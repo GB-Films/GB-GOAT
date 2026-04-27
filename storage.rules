@@ -1,0 +1,59 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function userEmail() {
+      return request.auth.token.email;
+    }
+
+    function isAppAdmin() {
+      return isSignedIn() && userEmail() in [
+        'info@granbertafilms.com',
+        'tgboetsch@gmail.com',
+        'tomas@granberta.com'
+      ];
+    }
+
+    function projectDoc(projectId) {
+      return firestore.get(/databases/(default)/documents/projects/$(projectId)).data;
+    }
+
+    function isProjectOwner(projectId) {
+      return isSignedIn() && projectDoc(projectId).createdBy == request.auth.uid;
+    }
+
+    function isProjectCollaborator(projectId) {
+      return isSignedIn() && userEmail() in projectDoc(projectId).collaboratorEmails;
+    }
+
+    function isProjectAdmin(projectId) {
+      return isAppAdmin()
+        || isProjectOwner(projectId)
+        || (
+          isSignedIn()
+          && firestore.exists(/databases/(default)/documents/projects/$(projectId)/collaborators/$(userEmail()))
+          && firestore.get(/databases/(default)/documents/projects/$(projectId)/collaborators/$(userEmail())).data.role == 'admin'
+        );
+    }
+
+    function hasProjectAccess(projectId) {
+      return isProjectAdmin(projectId) || isProjectCollaborator(projectId);
+    }
+
+    match /projects/{projectId}/areaExpenses/{expenseId}/{fileName} {
+      allow read: if hasProjectAccess(projectId);
+      allow create, update: if hasProjectAccess(projectId)
+        && request.resource.size <= 15 * 1024 * 1024
+        && request.resource.contentType == 'application/pdf';
+      allow delete: if isProjectAdmin(projectId);
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

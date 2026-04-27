@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { doc, getDoc, collection, query, getDocs, addDoc, serverTimestamp, deleteDoc, updateDoc } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { deleteObject, getDownloadURL, ref, uploadBytes } from 'firebase/storage';
+import { db, storage } from '../lib/firebase';
 import { handleFirestoreError } from '../lib/firestoreUtils';
 import { useAuth } from '../context/AuthContext';
 import { 
@@ -25,7 +26,10 @@ import {
   Download,
   LayoutGrid,
   MapPin,
-  ExternalLink as LinkIcon
+  ExternalLink as LinkIcon,
+  FileText,
+  Paperclip,
+  X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
@@ -94,6 +98,15 @@ const formatShootingDate = (dateValue: any) => {
   return formatted.charAt(0).toUpperCase() + formatted.slice(1);
 };
 
+const sanitizeFileName = (fileName: string) => {
+  return fileName
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9._-]/g, '-')
+    .replace(/-+/g, '-')
+    .slice(0, 120);
+};
+
 export default function ProjectDetail() {
   const { id } = useParams();
   const { user, profile } = useAuth();
@@ -119,6 +132,7 @@ export default function ProjectDetail() {
   const [selectedItemForPayment, setSelectedItemForPayment] = useState<any>(null);
   const [paymentType, setPaymentType] = useState<PaymentCollection>('areaExpenses');
   const [isDeletingPayment, setIsDeletingPayment] = useState<number | null>(null);
+  const [uploadingInvoices, setUploadingInvoices] = useState<Record<string, boolean>>({});
   const areaSelectorRef = useRef<HTMLDivElement>(null);
   
   useEffect(() => {
@@ -489,6 +503,102 @@ export default function ProjectDetail() {
       setAreaExpenses(areaExpenses.filter(e => e.id !== expenseId));
     } catch (e) {
       console.error("Error deleting area expense:", e);
+    }
+  };
+
+  const uploadInvoiceForExpense = async (expense: any, file?: File | null) => {
+    if (!id || !file) return;
+
+    if (file.type !== 'application/pdf') {
+      alert('Por ahora sólo se pueden adjuntar facturas en PDF.');
+      return;
+    }
+
+    if (file.size > 15 * 1024 * 1024) {
+      alert('El PDF es muy pesado. El máximo permitido es 15 MB.');
+      return;
+    }
+
+    setUploadingInvoices(prev => ({ ...prev, [expense.id]: true }));
+
+    try {
+      const safeName = sanitizeFileName(file.name);
+      const path = `projects/${id}/areaExpenses/${expense.id}/${Date.now()}-${safeName}`;
+      const storageRef = ref(storage, path);
+
+      await uploadBytes(storageRef, file, {
+        contentType: file.type,
+        customMetadata: {
+          projectId: id,
+          expenseId: expense.id,
+          uploadedBy: user?.email || user?.uid || 'unknown',
+        },
+      });
+
+      const url = await getDownloadURL(storageRef);
+      const invoice = {
+        fileName: file.name,
+        url,
+        path,
+        contentType: file.type,
+        size: file.size,
+        uploadedAt: serverTimestamp(),
+        uploadedBy: user?.email || user?.uid || '',
+      };
+
+      await updateDoc(doc(db, 'projects', id, 'areaExpenses', expense.id), {
+        invoice,
+        invoiceStatus: 'pendiente',
+        updatedAt: serverTimestamp(),
+      });
+
+      if (expense.invoice?.path && expense.invoice.path !== path) {
+        deleteObject(ref(storage, expense.invoice.path)).catch(() => {});
+      }
+
+      setAreaExpenses(areaExpenses.map(item => item.id === expense.id
+        ? {
+            ...item,
+            invoice: { ...invoice, uploadedAt: new Date() },
+            invoiceStatus: 'pendiente',
+          }
+        : item
+      ));
+    } catch (error: any) {
+      console.error('Error uploading invoice:', error);
+      handleFirestoreError(error, 'update', `projects/${id}/areaExpenses/${expense.id}`);
+      alert('No se pudo subir la factura. Revisá que Firebase Storage esté activado y que las reglas permitan PDFs.');
+    } finally {
+      setUploadingInvoices(prev => ({ ...prev, [expense.id]: false }));
+    }
+  };
+
+  const removeInvoiceFromExpense = async (expense: any) => {
+    if (!id || !expense.invoice) return;
+    if (!confirm('¿Quitar la factura adjunta de este gasto?')) return;
+
+    setUploadingInvoices(prev => ({ ...prev, [expense.id]: true }));
+
+    try {
+      await updateDoc(doc(db, 'projects', id, 'areaExpenses', expense.id), {
+        invoice: null,
+        invoiceStatus: null,
+        updatedAt: serverTimestamp(),
+      });
+
+      if (expense.invoice.path) {
+        await deleteObject(ref(storage, expense.invoice.path)).catch(() => {});
+      }
+
+      setAreaExpenses(areaExpenses.map(item => item.id === expense.id
+        ? { ...item, invoice: null, invoiceStatus: null }
+        : item
+      ));
+    } catch (error: any) {
+      console.error('Error removing invoice:', error);
+      handleFirestoreError(error, 'update', `projects/${id}/areaExpenses/${expense.id}`);
+    } finally {
+      setUploadingInvoices(prev => ({ ...prev, [expense.id]: false }));
     }
   };
 
@@ -1514,7 +1624,8 @@ export default function ProjectDetail() {
                   <div className="min-w-[800px]">
                     <div className="grid grid-cols-12 bg-slate-50 border-b border-slate-200 px-6 py-3">
                       <div className="col-span-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">Proveedor / Concepto</div>
-                      <div className="col-span-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Descripción Detallada</div>
+                      <div className="col-span-3 text-[10px] font-bold uppercase tracking-widest text-slate-400">Descripción Detallada</div>
+                      <div className="col-span-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Factura</div>
                       <div className="col-span-2 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">P. Unitario</div>
                       <div className="col-span-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Cant.</div>
                       <div className="col-span-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Total</div>
@@ -1537,12 +1648,64 @@ export default function ProjectDetail() {
                                 type="provider"
                               />
                             </div>
-                            <div className="col-span-4">
+                            <div className="col-span-3">
                               <BudgetRowCell 
                                 item={item} 
                                 onUpdate={updateAreaExpense} 
                                 type="description"
                               />
+                            </div>
+                            <div className="col-span-1 flex justify-center">
+                              <div className="flex items-center justify-center gap-1">
+                                {item.invoice?.url ? (
+                                  <>
+                                    <a
+                                      href={item.invoice.url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="w-7 h-7 rounded border border-emerald-100 bg-emerald-50 text-emerald-600 hover:bg-emerald-600 hover:text-white transition-all flex items-center justify-center"
+                                      title={item.invoice.fileName || 'Ver factura'}
+                                    >
+                                      <FileText className="w-3.5 h-3.5" />
+                                    </a>
+                                    {isProjectAdmin && (
+                                      <button
+                                        type="button"
+                                        disabled={!!uploadingInvoices[item.id]}
+                                        onClick={() => removeInvoiceFromExpense(item)}
+                                        className="w-7 h-7 rounded border border-slate-100 bg-white text-slate-300 hover:text-red-500 hover:border-red-100 transition-all flex items-center justify-center"
+                                        title="Quitar factura"
+                                      >
+                                        <X className="w-3.5 h-3.5" />
+                                      </button>
+                                    )}
+                                  </>
+                                ) : (
+                                  <span className="text-[9px] font-bold uppercase tracking-widest text-slate-300">Sin PDF</span>
+                                )}
+                                <label
+                                  className={cn(
+                                    "w-7 h-7 rounded border transition-all flex items-center justify-center cursor-pointer",
+                                    uploadingInvoices[item.id]
+                                      ? "bg-slate-100 border-slate-200 text-slate-300 cursor-wait"
+                                      : "bg-white border-slate-200 text-slate-400 hover:text-black hover:border-black"
+                                  )}
+                                  title={item.invoice?.url ? 'Reemplazar factura PDF' : 'Adjuntar factura PDF'}
+                                >
+                                  <Paperclip className="w-3.5 h-3.5" />
+                                  <input
+                                    type="file"
+                                    accept="application/pdf,.pdf"
+                                    className="hidden"
+                                    disabled={!!uploadingInvoices[item.id]}
+                                    onChange={(event) => {
+                                      const file = event.target.files?.[0];
+                                      uploadInvoiceForExpense(item, file);
+                                      event.target.value = '';
+                                    }}
+                                  />
+                                </label>
+                              </div>
                             </div>
                             <div className="col-span-2">
                               <BudgetRowCell 
