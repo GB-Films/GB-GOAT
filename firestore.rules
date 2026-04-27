@@ -1,0 +1,146 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // -------------------------------------------------------------------------
+    // Phase 3: Primitives & Helpers
+    // -------------------------------------------------------------------------
+    function isSignedIn() { return request.auth != null; }
+    function isAdmin() { return isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)); }
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-\\.]+@?[a-zA-Z0-9_\\-\\.]*$'); }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    
+    // Identity verification
+    function isEmailVerified() { return isSignedIn() && request.auth.token.email_verified == true; }
+    function userEmail() { return request.auth.token.email; }
+    
+    // Project Access Helpers
+    function projectDoc(projectId) { return get(/databases/$(database)/documents/projects/$(projectId)).data; }
+    function isProjectOwner(projectId) { return isSignedIn() && projectDoc(projectId).createdBy == request.auth.uid; }
+    function isProjectCollaborator(projectId) { 
+      return isSignedIn() && (userEmail() in projectDoc(projectId).collaboratorEmails); 
+    }
+    function hasProjectAccess(projectId) {
+      // Note: isProjectOwner calls get(), which is fine for individual document operations (get/create/update/delete)
+      // but should be avoided in list operations usually. Here it's used for subcollection access.
+      return isProjectOwner(projectId) || isProjectCollaborator(projectId);
+    }
+
+    // -------------------------------------------------------------------------
+    // Pillar 2: Validation Blueprints
+    // -------------------------------------------------------------------------
+    function isValidProject(data) {
+      return data.keys().hasAll(['name', 'status', 'createdBy', 'createdAt', 'updatedAt'])
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 200
+        && data.status in ['desarrollo', 'pre-produccion', 'produccion', 'post-produccion', 'completado', 'cancelado']
+        && data.createdBy == request.auth.uid
+        && (data.get('location', '') is string);
+    }
+
+    function isValidBudgetItem(data) {
+      return data.keys().hasAll(['projectId', 'area', 'description', 'total'])
+        && data.projectId is string && data.area is string && data.description is string
+        && (data.total is number || data.total is int)
+        && (data.get('paid', false) is bool)
+        && (data.get('paymentHistory', []) is list);
+    }
+
+    function isValidAreaExpense(data) {
+      return data.keys().hasAll(['projectId', 'description', 'total'])
+        && data.projectId is string && data.description is string
+        && (data.total is number || data.total is int)
+        && (data.get('paid', false) is bool)
+        && (data.get('paymentHistory', []) is list);
+    }
+
+    function isValidCollaborator(data) {
+      return data.keys().hasAll(['email', 'allowedTabs', 'allowedCategories'])
+        && data.email is string && data.allowedTabs is list && data.allowedCategories is list;
+    }
+
+    // -------------------------------------------------------------------------
+    // Global Safety Net
+    // -------------------------------------------------------------------------
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // -------------------------------------------------------------------------
+    // Collection: Users
+    // -------------------------------------------------------------------------
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    // -------------------------------------------------------------------------
+    // Collection: Projects
+    // -------------------------------------------------------------------------
+    match /projects/{projectId} {
+      // Secure List Query (Pillar 8)
+      allow list: if isSignedIn() && (
+        resource.data.createdBy == request.auth.uid || 
+        (userEmail() in resource.data.collaboratorEmails)
+      );
+      
+      allow get: if isSignedIn() && (
+        resource.data.createdBy == request.auth.uid || 
+        (userEmail() in resource.data.collaboratorEmails)
+      );
+
+      allow create: if isSignedIn() && isValidProject(incoming()) && incoming().createdAt == request.time;
+      
+      allow update: if isSignedIn() && (
+        // Action: Change status or name
+        (resource.data.createdBy == request.auth.uid && incoming().createdBy == existing().createdBy) ||
+        // Action: Add collaborator (Only owner)
+        (resource.data.createdBy == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['collaboratorEmails', 'updatedAt']))
+      );
+
+      allow delete: if isSignedIn() && resource.data.createdBy == request.auth.uid;
+
+      // Sub-collections (Pillar 1: Master Gate)
+      
+      match /budgetItems/{itemId} {
+        allow read: if isValidId(projectId) && hasProjectAccess(projectId);
+        allow write: if isValidId(projectId) && hasProjectAccess(projectId) && isValidBudgetItem(incoming());
+      }
+
+      match /collaborators/{email} {
+        allow read: if isValidId(projectId) && hasProjectAccess(projectId);
+        allow write: if isValidId(projectId) && isProjectOwner(projectId) && isValidCollaborator(incoming());
+      }
+      
+      match /expenses/{expenseId} {
+        allow read, write: if hasProjectAccess(projectId);
+      }
+      
+      match /milestones/{milestoneId} {
+        allow read, write: if hasProjectAccess(projectId);
+      }
+
+      match /areaExpenses/{expenseId} {
+        allow read: if hasProjectAccess(projectId);
+        allow write: if hasProjectAccess(projectId) && isValidAreaExpense(incoming());
+      }
+
+      match /teamMembers/{memberId} {
+        allow read, write: if hasProjectAccess(projectId);
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // Collection: Clients & Providers
+    // -------------------------------------------------------------------------
+    match /clients/{clientId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn();
+    }
+
+    match /providers/{providerId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn();
+    }
+  }
+}

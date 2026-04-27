@@ -1,0 +1,225 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile information and global role.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "producer", "colaborator"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "Project": {
+      "title": "Project",
+      "description": "A film or video production project.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "status": { "type": "string", "enum": ["Presupuesto", "Pre Producción", "Rodaje", "Post", "Aprobado"] },
+        "clientName": { "type": "string" },
+        "shootingDate": { "type": "string", "format": "date" },
+        "location": { "type": "string", "description": "Google Maps link or text location" },
+        "budgetTotal": { "type": "number" },
+        "createdBy": { "type": "string" },
+        "collaboratorEmails": { 
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "spreadsheetId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "status", "createdBy"]
+    },
+    "CollaboratorPermission": {
+      "title": "Collaborator Permission",
+      "description": "Granular permissions for a project collaborator.",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "allowedTabs": { 
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "allowedCategories": { 
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "required": ["email", "allowedTabs", "allowedCategories"]
+    },
+    "ProjectAccess": {
+      "title": "Project Access",
+      "description": "Mapping of users to specific projects with optional specific permissions.",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "userId": { "type": "string" },
+        "level": { "type": "string", "enum": ["viewer", "editor", "owner"] },
+        "grantedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["projectId", "userId", "level"]
+    },
+    "Expense": {
+      "title": "Expense",
+      "description": "Financial records for project spending.",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "amount": { "type": "number" },
+        "category": { "type": "string" },
+        "providerId": { "type": "string" },
+        "providerName": { "type": "string" },
+        "description": { "type": "string" },
+        "date": { "type": "string", "format": "date-time" },
+        "paid": { "type": "boolean" },
+        "paymentHistory": {
+          "type": "array",
+          "items": { "$ref": "#/entities/Payment" }
+        }
+      },
+      "required": ["projectId", "amount", "date"]
+    },
+    "Payment": {
+      "title": "Payment",
+      "description": "Record of a partial or total payment.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "amount": { "type": "number" },
+        "detail": { "type": "string" },
+        "date": { "type": "string", "format": "date-time" },
+        "type": { "type": "string", "enum": ["partial", "total"] }
+      },
+      "required": ["amount", "date", "type"]
+    },
+    "Provider": {
+      "title": "Provider",
+      "description": "Suppliers and contractors.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "lastName": { "type": "string" },
+        "dni_cuit": { "type": "string" },
+        "address": { "type": "string" },
+        "birthDate": { "type": "string", "format": "date" },
+        "bankAccount_cbu": { "type": "string" },
+        "email": { "type": "string" },
+        "category": { "type": "string" },
+        "phone": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "lastName", "dni_cuit"]
+    },
+    "Client": {
+      "title": "Client",
+      "description": "Production clients.",
+      "type": "object",
+      "properties": {
+        "businessName": { "type": "string", "description": "Razon Social" },
+        "cuit": { "type": "string" },
+        "country": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["businessName", "cuit", "country"]
+    },
+    "Milestone": {
+      "title": "Milestone",
+      "description": "Key schedule events for a project.",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "title": { "type": "string" },
+        "date": { "type": "string", "format": "date-time" },
+        "completed": { "type": "boolean" }
+      },
+      "required": ["projectId", "title", "date"]
+    },
+    "BudgetItem": {
+      "title": "Budget Item",
+      "description": "Detailed project budget record with provider link.",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "area": { "type": "string" },
+        "providerId": { "type": "string" },
+        "providerName": { "type": "string" },
+        "description": { "type": "string" },
+        "quantity": { "type": "number" },
+        "unit": { "type": "string" },
+        "unitPrice": { "type": "number" },
+        "total": { "type": "number" },
+        "paid": { "type": "boolean" },
+        "paymentHistory": {
+          "type": "array",
+          "items": { "$ref": "#/entities/Payment" }
+        },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["projectId", "area", "description", "total"]
+    },
+    "TeamMember": {
+      "title": "Team Member",
+      "description": "User or Provider assigned to a project team.",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "providerId": { "type": "string" },
+        "role": { "type": "string" },
+        "name": { "type": "string" },
+        "assignedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["projectId", "role"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profile data."
+    },
+    "/projects/{projectId}": {
+      "schema": "Project",
+      "description": "Project main data."
+    },
+    "/projectAccess/{accessId}": {
+      "schema": "ProjectAccess",
+      "description": "Permissions mapping."
+    },
+    "/providers/{providerId}": {
+      "schema": "Provider",
+      "description": "Providers database."
+    },
+    "/clients/{clientId}": {
+      "schema": "Client",
+      "description": "Clients database."
+    },
+    "/projects/{projectId}/expenses/{expenseId}": {
+      "schema": "Expense",
+      "description": "Project individual expenses."
+    },
+    "/projects/{projectId}/milestones/{milestoneId}": {
+      "schema": "Milestone",
+      "description": "Project schedule milestones."
+    },
+    "/projects/{projectId}/budgetItems/{itemId}": {
+      "schema": "BudgetItem",
+      "description": "Individual budget spreadsheet entries."
+    },
+    "/projects/{projectId}/teamMembers/{memberId}": {
+      "schema": "TeamMember",
+      "description": "Project technical team assignments."
+    },
+    "/projects/{projectId}/collaborators/{email}": {
+      "schema": "CollaboratorPermission",
+      "description": "Granular permissions for a specific collaborator."
+    }
+  }
+}
