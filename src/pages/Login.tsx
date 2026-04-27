@@ -1,4 +1,5 @@
-import { signInWithRedirect } from 'firebase/auth';
+import { useEffect, useState } from 'react';
+import { getRedirectResult, signInWithPopup, signInWithRedirect } from 'firebase/auth';
 import { auth, googleProvider } from '../lib/firebase';
 import { Clapperboard } from 'lucide-react';
 import { Navigate } from 'react-router-dom';
@@ -6,17 +7,45 @@ import { useAuth } from '../context/AuthContext';
 import { motion } from 'motion/react';
 
 export default function Login() {
-  const { user } = useAuth();
+  const { user, loading } = useAuth();
+  const [isSigningIn, setIsSigningIn] = useState(false);
+  const [loginError, setLoginError] = useState('');
+
+  useEffect(() => {
+    getRedirectResult(auth).catch((error) => {
+      console.error('Error completing Google sign in:', error);
+      setLoginError('No pudimos completar el inicio con Google. Probá de nuevo.');
+    });
+  }, []);
 
   if (user) {
     return <Navigate to="/" replace />;
   }
 
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-slate-50">
+        <div className="w-10 h-10 border-4 border-black border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
   const handleLogin = async () => {
+    setIsSigningIn(true);
+    setLoginError('');
+
     try {
-      await signInWithRedirect(auth, googleProvider);
-    } catch (error) {
+      await signInWithPopup(auth, googleProvider);
+    } catch (error: any) {
       console.error('Error signing in:', error);
+
+      if (error?.code === 'auth/popup-blocked' || error?.code === 'auth/cancelled-popup-request') {
+        await signInWithRedirect(auth, googleProvider);
+        return;
+      }
+
+      setLoginError('No pudimos iniciar sesión con Google. Revisá que el popup no esté bloqueado y probá de nuevo.');
+      setIsSigningIn(false);
     }
   };
 
@@ -38,12 +67,19 @@ export default function Login() {
         <div className="space-y-4">
           <button
             onClick={handleLogin}
+            disabled={isSigningIn}
             className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-white border border-slate-200 rounded-xl font-medium text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition-all active:scale-[0.98]"
           >
             <img src="https://www.google.com/favicon.ico" alt="Google" className="w-5 h-5" />
-            Continuar con Google
+            {isSigningIn ? 'Conectando...' : 'Continuar con Google'}
           </button>
         </div>
+
+        {loginError && (
+          <p className="mt-4 text-center text-xs font-medium text-red-500">
+            {loginError}
+          </p>
+        )}
 
         <p className="mt-8 text-center text-xs text-slate-400">
           Usa tu cuenta corporativa para acceder a tus proyectos

@@ -10,6 +10,7 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType>({ user: null, profile: null, loading: true });
+const adminEmails = ['tgboetsch@gmail.com', 'tomas@granberta.com', 'info@granbertafilms.com'];
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -19,39 +20,54 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setUser(user);
-      if (user) {
-        const userDoc = await getDoc(doc(db, 'users', user.uid));
-        if (userDoc.exists()) {
-          const data = userDoc.data();
-          // Ensure specific emails are always admin
-          const normalizedEmail = user.email?.toLowerCase();
-          const adminEmails = ['tgboetsch@gmail.com', 'tomas@granberta.com', 'info@granbertafilms.com'];
-          if (adminEmails.includes(normalizedEmail || '') && data.role !== 'admin') {
-            await updateDoc(doc(db, 'users', user.uid), { role: 'admin' });
-            data.role = 'admin';
+      try {
+        if (user) {
+          const userDoc = await getDoc(doc(db, 'users', user.uid));
+          if (userDoc.exists()) {
+            const data = userDoc.data();
+            // Ensure specific emails are always admin
+            const normalizedEmail = user.email?.toLowerCase();
+            if (adminEmails.includes(normalizedEmail || '') && data.role !== 'admin') {
+              await updateDoc(doc(db, 'users', user.uid), { role: 'admin' });
+              data.role = 'admin';
+            }
+            setProfile(data);
+          } else {
+            // Create default profile for new user
+            // If it matches specific email, make admin
+            const normalizedEmail = user.email?.toLowerCase();
+            const role = adminEmails.includes(normalizedEmail || '') ? 'admin' : 'colaborador';
+            const newProfile = {
+              uid: user.uid,
+              email: user.email,
+              displayName: user.displayName,
+              photoURL: user.photoURL,
+              role: role,
+              createdAt: new Date().toISOString()
+            };
+            await setDoc(doc(db, 'users', user.uid), newProfile);
+            setProfile(newProfile);
           }
-          setProfile(data);
         } else {
-          // Create default profile for new user
-          // If it matches specific email, make admin
+          setProfile(null);
+        }
+      } catch (error) {
+        console.error('Error loading user profile:', error);
+        if (user) {
           const normalizedEmail = user.email?.toLowerCase();
-          const adminEmails = ['tgboetsch@gmail.com', 'tomas@granberta.com', 'info@granbertafilms.com'];
           const role = adminEmails.includes(normalizedEmail || '') ? 'admin' : 'colaborador';
-          const newProfile = {
+          setProfile({
             uid: user.uid,
             email: user.email,
             displayName: user.displayName,
             photoURL: user.photoURL,
-            role: role,
+            role,
             createdAt: new Date().toISOString()
-          };
-          await setDoc(doc(db, 'users', user.uid), newProfile);
-          setProfile(newProfile);
+          });
         }
-      } else {
-        setProfile(null);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     });
 
     return unsubscribe;
