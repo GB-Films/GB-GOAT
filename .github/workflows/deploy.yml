@@ -31,8 +31,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
       - name: Build
         run: npm run build
+
+      - name: Verify build output
+        run: |
+          test -f dist/index.html
+          cp dist/index.html dist/404.html
+          ls -la dist
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
