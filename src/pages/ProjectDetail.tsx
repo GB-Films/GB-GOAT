@@ -1276,6 +1276,7 @@ export default function ProjectDetail() {
                                                             item={item} 
                                                             onUpdate={updateBudgetItem} 
                                                             type="paid"
+                                                            disabledPayment={activeAreas.includes(item.area)}
                                                             onManagePayment={(item) => openPaymentModal(item, 'budgetItems')}
                                                           />
                                                         </div>
@@ -2174,9 +2175,10 @@ interface BudgetRowCellProps {
   onDelete?: (itemId: string) => Promise<void>;
   type: 'provider' | 'description' | 'price' | 'quantity' | 'paid';
   onManagePayment?: (item: any) => void;
+  disabledPayment?: boolean;
 }
 
-function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment }: BudgetRowCellProps) {
+function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment, disabledPayment }: BudgetRowCellProps) {
   const [isEditingProvider, setIsEditingProvider] = useState(false);
   const [providerSearch, setProviderSearch] = useState('');
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -2333,16 +2335,21 @@ function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment }: Bud
     return (
       <div className="flex items-center justify-center">
         <button 
+          disabled={disabledPayment}
           onClick={() => onManagePayment?.(item)}
           className={cn(
             "w-4 h-4 rounded-full border-2 transition-all flex items-center justify-center group/dot",
-            isFull ? "bg-emerald-500 border-emerald-600" : 
-            isPartial ? "bg-orange-500 border-orange-600" : 
+            disabledPayment ? "bg-slate-100 border-slate-300 cursor-not-allowed" :
+            isFull ? "bg-emerald-500 border-emerald-600" :
+            isPartial ? "bg-yellow-400 border-yellow-500" :
             "bg-rose-500 border-rose-600"
           )}
-          title={isFull ? "Pago Total" : isPartial ? "Pago Parcial" : "Sin Pago"}
+          title={disabledPayment ? "Pagos gestionados desde la pestaña Áreas" : isFull ? "Pago Total" : isPartial ? "Pago Parcial" : "Sin Pago"}
         >
-          <div className="w-1 h-1 bg-white rounded-full opacity-0 group-hover/dot:opacity-100 transition-all" />
+          <div className={cn(
+            "w-1 h-1 rounded-full opacity-0 group-hover/dot:opacity-100 transition-all",
+            disabledPayment ? "bg-slate-400" : "bg-white"
+          )} />
         </button>
       </div>
     );

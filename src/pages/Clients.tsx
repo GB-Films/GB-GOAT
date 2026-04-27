@@ -3,8 +3,10 @@ import { collection, query, getDocs, addDoc, serverTimestamp, orderBy, where, or
 import { db } from '../lib/firebase';
 import { handleFirestoreError } from '../lib/firestoreUtils';
 import { useAuth } from '../context/AuthContext';
-import { Plus, Search, Building2, Globe, X } from 'lucide-react';
+import { Plus, Search, Building2, Globe, X, Upload, Download } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import * as XLSX from 'xlsx';
+import Papa from 'papaparse';
 import { cn } from '../lib/utils';
 
 export default function Clients() {
@@ -12,6 +14,85 @@ export default function Clients() {
   const [loading, setLoading] = useState(true);
   const [showNewModal, setShowNewModal] = useState(false);
   const { profile } = useAuth();
+  const [searchTerm, setSearchTerm] = useState('');
+
+  const downloadTemplate = () => {
+    const templateData = [
+      {
+        'Razon Social': 'Gran Berta S.R.L.',
+        CUIT: '30-12345678-9',
+        Pais: 'Argentina'
+      },
+      {
+        'Razon Social': 'Cliente Ejemplo',
+        CUIT: '30-87654321-0',
+        Pais: 'Uruguay'
+      }
+    ];
+
+    const worksheet = XLSX.utils.json_to_sheet(templateData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Plantilla Clientes');
+    XLSX.writeFile(workbook, 'plantilla_clientes_gb_goat.xlsx');
+  };
+
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      const data = e.target?.result;
+      let jsonData: any[] = [];
+
+      try {
+        if (file.name.endsWith('.csv')) {
+          const results = Papa.parse(data as string, { header: true, skipEmptyLines: true });
+          jsonData = results.data;
+        } else {
+          const workbook = XLSX.read(data, { type: 'binary' });
+          const sheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[sheetName];
+          jsonData = XLSX.utils.sheet_to_json(worksheet);
+        }
+
+        if (jsonData.length === 0) {
+          alert('El archivo parece estar vacío.');
+          return;
+        }
+
+        const newClients: any[] = [];
+        for (const row of jsonData) {
+          const clientData = {
+            businessName: row['Razon Social'] || row['Razón Social'] || row.RazonSocial || row.Nombre || row.NOMBRE || '',
+            cuit: String(row.CUIT || row.Cuit || row.cuit || ''),
+            country: row.Pais || row.País || row.Country || row.PAIS || '',
+            createdBy: profile?.uid,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          };
+
+          if (!clientData.businessName) continue;
+
+          const docRef = await addDoc(collection(db, 'clients'), clientData);
+          newClients.push({ id: docRef.id, ...clientData, createdAt: new Date(), activeProjects: 0 });
+        }
+
+        setClients([...newClients, ...clients]);
+        alert(`${newClients.length} clientes importados correctamente.`);
+        event.target.value = '';
+      } catch (error) {
+        console.error("Error importing clients:", error);
+        alert("Hubo un error al procesar el archivo.");
+      }
+    };
+
+    if (file.name.endsWith('.csv')) {
+      reader.readAsText(file);
+    } else {
+      reader.readAsBinaryString(file);
+    }
+  };
 
   useEffect(() => {
     if (!profile?.uid || !profile?.email) return;
@@ -80,6 +161,10 @@ export default function Clients() {
     }
   };
 
+  const filteredClients = clients.filter(client =>
+    `${client.businessName || ''} ${client.cuit || ''}`.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
   return (
     <div className="max-w-6xl mx-auto space-y-8">
       <header className="flex items-end justify-between border-b border-slate-200 pb-8">
@@ -87,13 +172,27 @@ export default function Clients() {
           <div className="text-xs text-slate-400 uppercase tracking-widest font-bold mb-1">CineManage / Comercial</div>
           <h1 className="text-3xl font-light text-slate-900">Clientes: <span className="font-bold text-black">Cartera de Empresas</span></h1>
         </div>
-        <button 
-          onClick={() => setShowNewModal(true)}
-          className="px-4 py-2 bg-black text-white rounded text-sm font-semibold hover:bg-slate-800 transition-all active:scale-[0.98] uppercase tracking-widest flex items-center gap-2"
-        >
-          <Plus className="w-4 h-4" />
-          Nuevo Cliente
-        </button>
+        <div className="flex gap-2">
+          <button 
+            onClick={downloadTemplate}
+            className="px-4 py-2 bg-white border border-slate-200 text-slate-600 text-[10px] font-bold uppercase tracking-widest hover:bg-slate-50 transition-all flex items-center gap-2 rounded"
+          >
+            <Download className="w-3 h-3" />
+            Plantilla
+          </button>
+          <label className="px-4 py-2 bg-white border border-slate-200 text-slate-600 text-[10px] font-bold uppercase tracking-widest hover:bg-slate-50 transition-all flex items-center gap-2 rounded cursor-pointer">
+            <Upload className="w-3 h-3" />
+            Importar
+            <input type="file" accept=".csv, .xlsx, .xls" className="hidden" onChange={handleFileUpload} />
+          </label>
+          <button 
+            onClick={() => setShowNewModal(true)}
+            className="px-4 py-2 bg-black text-white rounded text-[10px] font-bold hover:bg-slate-800 transition-all active:scale-[0.98] uppercase tracking-widest flex items-center gap-2"
+          >
+            <Plus className="w-3 h-3" />
+            Nuevo Cliente
+          </button>
+        </div>
       </header>
 
       <div className="flex gap-4">
@@ -102,6 +201,8 @@ export default function Clients() {
           <input 
             type="text" 
             placeholder="Buscar por razon social o CUIT..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full pl-10 pr-4 py-2 bg-white border border-slate-200 rounded text-sm focus:outline-none focus:border-slate-400 transition-all placeholder:text-slate-300"
           />
         </div>
@@ -113,14 +214,14 @@ export default function Clients() {
             <div key={i} className="h-48 bg-white border border-slate-200 rounded-xl animate-pulse" />
           ))}
         </div>
-      ) : clients.length === 0 ? (
+      ) : filteredClients.length === 0 ? (
         <div className="text-center py-20 bg-white rounded-xl border border-dashed border-slate-200">
            <Building2 className="w-12 h-12 text-slate-100 mx-auto mb-4" />
            <h3 className="text-sm font-bold uppercase tracking-widest text-slate-300">Sin Clientes registrados</h3>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {clients.map((client, i) => (
+          {filteredClients.map((client, i) => (
             <motion.div
               key={client.id}
               initial={{ opacity: 0, y: 10 }}
