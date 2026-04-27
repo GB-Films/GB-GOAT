@@ -25,15 +25,16 @@ import {
   Download,
   LayoutGrid,
   MapPin,
-  ExternalLink as LinkIcon,
-  Calendar,
-  History
+  ExternalLink as LinkIcon
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import * as XLSX from 'xlsx';
 import Papa from 'papaparse';
 import { cn } from '../lib/utils';
+import { BudgetRowCell } from './project-detail/BudgetRowCell';
+import { PaymentModal } from './project-detail/PaymentModal';
+import type { BudgetItem, Collaborator, Payment, PaymentCollection } from './project-detail/types';
 
 const tabs = [
   { id: 'resumen', label: 'Resumen', icon: Info },
@@ -48,41 +49,6 @@ const BUDGET_AREAS = [
   'Producción', 'Dirección', 'Guion', 'Arte', 'Vestuario', 
   'Maquillaje', 'Fotografía', 'Sonido', 'Logística', 'Post-producción', 'Varios'
 ];
-
-interface Payment {
-  id: string;
-  amount: number;
-  detail: string;
-  date: any;
-  type: 'partial' | 'total';
-}
-
-interface BudgetItem {
-  id: string;
-  projectId: string;
-  area: string;
-  providerId: string;
-  providerName: string;
-  description: string;
-  unit: string;
-  quantity: number;
-  unitPrice: number;
-  total: number;
-  paid?: boolean;
-  paymentHistory?: Payment[];
-  order: number;
-  createdAt: any;
-  updatedAt?: any;
-}
-
-type PaymentCollection = 'budgetItems' | 'areaExpenses';
-
-interface Collaborator {
-  email: string;
-  role: 'admin' | 'colaborador';
-  allowedTabs: string[];
-  allowedCategories: string[];
-}
 
 const statusColors: Record<string, string> = {
   'Presupuesto': 'bg-slate-100 text-slate-700 border-slate-200',
@@ -147,7 +113,6 @@ export default function ProjectDetail() {
   const [selectedItemForPayment, setSelectedItemForPayment] = useState<any>(null);
   const [paymentType, setPaymentType] = useState<PaymentCollection>('areaExpenses');
   const [isDeletingPayment, setIsDeletingPayment] = useState<number | null>(null);
-  const amountRef = useRef<HTMLInputElement>(null);
   const areaSelectorRef = useRef<HTMLDivElement>(null);
   
   useEffect(() => {
@@ -1898,197 +1863,17 @@ export default function ProjectDetail() {
       </motion.div>
 
       <AnimatePresence>
-        {paymentModalOpen && selectedItemForPayment && (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[300] flex items-center justify-center p-4">
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden"
-            >
-              <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/30">
-                <h2 className="text-xs font-bold uppercase tracking-widest text-slate-900 flex items-center gap-2">
-                  <Wallet className="w-4 h-4 text-emerald-600" />
-                  Gestión de Pagos
-                </h2>
-                <button onClick={() => setPaymentModalOpen(false)} className="text-slate-400 hover:text-black">
-                  <Plus className="w-5 h-5 rotate-45" />
-                </button>
-              </div>
-
-              <div className="p-8 space-y-6">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-900">{selectedItemForPayment.description}</h3>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">
-                      {selectedItemForPayment.providerName || 'Sin Proveedor asignado'}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-lg font-black text-slate-900">${selectedItemForPayment.total?.toLocaleString()}</div>
-                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Total Partida</div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
-                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Pagado</div>
-                    <div className="text-xl font-black text-emerald-600">
-                      ${(selectedItemForPayment.paymentHistory || []).reduce((acc: number, p: any) => acc + p.amount, 0).toLocaleString()}
-                    </div>
-                  </div>
-                  <div className="bg-slate-900 p-4 rounded-xl">
-                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Saldo</div>
-                    <div className="text-xl font-black text-white">
-                      ${(selectedItemForPayment.total - (selectedItemForPayment.paymentHistory || []).reduce((acc: number, p: any) => acc + p.amount, 0)).toLocaleString()}
-                    </div>
-                  </div>
-                </div>
-
-                {isProjectAdmin && (
-                  <form onSubmit={async (e) => {
-                    e.preventDefault();
-                    if (!id) return;
-                    
-                    const formData = new FormData(e.currentTarget);
-                    const customDate = formData.get('paymentDate') as string;
-                    const amount = Number(formData.get('amount'));
-                    
-                    if (!amount || amount <= 0) {
-                      alert('Por favor ingrese un monto válido');
-                      return;
-                    }
-
-                    const currentItemId = selectedItemForPayment.id;
-                    const totalPaidBefore = (selectedItemForPayment.paymentHistory || []).reduce((acc: number, p: any) => acc + p.amount, 0);
-                    const isRemainingBalance = Math.abs(amount - (selectedItemForPayment.total - totalPaidBefore)) < 0.01;
-
-                    const newPayment: Payment = {
-                      id: Math.random().toString(36).substr(2, 9),
-                      amount,
-                      detail: formData.get('detail') as string,
-                      date: customDate ? new Date(customDate + 'T12:00:00') : new Date(),
-                      type: isRemainingBalance ? 'total' : 'partial'
-                    };
-
-                    const updatedHistory = [...(selectedItemForPayment.paymentHistory || []), newPayment];
-                    const totalPaid = updatedHistory.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
-                    const itemTotal = Number(selectedItemForPayment.total) || 0;
-                    const isFullyPaid = totalPaid >= (itemTotal - 0.01);
-
-                    const collectionName: PaymentCollection = selectedItemForPayment.__paymentCollection || paymentType;
-                    const docRef = doc(db, 'projects', id, collectionName, currentItemId);
-                    
-                    try {
-                      await updateDoc(docRef, {
-                        paymentHistory: updatedHistory,
-                        paid: isFullyPaid,
-                        updatedAt: serverTimestamp()
-                      });
-
-                      updatePaymentState(currentItemId, collectionName, updatedHistory, isFullyPaid);
-                      
-                      (e.target as HTMLFormElement).reset();
-                    } catch (err: any) {
-                      console.error("Error updating payment:", err);
-                      handleFirestoreError(err, 'update', `projects/${id}/${collectionName}/${currentItemId}`);
-                    }
-                  }} className="space-y-4 pt-4 border-t border-slate-100">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="flex-1">
-                        <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Fecha del Pago</label>
-                        <input name="paymentDate" type="date" defaultValue={new Date().toISOString().split('T')[0]} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all" />
-                      </div>
-                      <div className="flex-1">
-                         <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest text-emerald-600">Saldo Pendiente</label>
-                         <button 
-                           type="button"
-                           onClick={() => {
-                             const totalPaid = (selectedItemForPayment.paymentHistory || []).reduce((acc: number, p: any) => acc + (Number(p.amount) || 0), 0);
-                             const remaining = Math.max(0, (Number(selectedItemForPayment.total) || 0) - totalPaid);
-                             if (amountRef.current) {
-                               amountRef.current.value = remaining.toFixed(2);
-                             }
-                           }}
-                           className="w-full px-4 py-3 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded text-[10px] font-bold uppercase tracking-widest hover:bg-emerald-100 transition-all flex items-center justify-center gap-2 shadow-sm"
-                         >
-                           Cargar Saldo Total
-                         </button>
-                      </div>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Monto a Registrar</label>
-                      <div className="relative">
-                        <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold">$</div>
-                        <input 
-                          ref={amountRef}
-                          name="amount" 
-                          type="number" 
-                          step="0.01" 
-                          required
-                          placeholder="0.00" 
-                          className="w-full pl-8 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-xl text-lg font-black text-slate-900 focus:outline-none focus:border-black focus:ring-4 focus:ring-slate-100 transition-all" 
-                        />
-                      </div>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Detalle / Referencia</label>
-                      <input name="detail" placeholder="Ej: Transferencia Banco X, Pago en efectivo..." className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all" />
-                    </div>
-                    <button type="submit" className="w-full py-4 bg-emerald-600 text-white rounded-xl text-[10px] font-bold tracking-widest uppercase hover:bg-emerald-700 transition-colors flex items-center justify-center gap-2">
-                       <DollarSign className="w-4 h-4" /> Registrar Pago
-                    </button>
-                  </form>
-                )}
-
-                {isProjectAdmin && (selectedItemForPayment.paymentHistory || []).length > 0 && (
-                  <div className="pt-6 border-t border-slate-100">
-                    <h3 className="text-[10px] font-bold uppercase text-slate-400 mb-4 tracking-widest flex items-center gap-2">
-                       <History className="w-3 h-3" /> Historial de Pagos
-                    </h3>
-                    <div className="space-y-3 max-h-40 overflow-y-auto pr-2 custom-scrollbar">
-                      {(selectedItemForPayment.paymentHistory as Payment[]).map((payment, idx) => (
-                        <div key={payment.id || idx} className="flex justify-between items-center p-3 bg-slate-50 rounded-lg border border-slate-100">
-                          <div className="flex-1">
-                            <div className="text-xs font-bold text-slate-900">${payment.amount.toLocaleString()}</div>
-                            <div className="text-[9px] text-slate-400 uppercase font-medium">{payment.detail || 'Sin detalle'}</div>
-                          </div>
-                          <div className="text-right flex flex-col items-end gap-1">
-                             <div className="text-[9px] text-slate-400 font-bold uppercase flex items-center gap-1 justify-end">
-                               <Calendar className="w-2.5 h-2.5" />
-                               {formatDate(payment.date)}
-                             </div>
-                             <button 
-                               type="button"
-                               disabled={isDeletingPayment === idx}
-                               onClick={async (e) => {
-                                 e.preventDefault();
-                                 e.stopPropagation();
-                                 await deletePaymentFromSelectedItem(idx);
-                               }}
-                               className={cn(
-                                 "mt-2 text-[10px] font-bold uppercase px-3 py-1.5 rounded-lg transition-all flex items-center justify-center border shadow-sm active:scale-95 w-full",
-                                 isDeletingPayment === idx 
-                                   ? "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed" 
-                                   : "bg-white text-rose-600 border-rose-200 hover:bg-rose-600 hover:text-white"
-                               )}
-                             >
-                               {isDeletingPayment === idx ? (
-                                 "Borrando..."
-                               ) : (
-                                 <><Trash2 className="w-3 h-3 mr-1" /> Eliminar Pago</>
-                               )}
-                             </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </motion.div>
-          </div>
-        )}
+        <PaymentModal
+          projectId={id}
+          item={selectedItemForPayment}
+          isOpen={paymentModalOpen}
+          isProjectAdmin={isProjectAdmin}
+          paymentType={paymentType}
+          isDeletingPayment={isDeletingPayment}
+          onClose={() => setPaymentModalOpen(false)}
+          onPaymentStateChange={updatePaymentState}
+          onDeletePayment={deletePaymentFromSelectedItem}
+        />
         {showEditProjectModal && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
             <motion.div 
@@ -2159,194 +1944,4 @@ export default function ProjectDetail() {
 
     </div>
   );
-}
-
-interface BudgetRowCellProps {
-  item: any;
-  providers?: any[];
-  onUpdate: (itemId: string, updates: any) => Promise<void>;
-  onDelete?: (itemId: string) => Promise<void>;
-  type: 'provider' | 'description' | 'price' | 'quantity' | 'paid';
-  onManagePayment?: (item: any) => void;
-  disabledPayment?: boolean;
-}
-
-function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment, disabledPayment }: BudgetRowCellProps) {
-  const [isEditingProvider, setIsEditingProvider] = useState(false);
-  const [providerSearch, setProviderSearch] = useState('');
-  const dropdownRef = useRef<HTMLDivElement>(null);
-  
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setIsEditingProvider(false);
-      }
-    }
-    if (isEditingProvider) {
-      document.addEventListener("mousedown", handleClickOutside);
-    }
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [isEditingProvider]);
-
-  const isInvalidProvider = item.providerName && !item.providerId && providers?.length;
-
-  const handleValueUpdate = (field: string, value: any) => {
-    const updates: any = { [field]: value };
-    if (field === 'quantity' || field === 'unitPrice') {
-       const qty = field === 'quantity' ? Number(value) : item.quantity;
-       const price = field === 'unitPrice' ? Number(value) : item.unitPrice;
-       updates.total = qty * price;
-    }
-    onUpdate(item.id, updates);
-  };
-
-  if (type === 'provider') {
-    return (
-      <div className="relative group/provider">
-        {item.providerId || item.providerName ? (
-          <div className="flex items-center gap-2">
-            <div className={cn(
-              "w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-black",
-              isInvalidProvider ? "bg-red-500 text-white animate-pulse" : "bg-slate-900 text-white"
-            )}>
-              {item.providerName?.[0] || '?'}
-            </div>
-            <span className={cn(
-              "font-bold uppercase truncate text-[10px]",
-              isInvalidProvider ? "text-red-500 underline decoration-dotted" : "text-slate-900"
-            )}>
-              {item.providerName || 'Sin Nombre'}
-            </span>
-            <button 
-              onClick={() => setIsEditingProvider(true)}
-              className="opacity-0 group-hover/provider:opacity-100 p-1 text-slate-300 hover:text-black transition-all"
-            >
-              <Plus className="w-2.5 h-2.5" />
-            </button>
-          </div>
-        ) : (
-          <button 
-             onClick={() => setIsEditingProvider(true)}
-             className="text-slate-300 hover:text-black font-bold uppercase text-[9px] tracking-widest flex items-center gap-1"
-          >
-            <Plus className="w-3 h-3" /> Asignar Staff
-          </button>
-        )}
-        
-        {isEditingProvider && (
-           <div 
-             ref={dropdownRef}
-             className="absolute top-0 left-0 w-64 bg-white border border-slate-200 shadow-2xl rounded-lg z-[100] p-3 mt-8"
-           >
-              <div className="relative mb-3">
-                <input 
-                  autoFocus
-                  placeholder="Buscar profesional..."
-                  value={providerSearch}
-                  onChange={(e) => setProviderSearch(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 rounded border border-slate-100 outline-none focus:border-black text-[10px] font-medium"
-                />
-              </div>
-              <div className="max-h-52 overflow-y-auto custom-scrollbar">
-                <button 
-                  onClick={() => {
-                    onUpdate(item.id, { providerId: '', providerName: '' });
-                    setIsEditingProvider(false);
-                    setProviderSearch('');
-                  }}
-                  className="w-full text-left px-3 py-2 hover:bg-red-50 text-[10px] text-red-500 font-bold uppercase transition-colors rounded mb-1"
-                >
-                  X Desvincular actual
-                </button>
-                {providers?.filter(p => !providerSearch || `${p.name} ${p.lastName}`.toLowerCase().includes(providerSearch.toLowerCase())).map(p => (
-                  <button
-                    key={p.id}
-                    onClick={() => {
-                      onUpdate(item.id, { providerId: p.id, providerName: `${p.name} ${p.lastName}` });
-                      setIsEditingProvider(false);
-                      setProviderSearch('');
-                    }}
-                    className="w-full text-left px-3 py-2 hover:bg-slate-50 text-[10px] border-t border-slate-50 first:border-0 transition-colors font-medium"
-                  >
-                    {p.name} {p.lastName}
-                  </button>
-                ))}
-              </div>
-              <button 
-                onClick={() => setIsEditingProvider(false)}
-                className="w-full mt-3 py-2 text-[9px] uppercase font-black text-slate-400 hover:text-black border-t border-slate-100"
-              >
-                Cerrar Panel
-              </button>
-           </div>
-        )}
-      </div>
-    );
-  }
-
-  if (type === 'description') {
-    return (
-      <input 
-        defaultValue={item.description}
-        onBlur={(e) => handleValueUpdate('description', e.target.value)}
-        placeholder="Ej: Alquiler de lentes, jornada de 12hs..."
-        className="w-full bg-transparent border-b border-transparent hover:border-slate-100 focus:border-black outline-none transition-all py-1 text-slate-600 text-[11px]"
-      />
-    );
-  }
-
-  if (type === 'price') {
-    return (
-      <div className="flex items-center gap-1 font-mono text-[11px]">
-        <span className="text-slate-300 font-bold">$</span>
-        <input 
-          type="number"
-          defaultValue={item.unitPrice}
-          onBlur={(e) => handleValueUpdate('unitPrice', e.target.value)}
-          className="w-full bg-transparent border-b border-transparent hover:border-slate-100 focus:border-black outline-none transition-all py-1 font-bold text-slate-800"
-        />
-      </div>
-    );
-  }
-
-  if (type === 'quantity') {
-    return (
-      <input 
-        type="number"
-        defaultValue={item.quantity}
-        onBlur={(e) => handleValueUpdate('quantity', e.target.value)}
-        className="w-16 bg-transparent border-b border-transparent hover:border-slate-100 focus:border-black outline-none transition-all py-1 text-center font-bold text-slate-800"
-      />
-    );
-  }
-
-  if (type === 'paid') {
-    const totalPaid = (item.paymentHistory || []).reduce((acc: number, p: any) => acc + p.amount, 0);
-    const isPartial = totalPaid > 0 && totalPaid < item.total;
-    const isFull = totalPaid >= item.total;
-
-    return (
-      <div className="flex items-center justify-center">
-        <button 
-          disabled={disabledPayment}
-          onClick={() => onManagePayment?.(item)}
-          className={cn(
-            "w-4 h-4 rounded-full border-2 transition-all flex items-center justify-center group/dot",
-            disabledPayment ? "bg-slate-100 border-slate-300 cursor-not-allowed" :
-            isFull ? "bg-emerald-500 border-emerald-600" :
-            isPartial ? "bg-yellow-400 border-yellow-500" :
-            "bg-rose-500 border-rose-600"
-          )}
-          title={disabledPayment ? "Pagos gestionados desde la pestaña Áreas" : isFull ? "Pago Total" : isPartial ? "Pago Parcial" : "Sin Pago"}
-        >
-          <div className={cn(
-            "w-1 h-1 rounded-full opacity-0 group-hover/dot:opacity-100 transition-all",
-            disabledPayment ? "bg-slate-400" : "bg-white"
-          )} />
-        </button>
-      </div>
-    );
-  }
-
-  return null;
 }
