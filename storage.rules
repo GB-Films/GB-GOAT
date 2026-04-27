@@ -44,6 +44,15 @@ service firebase.storage {
       return isProjectAdmin(projectId) || isProjectCollaborator(projectId);
     }
 
+    match /projects/{projectId}/areas/{area}/facturas/{fileName} {
+      allow read: if hasProjectAccess(projectId);
+      allow create, update: if hasProjectAccess(projectId)
+        && request.resource.size <= 15 * 1024 * 1024
+        && request.resource.contentType == 'application/pdf';
+      allow delete: if isProjectAdmin(projectId);
+    }
+
+    // Legacy path kept so previously uploaded invoices can still be managed.
     match /projects/{projectId}/areaExpenses/{expenseId}/{fileName} {
       allow read: if hasProjectAccess(projectId);
       allow create, update: if hasProjectAccess(projectId)

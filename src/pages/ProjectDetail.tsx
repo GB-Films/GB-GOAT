@@ -107,6 +107,16 @@ const sanitizeFileName = (fileName: string) => {
     .slice(0, 120);
 };
 
+const buildInvoiceFileName = (expense: any) => {
+  const baseName = sanitizeFileName(
+    expense.providerName || expense.description || expense.area || 'factura'
+  )
+    .replace(/\.[^.]+$/, '')
+    .slice(0, 70) || 'factura';
+  const shortId = String(expense.id || 'gasto').slice(0, 8);
+  return `factura-${baseName}-${shortId}.pdf`;
+};
+
 export default function ProjectDetail() {
   const { id } = useParams();
   const { user, profile } = useAuth();
@@ -133,6 +143,7 @@ export default function ProjectDetail() {
   const [paymentType, setPaymentType] = useState<PaymentCollection>('areaExpenses');
   const [isDeletingPayment, setIsDeletingPayment] = useState<number | null>(null);
   const [uploadingInvoices, setUploadingInvoices] = useState<Record<string, boolean>>({});
+  const [dragOverExpenseId, setDragOverExpenseId] = useState<string | null>(null);
   const areaSelectorRef = useRef<HTMLDivElement>(null);
   
   useEffect(() => {
@@ -522,8 +533,9 @@ export default function ProjectDetail() {
     setUploadingInvoices(prev => ({ ...prev, [expense.id]: true }));
 
     try {
-      const safeName = sanitizeFileName(file.name);
-      const path = `projects/${id}/areaExpenses/${expense.id}/${Date.now()}-${safeName}`;
+      const areaFolder = sanitizeFileName(expense.area || 'sin-area') || 'sin-area';
+      const fileName = buildInvoiceFileName(expense);
+      const path = `projects/${id}/areas/${areaFolder}/facturas/${fileName}`;
       const storageRef = ref(storage, path);
 
       await uploadBytes(storageRef, file, {
@@ -531,13 +543,16 @@ export default function ProjectDetail() {
         customMetadata: {
           projectId: id,
           expenseId: expense.id,
+          area: expense.area || '',
+          originalFileName: file.name,
           uploadedBy: user?.email || user?.uid || 'unknown',
         },
       });
 
       const url = await getDownloadURL(storageRef);
       const invoice = {
-        fileName: file.name,
+        fileName,
+        originalFileName: file.name,
         url,
         path,
         contentType: file.type,
@@ -600,6 +615,28 @@ export default function ProjectDetail() {
     } finally {
       setUploadingInvoices(prev => ({ ...prev, [expense.id]: false }));
     }
+  };
+
+  const handleInvoiceDrop = async (event: React.DragEvent<HTMLDivElement>, expense: any) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setDragOverExpenseId(null);
+
+    if (uploadingInvoices[expense.id]) return;
+
+    const files: File[] = [];
+    for (let index = 0; index < event.dataTransfer.files.length; index += 1) {
+      const file = event.dataTransfer.files.item(index);
+      if (file) files.push(file);
+    }
+    const pdfFile = files.find(file => file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf'));
+
+    if (!pdfFile) {
+      alert('Soltá un archivo PDF para adjuntarlo como factura.');
+      return;
+    }
+
+    await uploadInvoiceForExpense(expense, pdfFile);
   };
 
   const renameCategory = async (oldName: string) => {
@@ -1638,7 +1675,38 @@ export default function ProjectDetail() {
                         .filter(item => item.area === selectedAreaTab)
                         .sort((a, b) => (b.updatedAt?.seconds || 0) - (a.updatedAt?.seconds || 0)) // Newest first
                         .map((item) => (
-                          <div key={item.id} className="grid grid-cols-12 px-6 py-3 items-center hover:bg-slate-50 transition-colors group">
+                          <div
+                            key={item.id}
+                            onDragEnter={(event) => {
+                              event.preventDefault();
+                              setDragOverExpenseId(item.id);
+                            }}
+                            onDragOver={(event) => {
+                              event.preventDefault();
+                              event.dataTransfer.dropEffect = 'copy';
+                              setDragOverExpenseId(item.id);
+                            }}
+                            onDragLeave={(event) => {
+                              if (!event.currentTarget.contains(event.relatedTarget as Node)) {
+                                setDragOverExpenseId(null);
+                              }
+                            }}
+                            onDrop={(event) => handleInvoiceDrop(event, item)}
+                            className={cn(
+                              "relative grid grid-cols-12 px-6 py-3 items-center transition-colors group",
+                              dragOverExpenseId === item.id
+                                ? "bg-emerald-50 ring-2 ring-inset ring-emerald-400"
+                                : "hover:bg-slate-50"
+                            )}
+                          >
+                            {dragOverExpenseId === item.id && (
+                              <div className="absolute inset-0 z-20 bg-emerald-50/90 border border-emerald-200 flex items-center justify-center pointer-events-none">
+                                <div className="px-4 py-2 rounded bg-white border border-emerald-100 shadow-sm text-[10px] font-black uppercase tracking-widest text-emerald-700 flex items-center gap-2">
+                                  <Paperclip className="w-3.5 h-3.5" />
+                                  Soltar PDF para adjuntar factura
+                                </div>
+                              </div>
+                            )}
                             <div className="col-span-2">
                               <BudgetRowCell 
                                 item={item} 
