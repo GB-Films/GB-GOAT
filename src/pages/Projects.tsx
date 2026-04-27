@@ -22,6 +22,7 @@ export default function Projects() {
   const [loading, setLoading] = useState(true);
   const [showNewModal, setShowNewModal] = useState(false);
   const { profile } = useAuth();
+  const isAppAdmin = profile?.role === 'admin';
 
   useEffect(() => {
     const fetchProjects = async () => {
@@ -66,6 +67,11 @@ export default function Projects() {
 
   const handleCreateProject = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (!isAppAdmin) {
+      alert('Solo un administrador puede crear proyectos.');
+      return;
+    }
+
     const formData = new FormData(e.currentTarget);
     const data = {
       name: formData.get('name'),
@@ -96,13 +102,15 @@ export default function Projects() {
           <div className="text-[10px] text-slate-400 uppercase tracking-widest font-bold mb-1">GB GOAT / Catálogo</div>
           <h1 className="text-2xl font-light text-slate-900">Producciones: <span className="font-bold text-black">Histórico y Activas</span></h1>
         </div>
-        <button 
-          onClick={() => setShowNewModal(true)}
-          className="px-3 py-1.5 bg-black text-white rounded text-[10px] font-bold hover:bg-slate-800 transition-all active:scale-[0.98] uppercase tracking-widest flex items-center gap-2"
-        >
-          <Plus className="w-3 h-3" />
-          Nuevo Proyecto
-        </button>
+        {isAppAdmin && (
+          <button 
+            onClick={() => setShowNewModal(true)}
+            className="px-3 py-1.5 bg-black text-white rounded text-[10px] font-bold hover:bg-slate-800 transition-all active:scale-[0.98] uppercase tracking-widest flex items-center gap-2"
+          >
+            <Plus className="w-3 h-3" />
+            Nuevo Proyecto
+          </button>
+        )}
       </header>
 
       <div className="flex gap-4">
@@ -179,7 +187,7 @@ export default function Projects() {
 
       {/* New Project Modal */}
       <AnimatePresence>
-        {showNewModal && (
+        {showNewModal && isAppAdmin && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <motion.div 
               initial={{ opacity: 0 }}

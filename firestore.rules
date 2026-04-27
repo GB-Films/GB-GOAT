@@ -63,7 +63,7 @@ service cloud.firestore {
         )
       );
       allow get: if hasProjectAccess(projectId);
-      allow create: if isSignedIn() && request.resource.data.createdBy == request.auth.uid;
+      allow create: if isAppAdmin() && request.resource.data.createdBy == request.auth.uid;
       allow update: if isProjectAdmin(projectId);
       allow delete: if isAppAdmin() || isProjectOwner(projectId);
 
