@@ -25,13 +25,15 @@ export default function Clients() {
         // Fetch projects separately to avoid one failure blocking the other
         let projectsData: any[] = [];
         try {
-          const pq = query(
-            collection(db, 'projects'),
-            or(
-              where('createdBy', '==', profile.uid),
-              where('collaboratorEmails', 'array-contains', profile.email)
-            )
-          );
+          const pq = profile.role === 'admin'
+            ? query(collection(db, 'projects'))
+            : query(
+                collection(db, 'projects'),
+                or(
+                  where('createdBy', '==', profile.uid),
+                  where('collaboratorEmails', 'array-contains', profile.email)
+                )
+              );
           const pSnapshot = await getDocs(pq);
           projectsData = pSnapshot.docs.map(doc => doc.data());
         } catch (pError: any) {

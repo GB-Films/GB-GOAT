@@ -6,7 +6,6 @@ service cloud.firestore {
     // Phase 3: Primitives & Helpers
     // -------------------------------------------------------------------------
     function isSignedIn() { return request.auth != null; }
-    function isAdmin() { return isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)); }
     function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-\\.]+@?[a-zA-Z0-9_\\-\\.]*$'); }
     function incoming() { return request.resource.data; }
     function existing() { return resource.data; }
@@ -14,6 +13,8 @@ service cloud.firestore {
     // Identity verification
     function isEmailVerified() { return isSignedIn() && request.auth.token.email_verified == true; }
     function userEmail() { return request.auth.token.email; }
+    function isAppOwner() { return isSignedIn() && userEmail() == 'info@granbertafilms.com'; }
+    function isAdmin() { return isAppOwner() || (isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid))); }
     
     // Project Access Helpers
     function projectDoc(projectId) { return get(/databases/$(database)/documents/projects/$(projectId)).data; }
@@ -24,7 +25,7 @@ service cloud.firestore {
     function hasProjectAccess(projectId) {
       // Note: isProjectOwner calls get(), which is fine for individual document operations (get/create/update/delete)
       // but should be avoided in list operations usually. Here it's used for subcollection access.
-      return isProjectOwner(projectId) || isProjectCollaborator(projectId);
+      return isAppOwner() || isProjectOwner(projectId) || isProjectCollaborator(projectId);
     }
 
     // -------------------------------------------------------------------------
@@ -33,7 +34,7 @@ service cloud.firestore {
     function isValidProject(data) {
       return data.keys().hasAll(['name', 'status', 'createdBy', 'createdAt', 'updatedAt'])
         && data.name is string && data.name.size() > 0 && data.name.size() <= 200
-        && data.status in ['desarrollo', 'pre-produccion', 'produccion', 'post-produccion', 'completado', 'cancelado']
+        && data.status in ['desarrollo', 'pre-produccion', 'produccion', 'post-produccion', 'completado', 'cancelado', 'Presupuesto', 'Pre Producción', 'Pre ProducciÃ³n', 'Rodaje', 'Post', 'Aprobado']
         && data.createdBy == request.auth.uid
         && (data.get('location', '') is string);
     }
@@ -71,7 +72,7 @@ service cloud.firestore {
     // -------------------------------------------------------------------------
     match /users/{userId} {
       allow read: if isSignedIn();
-      allow write: if isSignedIn() && request.auth.uid == userId;
+      allow write: if isSignedIn() && (request.auth.uid == userId || isAppOwner());
     }
 
     // -------------------------------------------------------------------------
@@ -80,11 +81,13 @@ service cloud.firestore {
     match /projects/{projectId} {
       // Secure List Query (Pillar 8)
       allow list: if isSignedIn() && (
+        isAppOwner() ||
         resource.data.createdBy == request.auth.uid || 
         (userEmail() in resource.data.collaboratorEmails)
       );
       
       allow get: if isSignedIn() && (
+        isAppOwner() ||
         resource.data.createdBy == request.auth.uid || 
         (userEmail() in resource.data.collaboratorEmails)
       );
@@ -92,13 +95,14 @@ service cloud.firestore {
       allow create: if isSignedIn() && isValidProject(incoming()) && incoming().createdAt == request.time;
       
       allow update: if isSignedIn() && (
+        isAppOwner() ||
         // Action: Change status or name
         (resource.data.createdBy == request.auth.uid && incoming().createdBy == existing().createdBy) ||
         // Action: Add collaborator (Only owner)
         (resource.data.createdBy == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['collaboratorEmails', 'updatedAt']))
       );
 
-      allow delete: if isSignedIn() && resource.data.createdBy == request.auth.uid;
+      allow delete: if isSignedIn() && (isAppOwner() || resource.data.createdBy == request.auth.uid);
 
       // Sub-collections (Pillar 1: Master Gate)
       
@@ -109,7 +113,7 @@ service cloud.firestore {
 
       match /collaborators/{email} {
         allow read: if isValidId(projectId) && hasProjectAccess(projectId);
-        allow write: if isValidId(projectId) && isProjectOwner(projectId) && isValidCollaborator(incoming());
+        allow write: if isValidId(projectId) && (isAppOwner() || isProjectOwner(projectId)) && isValidCollaborator(incoming());
       }
       
       match /expenses/{expenseId} {

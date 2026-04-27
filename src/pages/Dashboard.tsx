@@ -29,15 +29,16 @@ export default function Dashboard() {
 
     const fetchDashboardData = async () => {
       try {
-        // Fetch projects where user is owner or collaborator
-        const pq = query(
-          collection(db, 'projects'), 
-          or(
-            where('createdBy', '==', profile.uid),
-            where('collaboratorEmails', 'array-contains', profile.email)
-          ),
-          orderBy('createdAt', 'desc')
-        );
+        const pq = profile.role === 'admin'
+          ? query(collection(db, 'projects'), orderBy('createdAt', 'desc'))
+          : query(
+              collection(db, 'projects'),
+              or(
+                where('createdBy', '==', profile.uid),
+                where('collaboratorEmails', 'array-contains', profile.email)
+              ),
+              orderBy('createdAt', 'desc')
+            );
         const pSnap = await getDocs(pq);
         const projectsData = pSnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any }));
         setProjects(projectsData);

@@ -28,13 +28,15 @@ export default function Projects() {
       if (!profile?.uid || !profile?.email) return;
       try {
         const projectsRef = collection(db, 'projects');
-        const q = query(
-          projectsRef, 
-          or(
-            where('createdBy', '==', profile.uid),
-            where('collaboratorEmails', 'array-contains', profile.email)
-          )
-        );
+        const q = profile.role === 'admin'
+          ? query(projectsRef)
+          : query(
+              projectsRef,
+              or(
+                where('createdBy', '==', profile.uid),
+                where('collaboratorEmails', 'array-contains', profile.email)
+              )
+            );
         const querySnapshot = await getDocs(q);
         setProjects(querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
       } catch (error: any) {
