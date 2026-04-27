@@ -28,7 +28,7 @@ export type PaymentCollection = 'budgetItems' | 'areaExpenses';
 
 export interface Collaborator {
   email: string;
-  role: 'admin' | 'colaborador';
+  role: 'admin' | 'jefe_area' | 'colaborador';
   allowedTabs: string[];
   allowedCategories: string[];
 }

@@ -58,6 +58,12 @@ const statusColors: Record<string, string> = {
   'Aprobado': 'bg-emerald-100 text-emerald-700 border-emerald-200',
 };
 
+const roleLabels: Record<Collaborator['role'], string> = {
+  admin: 'Administrador',
+  jefe_area: 'Jefe de Área',
+  colaborador: 'Colaborador',
+};
+
 const formatDate = (dateString: string | any) => {
   if (!dateString) return 'Sin fecha';
   const date = dateString.seconds ? new Date(dateString.seconds * 1000) : new Date(dateString);
@@ -384,8 +390,58 @@ export default function ProjectDetail() {
     }
   };
 
+  const getAreaBudget = (area: string) => {
+    return budgetItems
+      .filter(item => item.area === area)
+      .reduce((acc, item) => acc + (Number(item.total) || 0), 0);
+  };
+
+  const getAreaSpent = (area: string, excludeExpenseId?: string) => {
+    return areaExpenses
+      .filter(item => item.area === area && item.id !== excludeExpenseId)
+      .reduce((acc, item) => acc + (Number(item.total) || 0), 0);
+  };
+
+  const canSaveAreaExpense = (area: string, nextTotal: number, excludeExpenseId?: string) => {
+    const assigned = getAreaBudget(area);
+    const nextSpent = getAreaSpent(area, excludeExpenseId) + (Number(nextTotal) || 0);
+
+    if (assigned <= 0) {
+      if (!isProjectAdmin) {
+        alert(`El área "${area}" no tiene presupuesto asignado en el Presupuesto Principal.`);
+        return false;
+      }
+      return true;
+    }
+
+    if (nextSpent <= assigned + 0.01) return true;
+
+    const overBy = nextSpent - assigned;
+    const message = `Este gasto supera el presupuesto asignado para "${area}" por $${overBy.toLocaleString()}.`;
+
+    if (!isProjectAdmin) {
+      alert(`${message}\n\nPedí autorización a un administrador del proyecto para ampliar el presupuesto.`);
+      return false;
+    }
+
+    return confirm(`${message}\n\nComo administrador, ¿querés guardarlo igual?`);
+  };
+
   const addAreaExpense = async (area: string) => {
     if (!id) return;
+    const assigned = getAreaBudget(area);
+    const spent = getAreaSpent(area);
+
+    if (!isProjectAdmin && assigned <= 0) {
+      alert(`El área "${area}" todavía no tiene presupuesto asignado.`);
+      return;
+    }
+
+    if (!isProjectAdmin && assigned > 0 && spent >= assigned) {
+      alert(`El área "${area}" ya consumió todo el presupuesto asignado.`);
+      return;
+    }
+
     const newItem = {
       projectId: id,
       area: area,
@@ -410,6 +466,14 @@ export default function ProjectDetail() {
   const updateAreaExpense = async (expenseId: string, updates: any) => {
     if (!id) return;
     try {
+      const currentExpense = areaExpenses.find(e => e.id === expenseId);
+      if (!currentExpense) return;
+
+      const nextArea = updates.area || currentExpense.area;
+      const nextTotal = updates.total !== undefined ? Number(updates.total) : Number(currentExpense.total) || 0;
+
+      if (!canSaveAreaExpense(nextArea, nextTotal, expenseId)) return;
+
       const docRef = doc(db, 'projects', id, 'areaExpenses', expenseId);
       await updateDoc(docRef, { ...updates, updatedAt: serverTimestamp() });
       setAreaExpenses(areaExpenses.map(e => e.id === expenseId ? { ...e, ...updates } : e));
@@ -674,6 +738,7 @@ export default function ProjectDetail() {
   // Filtered views based on permissions
   const visibleTabs = tabs.filter(tab => {
     if (isProjectAdmin) return true;
+    if (userPermissions?.role === 'jefe_area' && ['resumen', 'presupuesto', 'areas'].includes(tab.id)) return true;
     return userPermissions?.allowedTabs.includes(tab.id);
   });
 
@@ -687,9 +752,13 @@ export default function ProjectDetail() {
   });
 
   const visibleBudgetItems = budgetItems.filter(item => {
-    if (isOwner) return true;
+    if (isProjectAdmin) return true;
     return userPermissions?.allowedCategories.includes(item.area);
   });
+
+  const selectedAreaTab = activeAreaTab && visibleCategories.includes(activeAreaTab)
+    ? activeAreaTab
+    : visibleCategories[0] || null;
 
   const providerSaldos = React.useMemo(() => {
     const saldosMap = new Map<string, { 
@@ -753,9 +822,9 @@ export default function ProjectDetail() {
     if (!id || !email) return;
     const newCol: Collaborator = {
       email,
-      role: 'colaborador',
-      allowedTabs: ['resumen', 'presupuesto'], // Default tabs
-      allowedCategories: [categories[0]] // Default first category
+      role: 'jefe_area',
+      allowedTabs: ['resumen', 'presupuesto', 'areas'],
+      allowedCategories: [activeAreas[0] || categories[0]].filter(Boolean)
     };
     try {
       const { setDoc } = await import('firebase/firestore');
@@ -772,6 +841,26 @@ export default function ProjectDetail() {
       console.error("Error adding collaborator:", e);
       alert("Error al añadir colaborador. Verifica los permisos.");
     }
+  };
+
+  const updateCollaboratorRole = async (col: Collaborator, role: Collaborator['role']) => {
+    if (!id) return;
+
+    const updates: Partial<Collaborator> = { role };
+
+    if (role === 'jefe_area') {
+      updates.allowedTabs = Array.from(new Set([...col.allowedTabs, 'resumen', 'presupuesto', 'areas']));
+      updates.allowedCategories = col.allowedCategories.length
+        ? col.allowedCategories
+        : [activeAreas[0] || categories[0]].filter(Boolean);
+    }
+
+    if (role === 'colaborador' && col.allowedTabs.length === 0) {
+      updates.allowedTabs = ['resumen', 'presupuesto'];
+    }
+
+    await updateDoc(doc(db, 'projects', id, 'collaborators', col.email), updates);
+    setCollaborators(collaborators.map(c => c.email === col.email ? { ...c, ...updates } : c));
   };
 
   if (loading) return <div className="p-8 text-center text-slate-500 font-mono text-xs uppercase tracking-widest">Analizando proyecto...</div>;
@@ -1336,7 +1425,7 @@ export default function ProjectDetail() {
                   onClick={() => setActiveAreaTab(area)}
                   className={cn(
                     "px-4 py-2 text-[10px] uppercase font-bold tracking-widest rounded-md transition-all whitespace-nowrap",
-                    activeAreaTab === area
+                    selectedAreaTab === area
                       ? "bg-white text-black shadow-sm"
                       : "text-slate-400 hover:text-slate-600"
                   )}
@@ -1351,18 +1440,19 @@ export default function ProjectDetail() {
               )}
             </div>
 
-            {activeAreaTab && activeAreas.includes(activeAreaTab) && (
+            {selectedAreaTab && activeAreas.includes(selectedAreaTab) && (
               <div className="space-y-6">
                 {/* Summary Header */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   {(() => {
                     const assigned = budgetItems
-                      .filter(i => i.area === activeAreaTab)
+                      .filter(i => i.area === selectedAreaTab)
                       .reduce((acc, curr) => acc + (curr.total || 0), 0);
                     const spent = areaExpenses
-                      .filter(i => i.area === activeAreaTab)
+                      .filter(i => i.area === selectedAreaTab)
                       .reduce((acc, curr) => acc + (curr.total || 0), 0);
                     const balance = assigned - spent;
+                    const usedPercent = assigned > 0 ? Math.min(100, (spent / assigned) * 100) : 0;
 
                     return (
                       <>
@@ -1374,7 +1464,13 @@ export default function ProjectDetail() {
                         <div className="bg-white border border-slate-200 p-5 rounded-xl shadow-sm">
                           <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Gastos Realizados</div>
                           <div className="text-2xl font-bold text-emerald-600">${spent.toLocaleString()}</div>
-                          <div className="text-[9px] text-slate-400 mt-2 italic">{areaExpenses.filter(i => i.area === activeAreaTab).length} registros</div>
+                          <div className="mt-3 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                            <div
+                              className={cn("h-full rounded-full", balance < 0 ? "bg-red-500" : usedPercent >= 85 ? "bg-yellow-400" : "bg-emerald-500")}
+                              style={{ width: `${usedPercent}%` }}
+                            />
+                          </div>
+                          <div className="text-[9px] text-slate-400 mt-2 italic">{areaExpenses.filter(i => i.area === selectedAreaTab).length} registros</div>
                         </div>
                         <div className={cn(
                           "p-5 rounded-xl shadow-sm border",
@@ -1394,18 +1490,20 @@ export default function ProjectDetail() {
                     <div className="flex items-center gap-4">
                        <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-900 flex items-center gap-2">
                          <LayoutGrid className="w-3 h-3" />
-                         Carga de Gastos: {activeAreaTab}
+                         Carga de Gastos: {selectedAreaTab}
                        </h3>
-                       <button 
-                         onClick={() => removeActiveArea(activeAreaTab)}
-                         className="text-[9px] text-slate-400 hover:text-red-500 font-bold uppercase tracking-widest transition-colors"
-                         title="Desactivar gestión de esta área"
-                       >
-                         Desactivar Gestión
-                       </button>
+                       {isProjectAdmin && (
+                         <button 
+                           onClick={() => removeActiveArea(selectedAreaTab)}
+                           className="text-[9px] text-slate-400 hover:text-red-500 font-bold uppercase tracking-widest transition-colors"
+                           title="Desactivar gestión de esta área"
+                         >
+                           Desactivar Gestión
+                         </button>
+                       )}
                     </div>
                     <button 
-                      onClick={() => addAreaExpense(activeAreaTab)}
+                      onClick={() => addAreaExpense(selectedAreaTab)}
                       className="px-3 py-1.5 bg-black text-white text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 transition-all flex items-center gap-2 rounded"
                     >
                       <Plus className="w-3 h-3" />
@@ -1426,7 +1524,7 @@ export default function ProjectDetail() {
 
                     <div className="divide-y divide-slate-100">
                       {areaExpenses
-                        .filter(item => item.area === activeAreaTab)
+                        .filter(item => item.area === selectedAreaTab)
                         .sort((a, b) => (b.updatedAt?.seconds || 0) - (a.updatedAt?.seconds || 0)) // Newest first
                         .map((item) => (
                           <div key={item.id} className="grid grid-cols-12 px-6 py-3 items-center hover:bg-slate-50 transition-colors group">
@@ -1469,19 +1567,22 @@ export default function ProjectDetail() {
                                  onUpdate={updateAreaExpense} 
                                  type="paid"
                                  onManagePayment={(item) => openPaymentModal(item, 'areaExpenses')}
+                                 disabledPayment={!isProjectAdmin}
                                />
                             </div>
                             <div className="col-span-1 text-right">
-                               <button 
-                                 onClick={() => deleteAreaExpense(item.id)}
-                                 className="p-1 text-slate-200 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
-                               >
-                                 <Trash2 className="w-3.5 h-3.5" />
-                               </button>
+                               {isProjectAdmin && (
+                                 <button 
+                                   onClick={() => deleteAreaExpense(item.id)}
+                                   className="p-1 text-slate-200 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
+                                 >
+                                   <Trash2 className="w-3.5 h-3.5" />
+                                 </button>
+                               )}
                             </div>
                           </div>
                         ))}
-                      {areaExpenses.filter(item => item.area === activeAreaTab).length === 0 && (
+                      {areaExpenses.filter(item => item.area === selectedAreaTab).length === 0 && (
                         <div className="p-12 text-center text-slate-300 font-bold uppercase tracking-widest text-[10px] italic">
                           Sin gastos registrados en esta área
                         </div>
@@ -1630,11 +1731,17 @@ export default function ProjectDetail() {
                       <div>
                         <div className="text-xs font-bold text-slate-900 truncate max-w-[150px]">{col.email}</div>
                         <div className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">
-                          {col.role === 'admin' ? 'Administrador' : 'Colaborador'}
+                          {roleLabels[col.role] || 'Colaborador'}
                         </div>
                       </div>
                     </div>
-                    {col.role === 'admin' ? <Shield className="w-4 h-4 text-emerald-500" /> : <Users className="w-4 h-4 text-slate-300" />}
+                    {col.role === 'admin' ? (
+                      <Shield className="w-4 h-4 text-emerald-500" />
+                    ) : col.role === 'jefe_area' ? (
+                      <LayoutGrid className="w-4 h-4 text-blue-500" />
+                    ) : (
+                      <Users className="w-4 h-4 text-slate-300" />
+                    )}
                   </div>
                 ))}
 
@@ -1747,14 +1854,11 @@ export default function ProjectDetail() {
                             <div className="flex items-center gap-4">
                                 <div>
                                     <div className="text-xs font-bold">{col.email}</div>
-                                    <div className="text-[10px] text-slate-400 font-medium">Acceso granular activo</div>
+                                    <div className="text-[10px] text-slate-400 font-medium">{roleLabels[col.role] || 'Colaborador'}</div>
                                 </div>
                                 <div className="flex gap-1 ml-4 bg-white p-1 rounded border border-slate-200">
                                     <button 
-                                        onClick={async () => {
-                                            await updateDoc(doc(db, 'projects', id!, 'collaborators', col.email), { role: 'admin' });
-                                            setCollaborators(collaborators.map(c => c.email === col.email ? { ...c, role: 'admin' } : c));
-                                        }}
+                                        onClick={() => updateCollaboratorRole(col, 'admin')}
                                         className={cn(
                                             "px-2 py-1 text-[8px] font-bold uppercase tracking-widest rounded transition-all",
                                             col.role === 'admin' ? "bg-black text-white" : "text-slate-400 hover:text-black"
@@ -1763,10 +1867,16 @@ export default function ProjectDetail() {
                                         Admin
                                     </button>
                                     <button 
-                                        onClick={async () => {
-                                            await updateDoc(doc(db, 'projects', id!, 'collaborators', col.email), { role: 'colaborador' });
-                                            setCollaborators(collaborators.map(c => c.email === col.email ? { ...c, role: 'colaborador' } : c));
-                                        }}
+                                        onClick={() => updateCollaboratorRole(col, 'jefe_area')}
+                                        className={cn(
+                                            "px-2 py-1 text-[8px] font-bold uppercase tracking-widest rounded transition-all",
+                                            col.role === 'jefe_area' ? "bg-black text-white" : "text-slate-400 hover:text-black"
+                                        )}
+                                    >
+                                        Jefe Área
+                                    </button>
+                                    <button 
+                                        onClick={() => updateCollaboratorRole(col, 'colaborador')}
                                         className={cn(
                                             "px-2 py-1 text-[8px] font-bold uppercase tracking-widest rounded transition-all",
                                             col.role === 'colaborador' ? "bg-black text-white" : "text-slate-400 hover:text-black"
