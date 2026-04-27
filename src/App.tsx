@@ -10,10 +10,13 @@ import Providers from './pages/Providers';
 import Clients from './pages/Clients';
 import PlaceholderPage from './pages/PlaceholderPage';
 
+const routerBaseUrl = (import.meta as ImportMeta & { env?: { BASE_URL?: string } }).env?.BASE_URL || '/';
+const routerBasename = routerBaseUrl.replace(/\/$/, '') || '/';
+
 export default function App() {
   return (
     <AuthProvider>
-      <Router>
+      <Router basename={routerBasename}>
         <Routes>
           <Route path="/login" element={<Login />} />
           
@@ -35,5 +38,3 @@ export default function App() {
     </AuthProvider>
   );
 }
-
-

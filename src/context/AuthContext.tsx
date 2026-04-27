@@ -25,7 +25,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const data = userDoc.data();
           // Ensure specific emails are always admin
           const normalizedEmail = user.email?.toLowerCase();
-          const adminEmails = ['tgboetsch@gmail.com', 'tomas@granberta.com'];
+          const adminEmails = ['tgboetsch@gmail.com', 'tomas@granberta.com', 'info@granbertafilms.com'];
           if (adminEmails.includes(normalizedEmail || '') && data.role !== 'admin') {
             await updateDoc(doc(db, 'users', user.uid), { role: 'admin' });
             data.role = 'admin';
@@ -35,7 +35,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           // Create default profile for new user
           // If it matches specific email, make admin
           const normalizedEmail = user.email?.toLowerCase();
-          const adminEmails = ['tgboetsch@gmail.com', 'tomas@granberta.com'];
+          const adminEmails = ['tgboetsch@gmail.com', 'tomas@granberta.com', 'info@granbertafilms.com'];
           const role = adminEmails.includes(normalizedEmail || '') ? 'admin' : 'colaborador';
           const newProfile = {
             uid: user.uid,
