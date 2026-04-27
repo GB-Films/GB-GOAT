@@ -3,7 +3,7 @@ import { collection, query, getDocs, addDoc, serverTimestamp, orderBy, updateDoc
 import { db } from '../lib/firebase';
 import { handleFirestoreError } from '../lib/firestoreUtils';
 import { useAuth } from '../context/AuthContext';
-import { Plus, Search, Truck, ExternalLink, X, Upload, Download, Pencil, Trash2 } from 'lucide-react';
+import { Plus, Search, Truck, X, Upload, Download, Pencil, Trash2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import * as XLSX from 'xlsx';
 import Papa from 'papaparse';

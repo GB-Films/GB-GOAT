@@ -14,6 +14,14 @@ service cloud.firestore {
       return isSignedIn() && userEmail() == 'info@granbertafilms.com';
     }
 
+    function isAppAdmin() {
+      return isSignedIn() && userEmail() in [
+        'info@granbertafilms.com',
+        'tgboetsch@gmail.com',
+        'tomas@granberta.com'
+      ];
+    }
+
     function projectDoc(projectId) {
       return get(/databases/$(database)/documents/projects/$(projectId)).data;
     }
@@ -26,8 +34,18 @@ service cloud.firestore {
       return isSignedIn() && userEmail() in projectDoc(projectId).collaboratorEmails;
     }
 
+    function isProjectAdmin(projectId) {
+      return isAppAdmin()
+        || isProjectOwner(projectId)
+        || (
+          isSignedIn()
+          && exists(/databases/$(database)/documents/projects/$(projectId)/collaborators/$(userEmail()))
+          && get(/databases/$(database)/documents/projects/$(projectId)/collaborators/$(userEmail())).data.role == 'admin'
+        );
+    }
+
     function hasProjectAccess(projectId) {
-      return isAppOwner() || isProjectOwner(projectId) || isProjectCollaborator(projectId);
+      return isProjectAdmin(projectId) || isProjectCollaborator(projectId);
     }
 
     match /users/{userId} {
@@ -37,17 +55,48 @@ service cloud.firestore {
     }
 
     match /projects/{projectId} {
-      allow list: if isSignedIn();
+      allow list: if isAppAdmin() || (
+        isSignedIn()
+        && (
+          resource.data.createdBy == request.auth.uid
+          || userEmail() in resource.data.collaboratorEmails
+        )
+      );
       allow get: if hasProjectAccess(projectId);
       allow create: if isSignedIn() && request.resource.data.createdBy == request.auth.uid;
-      allow update, delete: if isAppOwner() || isProjectOwner(projectId);
+      allow update: if isProjectAdmin(projectId);
+      allow delete: if isAppAdmin() || isProjectOwner(projectId);
 
       match /collaborators/{email} {
         allow read: if hasProjectAccess(projectId);
-        allow write: if isAppOwner() || isProjectOwner(projectId);
+        allow write: if isProjectAdmin(projectId);
       }
 
-      match /{subcollection}/{documentId} {
+      match /budgetItems/{itemId} {
+        allow read, write: if hasProjectAccess(projectId);
+      }
+
+      match /areaExpenses/{expenseId} {
+        allow read, write: if hasProjectAccess(projectId);
+      }
+
+      match /expenses/{expenseId} {
+        allow read, write: if hasProjectAccess(projectId);
+      }
+
+      match /milestones/{milestoneId} {
+        allow read, write: if hasProjectAccess(projectId);
+      }
+
+      match /teamMembers/{memberId} {
+        allow read, write: if hasProjectAccess(projectId);
+      }
+
+      match /payments/{paymentId} {
+        allow read, write: if hasProjectAccess(projectId);
+      }
+
+      match /invoices/{invoiceId} {
         allow read, write: if hasProjectAccess(projectId);
       }
     }

@@ -8,15 +8,12 @@ import {
   ChevronLeft, 
   Info, 
   DollarSign, 
-  CreditCard, 
   Users, 
-  FileText, 
   Wallet,
   BarChart2,
   Trash2,
   Plus,
   ArrowRight,
-  Search,
   ChevronDown,
   ChevronRight,
   GripVertical,
@@ -153,10 +150,6 @@ export default function ProjectDetail() {
   const amountRef = useRef<HTMLInputElement>(null);
   const areaSelectorRef = useRef<HTMLDivElement>(null);
   
-  // Search state for modal
-  const [providerSearch, setProviderSearch] = useState('');
-  const [selectedProvider, setSelectedProvider] = useState<any>(null);
-
   useEffect(() => {
     const fetchProject = async () => {
       if (!id || !user) return;

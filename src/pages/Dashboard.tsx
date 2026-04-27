@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { Clapperboard, DollarSign, TrendingUp, Clock, AlertCircle } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Clapperboard, DollarSign } from 'lucide-react';
 import { motion } from 'motion/react';
-import { collection, getDocs, query, limit, orderBy, where, or, updateDoc, doc } from 'firebase/firestore';
+import { collection, getDocs, query, orderBy, where, or, updateDoc, doc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { handleFirestoreError } from '../lib/firestoreUtils';
 import { Link } from 'react-router-dom';

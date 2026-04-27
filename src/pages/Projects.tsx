@@ -4,7 +4,7 @@ import { db } from '../lib/firebase';
 import { handleFirestoreError } from '../lib/firestoreUtils';
 import { useAuth } from '../context/AuthContext';
 import { cn } from '../lib/utils';
-import { Plus, Search, Filter, MoreVertical, ExternalLink } from 'lucide-react';
+import { Plus, Search, ExternalLink } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 
