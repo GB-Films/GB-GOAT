@@ -1,18 +1,39 @@
-import React, { useState, useEffect } from 'react';
-import { collection, query, getDocs, addDoc, serverTimestamp, orderBy, updateDoc, deleteDoc, doc } from 'firebase/firestore';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  collection,
+  query,
+  getDocs,
+  addDoc,
+  serverTimestamp,
+  orderBy,
+  updateDoc,
+  deleteDoc,
+  doc,
+  setDoc,
+  writeBatch,
+} from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { handleFirestoreError } from '../lib/firestoreUtils';
 import { useAuth } from '../context/AuthContext';
-import { Plus, Search, Truck, X, Upload, Download, Pencil, Trash2 } from 'lucide-react';
+import { Plus, Search, Truck, X, Upload, Download, Pencil, Trash2, Link2, Copy, CheckCircle2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import * as XLSX from 'xlsx';
 import Papa from 'papaparse';
-import { cn } from '../lib/utils';
+import {
+  PRODUCTION_AREA_CATEGORIES,
+  COMPANY_PROVIDER_CATEGORIES,
+  normalizeDigits,
+  formatIdentifier,
+  providerDisplayName,
+  providerSearchText,
+  inferLegacyIdentifiers,
+} from '../lib/providerConstants';
+
+const inputClass = 'w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all';
+const labelClass = 'block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest';
 
 const formatDate = (dateValue: any) => {
   if (!dateValue) return '-';
-  
-  // If it's a string, try to split it (assuming YYYY-MM-DD)
   if (typeof dateValue === 'string') {
     const parts = dateValue.split('-');
     if (parts.length === 3) {
@@ -22,17 +43,37 @@ const formatDate = (dateValue: any) => {
     return dateValue;
   }
 
-  // If it's a Firestore timestamp or Date object
   try {
     const date = dateValue.seconds ? new Date(dateValue.seconds * 1000) : new Date(dateValue);
-    if (!isNaN(date.getTime())) {
+    if (!Number.isNaN(date.getTime())) {
       return date.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
     }
   } catch (e) {
-    console.error("Error formatting date:", e);
+    console.error('Error formatting date:', e);
   }
 
   return String(dateValue);
+};
+
+const generateInviteToken = () => {
+  const bytes = new Uint8Array(20);
+  window.crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+};
+
+const getPublicInviteLink = (token: string) => {
+  const baseUrl = ((import.meta as ImportMeta & { env?: { BASE_URL?: string } }).env?.BASE_URL || '/');
+  return `${window.location.origin}${baseUrl}#/alta-proveedor/${token}`;
+};
+
+const buildProviderIdentifiers = (provider: any) => {
+  const { dniNormalized, cuitNormalized } = inferLegacyIdentifiers(provider);
+  const identifiers: Array<{ id: string; type: 'dni' | 'cuit'; value: string }> = [];
+
+  if (dniNormalized) identifiers.push({ id: `dni_${dniNormalized}`, type: 'dni', value: dniNormalized });
+  if (cuitNormalized) identifiers.push({ id: `cuit_${cuitNormalized}`, type: 'cuit', value: cuitNormalized });
+
+  return identifiers;
 };
 
 export default function Providers() {
@@ -40,35 +81,116 @@ export default function Providers() {
   const [loading, setLoading] = useState(true);
   const [showNewModal, setShowNewModal] = useState(false);
   const [editingProvider, setEditingProvider] = useState<any | null>(null);
+  const [generatedInviteLink, setGeneratedInviteLink] = useState('');
+  const [copiedInviteLink, setCopiedInviteLink] = useState(false);
+  const [generatingInvite, setGeneratingInvite] = useState(false);
   const { profile } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
+
+  const filteredProviders = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    if (!term) return providers;
+    return providers.filter((provider) => providerSearchText(provider).includes(term));
+  }, [providers, searchTerm]);
+
+  const syncProviderIdentifiers = async (items: any[]) => {
+    const providersWithIdentifiers = items.filter((provider) => buildProviderIdentifiers(provider).length > 0);
+    if (providersWithIdentifiers.length === 0) return;
+
+    try {
+      let batch = writeBatch(db);
+      let operationCount = 0;
+
+      for (const provider of providersWithIdentifiers) {
+        const identifiers = buildProviderIdentifiers(provider);
+        for (const identifier of identifiers) {
+          batch.set(doc(db, 'providerIdentifiers', identifier.id), {
+            providerId: provider.id,
+            providerType: provider.type || 'legacy',
+            identifierType: identifier.type,
+            value: identifier.value,
+            updatedAt: serverTimestamp(),
+          }, { merge: true });
+          operationCount += 1;
+
+          if (operationCount >= 450) {
+            await batch.commit();
+            batch = writeBatch(db);
+            operationCount = 0;
+          }
+        }
+      }
+
+      if (operationCount > 0) await batch.commit();
+    } catch (error) {
+      console.error('Error syncing provider identifiers:', error);
+    }
+  };
+
+  useEffect(() => {
+    if (!profile) return;
+    const fetchProviders = async () => {
+      try {
+        const q = query(collection(db, 'providers'), orderBy('updatedAt', 'desc'));
+        const querySnapshot = await getDocs(q);
+        const items = querySnapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
+        setProviders(items);
+        if (profile?.role === 'admin') void syncProviderIdentifiers(items);
+      } catch (error: any) {
+        console.error('Error fetching providers:', error);
+        if (error.message?.includes('insufficient permissions')) {
+          handleFirestoreError(error, 'list', 'providers');
+        }
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchProviders();
+  }, [profile]);
 
   const downloadTemplate = () => {
     const templateData = [
       {
+        Tipo: 'persona',
         Nombre: 'Juan',
         Apellido: 'Pérez',
-        'DNI o CUIT': '20-12345678-9',
+        DNI: '12345678',
+        CUIT: '20-12345678-9',
         Domicilio: 'Calle Falsa 123',
         'Fecha Nacimiento': '1990-01-01',
+        Email: 'juan@email.com',
+        Telefono: '11 1234-5678',
         'CBU o Cuenta': '0000000000000000000000',
-        Categoria: 'Fotografía'
+        Categoria: 'Cámara',
+        'Restriccion Alimentaria': 'Vegetariano',
       },
       {
-        Nombre: 'María',
-        Apellido: 'García',
-        'DNI o CUIT': '27-87654321-0',
+        Tipo: 'empresa',
+        'Razon Social': 'Rental Ejemplo SRL',
+        CUIT: '30-71234567-8',
         Domicilio: 'Avenida Siempre Viva 742',
-        'Fecha Nacimiento': '1985-05-15',
+        Email: 'admin@rental.com',
+        Telefono: '11 8765-4321',
         'CBU o Cuenta': '1111111111111111111111',
-        Categoria: 'Arte'
-      }
+        Categoria: 'Rental de cámara',
+      },
     ];
 
     const worksheet = XLSX.utils.json_to_sheet(templateData);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Plantilla Proveedores');
     XLSX.writeFile(workbook, 'plantilla_proveedores_gb_goat.xlsx');
+  };
+
+  const createProviderIdentifierDocs = async (providerId: string, providerData: any) => {
+    const identifiers = buildProviderIdentifiers({ id: providerId, ...providerData });
+    await Promise.all(identifiers.map((identifier) => setDoc(doc(db, 'providerIdentifiers', identifier.id), {
+      providerId,
+      providerType: providerData.type || 'manual',
+      identifierType: identifier.type,
+      value: identifier.value,
+      createdAt: serverTimestamp(),
+    }, { merge: true })));
   };
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -98,83 +220,159 @@ export default function Providers() {
 
         const newProviders: any[] = [];
         for (const row of jsonData) {
-          const providerData = {
-            name: row.Nombre || row.NOMBRE || '',
-            lastName: row.Apellido || row.APELLIDO || '',
-            dni_cuit: String(row['DNI o CUIT'] || row.DNI || row.CUIT || ''),
-            address: row.Domicilio || row.DOMICILIO || '',
-            birthDate: row['Fecha Nacimiento'] || '',
-            bankAccount_cbu: String(row['CBU o Cuenta'] || row.CBU || row.Cuenta || ''),
-            category: row.Categoria || row.CATEGORÍA || row.Category || '',
-            createdBy: profile?.uid,
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-          };
+          const type = String(row.Tipo || row.tipo || '').toLowerCase() === 'empresa' ? 'empresa' : 'persona';
+          const dni = String(row.DNI || row.dni || '');
+          const cuit = String(row.CUIT || row.Cuit || row.cuit || row['DNI o CUIT'] || '');
+          const category = row.Categoria || row.CATEGORÍA || row.Category || '';
+          const providerData = type === 'empresa'
+            ? {
+                type,
+                name: row['Razon Social'] || row['Razón Social'] || row.RazonSocial || row.Nombre || '',
+                businessName: row['Razon Social'] || row['Razón Social'] || row.RazonSocial || row.Nombre || '',
+                lastName: '',
+                cuit,
+                cuitNormalized: normalizeDigits(cuit),
+                email: row.Email || row.EMAIL || '',
+                phone: row.Telefono || row.Teléfono || row.TELEFONO || '',
+                address: row.Domicilio || row.DOMICILIO || '',
+                bankAccount_cbu: String(row['CBU o Cuenta'] || row.CBU || row.Cuenta || ''),
+                category,
+                createdBy: profile?.uid,
+                createdAt: serverTimestamp(),
+                updatedAt: serverTimestamp(),
+              }
+            : {
+                type,
+                name: row.Nombre || row.NOMBRE || '',
+                lastName: row.Apellido || row.APELLIDO || '',
+                dni,
+                dniNormalized: normalizeDigits(dni),
+                cuit,
+                cuitNormalized: normalizeDigits(cuit),
+                dni_cuit: String(row['DNI o CUIT'] || row.DNI || row.CUIT || ''),
+                email: row.Email || row.EMAIL || '',
+                phone: row.Telefono || row.Teléfono || row.TELEFONO || '',
+                address: row.Domicilio || row.DOMICILIO || '',
+                birthDate: row['Fecha Nacimiento'] || '',
+                bankAccount_cbu: String(row['CBU o Cuenta'] || row.CBU || row.Cuenta || ''),
+                category,
+                dietaryRestriction: row['Restriccion Alimentaria'] || row['Restricción Alimentaria'] || '',
+                createdBy: profile?.uid,
+                createdAt: serverTimestamp(),
+                updatedAt: serverTimestamp(),
+              };
 
           const docRef = await addDoc(collection(db, 'providers'), providerData);
+          await createProviderIdentifierDocs(docRef.id, providerData);
           newProviders.push({ id: docRef.id, ...providerData, createdAt: new Date() });
         }
 
         setProviders([...newProviders, ...providers]);
         alert(`${newProviders.length} proveedores importados correctamente.`);
       } catch (error) {
-        console.error("Error importing providers:", error);
-        alert("Hubo un error al procesar el archivo.");
+        console.error('Error importing providers:', error);
+        alert('Hubo un error al procesar el archivo.');
       }
     };
 
-    if (file.name.endsWith('.csv')) {
-      reader.readAsText(file);
-    } else {
-      reader.readAsBinaryString(file);
+    if (file.name.endsWith('.csv')) reader.readAsText(file);
+    else reader.readAsBinaryString(file);
+  };
+
+  const handleGenerateProviderInvite = async () => {
+    setGeneratingInvite(true);
+    setGeneratedInviteLink('');
+    setCopiedInviteLink(false);
+
+    try {
+      const token = generateInviteToken();
+      await setDoc(doc(db, 'providerInvites', token), {
+        token,
+        status: 'pending',
+        used: false,
+        createdBy: profile?.uid,
+        createdByEmail: profile?.email,
+        createdAt: serverTimestamp(),
+      });
+
+      const link = getPublicInviteLink(token);
+      setGeneratedInviteLink(link);
+      try {
+        await navigator.clipboard.writeText(link);
+        setCopiedInviteLink(true);
+      } catch (clipboardError) {
+        console.warn('No se pudo copiar automáticamente el link:', clipboardError);
+      }
+    } catch (error) {
+      console.error('Error generating provider invite:', error);
+      alert('No se pudo generar el link de alta.');
+    } finally {
+      setGeneratingInvite(false);
     }
   };
 
-  const filteredProviders = providers.filter(p => 
-    `${p.name} ${p.lastName}`.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    p.dni_cuit?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
-  useEffect(() => {
-    if (!profile) return;
-    const fetchProviders = async () => {
-      try {
-        const q = query(collection(db, 'providers'), orderBy('lastName', 'asc'));
-        const querySnapshot = await getDocs(q);
-        setProviders(querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-      } catch (error: any) {
-        console.error("Error fetching providers:", error);
-        if (error.message?.includes('insufficient permissions')) {
-          handleFirestoreError(error, 'list', 'providers');
-        }
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchProviders();
-  }, [profile]);
+  const handleCopyInviteLink = async () => {
+    if (!generatedInviteLink) return;
+    await navigator.clipboard.writeText(generatedInviteLink);
+    setCopiedInviteLink(true);
+    window.setTimeout(() => setCopiedInviteLink(false), 2500);
+  };
 
   const handleCreateProvider = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
-    const data = {
-      name: formData.get('name'),
-      lastName: formData.get('lastName'),
-      dni_cuit: formData.get('dni_cuit'),
-      address: formData.get('address'),
-      birthDate: formData.get('birthDate'),
-      bankAccount_cbu: formData.get('bankAccount_cbu'),
-      createdBy: profile?.uid,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    };
+    const type = String(formData.get('type') || 'persona') as 'persona' | 'empresa';
+    const category = String(formData.get('category') || '');
+    const categoryOther = String(formData.get('categoryOther') || '');
+    const cuit = String(formData.get('cuit') || '');
+
+    const data: any = type === 'empresa'
+      ? {
+          type,
+          name: formData.get('businessName'),
+          businessName: formData.get('businessName'),
+          lastName: '',
+          cuit,
+          cuitNormalized: normalizeDigits(cuit),
+          email: formData.get('email'),
+          phone: formData.get('phone'),
+          address: formData.get('address'),
+          bankAccount_cbu: formData.get('bankAccount_cbu'),
+          category,
+          categoryOther: category === 'Otra' ? categoryOther : '',
+          createdBy: profile?.uid,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        }
+      : {
+          type,
+          name: formData.get('name'),
+          lastName: formData.get('lastName'),
+          fullName: `${formData.get('name') || ''} ${formData.get('lastName') || ''}`.trim(),
+          dni: formData.get('dni'),
+          dniNormalized: normalizeDigits(formData.get('dni')),
+          cuit,
+          cuitNormalized: normalizeDigits(cuit),
+          address: formData.get('address'),
+          birthDate: formData.get('birthDate'),
+          bankAccount_cbu: formData.get('bankAccount_cbu'),
+          category,
+          categoryOther: category === 'Otra' ? categoryOther : '',
+          dietaryRestriction: formData.get('dietaryRestriction'),
+          email: formData.get('email'),
+          phone: formData.get('phone'),
+          createdBy: profile?.uid,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        };
 
     try {
       const docRef = await addDoc(collection(db, 'providers'), data);
+      await createProviderIdentifierDocs(docRef.id, data);
       setProviders([{ id: docRef.id, ...data, createdAt: new Date() }, ...providers]);
       setShowNewModal(false);
     } catch (error) {
-      console.error("Error adding provider:", error);
+      console.error('Error adding provider:', error);
     }
   };
 
@@ -185,279 +383,291 @@ export default function Providers() {
     const formData = new FormData(e.currentTarget);
     const data = {
       name: formData.get('name'),
+      businessName: editingProvider?.type === 'empresa' ? formData.get('name') : editingProvider?.businessName,
       lastName: formData.get('lastName'),
+      dni: formData.get('dni'),
+      dniNormalized: normalizeDigits(formData.get('dni')),
+      cuit: formData.get('cuit'),
+      cuitNormalized: normalizeDigits(formData.get('cuit')),
       dni_cuit: formData.get('dni_cuit'),
       address: formData.get('address'),
       birthDate: formData.get('birthDate'),
       bankAccount_cbu: formData.get('bankAccount_cbu'),
       category: formData.get('category'),
+      categoryOther: formData.get('categoryOther'),
+      dietaryRestriction: formData.get('dietaryRestriction'),
+      email: formData.get('email'),
+      phone: formData.get('phone'),
       updatedAt: serverTimestamp(),
     };
 
     try {
       await updateDoc(doc(db, 'providers', editingProvider.id), data);
-      setProviders(providers.map(p => p.id === editingProvider.id ? { ...p, ...data } : p));
+      await createProviderIdentifierDocs(editingProvider.id, data);
+      setProviders(providers.map((provider) => provider.id === editingProvider.id ? { ...provider, ...data } : provider));
       setEditingProvider(null);
     } catch (error) {
-      console.error("Error updating provider:", error);
+      console.error('Error updating provider:', error);
     }
   };
 
-  const handleDeleteProvider = async (id: string) => {
+  const handleDeleteProvider = async (provider: any) => {
     if (!confirm('¿Estás seguro de que deseas eliminar este proveedor?')) return;
     try {
-      await deleteDoc(doc(db, 'providers', id));
-      setProviders(providers.filter(p => p.id !== id));
+      const batch = writeBatch(db);
+      batch.delete(doc(db, 'providers', provider.id));
+      for (const identifier of buildProviderIdentifiers(provider)) {
+        batch.delete(doc(db, 'providerIdentifiers', identifier.id));
+      }
+      await batch.commit();
+      setProviders(providers.filter((item) => item.id !== provider.id));
     } catch (error) {
-      console.error("Error deleting provider:", error);
+      console.error('Error deleting provider:', error);
     }
   };
 
   return (
-    <div className="max-w-6xl mx-auto space-y-8">
-      <header className="flex items-end justify-between border-b border-slate-200 pb-8">
+    <div className="max-w-7xl mx-auto space-y-8">
+      <header className="flex flex-col lg:flex-row lg:items-end justify-between border-b border-slate-200 pb-8 gap-4">
         <div>
           <div className="text-xs text-slate-400 uppercase tracking-widest font-bold mb-1">CineManage / Recursos</div>
           <h1 className="text-3xl font-light text-slate-900">Proveedores: <span className="font-bold text-black">Base de Contactos</span></h1>
         </div>
-        <div className="flex gap-2">
-          <button 
-            onClick={downloadTemplate}
-            className="px-4 py-2 bg-white border border-slate-200 text-slate-600 text-[10px] font-bold uppercase tracking-widest hover:bg-slate-50 transition-all flex items-center gap-2 rounded"
-          >
-            <Download className="w-3 h-3" />
-            Plantilla
+        <div className="flex flex-wrap gap-2">
+          <button onClick={downloadTemplate} className="px-4 py-2 bg-white border border-slate-200 text-[10px] font-bold uppercase tracking-widest rounded hover:bg-slate-50 transition-colors flex items-center gap-2">
+            <Download className="w-3 h-3" /> Plantilla
           </button>
-          <label className="px-4 py-2 bg-white border border-slate-200 text-slate-600 text-[10px] font-bold uppercase tracking-widest hover:bg-slate-50 transition-all flex items-center gap-2 rounded cursor-pointer relative group">
-            <Upload className="w-3 h-3" />
-            Importar
-            <input type="file" accept=".csv, .xlsx, .xls" className="hidden" onChange={handleFileUpload} />
+          <label className="px-4 py-2 bg-white border border-slate-200 text-[10px] font-bold uppercase tracking-widest rounded hover:bg-slate-50 transition-colors flex items-center gap-2 cursor-pointer">
+            <Upload className="w-3 h-3" /> Importar
+            <input type="file" accept=".xlsx,.xls,.csv" onChange={handleFileUpload} className="hidden" />
           </label>
-          <button 
-            onClick={() => setShowNewModal(true)}
-            className="px-4 py-2 bg-black text-white rounded text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 transition-all active:scale-[0.98] flex items-center gap-2"
-          >
-            <Plus className="w-3 h-3" />
-            Nuevo Proveedor
+          <button onClick={handleGenerateProviderInvite} disabled={generatingInvite} className="px-4 py-2 bg-slate-900 text-white text-[10px] font-bold uppercase tracking-widest rounded hover:bg-black transition-colors flex items-center gap-2 disabled:bg-slate-300">
+            <Link2 className="w-3 h-3" /> {generatingInvite ? 'Generando...' : 'Generar Link Alta'}
+          </button>
+          <button onClick={() => setShowNewModal(true)} className="px-4 py-2 bg-black text-white text-[10px] font-bold uppercase tracking-widest rounded hover:bg-slate-800 transition-colors flex items-center gap-2">
+            <Plus className="w-3 h-3" /> Nuevo Manual
           </button>
         </div>
       </header>
 
-      <div className="flex gap-4">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
-          <input 
-            type="text" 
-            placeholder="Buscar por nombre, DNI o CUIT..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 bg-white border border-slate-200 rounded text-sm focus:outline-none focus:border-slate-400 transition-all placeholder:text-slate-300"
-          />
+      {generatedInviteLink && (
+        <div className="bg-white rounded-xl border border-emerald-200 p-5 shadow-sm flex flex-col lg:flex-row gap-4 lg:items-center justify-between">
+          <div>
+            <div className="text-[10px] font-bold uppercase tracking-widest text-emerald-600 mb-2 flex items-center gap-2">
+              <CheckCircle2 className="w-3.5 h-3.5" /> Link de alta generado
+            </div>
+            <input readOnly value={generatedInviteLink} className="w-full lg:w-[720px] px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs text-slate-600" />
+            <p className="text-[11px] text-slate-400 mt-2">Es genérico, de un solo uso, y la persona elegirá si corresponde a Persona física o Empresa.</p>
+          </div>
+          <button onClick={handleCopyInviteLink} className="px-4 py-3 border border-slate-200 rounded text-[10px] font-bold uppercase tracking-widest hover:border-black flex items-center justify-center gap-2">
+            <Copy className="w-3.5 h-3.5" /> {copiedInviteLink ? 'Copiado' : 'Copiar'}
+          </button>
         </div>
+      )}
+
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
+        <input
+          type="text"
+          placeholder="Buscar por nombre, razón social, DNI, CUIT, email o categoría..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-slate-400 transition-all placeholder:text-slate-300"
+        />
       </div>
 
       {loading ? (
         <div className="space-y-3">
-          {[1, 2, 3].map(i => (
-            <div key={i} className="h-16 bg-white border border-slate-200 rounded-lg animate-pulse" />
-          ))}
+          {[1, 2, 3].map((i) => <div key={i} className="h-16 bg-white border border-slate-200 rounded-lg animate-pulse" />)}
         </div>
       ) : filteredProviders.length === 0 ? (
         <div className="text-center py-20 bg-white rounded-xl border border-dashed border-slate-200">
-           <Truck className="w-12 h-12 text-slate-100 mx-auto mb-4" />
-           <h3 className="text-sm font-bold uppercase tracking-widest text-slate-300">Sin Proveedores registrados</h3>
+          <Truck className="w-12 h-12 text-slate-100 mx-auto mb-4" />
+          <h3 className="text-sm font-bold uppercase tracking-widest text-slate-300">Sin Proveedores registrados</h3>
         </div>
       ) : (
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-          <table className="w-full text-left border-collapse">
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-auto">
+          <table className="w-full text-left border-collapse min-w-[1100px]">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200">
-                <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Nombre Completo</th>
-                <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">DNI / CUIT</th>
-                <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Fecha Nac.</th>
-                <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Domicilio</th>
-                <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">CBU / Cuenta</th>
-                <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Acciones</th>
+                <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Tipo</th>
+                <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Nombre / Razón Social</th>
+                <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">DNI</th>
+                <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">CUIT</th>
+                <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Categoría</th>
+                <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Email / Teléfono</th>
+                <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Domicilio</th>
+                <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Restricción</th>
+                <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Acciones</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filteredProviders.map((provider) => (
-                <tr key={provider.id} className="hover:bg-slate-50/50 transition-colors group">
-                  <td className="px-6 py-4">
-                    <div className="text-sm font-bold text-slate-900">{provider.name} {provider.lastName}</div>
-                    <div className="text-[10px] text-slate-400 font-medium">{provider.category || 'Sin categoría'}</div>
-                  </td>
-                  <td className="px-6 py-4 text-xs text-slate-600 font-medium">
-                    {provider.dni_cuit}
-                  </td>
-                  <td className="px-6 py-4 text-xs text-slate-600 font-medium whitespace-nowrap">
-                    {formatDate(provider.birthDate)}
-                  </td>
-                  <td className="px-6 py-4 text-xs text-slate-500 max-w-[200px] truncate">
-                    {provider.address || '-'}
-                  </td>
-                  <td className="px-6 py-4 text-xs font-mono text-slate-500">
-                    {provider.bankAccount_cbu || 'No especificado'}
-                  </td>
-                  <td className="px-6 py-4 text-right">
-                    <div className="flex justify-end gap-2">
-                      <button 
-                        onClick={() => setEditingProvider(provider)}
-                        className="p-1 text-slate-300 hover:text-black transition-colors"
-                        title="Editar proveedor"
-                      >
-                        <Pencil className="w-3.5 h-3.5" />
-                      </button>
-                      <button 
-                        onClick={() => handleDeleteProvider(provider.id)}
-                        className="p-1 text-slate-300 hover:text-red-500 transition-colors"
-                        title="Eliminar proveedor"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                      <button className="text-[10px] font-bold uppercase tracking-widest text-slate-400 hover:text-black transition-colors ml-2">
-                        Detalles
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {filteredProviders.map((provider) => {
+                const inferred = inferLegacyIdentifiers(provider);
+                return (
+                  <tr key={provider.id} className="hover:bg-slate-50/50 transition-colors group">
+                    <td className="px-5 py-4 text-xs font-bold uppercase tracking-widest text-slate-400">{provider.type === 'empresa' ? 'Empresa' : 'Persona'}</td>
+                    <td className="px-5 py-4">
+                      <div className="text-sm font-bold text-slate-900">{providerDisplayName(provider)}</div>
+                      <div className="text-[10px] text-slate-400 font-medium">{provider.source === 'provider_invite' ? 'Alta por link' : 'Carga interna'}</div>
+                    </td>
+                    <td className="px-5 py-4 text-xs text-slate-600 font-medium whitespace-nowrap">{formatIdentifier(provider.dni || inferred.dniNormalized) || '-'}</td>
+                    <td className="px-5 py-4 text-xs text-slate-600 font-medium whitespace-nowrap">{formatIdentifier(provider.cuit || inferred.cuitNormalized) || '-'}</td>
+                    <td className="px-5 py-4 text-xs text-slate-500">{provider.category === 'Otra' ? `Otra: ${provider.categoryOther || '-'}` : provider.category || 'Sin categoría'}</td>
+                    <td className="px-5 py-4 text-xs text-slate-500">
+                      <div>{provider.email || provider.adminEmail || '-'}</div>
+                      <div className="text-slate-400">{provider.phone || '-'}</div>
+                    </td>
+                    <td className="px-5 py-4 text-xs text-slate-500 max-w-[220px] truncate">{provider.address || '-'}</td>
+                    <td className="px-5 py-4 text-xs text-slate-500">{provider.dietaryRestriction || '-'}</td>
+                    <td className="px-5 py-4 text-right">
+                      <div className="flex justify-end gap-2">
+                        <button onClick={() => setEditingProvider(provider)} className="p-1 text-slate-300 hover:text-black transition-colors" title="Editar proveedor">
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                        <button onClick={() => handleDeleteProvider(provider)} className="p-1 text-slate-300 hover:text-red-500 transition-colors" title="Eliminar proveedor">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
       )}
 
-      {/* New Provider Modal */}
       <AnimatePresence>
         {showNewModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setShowNewModal(false)}
-              className="absolute inset-0 bg-white/80 backdrop-blur-md" 
-            />
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.98 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.98 }}
-              className="bg-white rounded-xl w-full max-w-2xl p-8 relative z-10 border border-slate-200 shadow-2xl shadow-slate-200/50"
-            >
-              <div className="flex justify-between items-center mb-8 border-l-4 border-black pl-4">
-                <h2 className="text-xs font-bold uppercase tracking-widest">Alta de Proveedor</h2>
-                <button onClick={() => setShowNewModal(false)} className="text-slate-400 hover:text-black">
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-              <form onSubmit={handleCreateProvider} className="space-y-6">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Nombre</label>
-                    <input name="name" required className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all" placeholder="Nombre..." />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Apellido</label>
-                    <input name="lastName" required className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all" placeholder="Apellido..." />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Categoría / Oficio</label>
-                  <input name="category" className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all" placeholder="Ej: Cámara, Sonido, Arte..." />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">DNI / CUIT</label>
-                    <input name="dni_cuit" required className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all" placeholder="20-XXXXXXXX-X" />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Fecha Nacimiento</label>
-                    <input name="birthDate" type="date" className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all" />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Domicilio</label>
-                  <input name="address" className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all" placeholder="Calle, Altura, Localidad..." />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">CBU / Cuenta Bancaria</label>
-                  <input name="bankAccount_cbu" className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all font-mono" placeholder="0000000000000000000000" />
-                </div>
-                <div className="flex gap-3 pt-4">
-                  <button type="button" onClick={() => setShowNewModal(false)} className="flex-1 px-4 py-3 border border-slate-200 rounded text-xs font-bold tracking-widest uppercase hover:bg-slate-50 transition-colors">Cancelar</button>
-                  <button type="submit" className="flex-1 px-4 py-3 bg-black text-white rounded text-xs font-bold tracking-widest uppercase hover:bg-slate-800 transition-colors">Guardar Proveedor</button>
-                </div>
-              </form>
-            </motion.div>
-          </div>
+          <ProviderManualModal onClose={() => setShowNewModal(false)} onSubmit={handleCreateProvider} />
         )}
       </AnimatePresence>
 
-      {/* Edit Provider Modal */}
       <AnimatePresence>
         {editingProvider && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setEditingProvider(null)}
-              className="absolute inset-0 bg-white/80 backdrop-blur-md" 
-            />
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.98 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.98 }}
-              className="bg-white rounded-xl w-full max-w-2xl p-8 relative z-10 border border-slate-200 shadow-2xl shadow-slate-200/50"
-            >
-              <div className="flex justify-between items-center mb-8 border-l-4 border-black pl-4">
-                <h2 className="text-xs font-bold uppercase tracking-widest">Editar Proveedor</h2>
-                <button onClick={() => setEditingProvider(null)} className="text-slate-400 hover:text-black">
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-              <form onSubmit={handleUpdateProvider} className="space-y-6">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Nombre</label>
-                    <input name="name" defaultValue={editingProvider.name} required className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all" placeholder="Nombre..." />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Apellido</label>
-                    <input name="lastName" defaultValue={editingProvider.lastName} required className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all" placeholder="Apellido..." />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Categoría / Oficio</label>
-                  <input name="category" defaultValue={editingProvider.category} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all" placeholder="Ej: Cámara, Sonido, Arte..." />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">DNI / CUIT</label>
-                    <input name="dni_cuit" defaultValue={editingProvider.dni_cuit} required className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all" placeholder="20-XXXXXXXX-X" />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Fecha Nacimiento</label>
-                    <input name="birthDate" defaultValue={editingProvider.birthDate} type="date" className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all" />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Domicilio</label>
-                  <input name="address" defaultValue={editingProvider.address} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all" placeholder="Calle, Altura, Localidad..." />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">CBU / Cuenta Bancaria</label>
-                  <input name="bankAccount_cbu" defaultValue={editingProvider.bankAccount_cbu} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all font-mono" placeholder="0000000000000000000000" />
-                </div>
-                <div className="flex gap-3 pt-4">
-                  <button type="button" onClick={() => setEditingProvider(null)} className="flex-1 px-4 py-3 border border-slate-200 rounded text-xs font-bold tracking-widest uppercase hover:bg-slate-50 transition-colors">Cancelar</button>
-                  <button type="submit" className="flex-1 px-4 py-3 bg-black text-white rounded text-xs font-bold tracking-widest uppercase hover:bg-slate-800 transition-colors">Actualizar Proveedor</button>
-                </div>
-              </form>
-            </motion.div>
-          </div>
+          <ProviderEditModal provider={editingProvider} onClose={() => setEditingProvider(null)} onSubmit={handleUpdateProvider} />
         )}
       </AnimatePresence>
+    </div>
+  );
+}
+
+function ProviderManualModal({ onClose, onSubmit }: { onClose: () => void; onSubmit: (e: React.FormEvent<HTMLFormElement>) => void }) {
+  const [type, setType] = useState<'persona' | 'empresa'>('persona');
+  const [category, setCategory] = useState('');
+  const categories = type === 'empresa' ? COMPANY_PROVIDER_CATEGORIES : PRODUCTION_AREA_CATEGORIES;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} className="absolute inset-0 bg-white/80 backdrop-blur-md" />
+      <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.98 }} className="bg-white rounded-xl w-full max-w-2xl max-h-[90vh] overflow-auto p-8 relative z-10 border border-slate-200 shadow-2xl shadow-slate-200/50">
+        <div className="flex justify-between items-center mb-8 border-l-4 border-black pl-4">
+          <h2 className="text-xs font-bold uppercase tracking-widest">Alta Manual de Proveedor</h2>
+          <button onClick={onClose} className="text-slate-400 hover:text-black"><X className="w-4 h-4" /></button>
+        </div>
+        <form onSubmit={onSubmit} className="space-y-6">
+          <div className="grid grid-cols-2 gap-3">
+            <button type="button" onClick={() => setType('persona')} className={`px-4 py-3 rounded border text-xs font-bold uppercase tracking-widest ${type === 'persona' ? 'bg-black text-white border-black' : 'border-slate-200'}`}>Persona</button>
+            <button type="button" onClick={() => setType('empresa')} className={`px-4 py-3 rounded border text-xs font-bold uppercase tracking-widest ${type === 'empresa' ? 'bg-black text-white border-black' : 'border-slate-200'}`}>Empresa</button>
+          </div>
+          <input type="hidden" name="type" value={type} />
+
+          {type === 'persona' ? (
+            <div className="grid grid-cols-2 gap-4">
+              <Field label="Nombre" required><input name="name" required className={inputClass} /></Field>
+              <Field label="Apellido" required><input name="lastName" required className={inputClass} /></Field>
+              <Field label="DNI" required><input name="dni" required className={inputClass} /></Field>
+              <Field label="CUIT / CUIL" required><input name="cuit" required className={inputClass} /></Field>
+              <Field label="Fecha Nacimiento"><input name="birthDate" type="date" className={inputClass} /></Field>
+              <Field label="Restricción alimentaria"><input name="dietaryRestriction" className={inputClass} /></Field>
+            </div>
+          ) : (
+            <>
+              <Field label="Razón Social" required><input name="businessName" required className={inputClass} /></Field>
+              <Field label="CUIT" required><input name="cuit" required className={inputClass} /></Field>
+            </>
+          )}
+
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Email" required><input name="email" type="email" required className={inputClass} /></Field>
+            <Field label="Teléfono" required><input name="phone" required className={inputClass} /></Field>
+          </div>
+          <Field label="Domicilio" required><input name="address" required className={inputClass} /></Field>
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Categoría" required>
+              <select name="category" value={category} onChange={(e) => setCategory(e.target.value)} required className={inputClass}>
+                <option value="">Seleccionar...</option>
+                {categories.map((item) => <option key={item} value={item}>{item}</option>)}
+              </select>
+            </Field>
+            {category === 'Otra' && <Field label="Comentario Otra" required><input name="categoryOther" required className={inputClass} /></Field>}
+          </div>
+          <Field label="CBU / Alias" required><input name="bankAccount_cbu" required className={`${inputClass} font-mono`} /></Field>
+          <div className="flex gap-3 pt-4">
+            <button type="button" onClick={onClose} className="flex-1 px-4 py-3 border border-slate-200 rounded text-xs font-bold tracking-widest uppercase hover:bg-slate-50 transition-colors">Cancelar</button>
+            <button type="submit" className="flex-1 px-4 py-3 bg-black text-white rounded text-xs font-bold tracking-widest uppercase hover:bg-slate-800 transition-colors">Guardar</button>
+          </div>
+        </form>
+      </motion.div>
+    </div>
+  );
+}
+
+function ProviderEditModal({ provider, onClose, onSubmit }: { provider: any; onClose: () => void; onSubmit: (e: React.FormEvent<HTMLFormElement>) => void }) {
+  const inferred = inferLegacyIdentifiers(provider);
+  const [category, setCategory] = useState(provider.category || '');
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} className="absolute inset-0 bg-white/80 backdrop-blur-md" />
+      <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.98 }} className="bg-white rounded-xl w-full max-w-2xl max-h-[90vh] overflow-auto p-8 relative z-10 border border-slate-200 shadow-2xl shadow-slate-200/50">
+        <div className="flex justify-between items-center mb-8 border-l-4 border-black pl-4">
+          <h2 className="text-xs font-bold uppercase tracking-widest">Editar Proveedor</h2>
+          <button onClick={onClose} className="text-slate-400 hover:text-black"><X className="w-4 h-4" /></button>
+        </div>
+        <form onSubmit={onSubmit} className="space-y-6">
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Nombre / Razón Social" required><input name="name" defaultValue={provider.name || provider.businessName} required className={inputClass} /></Field>
+            <Field label="Apellido"><input name="lastName" defaultValue={provider.lastName} className={inputClass} /></Field>
+            <Field label="DNI"><input name="dni" defaultValue={provider.dni || inferred.dniNormalized} className={inputClass} /></Field>
+            <Field label="CUIT"><input name="cuit" defaultValue={provider.cuit || inferred.cuitNormalized} className={inputClass} /></Field>
+          </div>
+          <input type="hidden" name="dni_cuit" defaultValue={provider.dni_cuit || ''} />
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Email"><input name="email" type="email" defaultValue={provider.email} className={inputClass} /></Field>
+            <Field label="Teléfono"><input name="phone" defaultValue={provider.phone} className={inputClass} /></Field>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Categoría / Oficio">
+              <select name="category" value={category} onChange={(e) => setCategory(e.target.value)} className={inputClass}>
+                <option value="">Seleccionar...</option>
+                {[...new Set([...PRODUCTION_AREA_CATEGORIES, ...COMPANY_PROVIDER_CATEGORIES])].map((item) => <option key={item} value={item}>{item}</option>)}
+              </select>
+            </Field>
+            {category === 'Otra' && <Field label="Comentario Otra"><input name="categoryOther" defaultValue={provider.categoryOther} className={inputClass} /></Field>}
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Fecha Nacimiento"><input name="birthDate" defaultValue={provider.birthDate} type="date" className={inputClass} /></Field>
+            <Field label="Restricción alimentaria"><input name="dietaryRestriction" defaultValue={provider.dietaryRestriction} className={inputClass} /></Field>
+          </div>
+          <Field label="Domicilio"><input name="address" defaultValue={provider.address} className={inputClass} /></Field>
+          <Field label="CBU / Cuenta Bancaria"><input name="bankAccount_cbu" defaultValue={provider.bankAccount_cbu} className={`${inputClass} font-mono`} /></Field>
+          <div className="flex gap-3 pt-4">
+            <button type="button" onClick={onClose} className="flex-1 px-4 py-3 border border-slate-200 rounded text-xs font-bold tracking-widest uppercase hover:bg-slate-50 transition-colors">Cancelar</button>
+            <button type="submit" className="flex-1 px-4 py-3 bg-black text-white rounded text-xs font-bold tracking-widest uppercase hover:bg-slate-800 transition-colors">Actualizar</button>
+          </div>
+        </form>
+      </motion.div>
+    </div>
+  );
+}
+
+function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) {
+  return (
+    <div>
+      <label className={labelClass}>{label}{required && <span className="text-red-500 ml-1">*</span>}</label>
+      {children}
     </div>
   );
 }

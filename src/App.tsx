@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Layout from './components/Layout';
 import Login from './pages/Login';
@@ -8,11 +8,9 @@ import Projects from './pages/Projects';
 import ProjectDetail from './pages/ProjectDetail';
 import Team from './pages/Team';
 import Providers from './pages/Providers';
+import ProviderInvite from './pages/ProviderInvite';
 import Clients from './pages/Clients';
 import PlaceholderPage from './pages/PlaceholderPage';
-
-const routerBaseUrl = (import.meta as ImportMeta & { env?: { BASE_URL?: string } }).env?.BASE_URL || '/';
-const routerBasename = routerBaseUrl.replace(/\/$/, '') || '/';
 
 function AdminRoute({ children }: { children: ReactNode }) {
   const { profile, loading } = useAuth();
@@ -26,9 +24,10 @@ function AdminRoute({ children }: { children: ReactNode }) {
 export default function App() {
   return (
     <AuthProvider>
-      <Router basename={routerBasename}>
+      <Router>
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/alta-proveedor/:token" element={<ProviderInvite />} />
           
           <Route element={<Layout />}>
             <Route path="/" element={<Dashboard />} />

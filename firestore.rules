@@ -51,6 +51,25 @@ service cloud.firestore {
       return isProjectAdmin(projectId) || isProjectCollaborator(projectId);
     }
 
+    function inviteIsPending(token) {
+      return token is string
+        && exists(/databases/$(database)/documents/providerInvites/$(token))
+        && get(/databases/$(database)/documents/providerInvites/$(token)).data.used == false
+        && get(/databases/$(database)/documents/providerInvites/$(token)).data.status == 'pending';
+    }
+
+    function publicProviderCreateIsValid() {
+      return request.auth == null
+        && request.resource.data.source == 'provider_invite'
+        && inviteIsPending(request.resource.data.inviteToken)
+        && request.resource.data.type in ['persona', 'empresa']
+        && request.resource.data.cuitNormalized is string
+        && request.resource.data.category is string
+        && request.resource.data.email is string
+        && request.resource.data.phone is string
+        && request.resource.data.address is string;
+    }
+
     match /users/{userId} {
       allow get: if isSignedIn() && (request.auth.uid == userId || isAppAdmin());
       allow list: if isAppAdmin();
@@ -132,7 +151,43 @@ service cloud.firestore {
 
     match /providers/{providerId} {
       allow read: if isSignedIn();
-      allow write: if isAppAdmin();
+      allow create: if isAppAdmin() || publicProviderCreateIsValid();
+      allow update, delete: if isAppAdmin();
+    }
+
+    match /providerInvites/{token} {
+      allow get: if true;
+      allow list: if isAppAdmin();
+      allow create: if isAppAdmin()
+        && request.resource.data.status == 'pending'
+        && request.resource.data.used == false;
+      allow update: if isAppAdmin()
+        || (
+          request.auth == null
+          && resource.data.used == false
+          && resource.data.status == 'pending'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'status', 'usedAt', 'providerId', 'providerType'])
+          && request.resource.data.used == true
+          && request.resource.data.status == 'used'
+          && request.resource.data.providerId is string
+          && request.resource.data.providerType in ['persona', 'empresa']
+        );
+      allow delete: if isAppAdmin();
+    }
+
+    match /providerIdentifiers/{identifierId} {
+      allow get: if true;
+      allow list: if isAppAdmin();
+      allow create: if isAppAdmin()
+        || (
+          request.auth == null
+          && request.resource.data.inviteToken is string
+          && inviteIsPending(request.resource.data.inviteToken)
+          && request.resource.data.providerId is string
+          && request.resource.data.identifierType in ['dni', 'cuit']
+          && request.resource.data.value is string
+        );
+      allow update, delete: if isAppAdmin();
     }
   }
 }
