@@ -1,5 +1,6 @@
+import type { ReactNode } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { AuthProvider } from './context/AuthContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import Layout from './components/Layout';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
@@ -13,6 +14,15 @@ import PlaceholderPage from './pages/PlaceholderPage';
 const routerBaseUrl = (import.meta as ImportMeta & { env?: { BASE_URL?: string } }).env?.BASE_URL || '/';
 const routerBasename = routerBaseUrl.replace(/\/$/, '') || '/';
 
+function AdminRoute({ children }: { children: ReactNode }) {
+  const { profile, loading } = useAuth();
+
+  if (loading) return null;
+  if (profile?.role !== 'admin') return <Navigate to="/proyectos" replace />;
+
+  return <>{children}</>;
+}
+
 export default function App() {
   return (
     <AuthProvider>
@@ -25,11 +35,11 @@ export default function App() {
             <Route path="/proyectos" element={<Projects />} />
             <Route path="/proyectos/:id" element={<ProjectDetail />} />
             
-            <Route path="/proveedores" element={<Providers />} />
-            <Route path="/clientes" element={<Clients />} />
-            <Route path="/equipo" element={<Team />} />
-            <Route path="/reportes" element={<PlaceholderPage title="Reportes" />} />
-            <Route path="/configuracion" element={<PlaceholderPage title="Configuración" />} />
+            <Route path="/proveedores" element={<AdminRoute><Providers /></AdminRoute>} />
+            <Route path="/clientes" element={<AdminRoute><Clients /></AdminRoute>} />
+            <Route path="/equipo" element={<AdminRoute><Team /></AdminRoute>} />
+            <Route path="/reportes" element={<AdminRoute><PlaceholderPage title="Reportes" /></AdminRoute>} />
+            <Route path="/configuracion" element={<AdminRoute><PlaceholderPage title="Configuración" /></AdminRoute>} />
           </Route>
 
           <Route path="*" element={<Navigate to="/" replace />} />

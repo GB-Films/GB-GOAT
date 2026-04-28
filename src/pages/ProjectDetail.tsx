@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { doc, getDoc, collection, query, getDocs, addDoc, serverTimestamp, deleteDoc, updateDoc } from 'firebase/firestore';
 import { deleteObject, getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { db, storage } from '../lib/firebase';
 import { handleFirestoreError } from '../lib/firestoreUtils';
-import { useAuth } from '../context/AuthContext';
+import { useAuth, APP_OWNER_EMAIL } from '../context/AuthContext';
 import { 
   ChevronLeft, 
   Info, 
@@ -117,9 +117,12 @@ const buildInvoiceFileName = (expense: any) => {
   return `factura-${baseName}-${shortId}.pdf`;
 };
 
+const normalizeEmail = (email?: string | null) => (email || '').trim().toLowerCase();
+
 export default function ProjectDetail() {
   const { id } = useParams();
-  const { user, profile } = useAuth();
+  const navigate = useNavigate();
+  const { user, profile, isOwner: isAppOwner } = useAuth();
   const [project, setProject] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('resumen');
@@ -144,7 +147,9 @@ export default function ProjectDetail() {
   const [isDeletingPayment, setIsDeletingPayment] = useState<number | null>(null);
   const [uploadingInvoices, setUploadingInvoices] = useState<Record<string, boolean>>({});
   const [dragOverExpenseId, setDragOverExpenseId] = useState<string | null>(null);
+  const [isDeletingProject, setIsDeletingProject] = useState(false);
   const areaSelectorRef = useRef<HTMLDivElement>(null);
+  const isGlobalAdmin = profile?.role === 'admin';
   
   useEffect(() => {
     const fetchProject = async () => {
@@ -993,6 +998,11 @@ export default function ProjectDetail() {
   const updateCollaboratorRole = async (col: Collaborator, role: Collaborator['role']) => {
     if (!id) return;
 
+    if ((col.role === 'admin' || role === 'admin') && !isAppOwner) {
+      alert(`Solo ${APP_OWNER_EMAIL} puede asignar o quitar roles Admin.`);
+      return;
+    }
+
     const updates: Partial<Collaborator> = { role };
 
     if (role === 'jefe_area') {
@@ -1008,6 +1018,59 @@ export default function ProjectDetail() {
 
     await updateDoc(doc(db, 'projects', id, 'collaborators', col.email), updates);
     setCollaborators(collaborators.map(c => c.email === col.email ? { ...c, ...updates } : c));
+  };
+
+  const handleDeleteProject = async () => {
+    if (!id || !project) return;
+
+    if (!isGlobalAdmin) {
+      alert('Solo usuarios con rol global de administrador pueden borrar proyectos.');
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `ADVERTENCIA: vas a borrar definitivamente el proyecto "${project.name}".\n\n` +
+      'Se eliminará el proyecto y sus datos internos conocidos: presupuesto, gastos, pagos, equipo, colaboradores, hitos y facturas registradas. Esta acción no se puede deshacer.\n\n' +
+      '¿Querés continuar?'
+    );
+
+    if (!confirmed) return;
+
+    const typedName = window.prompt(
+      `Para confirmar el borrado definitivo, escribí el nombre exacto del proyecto:\n\n${project.name}`
+    );
+
+    if (typedName !== project.name) {
+      alert('Borrado cancelado: el nombre ingresado no coincide.');
+      return;
+    }
+
+    setIsDeletingProject(true);
+    try {
+      const subcollections = [
+        'collaborators',
+        'budgetItems',
+        'areaExpenses',
+        'expenses',
+        'milestones',
+        'teamMembers',
+        'payments',
+        'invoices',
+      ];
+
+      for (const subcollection of subcollections) {
+        const snap = await getDocs(collection(db, 'projects', id, subcollection));
+        await Promise.all(snap.docs.map((childDoc) => deleteDoc(childDoc.ref)));
+      }
+
+      await deleteDoc(doc(db, 'projects', id));
+      navigate('/proyectos');
+    } catch (error) {
+      console.error('Error deleting project:', error);
+      alert('No se pudo borrar el proyecto. Revisá permisos o conexión.');
+    } finally {
+      setIsDeletingProject(false);
+    }
   };
 
   if (loading) return <div className="p-8 text-center text-slate-500 font-mono text-xs uppercase tracking-widest">Analizando proyecto...</div>;
@@ -2075,7 +2138,9 @@ export default function ProjectDetail() {
                       No hay colaboradores externos en este proyecto
                     </div>
                   ) : (
-                    collaborators.map(col => (
+                    collaborators.map(col => {
+                      const canChangeAdminRole = isAppOwner || col.role !== 'admin';
+                      return (
                       <div key={col.email} className="p-6 bg-slate-50 rounded-xl border border-slate-100">
                         <div className="flex justify-between items-start mb-8">
                           <div className="flex items-center gap-3">
@@ -2090,27 +2155,36 @@ export default function ProjectDetail() {
                                 <div className="flex gap-1 ml-4 bg-white p-1 rounded border border-slate-200">
                                     <button 
                                         onClick={() => updateCollaboratorRole(col, 'admin')}
+                                        disabled={!isAppOwner}
+                                        title={isAppOwner ? 'Asignar Admin' : `Solo ${APP_OWNER_EMAIL} puede asignar Admin`}
                                         className={cn(
                                             "px-2 py-1 text-[8px] font-bold uppercase tracking-widest rounded transition-all",
-                                            col.role === 'admin' ? "bg-black text-white" : "text-slate-400 hover:text-black"
+                                            col.role === 'admin' ? "bg-black text-white" : "text-slate-400 hover:text-black",
+                                            !isAppOwner && "opacity-40 cursor-not-allowed hover:text-slate-400"
                                         )}
                                     >
                                         Admin
                                     </button>
                                     <button 
                                         onClick={() => updateCollaboratorRole(col, 'jefe_area')}
+                                        disabled={!canChangeAdminRole}
+                                        title={canChangeAdminRole ? 'Cambiar a Jefe de Área' : `Solo ${APP_OWNER_EMAIL} puede bajar un Admin`}
                                         className={cn(
                                             "px-2 py-1 text-[8px] font-bold uppercase tracking-widest rounded transition-all",
-                                            col.role === 'jefe_area' ? "bg-black text-white" : "text-slate-400 hover:text-black"
+                                            col.role === 'jefe_area' ? "bg-black text-white" : "text-slate-400 hover:text-black",
+                                            !canChangeAdminRole && "opacity-40 cursor-not-allowed hover:text-slate-400"
                                         )}
                                     >
                                         Jefe Área
                                     </button>
                                     <button 
                                         onClick={() => updateCollaboratorRole(col, 'colaborador')}
+                                        disabled={!canChangeAdminRole}
+                                        title={canChangeAdminRole ? 'Cambiar a Colaborador' : `Solo ${APP_OWNER_EMAIL} puede bajar un Admin`}
                                         className={cn(
                                             "px-2 py-1 text-[8px] font-bold uppercase tracking-widest rounded transition-all",
-                                            col.role === 'colaborador' ? "bg-black text-white" : "text-slate-400 hover:text-black"
+                                            col.role === 'colaborador' ? "bg-black text-white" : "text-slate-400 hover:text-black",
+                                            !canChangeAdminRole && "opacity-40 cursor-not-allowed hover:text-slate-400"
                                         )}
                                     >
                                         Colaborador
@@ -2121,6 +2195,10 @@ export default function ProjectDetail() {
                           <button 
                             className="text-[10px] text-red-500 font-bold uppercase tracking-widest hover:underline"
                             onClick={async () => {
+                                if (col.role === 'admin' && !isAppOwner) {
+                                    alert(`Solo ${APP_OWNER_EMAIL} puede quitar acceso a colaboradores Admin.`);
+                                    return;
+                                }
                                 if (confirm(`¿Quitar acceso a ${col.email}?`)) {
                                     await deleteDoc(doc(db, 'projects', id!, 'collaborators', col.email));
                                     await updateDoc(doc(db, 'projects', id!), {
@@ -2188,7 +2266,8 @@ export default function ProjectDetail() {
                           </div>
                         </div>
                       </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
               </div>
@@ -2273,6 +2352,26 @@ export default function ProjectDetail() {
                   <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Resumen del Proyecto</label>
                   <textarea name="description" defaultValue={project.description} rows={4} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all resize-none" />
                 </div>
+                {isGlobalAdmin && (
+                  <div className="rounded-xl border border-red-100 bg-red-50/50 p-4 space-y-3">
+                    <div>
+                      <h3 className="text-[10px] font-black uppercase tracking-widest text-red-700">Zona de peligro</h3>
+                      <p className="text-xs text-red-600 mt-1 leading-relaxed">
+                        Borrar un proyecto elimina sus datos internos conocidos y no se puede deshacer.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleDeleteProject}
+                      disabled={isDeletingProject}
+                      className="w-full px-4 py-3 bg-red-600 text-white rounded text-[10px] font-bold tracking-widest uppercase hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      {isDeletingProject ? 'Borrando Proyecto...' : 'Borrar Proyecto'}
+                    </button>
+                  </div>
+                )}
+
                 <div className="flex gap-3 pt-4">
                   <button type="button" onClick={() => setShowEditProjectModal(false)} className="flex-1 px-4 py-3 border border-slate-200 rounded text-[10px] font-bold tracking-widest uppercase hover:bg-slate-50 transition-colors">Cancelar</button>
                   <button type="submit" className="flex-1 px-4 py-3 bg-black text-white rounded text-[10px] font-bold tracking-widest uppercase hover:bg-slate-800 transition-colors">Actualizar Datos</button>

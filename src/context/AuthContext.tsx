@@ -7,10 +7,21 @@ interface AuthContextType {
   user: User | null;
   profile: any | null;
   loading: boolean;
+  isOwner: boolean;
+  isAdmin: boolean;
 }
 
-const AuthContext = createContext<AuthContextType>({ user: null, profile: null, loading: true });
-const adminEmails = ['tgboetsch@gmail.com', 'tomas@granberta.com', 'info@granbertafilms.com'];
+export const APP_OWNER_EMAIL = 'info@granbertafilms.com';
+
+const normalizeEmail = (email?: string | null) => (email || '').trim().toLowerCase();
+
+const AuthContext = createContext<AuthContextType>({
+  user: null,
+  profile: null,
+  loading: true,
+  isOwner: false,
+  isAdmin: false,
+});
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -19,33 +30,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      setLoading(true);
       setUser(user);
       try {
         if (user) {
-          const userDoc = await getDoc(doc(db, 'users', user.uid));
+          const normalizedEmail = normalizeEmail(user.email);
+          const userRef = doc(db, 'users', user.uid);
+          const userDoc = await getDoc(userRef);
+
           if (userDoc.exists()) {
             const data = userDoc.data();
-            // Ensure specific emails are always admin
-            const normalizedEmail = user.email?.toLowerCase();
-            if (adminEmails.includes(normalizedEmail || '') && data.role !== 'admin') {
-              await updateDoc(doc(db, 'users', user.uid), { role: 'admin' });
+
+            // El dueño de la app siempre queda como admin.
+            // El resto conserva el rol guardado en Firestore.
+            if (normalizedEmail === APP_OWNER_EMAIL && data.role !== 'admin') {
+              await updateDoc(userRef, { role: 'admin' });
               data.role = 'admin';
             }
+
+            if (!data.role) data.role = 'colaborador';
             setProfile(data);
           } else {
-            // Create default profile for new user
-            // If it matches specific email, make admin
-            const normalizedEmail = user.email?.toLowerCase();
-            const role = adminEmails.includes(normalizedEmail || '') ? 'admin' : 'colaborador';
+            // Todo usuario nuevo empieza como colaborador, salvo el dueño.
+            const role = normalizedEmail === APP_OWNER_EMAIL ? 'admin' : 'colaborador';
             const newProfile = {
               uid: user.uid,
               email: user.email,
               displayName: user.displayName,
               photoURL: user.photoURL,
-              role: role,
-              createdAt: new Date().toISOString()
+              role,
+              createdAt: new Date().toISOString(),
             };
-            await setDoc(doc(db, 'users', user.uid), newProfile);
+            await setDoc(userRef, newProfile);
             setProfile(newProfile);
           }
         } else {
@@ -54,15 +70,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } catch (error) {
         console.error('Error loading user profile:', error);
         if (user) {
-          const normalizedEmail = user.email?.toLowerCase();
-          const role = adminEmails.includes(normalizedEmail || '') ? 'admin' : 'colaborador';
+          const normalizedEmail = normalizeEmail(user.email);
+          const role = normalizedEmail === APP_OWNER_EMAIL ? 'admin' : 'colaborador';
           setProfile({
             uid: user.uid,
             email: user.email,
             displayName: user.displayName,
             photoURL: user.photoURL,
             role,
-            createdAt: new Date().toISOString()
+            createdAt: new Date().toISOString(),
           });
         }
       } finally {
@@ -73,8 +89,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return unsubscribe;
   }, []);
 
+  const isOwner = normalizeEmail(profile?.email) === APP_OWNER_EMAIL;
+  const isAdmin = profile?.role === 'admin';
+
   return (
-    <AuthContext.Provider value={{ user, profile, loading }}>
+    <AuthContext.Provider value={{ user, profile, loading, isOwner, isAdmin }}>
       {children}
     </AuthContext.Provider>
   );

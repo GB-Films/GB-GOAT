@@ -15,11 +15,14 @@ service cloud.firestore {
     }
 
     function isAppAdmin() {
-      return isSignedIn() && userEmail() in [
-        'info@granbertafilms.com',
-        'tgboetsch@gmail.com',
-        'tomas@granberta.com'
-      ];
+      return isSignedIn()
+        && (
+          isAppOwner()
+          || (
+            exists(/databases/$(database)/documents/users/$(request.auth.uid))
+            && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
+          )
+        );
     }
 
     function projectDoc(projectId) {
@@ -49,8 +52,21 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn() && (request.auth.uid == userId || isAppOwner());
+      allow get: if isSignedIn() && (request.auth.uid == userId || isAppAdmin());
+      allow list: if isAppAdmin();
+      allow create: if isSignedIn() && (
+        isAppOwner()
+        || (
+          request.auth.uid == userId
+          && request.resource.data.role == 'colaborador'
+        )
+      );
+      allow update: if isAppOwner()
+        || (
+          isSignedIn()
+          && request.auth.uid == userId
+          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role'])
+        );
       allow delete: if isAppOwner();
     }
 
@@ -65,11 +81,19 @@ service cloud.firestore {
       allow get: if hasProjectAccess(projectId);
       allow create: if isAppAdmin() && request.resource.data.createdBy == request.auth.uid;
       allow update: if isProjectAdmin(projectId);
-      allow delete: if isAppAdmin() || isProjectOwner(projectId);
+      allow delete: if isAppAdmin();
 
       match /collaborators/{email} {
         allow read: if hasProjectAccess(projectId);
-        allow write: if isProjectAdmin(projectId);
+        allow create: if isProjectAdmin(projectId)
+          && (request.resource.data.role != 'admin' || isAppOwner());
+        allow update: if isProjectAdmin(projectId)
+          && (
+            isAppOwner()
+            || (resource.data.role != 'admin' && request.resource.data.role != 'admin')
+          );
+        allow delete: if isProjectAdmin(projectId)
+          && (resource.data.role != 'admin' || isAppOwner());
       }
 
       match /budgetItems/{itemId} {
@@ -102,11 +126,13 @@ service cloud.firestore {
     }
 
     match /clients/{clientId} {
-      allow read, write: if isSignedIn();
+      allow read: if isSignedIn();
+      allow write: if isAppAdmin();
     }
 
     match /providers/{providerId} {
-      allow read, write: if isSignedIn();
+      allow read: if isSignedIn();
+      allow write: if isAppAdmin();
     }
   }
 }

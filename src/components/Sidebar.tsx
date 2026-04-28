@@ -5,8 +5,7 @@ import {
   Users, 
   BarChart3, 
   Settings, 
-  LogOut,
-  ChevronRight
+  LogOut
 } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import { cn } from '../lib/utils';
@@ -14,23 +13,19 @@ import { auth } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 
 const menuItems = [
-  { icon: LayoutDashboard, label: 'Dashboard', path: '/' },
-  { icon: Clapperboard, label: 'Proyectos', path: '/proyectos' },
-  { icon: Truck, label: 'Proveedores', path: '/proveedores' },
-  { icon: Users, label: 'Clientes', path: '/clientes' },
-  { icon: Users, label: 'Equipo', path: '/equipo' },
-  { icon: BarChart3, label: 'Reportes', path: '/reportes' },
-  { icon: Settings, label: 'Configuración', path: '/configuracion' },
+  { icon: LayoutDashboard, label: 'Dashboard', path: '/', adminOnly: false },
+  { icon: Clapperboard, label: 'Proyectos', path: '/proyectos', adminOnly: false },
+  { icon: Truck, label: 'Proveedores', path: '/proveedores', adminOnly: true },
+  { icon: Users, label: 'Clientes', path: '/clientes', adminOnly: true },
+  { icon: Users, label: 'Equipo', path: '/equipo', adminOnly: true },
+  { icon: BarChart3, label: 'Reportes', path: '/reportes', adminOnly: true },
+  { icon: Settings, label: 'Configuración', path: '/configuracion', adminOnly: true },
 ];
 
 export default function Sidebar() {
   const { profile } = useAuth();
 
-  const filteredMenuItems = menuItems.filter(item => {
-    if (profile?.role === 'admin') return true;
-    // Colaboradores only see Proyectos and Proveedores
-    return ['Proyectos', 'Proveedores'].includes(item.label);
-  });
+  const filteredMenuItems = menuItems.filter(item => profile?.role === 'admin' || !item.adminOnly);
 
   return (
     <aside className="w-64 bg-white border-r border-slate-200 flex flex-col h-screen sticky top-0">
@@ -78,7 +73,7 @@ export default function Sidebar() {
           />
           <div className="overflow-hidden">
             <p className="text-[10px] font-bold text-slate-900 truncate uppercase tracking-tight">{profile?.displayName}</p>
-            <p className="text-[10px] text-slate-400 truncate capitalize tracking-tighter">Google Connected</p>
+            <p className="text-[10px] text-slate-400 truncate capitalize tracking-tighter">{profile?.role || 'colaborador'}</p>
           </div>
         </div>
         <button 

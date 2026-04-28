@@ -4,7 +4,7 @@ import { db } from '../lib/firebase';
 import { handleFirestoreError } from '../lib/firestoreUtils';
 import { useAuth } from '../context/AuthContext';
 import { cn } from '../lib/utils';
-import { Plus, Search, ExternalLink } from 'lucide-react';
+import { Plus, Search, ExternalLink, Clapperboard } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -133,7 +133,14 @@ export default function Projects() {
       ) : projects.length === 0 ? (
         <div className="text-center py-20 bg-white rounded-xl border border-dashed border-slate-200">
            <Clapperboard className="w-12 h-12 text-slate-100 mx-auto mb-4" />
-           <h3 className="text-sm font-bold uppercase tracking-widest text-slate-300">Sin Producciones registradas</h3>
+           <h3 className="text-sm font-bold uppercase tracking-widest text-slate-300">
+             {isAppAdmin ? 'Sin Producciones registradas' : 'Acceso pendiente'}
+           </h3>
+           {!isAppAdmin && (
+             <p className="text-xs text-slate-400 mt-3 max-w-md mx-auto">
+               Tu cuenta ya está activa como colaborador, pero todavía no fuiste incorporado a ningún proyecto.
+             </p>
+           )}
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">

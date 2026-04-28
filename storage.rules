@@ -10,12 +10,19 @@ service firebase.storage {
       return request.auth.token.email;
     }
 
+    function isAppOwner() {
+      return isSignedIn() && userEmail() == 'info@granbertafilms.com';
+    }
+
     function isAppAdmin() {
-      return isSignedIn() && userEmail() in [
-        'info@granbertafilms.com',
-        'tgboetsch@gmail.com',
-        'tomas@granberta.com'
-      ];
+      return isSignedIn()
+        && (
+          isAppOwner()
+          || (
+            firestore.exists(/databases/(default)/documents/users/$(request.auth.uid))
+            && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'admin'
+          )
+        );
     }
 
     function projectDoc(projectId) {

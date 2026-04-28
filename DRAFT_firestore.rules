@@ -2,110 +2,112 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // -------------------------------------------------------------------------
-    // Phase 3: Primitives & Helpers
-    // -------------------------------------------------------------------------
-    function isSignedIn() { return request.auth != null; }
-    function isAdmin() { return isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)); }
-    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
-    function incoming() { return request.resource.data; }
-    function existing() { return resource.data; }
-    
-    // Identity verification
-    function isEmailVerified() { return isSignedIn() && request.auth.token.email_verified == true; }
-    function userEmail() { return request.auth.token.email; }
-    
-    // Project Access Helpers
-    function getProject(projectId) { return get(/databases/$(database)/documents/projects/$(projectId)).data; }
-    function isProjectOwner(projectId) { return isSignedIn() && getProject(projectId).createdBy == request.auth.uid; }
-    function isProjectCollaborator(projectId) { 
-      return isSignedIn() && (userEmail() in getProject(projectId).collaboratorEmails); 
+    function isSignedIn() {
+      return request.auth != null;
     }
+
+    function userEmail() {
+      return request.auth.token.email;
+    }
+
+    function isAppOwner() {
+      return isSignedIn() && userEmail() == 'info@granbertafilms.com';
+    }
+
+    function isAppAdmin() {
+      return isSignedIn()
+        && (
+          isAppOwner()
+          || (
+            exists(/databases/$(database)/documents/users/$(request.auth.uid))
+            && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
+          )
+        );
+    }
+
+    function projectDoc(projectId) {
+      return get(/databases/$(database)/documents/projects/$(projectId)).data;
+    }
+
+    function isProjectOwner(projectId) {
+      return isSignedIn() && projectDoc(projectId).createdBy == request.auth.uid;
+    }
+
+    function isProjectCollaborator(projectId) {
+      return isSignedIn() && userEmail() in projectDoc(projectId).collaboratorEmails;
+    }
+
+    function isProjectAdmin(projectId) {
+      return isAppAdmin()
+        || isProjectOwner(projectId)
+        || (
+          isSignedIn()
+          && exists(/databases/$(database)/documents/projects/$(projectId)/collaborators/$(userEmail()))
+          && get(/databases/$(database)/documents/projects/$(projectId)/collaborators/$(userEmail())).data.role == 'admin'
+        );
+    }
+
     function hasProjectAccess(projectId) {
-      return isProjectOwner(projectId) || isProjectCollaborator(projectId);
+      return isProjectAdmin(projectId) || isProjectCollaborator(projectId);
     }
 
-    // -------------------------------------------------------------------------
-    // Pillar 2: Validation Blueprints
-    // -------------------------------------------------------------------------
-    function isValidProject(data) {
-      return data.keys().hasAll(['name', 'status', 'createdBy', 'createdAt', 'updatedAt'])
-        && data.name is string && data.name.size() > 0 && data.name.size() <= 200
-        && data.status in ['desarrollo', 'pre-produccion', 'produccion', 'post-produccion', 'completado', 'cancelado']
-        && data.createdBy == request.auth.uid;
-    }
-
-    function isValidBudgetItem(data) {
-      return data.keys().hasAll(['projectId', 'area', 'description', 'total'])
-        && data.projectId is string && data.area is string && data.description is string
-        && (data.total is number || data.total is int);
-    }
-
-    function isValidCollaborator(data) {
-      return data.keys().hasAll(['email', 'allowedTabs', 'allowedCategories'])
-        && data.email is string && data.allowedTabs is list && data.allowedCategories is list;
-    }
-
-    // -------------------------------------------------------------------------
-    // Global Safety Net
-    // -------------------------------------------------------------------------
-    match /{document=**} {
-      allow read, write: if false;
-    }
-
-    // -------------------------------------------------------------------------
-    // Collection: Users
-    // -------------------------------------------------------------------------
     match /users/{userId} {
-      allow read: if isSignedIn();
-      allow write: if isSignedIn() && request.auth.uid == userId;
+      allow get: if isSignedIn() && (request.auth.uid == userId || isAppAdmin());
+      allow list: if isAppAdmin();
+      allow create: if isSignedIn() && (
+        isAppOwner()
+        || (
+          request.auth.uid == userId
+          && request.resource.data.role == 'colaborador'
+        )
+      );
+      allow update: if isAppOwner()
+        || (
+          isSignedIn()
+          && request.auth.uid == userId
+          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role'])
+        );
+      allow delete: if isAppOwner();
     }
 
-    // -------------------------------------------------------------------------
-    // Collection: Projects
-    // -------------------------------------------------------------------------
     match /projects/{projectId} {
-      // Secure List Query (Pillar 8)
-      // Query must have where filters matching these conditions
-      allow list: if isSignedIn() && (
-        resource.data.createdBy == request.auth.uid || 
-        (userEmail() in resource.data.collaboratorEmails)
+      allow list: if isAppAdmin() || (
+        isSignedIn()
+        && (
+          resource.data.createdBy == request.auth.uid
+          || userEmail() in resource.data.collaboratorEmails
+        )
       );
-      
-      allow get: if isSignedIn() && (
-        resource.data.createdBy == request.auth.uid || 
-        (userEmail() in resource.data.collaboratorEmails)
-      );
-
-      allow create: if isSignedIn() && isValidProject(incoming()) && incoming().createdAt == request.time;
-      
-      allow update: if isSignedIn() && isValidProject(incoming()) && (
-        // Action: Owner Edit
-        (resource.data.createdBy == request.auth.uid && incoming().createdBy == existing().createdBy) ||
-        // Action: Collaborator Edit (Immutable createdBy)
-        ((userEmail() in resource.data.collaboratorEmails) && incoming().createdBy == existing().createdBy)
-      );
-
-      allow delete: if isSignedIn() && resource.data.createdBy == request.auth.uid;
-
-      // Sub-collections (Pillar 1: Master Gate)
-      
-      match /budgetItems/{itemId} {
-        allow read: if hasProjectAccess(projectId);
-        allow create: if hasProjectAccess(projectId) && isValidBudgetItem(incoming());
-        allow update: if hasProjectAccess(projectId) && isValidBudgetItem(incoming());
-        allow delete: if isProjectOwner(projectId);
-      }
+      allow get: if hasProjectAccess(projectId);
+      allow create: if isAppAdmin() && request.resource.data.createdBy == request.auth.uid;
+      allow update: if isProjectAdmin(projectId);
+      allow delete: if isAppAdmin();
 
       match /collaborators/{email} {
         allow read: if hasProjectAccess(projectId);
-        allow write: if isProjectOwner(projectId) && isValidCollaborator(incoming());
+        allow create: if isProjectAdmin(projectId)
+          && (request.resource.data.role != 'admin' || isAppOwner());
+        allow update: if isProjectAdmin(projectId)
+          && (
+            isAppOwner()
+            || (resource.data.role != 'admin' && request.resource.data.role != 'admin')
+          );
+        allow delete: if isProjectAdmin(projectId)
+          && (resource.data.role != 'admin' || isAppOwner());
       }
-      
+
+      match /budgetItems/{itemId} {
+        allow read, write: if hasProjectAccess(projectId);
+      }
+
+      match /areaExpenses/{expenseId} {
+        allow read, write: if hasProjectAccess(projectId);
+      }
+
       match /expenses/{expenseId} {
         allow read, write: if hasProjectAccess(projectId);
       }
-      
+
       match /milestones/{milestoneId} {
         allow read, write: if hasProjectAccess(projectId);
       }
@@ -113,24 +115,24 @@ service cloud.firestore {
       match /teamMembers/{memberId} {
         allow read, write: if hasProjectAccess(projectId);
       }
+
+      match /payments/{paymentId} {
+        allow read, write: if hasProjectAccess(projectId);
+      }
+
+      match /invoices/{invoiceId} {
+        allow read, write: if hasProjectAccess(projectId);
+      }
     }
 
-    // -------------------------------------------------------------------------
-    // Collection: Clients & Providers (Global catalogs)
-    // -------------------------------------------------------------------------
     match /clients/{clientId} {
       allow read: if isSignedIn();
-      allow write: if isSignedIn();
+      allow write: if isAppAdmin();
     }
 
     match /providers/{providerId} {
       allow read: if isSignedIn();
-      allow write: if isSignedIn();
-    }
-    
-    match /admins/{adminId} {
-      allow read: if false; // System only
-      allow write: if false;
+      allow write: if isAppAdmin();
     }
   }
 }
