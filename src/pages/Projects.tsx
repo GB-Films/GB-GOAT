@@ -8,6 +8,8 @@ import { Plus, Search, ExternalLink, Clapperboard } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 
+const normalizeEmail = (email?: string | null) => (email || '').trim().toLowerCase();
+
 const statusColors: Record<string, string> = {
   'Presupuesto': 'bg-slate-100 text-slate-700',
   'Pre Producción': 'bg-blue-100 text-blue-700',
@@ -35,7 +37,7 @@ export default function Projects() {
               projectsRef,
               or(
                 where('createdBy', '==', profile.uid),
-                where('collaboratorEmails', 'array-contains', profile.email)
+                where('collaboratorEmails', 'array-contains', normalizeEmail(profile.email))
               )
             );
         const querySnapshot = await getDocs(q);
@@ -80,7 +82,7 @@ export default function Projects() {
       budgetTotal: Number(formData.get('budgetTotal')) || 0,
       status: 'Presupuesto',
       createdBy: profile?.uid,
-      createdByEmail: profile?.email,
+      createdByEmail: normalizeEmail(profile?.email),
       collaboratorEmails: [],
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),

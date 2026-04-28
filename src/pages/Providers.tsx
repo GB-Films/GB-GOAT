@@ -381,33 +381,63 @@ export default function Providers() {
     if (!editingProvider) return;
 
     const formData = new FormData(e.currentTarget);
-    const data = {
-      name: formData.get('name'),
-      businessName: editingProvider?.type === 'empresa' ? formData.get('name') : editingProvider?.businessName,
-      lastName: formData.get('lastName'),
-      dni: formData.get('dni'),
-      dniNormalized: normalizeDigits(formData.get('dni')),
-      cuit: formData.get('cuit'),
-      cuitNormalized: normalizeDigits(formData.get('cuit')),
-      dni_cuit: formData.get('dni_cuit'),
-      address: formData.get('address'),
-      birthDate: formData.get('birthDate'),
-      bankAccount_cbu: formData.get('bankAccount_cbu'),
-      category: formData.get('category'),
-      categoryOther: formData.get('categoryOther'),
-      dietaryRestriction: formData.get('dietaryRestriction'),
-      email: formData.get('email'),
-      phone: formData.get('phone'),
+    const providerType = editingProvider?.type === 'empresa' ? 'empresa' : 'persona';
+    const name = String(formData.get('name') || '').trim();
+    const lastName = String(formData.get('lastName') || '').trim();
+    const dni = String(formData.get('dni') || '').trim();
+    const cuit = String(formData.get('cuit') || '').trim();
+    const category = String(formData.get('category') || '').trim();
+
+    const data: any = {
+      type: providerType,
+      name,
+      businessName: providerType === 'empresa' ? name : editingProvider?.businessName || '',
+      lastName: providerType === 'empresa' ? '' : lastName,
+      fullName: providerType === 'persona' ? `${name} ${lastName}`.trim() : name,
+      dni: providerType === 'persona' ? dni : '',
+      dniNormalized: providerType === 'persona' ? normalizeDigits(dni) : '',
+      cuit,
+      cuitNormalized: normalizeDigits(cuit),
+      dni_cuit: formData.get('dni_cuit') || '',
+      address: String(formData.get('address') || '').trim(),
+      birthDate: providerType === 'persona' ? formData.get('birthDate') || '' : '',
+      bankAccount_cbu: String(formData.get('bankAccount_cbu') || '').trim(),
+      category,
+      categoryOther: category === 'Otra' ? String(formData.get('categoryOther') || '').trim() : '',
+      dietaryRestriction: providerType === 'persona' ? String(formData.get('dietaryRestriction') || '').trim() : '',
+      email: String(formData.get('email') || '').trim(),
+      phone: String(formData.get('phone') || '').trim(),
       updatedAt: serverTimestamp(),
     };
 
     try {
-      await updateDoc(doc(db, 'providers', editingProvider.id), data);
-      await createProviderIdentifierDocs(editingProvider.id, data);
-      setProviders(providers.map((provider) => provider.id === editingProvider.id ? { ...provider, ...data } : provider));
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'providers', editingProvider.id), data);
+
+      for (const identifier of buildProviderIdentifiers(editingProvider)) {
+        batch.delete(doc(db, 'providerIdentifiers', identifier.id));
+      }
+
+      for (const identifier of buildProviderIdentifiers({ id: editingProvider.id, ...data })) {
+        batch.set(doc(db, 'providerIdentifiers', identifier.id), {
+          providerId: editingProvider.id,
+          providerType,
+          identifierType: identifier.type,
+          value: identifier.value,
+          updatedAt: serverTimestamp(),
+        }, { merge: true });
+      }
+
+      await batch.commit();
+      setProviders(providers.map((provider) => provider.id === editingProvider.id ? { ...provider, ...data, updatedAt: new Date() } : provider));
       setEditingProvider(null);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error updating provider:', error);
+      if (error.message?.includes('insufficient permissions')) {
+        handleFirestoreError(error, 'update', `providers/${editingProvider.id}`);
+      } else {
+        alert('No se pudo actualizar el proveedor.');
+      }
     }
   };
 

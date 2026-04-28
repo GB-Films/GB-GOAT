@@ -27,8 +27,15 @@ export interface BudgetItem {
 export type PaymentCollection = 'budgetItems' | 'areaExpenses';
 
 export interface Collaborator {
+  uid?: string;
   email: string;
-  role: 'admin' | 'jefe_area' | 'colaborador';
+  displayName?: string;
+  photoURL?: string;
+  role: 'admin' | 'jefe_area' | 'colaborador' | 'lector';
   allowedTabs: string[];
   allowedCategories: string[];
+  canEditBudgetAreas?: boolean;
+  canViewBudgetTotals?: boolean;
+  createdAt?: any;
+  updatedAt?: any;
 }

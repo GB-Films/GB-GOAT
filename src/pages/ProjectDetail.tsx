@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { doc, getDoc, collection, query, getDocs, addDoc, serverTimestamp, deleteDoc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, query, getDocs, addDoc, serverTimestamp, deleteDoc, updateDoc, setDoc, writeBatch } from 'firebase/firestore';
 import { deleteObject, getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { db, storage } from '../lib/firebase';
 import { handleFirestoreError } from '../lib/firestoreUtils';
-import { useAuth, APP_OWNER_EMAIL } from '../context/AuthContext';
+import { useAuth } from '../context/AuthContext';
 import { 
   ChevronLeft, 
   Info, 
@@ -63,9 +63,43 @@ const statusColors: Record<string, string> = {
 };
 
 const roleLabels: Record<Collaborator['role'], string> = {
-  admin: 'Administrador',
+  admin: 'Admin de proyecto',
   jefe_area: 'Jefe de Área',
   colaborador: 'Colaborador',
+  lector: 'Lector',
+};
+
+const PROJECT_TAB_IDS = tabs.map(tab => tab.id);
+const DEFAULT_AREA_TABS = ['resumen', 'presupuesto', 'areas'];
+const safeArray = (value: any): string[] => Array.isArray(value) ? value : [];
+
+const getDefaultCollaboratorPermissions = (role: Collaborator['role'], categories: string[], selectedCategories?: string[]) => {
+  const chosenCategories = selectedCategories?.length ? selectedCategories : categories.slice(0, 1);
+
+  if (role === 'admin') {
+    return {
+      allowedTabs: PROJECT_TAB_IDS,
+      allowedCategories: categories,
+      canEditBudgetAreas: true,
+      canViewBudgetTotals: true,
+    };
+  }
+
+  if (role === 'lector') {
+    return {
+      allowedTabs: ['resumen', 'presupuesto'],
+      allowedCategories: chosenCategories,
+      canEditBudgetAreas: false,
+      canViewBudgetTotals: false,
+    };
+  }
+
+  return {
+    allowedTabs: DEFAULT_AREA_TABS,
+    allowedCategories: chosenCategories,
+    canEditBudgetAreas: true,
+    canViewBudgetTotals: false,
+  };
 };
 
 const formatDate = (dateString: string | any) => {
@@ -122,7 +156,7 @@ const normalizeEmail = (email?: string | null) => (email || '').trim().toLowerCa
 export default function ProjectDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { user, profile, isOwner: isAppOwner } = useAuth();
+  const { user, profile } = useAuth();
   const [project, setProject] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('resumen');
@@ -137,6 +171,11 @@ export default function ProjectDetail() {
   const [activeAreas, setActiveAreas] = useState<string[]>([]);
   const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>({});
   const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
+  const [availableUsers, setAvailableUsers] = useState<any[]>([]);
+  const [newCollaboratorSearch, setNewCollaboratorSearch] = useState('');
+  const [selectedUserToAdd, setSelectedUserToAdd] = useState<any | null>(null);
+  const [newCollaboratorRole, setNewCollaboratorRole] = useState<Collaborator['role']>('jefe_area');
+  const [newCollaboratorCategories, setNewCollaboratorCategories] = useState<string[]>([]);
   const [userPermissions, setUserPermissions] = useState<Collaborator | null>(null);
   const [isOwner, setIsOwner] = useState(false);
   const [isProjectAdmin, setIsProjectAdmin] = useState(false);
@@ -166,15 +205,28 @@ export default function ProjectDetail() {
           const isGlobalAdmin = profile?.role === 'admin';
           setIsOwner(owner);
 
-          // Fetch permissions
-          const colRef = doc(db, 'projects', id, 'collaborators', user.email || '');
-          const colSnapshot = await getDoc(colRef);
+          // Fetch permissions. Los colaboradores se guardan por email normalizado.
+          const userEmailKey = normalizeEmail(user.email);
+          let colSnapshot = await getDoc(doc(db, 'projects', id, 'collaborators', userEmailKey));
+          if (!colSnapshot.exists() && user.email && user.email !== userEmailKey) {
+            colSnapshot = await getDoc(doc(db, 'projects', id, 'collaborators', user.email));
+          }
           
           if (colSnapshot.exists()) {
-            const perms = colSnapshot.data() as Collaborator;
+            const rawPerms = colSnapshot.data() as Collaborator;
+            const perms: Collaborator = {
+              email: normalizeEmail(rawPerms.email || colSnapshot.id),
+              role: rawPerms.role || 'colaborador',
+              allowedTabs: safeArray(rawPerms.allowedTabs),
+              allowedCategories: safeArray(rawPerms.allowedCategories),
+              canEditBudgetAreas: rawPerms.canEditBudgetAreas ?? rawPerms.role !== 'lector',
+              canViewBudgetTotals: rawPerms.canViewBudgetTotals ?? rawPerms.role === 'admin',
+              ...rawPerms,
+            };
             setUserPermissions(perms);
             setIsProjectAdmin(owner || perms.role === 'admin' || isGlobalAdmin);
           } else {
+            setUserPermissions(null);
             setIsProjectAdmin(owner || isGlobalAdmin);
           }
 
@@ -194,9 +246,20 @@ export default function ProjectDetail() {
             setCategories(BUDGET_AREAS);
           }
 
-          // Fetch all collaborators for owner/admin
+          // Fetch all collaborators for project admins
           const colSnap = await getDocs(collection(db, 'projects', id, 'collaborators'));
-          setCollaborators(colSnap.docs.map(d => ({ role: 'colaborador', ...d.data() } as Collaborator)));
+          setCollaborators(colSnap.docs.map(d => {
+            const data = d.data() as any;
+            return {
+              email: normalizeEmail(data.email || d.id),
+              role: data.role || 'colaborador',
+              allowedTabs: safeArray(data.allowedTabs),
+              allowedCategories: safeArray(data.allowedCategories),
+              canEditBudgetAreas: data.canEditBudgetAreas ?? data.role !== 'lector',
+              canViewBudgetTotals: data.canViewBudgetTotals ?? data.role === 'admin',
+              ...data,
+            } as Collaborator;
+          }));
         }
 
         // Fetch Budget Items
@@ -235,6 +298,21 @@ export default function ProjectDetail() {
   }, [id, user, profile]);
 
   useEffect(() => {
+    if (!isProjectAdmin) return;
+
+    const fetchUsers = async () => {
+      try {
+        const snap = await getDocs(collection(db, 'users'));
+        setAvailableUsers(snap.docs.map((userDoc) => ({ id: userDoc.id, ...userDoc.data() })));
+      } catch (error) {
+        console.error('Error fetching available users:', error);
+      }
+    };
+
+    fetchUsers();
+  }, [isProjectAdmin]);
+
+  useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (areaSelectorRef.current && !areaSelectorRef.current.contains(event.target as Node)) {
         setIsAreaSelectorOpen(false);
@@ -245,7 +323,7 @@ export default function ProjectDetail() {
   }, []);
 
   const updateBudgetItem = async (itemId: string, updates: any) => {
-    if (!id) return;
+    if (!id || !canEditMainBudget) return;
     try {
       const itemRef = doc(db, 'projects', id, 'budgetItems', itemId);
       await updateDoc(itemRef, {
@@ -259,7 +337,7 @@ export default function ProjectDetail() {
   };
 
   const deleteBudgetItem = async (itemId: string) => {
-    if (!id || !confirm('¿Eliminar esta partida?')) return;
+    if (!id || !canEditMainBudget || !confirm('¿Eliminar esta partida?')) return;
     try {
       await deleteDoc(doc(db, 'projects', id, 'budgetItems', itemId));
       setBudgetItems(items => items.filter(i => i.id !== itemId));
@@ -269,7 +347,7 @@ export default function ProjectDetail() {
   };
 
   const addEmptyRow = async (area: string) => {
-    if (!id) return;
+    if (!id || !canEditMainBudget) return;
     const itemsInArea = budgetItems.filter(i => i.area === area);
     const maxOrder = itemsInArea.length > 0 ? Math.max(...itemsInArea.map(i => i.order || 0)) : 0;
     
@@ -295,7 +373,7 @@ export default function ProjectDetail() {
   };
 
   const onDragEnd = async (result: any) => {
-    if (!result.destination || !id) return;
+    if (!result.destination || !id || !canEditMainBudget) return;
 
     const { source, destination, type } = result;
     
@@ -458,7 +536,7 @@ export default function ProjectDetail() {
   };
 
   const addAreaExpense = async (area: string) => {
-    if (!id) return;
+    if (!id || !canEditArea(area)) return;
     const assigned = getAreaBudget(area);
     const spent = getAreaSpent(area);
 
@@ -500,6 +578,7 @@ export default function ProjectDetail() {
       if (!currentExpense) return;
 
       const nextArea = updates.area || currentExpense.area;
+      if (!canEditArea(currentExpense.area) || !canEditArea(nextArea)) return;
       const nextTotal = updates.total !== undefined ? Number(updates.total) : Number(currentExpense.total) || 0;
 
       if (!canSaveAreaExpense(nextArea, nextTotal, expenseId)) return;
@@ -513,7 +592,8 @@ export default function ProjectDetail() {
   };
 
   const deleteAreaExpense = async (expenseId: string) => {
-    if (!id || !confirm('¿Eliminar este gasto?')) return;
+    const currentExpense = areaExpenses.find(e => e.id === expenseId);
+    if (!id || !currentExpense || !canEditArea(currentExpense.area) || !confirm('¿Eliminar este gasto?')) return;
     try {
       await deleteDoc(doc(db, 'projects', id, 'areaExpenses', expenseId));
       setAreaExpenses(areaExpenses.filter(e => e.id !== expenseId));
@@ -523,7 +603,7 @@ export default function ProjectDetail() {
   };
 
   const uploadInvoiceForExpense = async (expense: any, file?: File | null) => {
-    if (!id || !file) return;
+    if (!id || !file || !canUploadAreaFiles(expense.area)) return;
 
     if (file.type !== 'application/pdf') {
       alert('Por ahora sólo se pueden adjuntar facturas en PDF.');
@@ -594,7 +674,7 @@ export default function ProjectDetail() {
   };
 
   const removeInvoiceFromExpense = async (expense: any) => {
-    if (!id || !expense.invoice) return;
+    if (!id || !expense.invoice || !canUploadAreaFiles(expense.area)) return;
     if (!confirm('¿Quitar la factura adjunta de este gasto?')) return;
 
     setUploadingInvoices(prev => ({ ...prev, [expense.id]: true }));
@@ -645,6 +725,7 @@ export default function ProjectDetail() {
   };
 
   const renameCategory = async (oldName: string) => {
+    if (!canEditMainBudget) return;
     const newName = prompt('Nuevo nombre para la categoría:', oldName);
     if (!newName || newName === oldName || !id) return;
 
@@ -744,6 +825,7 @@ export default function ProjectDetail() {
   };
 
   const addCategory = async () => {
+    if (!canEditMainBudget) return;
     const name = prompt('Nombre de la nueva categoría:');
     if (!name || !id) return;
     const newCategories = [...categories, name];
@@ -780,6 +862,7 @@ export default function ProjectDetail() {
   };
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (!canEditMainBudget) return;
     const file = event.target.files?.[0];
     if (!file || !id) return;
 
@@ -867,7 +950,7 @@ export default function ProjectDetail() {
   };
 
   const deleteCategory = async (area: string) => {
-    if (!id || !confirm(`¿Eliminar la categoría "${area}" y todos sus ítems?`)) return;
+    if (!id || !canEditMainBudget || !confirm(`¿Eliminar la categoría "${area}" y todos sus ítems?`)) return;
     
     const itemsToDelete = budgetItems.filter(i => i.area === area);
     const newCategories = categories.filter(c => c !== area);
@@ -891,26 +974,49 @@ export default function ProjectDetail() {
   const visibleTabs = tabs.filter(tab => {
     if (isProjectAdmin) return true;
     if (userPermissions?.role === 'jefe_area' && ['resumen', 'presupuesto', 'areas'].includes(tab.id)) return true;
-    return userPermissions?.allowedTabs.includes(tab.id);
+    return safeArray(userPermissions?.allowedTabs).includes(tab.id);
   });
 
   const visibleCategories = categories.filter(cat => {
     if (activeTab === 'areas') {
        // In areas tab, we only show active ones or what user is allowed
-       return activeAreas.includes(cat) && (isProjectAdmin || userPermissions?.allowedCategories.includes(cat));
+       return activeAreas.includes(cat) && (isProjectAdmin || safeArray(userPermissions?.allowedCategories).includes(cat));
     }
     if (isProjectAdmin) return true;
-    return userPermissions?.allowedCategories.includes(cat);
+    return safeArray(userPermissions?.allowedCategories).includes(cat);
   });
 
   const visibleBudgetItems = budgetItems.filter(item => {
     if (isProjectAdmin) return true;
-    return userPermissions?.allowedCategories.includes(item.area);
+    return safeArray(userPermissions?.allowedCategories).includes(item.area);
   });
 
   const selectedAreaTab = activeAreaTab && visibleCategories.includes(activeAreaTab)
     ? activeAreaTab
     : visibleCategories[0] || null;
+
+  const canEditMainBudget = isProjectAdmin;
+  const canEditArea = (area?: string | null) => {
+    if (!area) return false;
+    if (isProjectAdmin) return true;
+    return Boolean(
+      userPermissions?.canEditBudgetAreas
+      && safeArray(userPermissions.allowedCategories).includes(area)
+      && safeArray(userPermissions.allowedTabs).includes('areas')
+    );
+  };
+  const canUploadAreaFiles = (area?: string | null) => canEditArea(area);
+  const collaboratorEmails = collaborators.map((col) => normalizeEmail(col.email));
+  const filteredAvailableUsers = availableUsers
+    .filter((candidate) => {
+      const email = normalizeEmail(candidate.email);
+      if (!email) return false;
+      if (collaboratorEmails.includes(email)) return false;
+      const term = newCollaboratorSearch.trim().toLowerCase();
+      if (!term) return true;
+      return [candidate.displayName, candidate.email].filter(Boolean).join(' ').toLowerCase().includes(term);
+    })
+    .slice(0, 8);
 
   const providerSaldos = React.useMemo(() => {
     const saldosMap = new Map<string, { 
@@ -970,54 +1076,103 @@ export default function ProjectDetail() {
     }));
   }, [budgetItems, areaExpenses, providers]);
 
-  const addCollaborator = async (email: string) => {
-    if (!id || !email) return;
+  const addCollaborator = async (selectedUser: any) => {
+    if (!id || !selectedUser?.email) return;
+
+    const email = normalizeEmail(selectedUser.email);
+    const selectedCategories = newCollaboratorRole === 'admin'
+      ? categories
+      : newCollaboratorCategories.length
+        ? newCollaboratorCategories
+        : [activeAreas[0] || categories[0]].filter(Boolean);
+    const defaults = getDefaultCollaboratorPermissions(newCollaboratorRole, categories, selectedCategories);
+
     const newCol: Collaborator = {
+      uid: selectedUser.uid || selectedUser.id,
       email,
-      role: 'jefe_area',
-      allowedTabs: ['resumen', 'presupuesto', 'areas'],
-      allowedCategories: [activeAreas[0] || categories[0]].filter(Boolean)
+      displayName: selectedUser.displayName || selectedUser.email,
+      photoURL: selectedUser.photoURL || '',
+      role: newCollaboratorRole,
+      ...defaults,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
     };
+
     try {
-      const { setDoc } = await import('firebase/firestore');
       await setDoc(doc(db, 'projects', id, 'collaborators', email), newCol);
-      
-      const newEmails = Array.from(new Set([...(project?.collaboratorEmails || []), email]));
+      const newEmails = Array.from(new Set([...(project?.collaboratorEmails || []), email].map(normalizeEmail).filter(Boolean)));
       await updateDoc(doc(db, 'projects', id), {
-        collaboratorEmails: newEmails
+        collaboratorEmails: newEmails,
+        updatedAt: serverTimestamp(),
       });
-      
-      setCollaborators([...collaborators, newCol]);
+
+      setCollaborators([...collaborators, { ...newCol, createdAt: new Date(), updatedAt: new Date() }]);
       setProject({ ...project, collaboratorEmails: newEmails });
+      setSelectedUserToAdd(null);
+      setNewCollaboratorSearch('');
+      setNewCollaboratorRole('jefe_area');
+      setNewCollaboratorCategories([]);
     } catch (e) {
       console.error("Error adding collaborator:", e);
-      alert("Error al añadir colaborador. Verifica los permisos.");
+      alert("Error al añadir colaborador. Verificá permisos o que el usuario exista en la plataforma.");
     }
   };
 
   const updateCollaboratorRole = async (col: Collaborator, role: Collaborator['role']) => {
     if (!id) return;
 
-    if ((col.role === 'admin' || role === 'admin') && !isAppOwner) {
-      alert(`Solo ${APP_OWNER_EMAIL} puede asignar o quitar roles Admin.`);
-      return;
+    const defaults = getDefaultCollaboratorPermissions(
+      role,
+      categories,
+      col.allowedCategories?.length ? col.allowedCategories : [activeAreas[0] || categories[0]].filter(Boolean)
+    );
+    const updates: Partial<Collaborator> = {
+      role,
+      ...defaults,
+      updatedAt: serverTimestamp(),
+    };
+
+    try {
+      await updateDoc(doc(db, 'projects', id, 'collaborators', normalizeEmail(col.email)), updates);
+      setCollaborators(collaborators.map(c => normalizeEmail(c.email) === normalizeEmail(col.email) ? { ...c, ...updates, updatedAt: new Date() } : c));
+    } catch (error) {
+      console.error('Error updating collaborator role:', error);
+      alert('No se pudo actualizar el rol del colaborador.');
     }
+  };
 
-    const updates: Partial<Collaborator> = { role };
+  const updateCollaboratorPermissions = async (col: Collaborator, updates: Partial<Collaborator>) => {
+    if (!id) return;
 
-    if (role === 'jefe_area') {
-      updates.allowedTabs = Array.from(new Set([...col.allowedTabs, 'resumen', 'presupuesto', 'areas']));
-      updates.allowedCategories = col.allowedCategories.length
-        ? col.allowedCategories
-        : [activeAreas[0] || categories[0]].filter(Boolean);
+    try {
+      const payload = { ...updates, updatedAt: serverTimestamp() };
+      await updateDoc(doc(db, 'projects', id, 'collaborators', normalizeEmail(col.email)), payload);
+      setCollaborators(collaborators.map(c => normalizeEmail(c.email) === normalizeEmail(col.email) ? { ...c, ...updates, updatedAt: new Date() } : c));
+    } catch (error) {
+      console.error('Error updating collaborator permissions:', error);
+      alert('No se pudieron actualizar los permisos.');
     }
+  };
 
-    if (role === 'colaborador' && col.allowedTabs.length === 0) {
-      updates.allowedTabs = ['resumen', 'presupuesto'];
+  const removeCollaborator = async (col: Collaborator) => {
+    if (!id || !confirm('¿Quitar acceso a ' + col.email + '?')) return;
+    const email = normalizeEmail(col.email);
+
+    try {
+      const batch = writeBatch(db);
+      batch.delete(doc(db, 'projects', id, 'collaborators', email));
+      const newEmails = (project?.collaboratorEmails || []).map(normalizeEmail).filter((item: string) => item !== email);
+      batch.update(doc(db, 'projects', id), {
+        collaboratorEmails: newEmails,
+        updatedAt: serverTimestamp(),
+      });
+      await batch.commit();
+      setCollaborators(collaborators.filter(c => normalizeEmail(c.email) !== email));
+      setProject({ ...project, collaboratorEmails: newEmails });
+    } catch (error) {
+      console.error('Error removing collaborator:', error);
+      alert('No se pudo quitar el acceso.');
     }
-
-    await updateDoc(doc(db, 'projects', id, 'collaborators', col.email), updates);
-    setCollaborators(collaborators.map(c => c.email === col.email ? { ...c, ...updates } : c));
   };
 
   const handleDeleteProject = async () => {
@@ -1342,11 +1497,11 @@ export default function ProjectDetail() {
               <div>
                 <h2 className="text-xl font-bold text-slate-900">Planilla de Presupuesto</h2>
                 <div className="text-[10px] uppercase font-bold text-slate-400 tracking-widest mt-1">
-                  {isOwner ? 'Categorías dinámicas y ordenables' : 'Vista restringida por rol'}
+                  {canEditMainBudget ? 'Categorías dinámicas y ordenables' : 'Vista restringida por rol'}
                 </div>
               </div>
               <div className="flex gap-2">
-                {isOwner && (
+                {canEditMainBudget && (
                   <div className="flex gap-1">
                     <button 
                       onClick={downloadTemplate}
@@ -1373,7 +1528,7 @@ export default function ProjectDetail() {
                     </label>
                   </div>
                 )}
-                {isOwner && (
+                {canEditMainBudget && (
                   <button 
                     onClick={addCategory}
                     className="px-4 py-2 bg-black text-white text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 transition-all flex items-center gap-2 rounded"
@@ -1398,7 +1553,7 @@ export default function ProjectDetail() {
                   <div className="col-span-2"></div>
                 </div>
 
-                <DragDropContext onDragEnd={isOwner ? onDragEnd : () => {}}>
+                <DragDropContext onDragEnd={canEditMainBudget ? onDragEnd : () => {}}>
                   <Droppable droppableId="all-categories" type="category">
                     {(provided) => (
                       <div {...provided.droppableProps} ref={provided.innerRef}>
@@ -1411,7 +1566,7 @@ export default function ProjectDetail() {
 
                           const DraggableComponent = Draggable as any;
                           return (
-                            <DraggableComponent key={area} draggableId={area} index={areaIndex} isDragDisabled={!isOwner}>
+                            <DraggableComponent key={area} draggableId={area} index={areaIndex} isDragDisabled={!canEditMainBudget}>
                               {(provided: any) => (
                                 <div
                                   ref={provided.innerRef}
@@ -1419,35 +1574,36 @@ export default function ProjectDetail() {
                                   className="border-b border-slate-100 last:border-0"
                                 >
                                   {/* Category Row */}
-                                  <div className="bg-slate-50/50 px-4 py-2.5 flex items-center justify-between group border-l-4 border-black">
+                                  <div className="bg-slate-900 text-white px-4 py-3 flex items-center justify-between group border-l-4 border-emerald-400 shadow-sm">
                                     <div className="flex items-center gap-4 flex-1">
-                                      <div {...provided.dragHandleProps} className="text-slate-300 hover:text-slate-500 cursor-grab active:cursor-grabbing">
+                                      <div {...provided.dragHandleProps} className={cn("text-slate-300", canEditMainBudget ? "hover:text-slate-500 cursor-grab active:cursor-grabbing" : "opacity-30")}>
                                         <GripVertical className="w-4 h-4" />
                                       </div>
                                       <button 
                                         onClick={() => toggleCategory(area)}
-                                        className="p-1 text-slate-400 hover:text-black transition-colors"
+                                        className="p-1 text-slate-300 hover:text-white transition-colors"
                                       >
                                         {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                                       </button>
                                       <span 
                                         className={cn(
-                                          "text-[11px] font-bold uppercase tracking-wider text-slate-900",
-                                          isOwner && "cursor-pointer hover:underline"
+                                          "text-[12px] font-black uppercase tracking-[0.18em] text-white",
+                                          canEditMainBudget && "cursor-pointer hover:underline"
                                         )}
-                                        onClick={() => isOwner && renameCategory(area)}
-                                        title={isOwner ? "Click para renombrar" : ""}
+                                        onClick={() => canEditMainBudget && renameCategory(area)}
+                                        title={canEditMainBudget ? "Click para renombrar" : ""}
                                       >
                                         {area}
                                       </span>
-                                      <span className="text-[10px] text-slate-400 font-medium">({areaItems.length} ítems)</span>
+                                      <span className="text-[10px] text-slate-300 font-bold">({areaItems.length} ítems)</span>
                                     </div>
                                     
                                     <div className="flex items-center gap-6">
-                                      <div className="text-[10px] font-black tracking-widest text-emerald-600">
+                                      <div className="text-[10px] font-black tracking-widest text-emerald-300">
                                         SUBTOTAL: ${areaTotal.toLocaleString()}
                                       </div>
                                       <div className="flex items-center gap-1">
+                                        {canEditMainBudget && (
                                         <button 
                                           onClick={() => addEmptyRow(area)}
                                           className="p-1.5 text-slate-400 hover:text-black transition-colors bg-white border border-slate-200 rounded"
@@ -1455,7 +1611,8 @@ export default function ProjectDetail() {
                                         >
                                           <Plus className="w-3.5 h-3.5" />
                                         </button>
-                                        {isOwner && (
+                                        )}
+                                        {canEditMainBudget && (
                                           <button 
                                             onClick={() => deleteCategory(area)}
                                             className="p-1.5 text-slate-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
@@ -1491,7 +1648,7 @@ export default function ProjectDetail() {
                                                     )}
                                                   >
                                                     <div className="col-span-12 flex items-center">
-                                                      <div {...provided.dragHandleProps} className="mr-2 text-slate-300 hover:text-slate-500 cursor-grab active:cursor-grabbing">
+                                                      <div {...provided.dragHandleProps} className={cn("mr-2 text-slate-300", canEditMainBudget ? "hover:text-slate-500 cursor-grab active:cursor-grabbing" : "opacity-30")}>
                                                         <GripVertical className="w-4 h-4" />
                                                       </div>
                                                       <div className="grid grid-cols-12 w-full items-center">
@@ -1502,6 +1659,7 @@ export default function ProjectDetail() {
                                                             onUpdate={updateBudgetItem} 
                                                             onDelete={deleteBudgetItem} 
                                                             type="provider"
+                                                            disabled={!canEditMainBudget}
                                                           />
                                                         </div>
                                                         <div className="col-span-3">
@@ -1509,6 +1667,7 @@ export default function ProjectDetail() {
                                                             item={item} 
                                                             onUpdate={updateBudgetItem} 
                                                             type="description"
+                                                            disabled={!canEditMainBudget}
                                                           />
                                                         </div>
                                                         <div className="col-span-2">
@@ -1516,6 +1675,7 @@ export default function ProjectDetail() {
                                                             item={item} 
                                                             onUpdate={updateBudgetItem} 
                                                             type="price"
+                                                            disabled={!canEditMainBudget}
                                                           />
                                                         </div>
                                                         <div className="col-span-1 text-center font-mono">
@@ -1523,6 +1683,7 @@ export default function ProjectDetail() {
                                                             item={item} 
                                                             onUpdate={updateBudgetItem} 
                                                             type="quantity"
+                                                            disabled={!canEditMainBudget}
                                                           />
                                                         </div>
                                                         <div className="col-span-1 text-right font-bold text-slate-900 text-xs">
@@ -1535,15 +1696,18 @@ export default function ProjectDetail() {
                                                             type="paid"
                                                             disabledPayment={activeAreas.includes(item.area)}
                                                             onManagePayment={(item) => openPaymentModal(item, 'budgetItems')}
+                                                            disabled={!canEditMainBudget}
                                                           />
                                                         </div>
                                                         <div className="col-span-2 text-right">
+                                                          {canEditMainBudget && (
                                                           <button 
                                                             onClick={() => deleteBudgetItem(item.id)}
                                                             className="p-1 text-slate-200 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all font-bold text-[10px] uppercase underline"
                                                           >
                                                             Eliminar
                                                           </button>
+                                                          )}
                                                         </div>
                                                       </div>
                                                     </div>
@@ -1714,7 +1878,8 @@ export default function ProjectDetail() {
                     </div>
                     <button 
                       onClick={() => addAreaExpense(selectedAreaTab)}
-                      className="px-3 py-1.5 bg-black text-white text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 transition-all flex items-center gap-2 rounded"
+                      disabled={!canEditArea(selectedAreaTab)}
+                      className="px-3 py-1.5 bg-black text-white text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 transition-all flex items-center gap-2 rounded disabled:bg-slate-300 disabled:cursor-not-allowed"
                     >
                       <Plus className="w-3 h-3" />
                       Registrar Gasto
@@ -1742,19 +1907,19 @@ export default function ProjectDetail() {
                             key={item.id}
                             onDragEnter={(event) => {
                               event.preventDefault();
-                              setDragOverExpenseId(item.id);
+                              if (canUploadAreaFiles(item.area)) setDragOverExpenseId(item.id);
                             }}
                             onDragOver={(event) => {
                               event.preventDefault();
-                              event.dataTransfer.dropEffect = 'copy';
-                              setDragOverExpenseId(item.id);
+                              event.dataTransfer.dropEffect = canUploadAreaFiles(item.area) ? 'copy' : 'none';
+                              if (canUploadAreaFiles(item.area)) setDragOverExpenseId(item.id);
                             }}
                             onDragLeave={(event) => {
                               if (!event.currentTarget.contains(event.relatedTarget as Node)) {
                                 setDragOverExpenseId(null);
                               }
                             }}
-                            onDrop={(event) => handleInvoiceDrop(event, item)}
+                            onDrop={(event) => canUploadAreaFiles(item.area) && handleInvoiceDrop(event, item)}
                             className={cn(
                               "relative grid grid-cols-12 px-6 py-3 items-center transition-colors group",
                               dragOverExpenseId === item.id
@@ -1777,6 +1942,7 @@ export default function ProjectDetail() {
                                 onUpdate={updateAreaExpense} 
                                 onDelete={deleteAreaExpense} 
                                 type="provider"
+                                disabled={!canEditArea(item.area)}
                               />
                             </div>
                             <div className="col-span-3">
@@ -1784,6 +1950,7 @@ export default function ProjectDetail() {
                                 item={item} 
                                 onUpdate={updateAreaExpense} 
                                 type="description"
+                                disabled={!canEditArea(item.area)}
                               />
                             </div>
                             <div className="col-span-1 flex justify-center">
@@ -1799,7 +1966,7 @@ export default function ProjectDetail() {
                                     >
                                       <FileText className="w-3.5 h-3.5" />
                                     </a>
-                                    {isProjectAdmin && (
+                                    {canUploadAreaFiles(item.area) && (
                                       <button
                                         type="button"
                                         disabled={!!uploadingInvoices[item.id]}
@@ -1814,6 +1981,7 @@ export default function ProjectDetail() {
                                 ) : (
                                   <span className="text-[9px] font-bold uppercase tracking-widest text-slate-300">Sin PDF</span>
                                 )}
+                                {canUploadAreaFiles(item.area) && (
                                 <label
                                   className={cn(
                                     "w-7 h-7 rounded border transition-all flex items-center justify-center cursor-pointer",
@@ -1836,6 +2004,7 @@ export default function ProjectDetail() {
                                     }}
                                   />
                                 </label>
+                                )}
                               </div>
                             </div>
                             <div className="col-span-2">
@@ -1843,6 +2012,7 @@ export default function ProjectDetail() {
                                 item={item} 
                                 onUpdate={updateAreaExpense} 
                                 type="price"
+                                disabled={!canEditArea(item.area)}
                               />
                             </div>
                             <div className="col-span-1">
@@ -1850,6 +2020,7 @@ export default function ProjectDetail() {
                                 item={item} 
                                 onUpdate={updateAreaExpense} 
                                 type="quantity"
+                                disabled={!canEditArea(item.area)}
                               />
                             </div>
                             <div className="col-span-1 text-right font-bold text-slate-900 text-xs">
@@ -1861,11 +2032,11 @@ export default function ProjectDetail() {
                                  onUpdate={updateAreaExpense} 
                                  type="paid"
                                  onManagePayment={(item) => openPaymentModal(item, 'areaExpenses')}
-                                 disabledPayment={!isProjectAdmin}
+                                 disabledPayment={!canEditArea(item.area)}
                                />
                             </div>
                             <div className="col-span-1 text-right">
-                               {isProjectAdmin && (
+                               {canEditArea(item.area) && (
                                  <button 
                                    onClick={() => deleteAreaExpense(item.id)}
                                    className="p-1 text-slate-200 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
@@ -2095,37 +2266,122 @@ export default function ProjectDetail() {
 
         {activeTab === 'permisos' && isProjectAdmin && (
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden p-8">
-            <div className="max-w-2xl mx-auto space-y-12">
+            <div className="max-w-5xl mx-auto space-y-12">
               <header className="text-center">
                 <Shield className="w-12 h-12 text-slate-900 mx-auto mb-4" />
-                <h2 className="text-xl font-bold mb-2">Gestión de Acceso y Colaboradores</h2>
-                <p className="text-sm text-slate-500">Define qué partes del presupuesto y qué pestañas pueden visualizar tus invitados.</p>
+                <h2 className="text-xl font-bold mb-2">Permisos del Proyecto</h2>
+                <p className="text-sm text-slate-500 max-w-2xl mx-auto">
+                  Agregá usuarios que ya se hayan logueado en la plataforma y definí si son admins del proyecto, jefes de área, colaboradores o lectores. Esto no cambia su rol global en la app.
+                </p>
               </header>
 
-              <div className="space-y-4">
-                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Añadir Colaborador por Email</label>
-                <div className="flex gap-2">
-                  <div className="relative flex-1">
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 p-6 bg-slate-50 border border-slate-100 rounded-2xl">
+                <div className="lg:col-span-5 space-y-4">
+                  <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400">Buscar usuario logueado</label>
+                  <div className="relative">
                     <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
-                    <input 
-                      type="email" 
-                      id="new-collab-email"
-                      placeholder="ejemplo@google.com" 
-                      className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded text-sm focus:border-black focus:outline-none transition-all"
+                    <input
+                      value={newCollaboratorSearch}
+                      onChange={(event) => {
+                        setNewCollaboratorSearch(event.target.value);
+                        setSelectedUserToAdd(null);
+                      }}
+                      placeholder="Nombre o email..."
+                      className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded text-sm focus:border-black focus:outline-none transition-all"
                     />
                   </div>
-                  <button 
-                    onClick={() => {
-                        const input = document.getElementById('new-collab-email') as HTMLInputElement;
-                        if (input.value) {
-                            addCollaborator(input.value);
-                            input.value = '';
-                        }
-                    }}
-                    className="px-6 py-3 bg-black text-white rounded text-xs font-bold uppercase tracking-widest hover:bg-slate-800 transition-all flex items-center gap-2"
+
+                  <div className="max-h-64 overflow-y-auto bg-white border border-slate-200 rounded-xl divide-y divide-slate-100">
+                    {filteredAvailableUsers.length === 0 ? (
+                      <div className="p-5 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
+                        {availableUsers.length === 0 ? 'No hay usuarios disponibles' : 'Sin resultados'}
+                      </div>
+                    ) : filteredAvailableUsers.map((candidate) => {
+                      const candidateEmail = normalizeEmail(candidate.email);
+                      const selected = normalizeEmail(selectedUserToAdd?.email) === candidateEmail;
+                      return (
+                        <button
+                          key={candidate.uid || candidate.id || candidateEmail}
+                          type="button"
+                          onClick={() => setSelectedUserToAdd(candidate)}
+                          className={cn(
+                            "w-full text-left px-4 py-3 transition-all flex items-center gap-3",
+                            selected ? "bg-black text-white" : "hover:bg-slate-50 text-slate-700"
+                          )}
+                        >
+                          <img
+                            src={candidate.photoURL || `https://ui-avatars.com/api/?name=${candidate.displayName || candidate.email || 'U'}&background=000&color=fff`}
+                            alt="Avatar"
+                            className="w-8 h-8 rounded-full border border-white/30"
+                          />
+                          <div className="min-w-0">
+                            <div className="text-xs font-bold truncate">{candidate.displayName || candidate.email}</div>
+                            <div className={cn("text-[10px] truncate", selected ? "text-white/60" : "text-slate-400")}>{candidate.email}</div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="lg:col-span-7 space-y-5">
+                  <div>
+                    <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Rol dentro del proyecto</div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                      {(['admin', 'jefe_area', 'colaborador', 'lector'] as Collaborator['role'][]).map((role) => (
+                        <button
+                          key={role}
+                          type="button"
+                          onClick={() => setNewCollaboratorRole(role)}
+                          className={cn(
+                            "px-3 py-2 rounded border text-[9px] font-bold uppercase tracking-widest transition-all",
+                            newCollaboratorRole === role ? "bg-black text-white border-black" : "bg-white border-slate-200 text-slate-400 hover:text-black hover:border-black"
+                          )}
+                        >
+                          {roleLabels[role]}
+                        </button>
+                      ))}
+                    </div>
+                    {newCollaboratorRole === 'admin' && (
+                      <p className="text-[10px] text-slate-500 mt-2">
+                        Admin de proyecto: puede gestionar este proyecto y sus permisos, pero no pasa a ser admin global de la app.
+                      </p>
+                    )}
+                  </div>
+
+                  {newCollaboratorRole !== 'admin' && (
+                    <div>
+                      <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Áreas del presupuesto asignadas</div>
+                      <div className="flex flex-wrap gap-2 max-h-36 overflow-y-auto pr-1">
+                        {categories.map((cat) => {
+                          const selected = newCollaboratorCategories.includes(cat);
+                          return (
+                            <button
+                              key={cat}
+                              type="button"
+                              onClick={() => setNewCollaboratorCategories(selected ? newCollaboratorCategories.filter(item => item !== cat) : [...newCollaboratorCategories, cat])}
+                              className={cn(
+                                "px-3 py-1.5 rounded text-[10px] font-bold uppercase transition-all tracking-tight",
+                                selected ? "bg-emerald-500 text-white" : "bg-white border border-slate-200 text-slate-400 hover:border-emerald-500 hover:text-emerald-500"
+                              )}
+                            >
+                              {cat}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <p className="text-[10px] text-slate-400 mt-2">Si no elegís ninguna, se asigna la primera área activa/disponible.</p>
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    disabled={!selectedUserToAdd}
+                    onClick={() => selectedUserToAdd && addCollaborator(selectedUserToAdd)}
+                    className="w-full px-6 py-3 bg-black text-white rounded text-xs font-bold uppercase tracking-widest hover:bg-slate-800 transition-all flex items-center justify-center gap-2 disabled:bg-slate-300 disabled:cursor-not-allowed"
                   >
                     <UserPlus className="w-4 h-4" />
-                    Invitar
+                    Agregar al Proyecto
                   </button>
                 </div>
               </div>
@@ -2138,142 +2394,135 @@ export default function ProjectDetail() {
                       No hay colaboradores externos en este proyecto
                     </div>
                   ) : (
-                    collaborators.map(col => {
-                      const canChangeAdminRole = isAppOwner || col.role !== 'admin';
-                      return (
+                    collaborators.map(col => (
                       <div key={col.email} className="p-6 bg-slate-50 rounded-xl border border-slate-100">
-                        <div className="flex justify-between items-start mb-8">
-                          <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-full bg-white border border-slate-200 flex items-center justify-center">
-                              <Mail className="w-4 h-4 text-slate-400" />
-                            </div>
-                            <div className="flex items-center gap-4">
-                                <div>
-                                    <div className="text-xs font-bold">{col.email}</div>
-                                    <div className="text-[10px] text-slate-400 font-medium">{roleLabels[col.role] || 'Colaborador'}</div>
-                                </div>
-                                <div className="flex gap-1 ml-4 bg-white p-1 rounded border border-slate-200">
-                                    <button 
-                                        onClick={() => updateCollaboratorRole(col, 'admin')}
-                                        disabled={!isAppOwner}
-                                        title={isAppOwner ? 'Asignar Admin' : `Solo ${APP_OWNER_EMAIL} puede asignar Admin`}
-                                        className={cn(
-                                            "px-2 py-1 text-[8px] font-bold uppercase tracking-widest rounded transition-all",
-                                            col.role === 'admin' ? "bg-black text-white" : "text-slate-400 hover:text-black",
-                                            !isAppOwner && "opacity-40 cursor-not-allowed hover:text-slate-400"
-                                        )}
-                                    >
-                                        Admin
-                                    </button>
-                                    <button 
-                                        onClick={() => updateCollaboratorRole(col, 'jefe_area')}
-                                        disabled={!canChangeAdminRole}
-                                        title={canChangeAdminRole ? 'Cambiar a Jefe de Área' : `Solo ${APP_OWNER_EMAIL} puede bajar un Admin`}
-                                        className={cn(
-                                            "px-2 py-1 text-[8px] font-bold uppercase tracking-widest rounded transition-all",
-                                            col.role === 'jefe_area' ? "bg-black text-white" : "text-slate-400 hover:text-black",
-                                            !canChangeAdminRole && "opacity-40 cursor-not-allowed hover:text-slate-400"
-                                        )}
-                                    >
-                                        Jefe Área
-                                    </button>
-                                    <button 
-                                        onClick={() => updateCollaboratorRole(col, 'colaborador')}
-                                        disabled={!canChangeAdminRole}
-                                        title={canChangeAdminRole ? 'Cambiar a Colaborador' : `Solo ${APP_OWNER_EMAIL} puede bajar un Admin`}
-                                        className={cn(
-                                            "px-2 py-1 text-[8px] font-bold uppercase tracking-widest rounded transition-all",
-                                            col.role === 'colaborador' ? "bg-black text-white" : "text-slate-400 hover:text-black",
-                                            !canChangeAdminRole && "opacity-40 cursor-not-allowed hover:text-slate-400"
-                                        )}
-                                    >
-                                        Colaborador
-                                    </button>
-                                </div>
-                            </div>
-                          </div>
-                          <button 
-                            className="text-[10px] text-red-500 font-bold uppercase tracking-widest hover:underline"
-                            onClick={async () => {
-                                if (col.role === 'admin' && !isAppOwner) {
-                                    alert(`Solo ${APP_OWNER_EMAIL} puede quitar acceso a colaboradores Admin.`);
-                                    return;
-                                }
-                                if (confirm(`¿Quitar acceso a ${col.email}?`)) {
-                                    await deleteDoc(doc(db, 'projects', id!, 'collaborators', col.email));
-                                    await updateDoc(doc(db, 'projects', id!), {
-                                        collaboratorEmails: project.collaboratorEmails.filter((e: string) => e !== col.email)
-                                    });
-                                    setCollaborators(collaborators.filter(c => c.email !== col.email));
-                                }
-                            }}
-                          >
-                            Eliminar
-                          </button>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-8">
-                          <div>
-                            <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3 font-mono">Pestañas Permitidas</div>
-                            <div className="flex flex-wrap gap-2">
-                              {tabs.filter(t => t.id !== 'permisos' && t.id !== 'saldos').map(tab => (
-                                <button
-                                  key={tab.id}
-                                  onClick={async () => {
-                                    const next = col.allowedTabs.includes(tab.id)
-                                      ? col.allowedTabs.filter(id => id !== tab.id)
-                                      : [...col.allowedTabs, tab.id];
-                                    await updateDoc(doc(db, 'projects', id!, 'collaborators', col.email), { allowedTabs: next });
-                                    setCollaborators(collaborators.map(c => c.email === col.email ? { ...c, allowedTabs: next } : c));
-                                  }}
-                                  className={cn(
-                                    "px-3 py-1.5 rounded text-[10px] font-bold uppercase transition-all tracking-tight",
-                                    col.allowedTabs.includes(tab.id) 
-                                      ? "bg-black text-white" 
-                                      : "bg-white border border-slate-200 text-slate-400 hover:border-black hover:text-black"
-                                  )}
-                                >
-                                  {tab.label}
-                                </button>
-                              ))}
+                        <div className="flex flex-col lg:flex-row lg:justify-between lg:items-start gap-4 mb-8">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <img
+                              src={col.photoURL || `https://ui-avatars.com/api/?name=${col.displayName || col.email || 'U'}&background=000&color=fff`}
+                              alt="Avatar"
+                              className="w-10 h-10 rounded-full border border-slate-200"
+                            />
+                            <div className="min-w-0">
+                              <div className="text-xs font-bold truncate">{col.displayName || col.email}</div>
+                              <div className="text-[10px] text-slate-400 font-medium truncate">{col.email}</div>
+                              <div className="text-[9px] text-slate-400 font-bold uppercase mt-1">{roleLabels[col.role] || 'Colaborador'}</div>
                             </div>
                           </div>
 
-                          <div>
-                            <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3 font-mono">Categorías Presupuesto</div>
-                            <div className="flex flex-wrap gap-2">
-                              {categories.map(cat => (
+                          <div className="flex flex-wrap gap-2 items-center justify-end">
+                            <div className="flex gap-1 bg-white p-1 rounded border border-slate-200">
+                              {(['admin', 'jefe_area', 'colaborador', 'lector'] as Collaborator['role'][]).map((role) => (
                                 <button
-                                  key={cat}
-                                  onClick={async () => {
-                                    const next = col.allowedCategories.includes(cat)
-                                      ? col.allowedCategories.filter(c => c !== cat)
-                                      : [...col.allowedCategories, cat];
-                                    await updateDoc(doc(db, 'projects', id!, 'collaborators', col.email), { allowedCategories: next });
-                                    setCollaborators(collaborators.map(c => c.email === col.email ? { ...c, allowedCategories: next } : c));
-                                  }}
+                                  key={role}
+                                  onClick={() => updateCollaboratorRole(col, role)}
                                   className={cn(
-                                    "px-3 py-1.5 rounded text-[10px] font-bold uppercase transition-all tracking-tight",
-                                    col.allowedCategories.includes(cat) 
-                                      ? "bg-emerald-500 text-white" 
-                                      : "bg-white border border-slate-200 text-slate-400 hover:border-emerald-500 hover:text-emerald-500"
+                                    "px-2 py-1 text-[8px] font-bold uppercase tracking-widest rounded transition-all",
+                                    col.role === role ? "bg-black text-white" : "text-slate-400 hover:text-black"
                                   )}
                                 >
-                                  {cat}
+                                  {role === 'jefe_area' ? 'Jefe' : role}
                                 </button>
                               ))}
                             </div>
+                            <button
+                              className="text-[10px] text-red-500 font-bold uppercase tracking-widest hover:underline"
+                              onClick={() => removeCollaborator(col)}
+                            >
+                              Eliminar
+                            </button>
                           </div>
                         </div>
+
+                        {col.role !== 'admin' ? (
+                          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                            <div>
+                              <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3 font-mono">Pestañas Permitidas</div>
+                              <div className="flex flex-wrap gap-2">
+                                {tabs.filter(t => t.id !== 'permisos' && t.id !== 'saldos').map(tab => {
+                                  const enabled = safeArray(col.allowedTabs).includes(tab.id);
+                                  return (
+                                    <button
+                                      key={tab.id}
+                                      onClick={() => {
+                                        const next = enabled
+                                          ? safeArray(col.allowedTabs).filter(tabId => tabId !== tab.id)
+                                          : [...safeArray(col.allowedTabs), tab.id];
+                                        updateCollaboratorPermissions(col, { allowedTabs: next });
+                                      }}
+                                      className={cn(
+                                        "px-3 py-1.5 rounded text-[10px] font-bold uppercase transition-all tracking-tight",
+                                        enabled ? "bg-black text-white" : "bg-white border border-slate-200 text-slate-400 hover:border-black hover:text-black"
+                                      )}
+                                    >
+                                      {tab.label}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+
+                            <div>
+                              <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3 font-mono">Áreas de Presupuesto</div>
+                              <div className="flex flex-wrap gap-2">
+                                {categories.map(cat => {
+                                  const enabled = safeArray(col.allowedCategories).includes(cat);
+                                  return (
+                                    <button
+                                      key={cat}
+                                      onClick={() => {
+                                        const next = enabled
+                                          ? safeArray(col.allowedCategories).filter(item => item !== cat)
+                                          : [...safeArray(col.allowedCategories), cat];
+                                        updateCollaboratorPermissions(col, { allowedCategories: next });
+                                      }}
+                                      className={cn(
+                                        "px-3 py-1.5 rounded text-[10px] font-bold uppercase transition-all tracking-tight",
+                                        enabled ? "bg-emerald-500 text-white" : "bg-white border border-slate-200 text-slate-400 hover:border-emerald-500 hover:text-emerald-500"
+                                      )}
+                                    >
+                                      {cat}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+
+                            <div className="lg:col-span-2 flex flex-wrap gap-2 pt-2">
+                              <button
+                                onClick={() => updateCollaboratorPermissions(col, { canEditBudgetAreas: !col.canEditBudgetAreas })}
+                                className={cn(
+                                  "px-3 py-2 rounded text-[10px] font-bold uppercase tracking-widest border transition-all",
+                                  col.canEditBudgetAreas ? "bg-blue-600 text-white border-blue-600" : "bg-white text-slate-400 border-slate-200 hover:border-blue-600 hover:text-blue-600"
+                                )}
+                              >
+                                {col.canEditBudgetAreas ? 'Puede editar áreas' : 'Solo lectura en áreas'}
+                              </button>
+                              <button
+                                onClick={() => updateCollaboratorPermissions(col, { canViewBudgetTotals: !col.canViewBudgetTotals })}
+                                className={cn(
+                                  "px-3 py-2 rounded text-[10px] font-bold uppercase tracking-widest border transition-all",
+                                  col.canViewBudgetTotals ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-400 border-slate-200 hover:border-slate-900 hover:text-slate-900"
+                                )}
+                              >
+                                {col.canViewBudgetTotals ? 'Ve totales' : 'Totales restringidos'}
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="px-4 py-3 bg-white rounded border border-slate-200 text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                            Tiene acceso completo al proyecto. No es admin global de la app.
+                          </div>
+                        )}
                       </div>
-                      );
-                    })
+                    ))
                   )}
                 </div>
               </div>
             </div>
           </div>
         )}
+
 
         {(activeTab !== 'resumen' && activeTab !== 'presupuesto' && activeTab !== 'equipo' && activeTab !== 'areas' && activeTab !== 'permisos') && (
            <div className="py-32 text-center border border-dashed border-slate-200 rounded-2xl bg-white">
