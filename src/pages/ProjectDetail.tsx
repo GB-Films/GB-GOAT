@@ -262,6 +262,8 @@ export default function ProjectDetail() {
   const [dragOverExpenseId, setDragOverExpenseId] = useState<string | null>(null);
   const [isDeletingProject, setIsDeletingProject] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
+  const [locationDraft, setLocationDraft] = useState('');
+  const [isSavingLocation, setIsSavingLocation] = useState(false);
   const areaSelectorRef = useRef<HTMLDivElement>(null);
   const isGlobalAdmin = profile?.role === 'admin';
   
@@ -275,6 +277,7 @@ export default function ProjectDetail() {
         if (docSnap.exists()) {
           const data = docSnap.data();
           setProject({ id: docSnap.id, ...data });
+          setLocationDraft(data.location || '');
           
           const owner = data.createdBy === user.uid;
           const isGlobalAdmin = profile?.role === 'admin';
@@ -433,7 +436,7 @@ export default function ProjectDetail() {
       providerName: '',
       description: '',
       unit: 'Unidad',
-      quantity: 0,
+      quantity: 1,
       unitPrice: 0,
       total: 0,
       order: maxOrder + 1,
@@ -1113,7 +1116,16 @@ export default function ProjectDetail() {
       budgeted: number, 
       spent: number, 
       paid: number,
-      debt: number 
+      debt: number,
+      entries: Array<{
+        id: string;
+        collectionName: PaymentCollection;
+        item: any;
+        description: string;
+        total: number;
+        paid: number;
+        invoice?: any;
+      }>;
     }>();
 
     const ensureSaldo = (area: string, providerId: string, providerName?: string) => {
@@ -1128,7 +1140,8 @@ export default function ProjectDetail() {
           budgeted: 0,
           spent: 0,
           paid: 0,
-          debt: 0
+          debt: 0,
+          entries: []
         });
       }
 
@@ -1144,6 +1157,14 @@ export default function ProjectDetail() {
         s.spent += item.total || 0;
         const itemPaid = (item.paymentHistory || []).reduce((acc: number, p: any) => acc + (Number(p.amount) || 0), 0);
         s.paid += itemPaid;
+        s.entries.push({
+          id: item.id,
+          collectionName: 'budgetItems',
+          item,
+          description: item.description || 'Partida de presupuesto',
+          total: Number(item.total) || 0,
+          paid: itemPaid,
+        });
       }
     });
 
@@ -1154,6 +1175,15 @@ export default function ProjectDetail() {
       
       const itemPaid = (item.paymentHistory || []).reduce((acc: number, p: any) => acc + (Number(p.amount) || 0), 0);
       s.paid += itemPaid;
+      s.entries.push({
+        id: item.id,
+        collectionName: 'areaExpenses',
+        item,
+        description: item.description || 'Gasto de area',
+        total: Number(item.total) || 0,
+        paid: itemPaid,
+        invoice: item.invoice,
+      });
     });
 
     const rows = Array.from(saldosMap.values())
@@ -1462,6 +1492,25 @@ export default function ProjectDetail() {
     }
   };
 
+  const saveLocation = async () => {
+    if (!id || !isProjectAdmin || locationDraft === (project.location || '')) return;
+
+    setIsSavingLocation(true);
+    try {
+      await updateDoc(doc(db, 'projects', id), { location: locationDraft, updatedAt: serverTimestamp() });
+      setProject({ ...project, location: locationDraft });
+    } catch (error) {
+      console.error('Error updating location:', error);
+      alert('No se pudo guardar la locacion.');
+    } finally {
+      setIsSavingLocation(false);
+    }
+  };
+
+  const mapsSearchUrl = locationDraft.trim()
+    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${locationDraft}, Buenos Aires, Argentina`)}`
+    : '';
+
   if (loading) return <div className="p-8 text-center text-slate-500 font-mono text-xs uppercase tracking-widest">Analizando proyecto...</div>;
   if (!project) return <div className="p-8 text-center text-slate-900 font-bold uppercase tracking-widest">Proyecto no encontrado</div>;
 
@@ -1640,15 +1689,32 @@ export default function ProjectDetail() {
                       <div className="space-y-3">
                         <input 
                           type="text"
-                          placeholder="Link de Google Maps o Dirección..."
-                          value={project.location || ''}
-                          onChange={async (e) => {
-                            const newLoc = e.target.value;
-                            await updateDoc(doc(db, 'projects', id!), { location: newLoc });
-                            setProject({ ...project, location: newLoc });
+                          placeholder="Direccion o link de Google Maps..."
+                          value={locationDraft}
+                          onChange={(e) => setLocationDraft(e.target.value)}
+                          onBlur={saveLocation}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') {
+                              event.currentTarget.blur();
+                            }
                           }}
                           className="w-full p-3 bg-slate-50 border border-slate-100 rounded text-xs font-medium focus:outline-none focus:border-black"
                         />
+                        <div className="flex flex-wrap items-center gap-3">
+                          {mapsSearchUrl && (
+                            <a 
+                              href={mapsSearchUrl}
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className="text-[10px] font-bold text-blue-600 flex items-center gap-1 hover:underline"
+                            >
+                              <LinkIcon className="w-3 h-3" /> Buscar en Google Maps
+                            </a>
+                          )}
+                          {isSavingLocation && (
+                            <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Guardando...</span>
+                          )}
+                        </div>
                         {project.location?.startsWith('http') && (
                           <a 
                             href={project.location} 
@@ -2407,13 +2473,14 @@ export default function ProjectDetail() {
                      <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Gastado</th>
                      <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Pagado</th>
                      <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Saldo Deudor</th>
+                     <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Facturas / Pagos</th>
                    </tr>
                  </thead>
                  <tbody className="divide-y divide-slate-100">
                    {providerSaldosByArea.map((group) => (
                      <React.Fragment key={group.area}>
                        <tr className="bg-slate-100/70">
-                         <td colSpan={6} className="px-6 py-3 text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">
+                         <td colSpan={7} className="px-6 py-3 text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">
                            {group.area}
                          </td>
                        </tr>
@@ -2441,16 +2508,56 @@ export default function ProjectDetail() {
                                "text-sm font-bold font-mono",
                                saldo.debt > 0 ? "text-rose-600" : "text-emerald-600"
                              )}>
-                               ${saldo.debt.toLocaleString()}
-                             </div>
-                           </td>
-                         </tr>
-                       ))}
+                           ${saldo.debt.toLocaleString()}
+                         </div>
+                       </td>
+                       <td className="px-6 py-4">
+                         <div className="space-y-2">
+                           {saldo.entries.map((entry) => {
+                             const entryDebt = entry.total - entry.paid;
+                             return (
+                               <div key={`${entry.collectionName}-${entry.id}`} className="flex flex-wrap items-center gap-2 text-[10px]">
+                                 <span className="max-w-[170px] truncate text-slate-500" title={entry.description}>
+                                   {entry.description || 'Movimiento'}
+                                 </span>
+                                 {entry.invoice?.url && (
+                                   <a
+                                     href={entry.invoice.url}
+                                     target="_blank"
+                                     rel="noreferrer"
+                                     className="inline-flex items-center gap-1 px-2 py-1 rounded bg-emerald-50 text-emerald-700 border border-emerald-100 font-bold uppercase tracking-widest hover:bg-emerald-600 hover:text-white"
+                                     title={entry.invoice.fileName || 'Ver factura'}
+                                   >
+                                     <FileText className="w-3 h-3" />
+                                     Factura
+                                   </a>
+                                 )}
+                                 {isProjectAdmin && (
+                                   <button
+                                     type="button"
+                                     onClick={() => openPaymentModal(entry.item, entry.collectionName)}
+                                     className={cn(
+                                       "px-2 py-1 rounded border font-bold uppercase tracking-widest transition-all",
+                                       entryDebt > 0
+                                         ? "bg-white border-slate-200 text-slate-600 hover:border-black hover:text-black"
+                                         : "bg-emerald-50 border-emerald-100 text-emerald-700"
+                                     )}
+                                   >
+                                     {entryDebt > 0 ? 'Registrar pago' : 'Pagado'}
+                                   </button>
+                                 )}
+                               </div>
+                             );
+                           })}
+                         </div>
+                       </td>
+                     </tr>
+                   ))}
                      </React.Fragment>
                    ))}
                    {providerSaldos.length === 0 && (
                      <tr>
-                       <td colSpan={6} className="px-6 py-12 text-center text-[10px] font-bold uppercase text-slate-300 tracking-widest italic">
+                       <td colSpan={7} className="px-6 py-12 text-center text-[10px] font-bold uppercase text-slate-300 tracking-widest italic">
                          No hay movimientos financieros con proveedores registrados
                        </td>
                      </tr>
@@ -2466,8 +2573,8 @@ export default function ProjectDetail() {
               <div>
                 <h4 className="text-xs font-bold text-blue-900 uppercase tracking-widest mb-1">Sobre el cálculo de deudas</h4>
                 <p className="text-xs text-blue-700 leading-relaxed max-w-2xl">
-                  El "Saldo Deudor" se calcula restando lo marcado como <b>Pagado</b> del total <b>Gastado</b> (registrado en la pestaña Áreas). 
-                  Para actualizar el estado de pago, dirígete a la pestaña <b>Áreas</b> y activa el check de Pago en cada registro.
+                  El "Saldo Deudor" se calcula restando lo marcado como <b>Pagado</b> del total <b>Gastado</b>. 
+                  Los administradores pueden registrar pagos desde esta pantalla o desde la carga por areas.
                 </p>
               </div>
             </div>
