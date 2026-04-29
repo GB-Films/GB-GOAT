@@ -51,6 +51,20 @@ export const TAX_CONDITIONS = [
 
 export const normalizeDigits = (value: unknown) => String(value || '').replace(/\D/g, '');
 
+export const formatPersonName = (value: unknown) => (
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .map((word) => (
+      word
+        .split('-')
+        .map((part) => part ? `${part.charAt(0).toUpperCase()}${part.slice(1)}` : part)
+        .join('-')
+    ))
+    .join(' ')
+);
+
 export const formatIdentifier = (value: unknown) => {
   const digits = normalizeDigits(value);
   if (digits.length === 11) return `${digits.slice(0, 2)}-${digits.slice(2, 10)}-${digits.slice(10)}`;
@@ -60,8 +74,8 @@ export const formatIdentifier = (value: unknown) => {
 
 export const providerDisplayName = (provider: any) => {
   if (provider?.type === 'empresa') return provider.businessName || provider.name || 'Empresa sin razón social';
-  const fullName = `${provider?.name || ''} ${provider?.lastName || ''}`.trim();
-  return fullName || provider?.fullName || 'Persona sin nombre';
+  const fullName = `${formatPersonName(provider?.name)} ${formatPersonName(provider?.lastName)}`.trim();
+  return fullName || formatPersonName(provider?.fullName) || 'Persona sin nombre';
 };
 
 export const providerSearchText = (provider: any) => [

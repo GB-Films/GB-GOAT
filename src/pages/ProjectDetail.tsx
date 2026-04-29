@@ -248,7 +248,7 @@ export default function ProjectDetail() {
   const [project, setProject] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('resumen');
-  const [activeAreaTab, setActiveAreaTab] = useState<string | null>(null);
+  const [selectedAreaTabs, setSelectedAreaTabs] = useState<string[]>([]);
   
   // Data for specific tabs
   const [budgetItems, setBudgetItems] = useState<BudgetItem[]>([]);
@@ -325,11 +325,13 @@ export default function ProjectDetail() {
 
           if (data.activeAreas) {
             setActiveAreas(data.activeAreas);
-            if (data.activeAreas.length > 0 && !activeAreaTab) {
-              setActiveAreaTab(data.activeAreas[0]);
-            }
+            setSelectedAreaTabs((current) => {
+              const stillVisible = current.filter((area) => data.activeAreas.includes(area));
+              return stillVisible.length > 0 ? stillVisible : data.activeAreas;
+            });
           } else {
             setActiveAreas([]);
+            setSelectedAreaTabs([]);
           }
 
           if (data.categories && Array.isArray(data.categories)) {
@@ -567,9 +569,9 @@ export default function ProjectDetail() {
       const currentActive = Array.isArray(activeAreas) ? activeAreas : [];
       const newActiveAreas = [...currentActive, areaName];
       setActiveAreas(newActiveAreas);
+      setSelectedAreaTabs((current) => Array.from(new Set([...current, areaName])));
       if (id) {
         await updateDoc(doc(db, 'projects', id), { activeAreas: newActiveAreas });
-        if (!activeAreaTab) setActiveAreaTab(areaName);
       }
       setIsAreaSelectorOpen(false);
     } catch (error) {
@@ -583,11 +585,9 @@ export default function ProjectDetail() {
     
     const newActiveAreas = activeAreas.filter(a => a !== areaName);
     setActiveAreas(newActiveAreas);
+    setSelectedAreaTabs((current) => current.filter((area) => area !== areaName));
     if (id) {
       await updateDoc(doc(db, 'projects', id), { activeAreas: newActiveAreas });
-    }
-    if (activeAreaTab === areaName) {
-      setActiveAreaTab(newActiveAreas[0] || null);
     }
   };
 
@@ -1094,9 +1094,40 @@ export default function ProjectDetail() {
     return safeArray(userPermissions?.allowedCategories).includes(item.area);
   });
 
-  const selectedAreaTab = activeAreaTab && visibleCategories.includes(activeAreaTab)
-    ? activeAreaTab
-    : visibleCategories[0] || null;
+  const visibleCategoryKey = visibleCategories.join('|');
+  const selectedVisibleAreas = selectedAreaTabs.filter((area) => visibleCategories.includes(area));
+
+  useEffect(() => {
+    setSelectedAreaTabs((current) => {
+      const stillVisible = current.filter((area) => visibleCategories.includes(area));
+      if (stillVisible.length > 0 || visibleCategories.length === 0) return stillVisible;
+      return visibleCategories;
+    });
+  }, [visibleCategoryKey]);
+
+  const areaDashboardRows = React.useMemo(() => (
+    visibleCategories.map((area) => {
+      const assigned = budgetItems
+        .filter((item) => item.area === area)
+        .reduce((acc, item) => acc + (Number(item.total) || 0), 0);
+      const expenses = areaExpenses
+        .filter((item) => item.area === area)
+        .sort((a, b) => (b.updatedAt?.seconds || 0) - (a.updatedAt?.seconds || 0));
+      const spent = expenses.reduce((acc, item) => acc + (Number(item.total) || 0), 0);
+      const balance = assigned - spent;
+      const usedPercent = assigned > 0 ? Math.min(100, (spent / assigned) * 100) : 0;
+
+      return { area, assigned, expenses, spent, balance, usedPercent };
+    })
+  ), [areaExpenses, budgetItems, visibleCategoryKey]);
+
+  const selectedAreaDashboardRows = areaDashboardRows.filter((row) => selectedVisibleAreas.includes(row.area));
+  const areaDashboardTotals = selectedAreaDashboardRows.reduce((acc, row) => ({
+    assigned: acc.assigned + row.assigned,
+    spent: acc.spent + row.spent,
+    balance: acc.balance + row.balance,
+    records: acc.records + row.expenses.length,
+  }), { assigned: 0, spent: 0, balance: 0, records: 0 });
 
   const canEditMainBudget = isProjectAdmin;
   const canEditArea = (area?: string | null) => {
@@ -2393,16 +2424,44 @@ export default function ProjectDetail() {
               )}
             </header>
 
-            {/* Sub-tabs for Active Areas */}
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-[10px] uppercase font-black tracking-widest text-slate-400">
+                Áreas visibles
+              </div>
+              {visibleCategories.length > 0 && (
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedAreaTabs(visibleCategories)}
+                    className="px-3 py-1.5 text-[9px] uppercase font-black tracking-widest rounded border border-slate-200 text-slate-500 hover:border-black hover:text-black transition-colors"
+                  >
+                    Todas
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedAreaTabs([])}
+                    className="px-3 py-1.5 text-[9px] uppercase font-black tracking-widest rounded border border-slate-200 text-slate-500 hover:border-black hover:text-black transition-colors"
+                  >
+                    Limpiar
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Multi-select buttons for Active Areas */}
             <div className="flex gap-2 p-1 bg-slate-100 rounded-lg overflow-x-auto scrollbar-hide">
               {visibleCategories.map((area) => (
                 <button
                   key={area}
-                  onClick={() => setActiveAreaTab(area)}
+                  onClick={() => setSelectedAreaTabs((current) => (
+                    current.includes(area)
+                      ? current.filter((item) => item !== area)
+                      : [...current, area]
+                  ))}
                   className={cn(
                     "px-4 py-2 text-[10px] uppercase font-bold tracking-widest rounded-md transition-all whitespace-nowrap",
-                    selectedAreaTab === area
-                      ? "bg-white text-black shadow-sm"
+                    selectedVisibleAreas.includes(area)
+                      ? "bg-slate-900 text-white shadow-sm"
                       : "text-slate-400 hover:text-slate-600"
                   )}
                 >
@@ -2416,29 +2475,25 @@ export default function ProjectDetail() {
               )}
             </div>
 
-            {selectedAreaTab && activeAreas.includes(selectedAreaTab) && (
+            {selectedAreaDashboardRows.length > 0 && (
               <div className="space-y-6">
                 {/* Summary Header */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   {(() => {
-                    const assigned = budgetItems
-                      .filter(i => i.area === selectedAreaTab)
-                      .reduce((acc, curr) => acc + (curr.total || 0), 0);
-                    const spent = areaExpenses
-                      .filter(i => i.area === selectedAreaTab)
-                      .reduce((acc, curr) => acc + (curr.total || 0), 0);
-                    const balance = assigned - spent;
+                    const assigned = areaDashboardTotals.assigned;
+                    const spent = areaDashboardTotals.spent;
+                    const balance = areaDashboardTotals.balance;
                     const usedPercent = assigned > 0 ? Math.min(100, (spent / assigned) * 100) : 0;
 
                     return (
                       <>
                         <div className="bg-white border border-slate-200 p-5 rounded-xl shadow-sm">
-                          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Presupuesto Asignado</div>
+                          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Presupuesto Global</div>
                           <div className="text-2xl font-bold text-slate-900">${assigned.toLocaleString()}</div>
-                          <div className="text-[9px] text-slate-400 mt-2 italic">Tomado del Presupuesto Principal</div>
+                          <div className="text-[9px] text-slate-400 mt-2 italic">{selectedAreaDashboardRows.length} áreas seleccionadas</div>
                         </div>
                         <div className="bg-white border border-slate-200 p-5 rounded-xl shadow-sm">
-                          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Gastos Realizados</div>
+                          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Gasto Global</div>
                           <div className="text-2xl font-bold text-emerald-600">${spent.toLocaleString()}</div>
                           <div className="mt-3 h-1.5 bg-slate-100 rounded-full overflow-hidden">
                             <div
@@ -2446,13 +2501,13 @@ export default function ProjectDetail() {
                               style={{ width: `${usedPercent}%` }}
                             />
                           </div>
-                          <div className="text-[9px] text-slate-400 mt-2 italic">{areaExpenses.filter(i => i.area === selectedAreaTab).length} registros</div>
+                          <div className="text-[9px] text-slate-400 mt-2 italic">{areaDashboardTotals.records} registros cargados</div>
                         </div>
                         <div className={cn(
                           "p-5 rounded-xl shadow-sm border",
                           balance >= 0 ? "bg-slate-900 border-slate-900 text-white" : "bg-red-50 border-red-100 text-red-600"
                         )}>
-                          <div className={cn("text-[10px] font-bold uppercase tracking-widest mb-1", balance >= 0 ? "text-slate-400" : "text-red-400")}>Saldo Disponible</div>
+                          <div className={cn("text-[10px] font-bold uppercase tracking-widest mb-1", balance >= 0 ? "text-slate-400" : "text-red-400")}>Saldo Global</div>
                           <div className="text-2xl font-bold font-mono tracking-tight">${balance.toLocaleString()}</div>
                           {balance < 0 && <div className="text-[9px] font-bold uppercase mt-2">¡EXCEDIDO!</div>}
                         </div>
@@ -2461,16 +2516,17 @@ export default function ProjectDetail() {
                   })()}
                 </div>
 
-                <div className="bg-white border border-slate-200 rounded-xl shadow-sm">
+                {selectedAreaDashboardRows.map((areaRow) => (
+                <div key={areaRow.area} className="bg-white border border-slate-200 rounded-xl shadow-sm">
                   <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center rounded-t-xl">
                     <div className="flex items-center gap-4">
                        <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-900 flex items-center gap-2">
                          <LayoutGrid className="w-3 h-3" />
-                         Carga de Gastos: {selectedAreaTab}
+                         Carga de Gastos: {areaRow.area}
                        </h3>
                        {isProjectAdmin && (
                          <button 
-                           onClick={() => removeActiveArea(selectedAreaTab)}
+                           onClick={() => removeActiveArea(areaRow.area)}
                            className="text-[9px] text-slate-400 hover:text-red-500 font-bold uppercase tracking-widest transition-colors"
                            title="Desactivar gestión de esta área"
                          >
@@ -2479,13 +2535,37 @@ export default function ProjectDetail() {
                        )}
                     </div>
                     <button 
-                      onClick={() => addAreaExpense(selectedAreaTab)}
-                      disabled={!canEditArea(selectedAreaTab)}
+                      onClick={() => addAreaExpense(areaRow.area)}
+                      disabled={!canEditArea(areaRow.area)}
                       className="px-3 py-1.5 bg-black text-white text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 transition-all flex items-center gap-2 rounded disabled:bg-slate-300 disabled:cursor-not-allowed"
                     >
                       <Plus className="w-3 h-3" />
                       Registrar Gasto
                     </button>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 px-6 py-4 border-b border-slate-100 bg-white">
+                    <div>
+                      <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400">Asignado</div>
+                      <div className="text-sm font-black text-slate-900">${areaRow.assigned.toLocaleString()}</div>
+                    </div>
+                    <div>
+                      <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400">Gastado</div>
+                      <div className="text-sm font-black text-emerald-600">${areaRow.spent.toLocaleString()}</div>
+                    </div>
+                    <div>
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400">Saldo</div>
+                          <div className={cn("text-sm font-black", areaRow.balance >= 0 ? "text-slate-900" : "text-red-600")}>${areaRow.balance.toLocaleString()}</div>
+                        </div>
+                        <div className="w-28 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                          <div
+                            className={cn("h-full rounded-full", areaRow.balance < 0 ? "bg-red-500" : areaRow.usedPercent >= 85 ? "bg-yellow-400" : "bg-emerald-500")}
+                            style={{ width: `${areaRow.usedPercent}%` }}
+                          />
+                        </div>
+                      </div>
+                    </div>
                   </div>
                   
                   <div className="min-w-[800px]">
@@ -2501,10 +2581,7 @@ export default function ProjectDetail() {
                     </div>
 
                     <div className="divide-y divide-slate-100">
-                      {areaExpenses
-                        .filter(item => item.area === selectedAreaTab)
-                        .sort((a, b) => (b.updatedAt?.seconds || 0) - (a.updatedAt?.seconds || 0)) // Newest first
-                        .map((item) => (
+                      {areaRow.expenses.map((item) => (
                           <div
                             key={item.id}
                             onDragEnter={(event) => {
@@ -2649,7 +2726,7 @@ export default function ProjectDetail() {
                             </div>
                           </div>
                         ))}
-                      {areaExpenses.filter(item => item.area === selectedAreaTab).length === 0 && (
+                      {areaRow.expenses.length === 0 && (
                         <div className="p-12 text-center text-slate-300 font-bold uppercase tracking-widest text-[10px] italic">
                           Sin gastos registrados en esta área
                         </div>
@@ -2657,6 +2734,12 @@ export default function ProjectDetail() {
                     </div>
                   </div>
                 </div>
+                ))}
+              </div>
+            )}
+            {visibleCategories.length > 0 && selectedAreaDashboardRows.length === 0 && (
+              <div className="bg-white border border-dashed border-slate-200 rounded-xl p-10 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
+                Seleccioná una o más áreas para ver gastos y presupuesto
               </div>
             )}
           </div>
