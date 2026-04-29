@@ -47,9 +47,17 @@ const tabs = [
   { id: 'presupuesto', label: 'Presupuesto Principal', icon: DollarSign },
   { id: 'areas', label: 'Áreas', icon: LayoutGrid },
   { id: 'saldos', label: 'Saldos', icon: Wallet },
+  { id: 'resultado', label: 'Resultado', icon: BarChart2 },
   { id: 'proveedores', label: 'Proveedores', icon: Truck },
   { id: 'equipo', label: 'Equipo', icon: Users },
   { id: 'permisos', label: 'Permisos', icon: Settings },
+];
+
+const RESULT_INCIDENCES = [
+  { id: 'imprevistos', label: 'Imprevistos' },
+  { id: 'impuestos', label: 'Impuestos' },
+  { id: 'financiacion', label: 'Financiacion' },
+  { id: 'administracion', label: 'Administracion' },
 ];
 
 const BUDGET_AREAS = [
@@ -1054,6 +1062,7 @@ export default function ProjectDetail() {
 
   // Filtered views based on permissions
   const visibleTabs = tabs.filter(tab => {
+    if (tab.id === 'resultado') return isProjectAdmin;
     if (isProjectAdmin) return true;
     return safeArray(userPermissions?.allowedTabs).includes(tab.id);
   });
@@ -1338,6 +1347,96 @@ export default function ProjectDetail() {
     } else {
       downloadXlsx(rows, 'Gestion por Areas', `gestion_por_areas_${project?.name || 'proyecto'}.xlsx`);
     }
+  };
+
+  const resultIndirectExpenses = React.useMemo(() => (
+    Array.isArray(project?.resultIndirectExpenses) ? project.resultIndirectExpenses : []
+  ), [project?.resultIndirectExpenses]);
+
+  const resultIncidences = React.useMemo(() => (
+    project?.resultIncidences && typeof project.resultIncidences === 'object'
+      ? project.resultIncidences
+      : {}
+  ), [project?.resultIncidences]);
+
+  const resultCategoryTotals = React.useMemo(() => (
+    categories
+      .map((area) => ({
+        area,
+        total: budgetItems
+          .filter((item) => item.area === area)
+          .reduce((acc, item) => acc + (Number(item.total) || 0), 0),
+      }))
+      .filter((item) => item.total > 0)
+  ), [budgetItems, categories]);
+
+  const productionTotal = resultCategoryTotals.reduce((acc, item) => acc + item.total, 0);
+  const indirectTotal = resultIndirectExpenses.reduce((acc: number, item: any) => acc + (Number(item.total) || 0), 0);
+  const saleValue = Number(project?.budgetTotal) || 0;
+  const incidenceRows = RESULT_INCIDENCES.map((incidence) => {
+    const percent = Number(resultIncidences[incidence.id]) || 0;
+    return {
+      ...incidence,
+      percent,
+      amount: saleValue * (percent / 100),
+    };
+  });
+  const incidenceTotal = incidenceRows.reduce((acc, item) => acc + item.amount, 0);
+  const totalCost = productionTotal + indirectTotal + incidenceTotal;
+  const margin = saleValue - totalCost;
+  const marginPercent = saleValue > 0 ? (margin / saleValue) * 100 : 0;
+
+  const persistResultIndirectExpenses = async (nextItems: any[]) => {
+    if (!id || !isProjectAdmin) return;
+    await updateDoc(doc(db, 'projects', id), {
+      resultIndirectExpenses: nextItems,
+      updatedAt: serverTimestamp(),
+    });
+    setProject({ ...project, resultIndirectExpenses: nextItems });
+  };
+
+  const addResultIndirectExpense = async () => {
+    if (!isProjectAdmin) return;
+    const nextItems = [
+      ...resultIndirectExpenses,
+      {
+        id: Math.random().toString(36).slice(2, 11),
+        providerId: '',
+        providerName: '',
+        description: '',
+        unit: 'Unidad',
+        quantity: 1,
+        unitPrice: 0,
+        total: 0,
+      },
+    ];
+    await persistResultIndirectExpenses(nextItems);
+  };
+
+  const updateResultIndirectExpense = async (itemId: string, updates: any) => {
+    const nextItems = resultIndirectExpenses.map((item: any) => (
+      item.id === itemId ? { ...item, ...updates } : item
+    ));
+    await persistResultIndirectExpenses(nextItems);
+  };
+
+  const deleteResultIndirectExpense = async (itemId: string) => {
+    if (!confirm('¿Eliminar este gasto indirecto?')) return;
+    const nextItems = resultIndirectExpenses.filter((item: any) => item.id !== itemId);
+    await persistResultIndirectExpenses(nextItems);
+  };
+
+  const updateResultIncidence = async (incidenceId: string, value: number) => {
+    if (!id || !isProjectAdmin) return;
+    const nextIncidences = {
+      ...resultIncidences,
+      [incidenceId]: Math.max(0, Number(value) || 0),
+    };
+    await updateDoc(doc(db, 'projects', id), {
+      resultIncidences: nextIncidences,
+      updatedAt: serverTimestamp(),
+    });
+    setProject({ ...project, resultIncidences: nextIncidences });
   };
 
   const addCollaborator = async (selectedUser: any) => {
@@ -2435,6 +2534,197 @@ export default function ProjectDetail() {
           </div>
         )}
 
+        {activeTab === 'resultado' && isProjectAdmin && (
+          <div className="space-y-6 pb-20">
+            <header className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-bold text-slate-900">Resultado del Proyecto</h2>
+                <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest mt-1">
+                  Analisis de venta, costos, incidencias y margen
+                </p>
+              </div>
+              <div className={cn(
+                "px-4 py-3 rounded-xl border text-right",
+                margin >= 0 ? "bg-emerald-50 border-emerald-100" : "bg-rose-50 border-rose-100"
+              )}>
+                <div className={cn("text-[10px] font-bold uppercase tracking-widest", margin >= 0 ? "text-emerald-700" : "text-rose-700")}>
+                  Margen estimado
+                </div>
+                <div className={cn("text-2xl font-black font-mono", margin >= 0 ? "text-emerald-700" : "text-rose-700")}>
+                  ${margin.toLocaleString()}
+                </div>
+                <div className="text-[10px] font-bold text-slate-500">{marginPercent.toFixed(1)}% sobre venta</div>
+              </div>
+            </header>
+
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Valor de Venta</div>
+                <div className="text-2xl font-bold text-slate-900">${saleValue.toLocaleString()}</div>
+                <div className="text-[9px] text-slate-400 mt-2">Presupuesto cargado en el proyecto</div>
+              </div>
+              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Produccion</div>
+                <div className="text-2xl font-bold text-slate-900">${productionTotal.toLocaleString()}</div>
+                <div className="text-[9px] text-slate-400 mt-2">{resultCategoryTotals.length} categorias con costo</div>
+              </div>
+              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Indirectos</div>
+                <div className="text-2xl font-bold text-slate-900">${indirectTotal.toLocaleString()}</div>
+                <div className="text-[9px] text-slate-400 mt-2">{resultIndirectExpenses.length} registros</div>
+              </div>
+              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Incidencias</div>
+                <div className="text-2xl font-bold text-slate-900">${incidenceTotal.toLocaleString()}</div>
+                <div className="text-[9px] text-slate-400 mt-2">Sobre valor de venta</div>
+              </div>
+              <div className="bg-slate-900 p-5 rounded-xl border border-slate-900 shadow-sm text-white">
+                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Costo Total</div>
+                <div className="text-2xl font-bold font-mono">${totalCost.toLocaleString()}</div>
+                <div className="text-[9px] text-slate-400 mt-2">Produccion + indirectos + incidencias</div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              <section className="lg:col-span-5 bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+                <div className="px-5 py-4 border-b border-slate-100 bg-slate-50/50">
+                  <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500">Costo directo por categoria</h3>
+                </div>
+                <div className="divide-y divide-slate-100">
+                  {resultCategoryTotals.map((category) => {
+                    const percent = productionTotal > 0 ? (category.total / productionTotal) * 100 : 0;
+                    return (
+                      <div key={category.area} className="p-4">
+                        <div className="flex items-center justify-between gap-4 mb-2">
+                          <div className="text-xs font-black uppercase tracking-wider text-slate-900">{category.area}</div>
+                          <div className="text-sm font-bold font-mono text-slate-900">${category.total.toLocaleString()}</div>
+                        </div>
+                        <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                          <div className="h-full bg-slate-900 rounded-full" style={{ width: `${Math.min(100, percent)}%` }} />
+                        </div>
+                        <div className="text-[9px] font-bold text-slate-400 mt-2">{percent.toFixed(1)}% del costo directo</div>
+                      </div>
+                    );
+                  })}
+                  {resultCategoryTotals.length === 0 && (
+                    <div className="p-10 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
+                      Sin categorias con costo
+                    </div>
+                  )}
+                </div>
+              </section>
+
+              <section className="lg:col-span-7 space-y-6">
+                <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+                  <div className="px-5 py-4 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between gap-4">
+                    <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500">Gastos Indirectos</h3>
+                    <button
+                      onClick={addResultIndirectExpense}
+                      className="px-3 py-2 bg-black text-white rounded text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 transition-all flex items-center gap-2"
+                    >
+                      <Plus className="w-3 h-3" />
+                      Agregar
+                    </button>
+                  </div>
+                  <div className="min-w-[780px]">
+                    <div className="grid grid-cols-12 bg-slate-50 border-b border-slate-100 px-5 py-3">
+                      <div className="col-span-3 text-[10px] font-bold uppercase tracking-widest text-slate-400">Proveedor</div>
+                      <div className="col-span-3 text-[10px] font-bold uppercase tracking-widest text-slate-400">Concepto</div>
+                      <div className="col-span-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">P. Unitario</div>
+                      <div className="col-span-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Cant.</div>
+                      <div className="col-span-2 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Total</div>
+                      <div className="col-span-1"></div>
+                    </div>
+                    <div className="divide-y divide-slate-100">
+                      {resultIndirectExpenses.map((item: any) => (
+                        <div key={item.id} className="grid grid-cols-12 px-5 py-3 items-center hover:bg-slate-50 transition-colors">
+                          <div className="col-span-3">
+                            <BudgetRowCell item={item} providers={providers} onUpdate={updateResultIndirectExpense} type="provider" />
+                          </div>
+                          <div className="col-span-3">
+                            <BudgetRowCell item={item} onUpdate={updateResultIndirectExpense} type="description" />
+                          </div>
+                          <div className="col-span-2">
+                            <BudgetRowCell item={item} onUpdate={updateResultIndirectExpense} type="price" />
+                          </div>
+                          <div className="col-span-1 text-center">
+                            <BudgetRowCell item={item} onUpdate={updateResultIndirectExpense} type="quantity" />
+                          </div>
+                          <div className="col-span-2 text-right text-xs font-bold text-slate-900">
+                            ${(Number(item.total) || 0).toLocaleString()}
+                          </div>
+                          <div className="col-span-1 text-right">
+                            <button
+                              onClick={() => deleteResultIndirectExpense(item.id)}
+                              className="p-1 text-slate-300 hover:text-red-500 transition-colors"
+                              title="Eliminar gasto indirecto"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                      {resultIndirectExpenses.length === 0 && (
+                        <div className="p-10 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
+                          Sin gastos indirectos cargados
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+                  <div className="px-5 py-4 border-b border-slate-100 bg-slate-50/50">
+                    <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500">Incidencias sobre valor de venta</h3>
+                  </div>
+                  <div className="divide-y divide-slate-100">
+                    {incidenceRows.map((incidence) => (
+                      <div key={incidence.id} className="grid grid-cols-12 gap-4 px-5 py-4 items-center">
+                        <div className="col-span-5 text-xs font-bold uppercase tracking-wider text-slate-700">{incidence.label}</div>
+                        <div className="col-span-3">
+                          <div className="relative">
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              defaultValue={incidence.percent}
+                              onBlur={(event) => updateResultIncidence(incidence.id, Number(event.target.value))}
+                              className="w-full px-3 py-2 pr-7 bg-slate-50 border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black"
+                            />
+                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-slate-400">%</span>
+                          </div>
+                        </div>
+                        <div className="col-span-4 text-right text-sm font-bold font-mono text-slate-900">
+                          ${incidence.amount.toLocaleString()}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </section>
+            </div>
+
+            <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+              <div className="grid grid-cols-1 md:grid-cols-5 divide-y md:divide-y-0 md:divide-x divide-slate-100">
+                {[
+                  { label: 'Valor de venta', value: saleValue, tone: 'text-slate-900' },
+                  { label: 'Produccion', value: -productionTotal, tone: 'text-rose-600' },
+                  { label: 'Indirectos', value: -indirectTotal, tone: 'text-rose-600' },
+                  { label: 'Incidencias', value: -incidenceTotal, tone: 'text-rose-600' },
+                  { label: 'Margen', value: margin, tone: margin >= 0 ? 'text-emerald-600' : 'text-rose-600' },
+                ].map((item) => (
+                  <div key={item.label} className="p-5">
+                    <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">{item.label}</div>
+                    <div className={cn("text-xl font-black font-mono", item.tone)}>
+                      {item.value < 0 ? '-' : ''}${Math.abs(item.value).toLocaleString()}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          </div>
+        )}
+
         {activeTab === 'saldos' && (
           <div className="space-y-6 pb-20">
             <header>
@@ -2866,7 +3156,7 @@ export default function ProjectDetail() {
                             <div>
                               <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3 font-mono">Pestañas Permitidas</div>
                               <div className="flex flex-wrap gap-2">
-                                {tabs.filter(t => t.id !== 'permisos').map(tab => {
+                                {tabs.filter(t => t.id !== 'permisos' && t.id !== 'resultado').map(tab => {
                                   const enabled = safeArray(col.allowedTabs).includes(tab.id);
                                   return (
                                     <button
@@ -2951,7 +3241,7 @@ export default function ProjectDetail() {
         )}
 
 
-        {(activeTab !== 'resumen' && activeTab !== 'presupuesto' && activeTab !== 'equipo' && activeTab !== 'areas' && activeTab !== 'saldos' && activeTab !== 'proveedores' && activeTab !== 'permisos') && (
+        {(activeTab !== 'resumen' && activeTab !== 'presupuesto' && activeTab !== 'equipo' && activeTab !== 'areas' && activeTab !== 'saldos' && activeTab !== 'resultado' && activeTab !== 'proveedores' && activeTab !== 'permisos') && (
            <div className="py-32 text-center border border-dashed border-slate-200 rounded-2xl bg-white">
               <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest animate-pulse">Integrando módulo {activeTab}...</span>
            </div>
