@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Clapperboard, DollarSign, ReceiptText, TrendingUp, Wallet } from 'lucide-react';
+import { AlertTriangle, CalendarDays, CheckCircle2, Clapperboard, Clock, MapPin } from 'lucide-react';
 import { motion } from 'motion/react';
 import { collection, getDocs, query, orderBy, where, or, updateDoc, doc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
@@ -44,16 +44,9 @@ interface ProjectFinance {
   unpaidLines: number;
   payableLines: PayableLine[];
   createdAt?: any;
-}
-
-interface ProviderBalance {
-  key: string;
-  name: string;
-  total: number;
-  paid: number;
-  debt: number;
-  items: number;
-  projects: string[];
+  shootingDate?: any;
+  location?: string;
+  updatedAt?: any;
 }
 
 const statusColors: Record<string, string> = {
@@ -71,6 +64,38 @@ const formatCompactCurrency = (value: number) => {
   if (abs >= 1000000) return `$${(value / 1000000).toFixed(1)}M`;
   if (abs >= 1000) return `$${(value / 1000).toFixed(0)}k`;
   return formatCurrency(value);
+};
+
+const parseProjectDate = (value: any) => {
+  if (!value) return null;
+  if (typeof value?.toDate === 'function') return value.toDate();
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const formatProjectDate = (value: any) => {
+  const date = parseProjectDate(value);
+  if (!date) return 'Sin fecha';
+  return date.toLocaleDateString('es-AR', { day: '2-digit', month: 'short' });
+};
+
+const getDaysUntil = (value: any) => {
+  const date = parseProjectDate(value);
+  if (!date) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  date.setHours(0, 0, 0, 0);
+  return Math.ceil((date.getTime() - today.getTime()) / 86400000);
+};
+
+const getOperationalFlags = (project: ProjectFinance) => {
+  const flags: string[] = [];
+  if (!project.shootingDate && project.status !== 'Aprobado') flags.push('Sin fecha de rodaje');
+  if (project.overBudget > 0) flags.push('Presupuesto excedido');
+  else if (project.usagePercent >= 85 && project.status !== 'Aprobado') flags.push('Presupuesto en alerta');
+  if (project.debt > 0.01) flags.push('Pagos pendientes');
+  if (!project.clientName) flags.push('Sin cliente asignado');
+  return flags;
 };
 
 const getPaymentTotal = (item: any) => {
@@ -145,6 +170,9 @@ const buildProjectFinance = (project: any, budgetItems: any[], areaExpenses: any
     unpaidLines: payableLines.filter((item) => item.debt > 0.01).length,
     payableLines,
     createdAt: project.createdAt,
+    shootingDate: project.shootingDate,
+    location: project.location,
+    updatedAt: project.updatedAt,
   };
 };
 
@@ -201,60 +229,35 @@ export default function Dashboard() {
     fetchDashboardData();
   }, [profile]);
 
-  const totals = useMemo(() => {
-    const budget = projects.reduce((acc, project) => acc + project.budgetTotal, 0);
-    const committed = projects.reduce((acc, project) => acc + project.committedBudget, 0);
-    const spent = projects.reduce((acc, project) => acc + project.spent, 0);
-    const paid = projects.reduce((acc, project) => acc + project.paid, 0);
-    const debt = projects.reduce((acc, project) => acc + project.debt, 0);
-    const overBudgetProjects = projects.filter((project) => project.overBudget > 0).length;
-    const riskProjects = projects.filter((project) => project.usagePercent >= 85 && project.overBudget === 0).length;
+  const dashboardStats = useMemo(() => {
+    const active = projects.filter((project) => project.status !== 'Aprobado').length;
+    const inShoot = projects.filter((project) => project.status === 'Rodaje').length;
+    const nextShoots = projects.filter((project) => {
+      const days = getDaysUntil(project.shootingDate);
+      return days !== null && days >= 0 && days <= 14;
+    }).length;
+    const attention = projects.filter((project) => getOperationalFlags(project).length > 0).length;
 
-    return { budget, committed, spent, paid, debt, overBudgetProjects, riskProjects };
+    return { active, inShoot, nextShoots, attention };
   }, [projects]);
 
-  const providerBalances = useMemo(() => {
-    const map = new Map<string, ProviderBalance>();
+  const upcomingShoots = useMemo(() => (
+    projects
+      .map((project) => ({ project, days: getDaysUntil(project.shootingDate) }))
+      .filter((item): item is { project: ProjectFinance; days: number } => item.days !== null && item.days >= 0)
+      .sort((a, b) => a.days - b.days)
+      .slice(0, 6)
+  ), [projects]);
 
-    projects.forEach((project) => {
-      project.payableLines.forEach((line) => {
-        if (line.debt <= 0.01) return;
-        const key = line.providerId || line.providerName || 'sin-proveedor';
-        const name = line.providerName || 'Sin proveedor asignado';
-
-        if (!map.has(key)) {
-          map.set(key, {
-            key,
-            name,
-            total: 0,
-            paid: 0,
-            debt: 0,
-            items: 0,
-            projects: [],
-          });
-        }
-
-        const balance = map.get(key)!;
-        balance.total += line.total;
-        balance.paid += line.paid;
-        balance.debt += line.debt;
-        balance.items += 1;
-        if (!balance.projects.includes(project.name)) {
-          balance.projects.push(project.name);
-        }
-      });
-    });
-
-    return Array.from(map.values()).sort((a, b) => b.debt - a.debt);
-  }, [projects]);
-
-  const projectAlerts = useMemo(() => {
-    return [...projects]
-      .filter((project) => project.debt > 0 || project.usagePercent >= 85)
+  const attentionProjects = useMemo(() => {
+    return projects
+      .map((project) => ({ project, flags: getOperationalFlags(project) }))
+      .filter((item) => item.flags.length > 0)
       .sort((a, b) => {
-        if (a.overBudget !== b.overBudget) return b.overBudget - a.overBudget;
-        if (a.debt !== b.debt) return b.debt - a.debt;
-        return b.usagePercent - a.usagePercent;
+        const aCritical = a.project.overBudget > 0 ? 1 : 0;
+        const bCritical = b.project.overBudget > 0 ? 1 : 0;
+        if (aCritical !== bCritical) return bCritical - aCritical;
+        return b.flags.length - a.flags.length;
       })
       .slice(0, 6);
   }, [projects]);
@@ -298,9 +301,9 @@ export default function Dashboard() {
     <div className="max-w-full mx-auto space-y-5">
       <header className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <div className="text-[10px] text-slate-400 uppercase tracking-widest font-bold mb-1">Global / Gestion ejecutiva</div>
+          <div className="text-[10px] text-slate-400 uppercase tracking-widest font-bold mb-1">Global / Operacion audiovisual</div>
           <h1 className="text-2xl font-light text-slate-900 leading-none">
-            Dashboard: <span className="font-bold text-black">Producciones y Finanzas</span>
+            Dashboard: <span className="font-bold text-black">Estado de Producciones</span>
           </h1>
         </div>
         <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
@@ -310,11 +313,11 @@ export default function Dashboard() {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
         {[
-          { label: 'Proyectos activos', value: projects.length.toString(), icon: Clapperboard, color: 'text-blue-600', bg: 'bg-blue-50' },
-          { label: 'Presupuesto total', value: formatCompactCurrency(totals.budget), icon: DollarSign, color: 'text-slate-900', bg: 'bg-slate-50' },
-          { label: 'Gastado registrado', value: formatCompactCurrency(totals.spent), icon: ReceiptText, color: 'text-purple-600', bg: 'bg-purple-50' },
-          { label: 'Total pagado', value: formatCompactCurrency(totals.paid), icon: Wallet, color: 'text-emerald-600', bg: 'bg-emerald-50' },
-          { label: 'Deuda pendiente', value: formatCompactCurrency(totals.debt), icon: AlertTriangle, color: totals.debt > 0 ? 'text-rose-600' : 'text-emerald-600', bg: totals.debt > 0 ? 'bg-rose-50' : 'bg-emerald-50' },
+          { label: 'Producciones visibles', value: projects.length.toString(), icon: Clapperboard, color: 'text-blue-600', bg: 'bg-blue-50' },
+          { label: 'Producciones activas', value: dashboardStats.active.toString(), icon: Clock, color: 'text-slate-900', bg: 'bg-slate-50' },
+          { label: 'En rodaje', value: dashboardStats.inShoot.toString(), icon: CalendarDays, color: 'text-rose-600', bg: 'bg-rose-50' },
+          { label: 'Rodajes proximos', value: dashboardStats.nextShoots.toString(), icon: MapPin, color: 'text-purple-600', bg: 'bg-purple-50' },
+          { label: 'Necesitan atencion', value: dashboardStats.attention.toString(), icon: AlertTriangle, color: dashboardStats.attention > 0 ? 'text-rose-600' : 'text-emerald-600', bg: dashboardStats.attention > 0 ? 'bg-rose-50' : 'bg-emerald-50' },
         ].map((stat, i) => (
           <motion.div
             key={stat.label}
@@ -336,186 +339,6 @@ export default function Dashboard() {
         ))}
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-[1.4fr_0.9fr] gap-4">
-        <section className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
-          <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between gap-3">
-            <div>
-              <h2 className="text-sm font-bold text-slate-900">Saldos globales por proveedor</h2>
-              <p className="text-[10px] uppercase font-bold tracking-widest text-slate-400 mt-0.5">Deuda consolidada de todos los proyectos visibles</p>
-            </div>
-            <div className="text-right">
-              <div className="text-[9px] uppercase font-bold tracking-widest text-slate-400">Pendiente</div>
-              <div className="text-base font-black text-rose-600">{formatCompactCurrency(totals.debt)}</div>
-            </div>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left">
-              <thead>
-                <tr className="bg-slate-50 border-b border-slate-100">
-                  <th className="px-4 py-3 text-[9px] font-bold uppercase tracking-widest text-slate-400">Proveedor</th>
-                  <th className="px-4 py-3 text-[9px] font-bold uppercase tracking-widest text-slate-400">Proyectos</th>
-                  <th className="px-4 py-3 text-[9px] font-bold uppercase tracking-widest text-slate-400 text-right">Total</th>
-                  <th className="px-4 py-3 text-[9px] font-bold uppercase tracking-widest text-slate-400 text-right">Pagado</th>
-                  <th className="px-4 py-3 text-[9px] font-bold uppercase tracking-widest text-slate-400 text-right">Debe</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {providerBalances.slice(0, 8).map((balance) => (
-                  <tr key={balance.key} className="hover:bg-slate-50/60 transition-colors">
-                    <td className="px-4 py-3">
-                      <div className="text-xs font-bold text-slate-900 uppercase">{balance.name}</div>
-                      <div className="text-[9px] font-bold uppercase tracking-widest text-slate-300">{balance.items} partidas abiertas</div>
-                    </td>
-                    <td className="px-4 py-3 max-w-[260px]">
-                      <div className="text-[10px] font-medium text-slate-500 truncate">
-                        {balance.projects.join(' / ')}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-right text-xs font-bold text-slate-500">{formatCurrency(balance.total)}</td>
-                    <td className="px-4 py-3 text-right text-xs font-bold text-emerald-600">{formatCurrency(balance.paid)}</td>
-                    <td className="px-4 py-3 text-right text-sm font-black text-rose-600">{formatCurrency(balance.debt)}</td>
-                  </tr>
-                ))}
-                {!loading && providerBalances.length === 0 && (
-                  <tr>
-                    <td colSpan={5} className="px-4 py-10 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
-                      No hay deudas pendientes registradas
-                    </td>
-                  </tr>
-                )}
-                {loading && (
-                  <tr>
-                    <td colSpan={5} className="px-4 py-10 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
-                      Calculando saldos...
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        <section className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
-          <div className="px-4 py-3 border-b border-slate-100">
-            <h2 className="text-sm font-bold text-slate-900">Alertas de produccion</h2>
-            <p className="text-[10px] uppercase font-bold tracking-widest text-slate-400 mt-0.5">
-              Presupuesto, deuda y avance financiero
-            </p>
-          </div>
-          <div className="divide-y divide-slate-100">
-            {projectAlerts.map((project) => (
-              <Link key={project.id} to={`/proyectos/${project.id}`} className="block px-4 py-3 hover:bg-slate-50 transition-colors">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="text-xs font-bold text-slate-900 truncate">{project.name}</div>
-                    <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400 mt-1">
-                      {project.status} / {project.unpaidLines} pendientes
-                    </div>
-                  </div>
-                  <div className={cn(
-                    'text-[10px] font-black px-2 py-1 rounded border',
-                    project.overBudget > 0
-                      ? 'bg-rose-50 text-rose-700 border-rose-100'
-                      : project.usagePercent >= 85
-                        ? 'bg-yellow-50 text-yellow-700 border-yellow-100'
-                        : 'bg-slate-50 text-slate-500 border-slate-100'
-                  )}>
-                    {project.usagePercent}%
-                  </div>
-                </div>
-                <div className="mt-3 h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                  <div
-                    className={cn(
-                      'h-full rounded-full',
-                      project.overBudget > 0 ? 'bg-rose-500' : project.usagePercent >= 85 ? 'bg-yellow-400' : 'bg-emerald-500'
-                    )}
-                    style={{ width: `${Math.min(project.usagePercent, 100)}%` }}
-                  />
-                </div>
-                <div className="mt-2 flex justify-between text-[10px] font-bold text-slate-400">
-                  <span>Gastado {formatCompactCurrency(project.spent)}</span>
-                  <span className={project.debt > 0 ? 'text-rose-600' : 'text-emerald-600'}>
-                    Debe {formatCompactCurrency(project.debt)}
-                  </span>
-                </div>
-              </Link>
-            ))}
-            {!loading && projectAlerts.length === 0 && (
-              <div className="px-4 py-10 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
-                Sin alertas financieras
-              </div>
-            )}
-            {loading && (
-              <div className="px-4 py-10 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
-                Analizando proyectos...
-              </div>
-            )}
-          </div>
-        </section>
-      </div>
-
-      <section className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
-        <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
-          <div>
-            <h2 className="text-sm font-bold text-slate-900">Resumen por proyecto</h2>
-            <p className="text-[10px] uppercase font-bold tracking-widest text-slate-400 mt-0.5">Presupuesto, gasto registrado, pagos y deuda</p>
-          </div>
-          <TrendingUp className="w-4 h-4 text-slate-300" />
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left">
-            <thead>
-              <tr className="bg-slate-50 border-b border-slate-100">
-                <th className="px-4 py-3 text-[9px] font-bold uppercase tracking-widest text-slate-400">Proyecto</th>
-                <th className="px-4 py-3 text-[9px] font-bold uppercase tracking-widest text-slate-400">Estado</th>
-                <th className="px-4 py-3 text-[9px] font-bold uppercase tracking-widest text-slate-400 text-right">Presupuesto</th>
-                <th className="px-4 py-3 text-[9px] font-bold uppercase tracking-widest text-slate-400 text-right">Gastado</th>
-                <th className="px-4 py-3 text-[9px] font-bold uppercase tracking-widest text-slate-400 text-right">Pagado</th>
-                <th className="px-4 py-3 text-[9px] font-bold uppercase tracking-widest text-slate-400 text-right">Deuda</th>
-                <th className="px-4 py-3 text-[9px] font-bold uppercase tracking-widest text-slate-400 text-right">Uso</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {projects.slice(0, 10).map((project) => (
-                <tr key={project.id} className="hover:bg-slate-50/60 transition-colors">
-                  <td className="px-4 py-3">
-                    <Link to={`/proyectos/${project.id}`} className="text-xs font-bold text-slate-900 hover:underline">
-                      {project.name}
-                    </Link>
-                    <div className="text-[9px] font-bold uppercase tracking-widest text-slate-300">{project.clientName || 'Sin cliente'}</div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className="text-[9px] font-bold uppercase tracking-widest text-slate-500 bg-slate-50 border border-slate-100 rounded px-2 py-1">
-                      {project.status}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-right text-xs font-bold text-slate-500">{formatCurrency(project.budgetTotal)}</td>
-                  <td className="px-4 py-3 text-right text-xs font-bold text-slate-700">{formatCurrency(project.spent)}</td>
-                  <td className="px-4 py-3 text-right text-xs font-bold text-emerald-600">{formatCurrency(project.paid)}</td>
-                  <td className="px-4 py-3 text-right text-xs font-black text-rose-600">{formatCurrency(project.debt)}</td>
-                  <td className="px-4 py-3 text-right">
-                    <span className={cn(
-                      'text-[10px] font-black',
-                      project.overBudget > 0 ? 'text-rose-600' : project.usagePercent >= 85 ? 'text-yellow-600' : 'text-slate-500'
-                    )}>
-                      {project.usagePercent}%
-                    </span>
-                  </td>
-                </tr>
-              ))}
-              {!loading && projects.length === 0 && (
-                <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
-                    No hay proyectos visibles
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
       <section className="space-y-3">
         <div>
           <div className="text-[10px] text-slate-400 uppercase tracking-widest font-bold mb-1">Pipeline operativo</div>
@@ -526,7 +349,6 @@ export default function Dashboard() {
           <div className="grid grid-cols-1 md:grid-cols-5 gap-2 min-h-[420px] items-start">
             {PROJECT_STATUSES.map((status, i) => {
               const columnProjects = getProjectsByStatus(status);
-              const columnBudget = columnProjects.reduce((sum, project) => sum + project.budgetTotal, 0);
 
               return (
                 <motion.div
@@ -544,9 +366,6 @@ export default function Dashboard() {
                       <h3 className="text-[10px] font-bold uppercase tracking-widest text-slate-900 truncate mr-1">{status}</h3>
                       <span className="text-[9px] font-bold bg-white/50 px-1.5 py-0.5 rounded-full border border-black/5 leading-none">{columnProjects.length}</span>
                     </div>
-                    <div className="text-sm font-bold text-slate-900 leading-none">
-                      {formatCompactCurrency(columnBudget)}
-                    </div>
                   </div>
 
                   <DroppableComponent droppableId={status}>
@@ -560,7 +379,11 @@ export default function Dashboard() {
                         )}
                       >
                         {columnProjects.length > 0 ? (
-                          columnProjects.map((project, index) => (
+                          columnProjects.map((project, index) => {
+                            const flags = getOperationalFlags(project);
+                            const daysUntilShoot = getDaysUntil(project.shootingDate);
+
+                            return (
                             <DraggableComponent key={project.id} draggableId={project.id} index={index}>
                               {(provided: any, snapshot: any) => (
                                 <div
@@ -586,27 +409,34 @@ export default function Dashboard() {
                                       {project.name}
                                     </h4>
                                     <div className="space-y-2 pt-2 border-t border-slate-50">
-                                      <div className="flex justify-between items-center text-[9px] font-bold">
-                                        <span className="text-slate-900">{formatCompactCurrency(project.budgetTotal)}</span>
-                                        <span className={project.debt > 0 ? 'text-rose-600' : 'text-emerald-600'}>
-                                          {formatCompactCurrency(project.debt)}
-                                        </span>
+                                      <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500">
+                                        <CalendarDays className="w-3 h-3 text-slate-300" />
+                                        <span>{formatProjectDate(project.shootingDate)}</span>
+                                        {daysUntilShoot !== null && daysUntilShoot >= 0 && (
+                                          <span className="ml-auto text-[9px] text-slate-400">D-{daysUntilShoot}</span>
+                                        )}
                                       </div>
-                                      <div className="h-1 bg-slate-100 rounded-full overflow-hidden">
-                                        <div
-                                          className={cn(
-                                            'h-full rounded-full',
-                                            project.overBudget > 0 ? 'bg-rose-500' : project.usagePercent >= 85 ? 'bg-yellow-400' : 'bg-slate-900'
-                                          )}
-                                          style={{ width: `${Math.min(project.usagePercent, 100)}%` }}
-                                        />
+                                      {project.location && (
+                                        <div className="flex items-center gap-1.5 text-[10px] font-medium text-slate-400 truncate">
+                                          <MapPin className="w-3 h-3 shrink-0" />
+                                          <span className="truncate">{project.location}</span>
+                                        </div>
+                                      )}
+                                      <div className={cn(
+                                        'inline-flex max-w-full items-center gap-1 rounded border px-2 py-1 text-[8px] font-black uppercase tracking-widest',
+                                        flags.length > 0
+                                          ? 'bg-rose-50 text-rose-700 border-rose-100'
+                                          : 'bg-emerald-50 text-emerald-700 border-emerald-100'
+                                      )}>
+                                        {flags.length > 0 ? flags[0] : 'En orden'}
                                       </div>
                                     </div>
                                   </Link>
                                 </div>
                               )}
                             </DraggableComponent>
-                          ))
+                            );
+                          })
                         ) : (
                           <div className="flex-1 border border-dashed border-slate-100 rounded-lg flex items-center justify-center p-4">
                             <p className="text-[8px] font-bold uppercase tracking-widest text-slate-200">Vacio</p>
@@ -621,6 +451,75 @@ export default function Dashboard() {
             })}
           </div>
         </DragDropContext>
+
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+          <section className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
+            <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <h2 className="text-sm font-bold text-slate-900">Proximos rodajes</h2>
+                <p className="text-[10px] uppercase font-bold tracking-widest text-slate-400 mt-0.5">Fechas visibles ordenadas por urgencia</p>
+              </div>
+              <CalendarDays className="w-4 h-4 text-slate-300" />
+            </div>
+            <div className="divide-y divide-slate-100">
+              {upcomingShoots.map(({ project, days }) => (
+                <Link key={project.id} to={`/proyectos/${project.id}`} className="flex items-center justify-between gap-4 px-4 py-3 hover:bg-slate-50 transition-colors">
+                  <div className="min-w-0">
+                    <div className="text-xs font-bold text-slate-900 truncate">{project.name}</div>
+                    <div className="text-[10px] font-medium text-slate-400 truncate">{project.clientName || 'Sin cliente'}{project.location ? ` / ${project.location}` : ''}</div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <div className="text-xs font-black text-slate-900">{formatProjectDate(project.shootingDate)}</div>
+                    <div className={cn("text-[9px] font-bold uppercase tracking-widest", days <= 3 ? "text-rose-600" : "text-slate-400")}>D-{days}</div>
+                  </div>
+                </Link>
+              ))}
+              {!loading && upcomingShoots.length === 0 && (
+                <div className="px-4 py-10 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
+                  No hay rodajes proximos cargados
+                </div>
+              )}
+            </div>
+          </section>
+
+          <section className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
+            <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <h2 className="text-sm font-bold text-slate-900">Atencion operativa</h2>
+                <p className="text-[10px] uppercase font-bold tracking-widest text-slate-400 mt-0.5">Datos faltantes o riesgos para resolver</p>
+              </div>
+              <AlertTriangle className="w-4 h-4 text-slate-300" />
+            </div>
+            <div className="divide-y divide-slate-100">
+              {attentionProjects.map(({ project, flags }) => (
+                <Link key={project.id} to={`/proyectos/${project.id}`} className="block px-4 py-3 hover:bg-slate-50 transition-colors">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-xs font-bold text-slate-900 truncate">{project.name}</div>
+                      <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400 mt-1">{project.status}</div>
+                    </div>
+                    <span className="text-[9px] font-black text-rose-600 bg-rose-50 border border-rose-100 rounded px-2 py-1">
+                      {flags.length}
+                    </span>
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {flags.slice(0, 3).map((flag) => (
+                      <span key={flag} className="text-[8px] font-black uppercase tracking-widest text-slate-500 bg-slate-50 border border-slate-100 rounded px-2 py-1">
+                        {flag}
+                      </span>
+                    ))}
+                  </div>
+                </Link>
+              ))}
+              {!loading && attentionProjects.length === 0 && (
+                <div className="px-4 py-10 text-center text-[10px] font-bold uppercase tracking-widest text-emerald-600 flex items-center justify-center gap-2">
+                  <CheckCircle2 className="w-4 h-4" />
+                  Producciones sin alertas operativas
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
       </section>
     </div>
   );
