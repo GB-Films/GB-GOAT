@@ -1246,10 +1246,12 @@ export default function ProjectDetail() {
   const hasExportOptions = isProjectAdmin || canExportPayroll;
 
   const exportNomina = (format: 'xlsx' | 'csv') => {
-    const rows = allProjectAreaProviderRows.map(row => providerExportRow(row.provider, {
-      Areas: row.areas.join(', '),
-      Conceptos: row.concepts.join(', '),
-    }));
+    const rows = allProjectAreaProviderRows.map(row => {
+      const { Categoria, Origen, ...nominaRow } = providerExportRow(row.provider, {
+        Areas: row.areas.join(', '),
+      });
+      return nominaRow;
+    });
 
     if (rows.length === 0) {
       alert('No hay proveedores cargados en Gestion por Areas para exportar.');

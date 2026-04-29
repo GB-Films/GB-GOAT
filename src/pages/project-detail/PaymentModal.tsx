@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { doc, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { Calendar, DollarSign, ExternalLink, History, Paperclip, Plus, Trash2, Wallet } from 'lucide-react';
@@ -30,6 +30,26 @@ const buildReceiptFileName = (paymentId: string, file: File) => {
   return `comprobante-${paymentId}-${cleanBase}.${ext}`;
 };
 
+const allowedReceiptTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
+
+const validateReceiptFile = (file: File) => {
+  if (!allowedReceiptTypes.includes(file.type)) {
+    return 'El comprobante debe ser PDF, JPG, PNG o WEBP.';
+  }
+
+  if (file.size > 15 * 1024 * 1024) {
+    return 'El comprobante es muy pesado. El maximo permitido es 15 MB.';
+  }
+
+  return '';
+};
+
+const formatFileSize = (size: number) => {
+  if (size >= 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  if (size >= 1024) return `${Math.round(size / 1024)} KB`;
+  return `${size} B`;
+};
+
 interface PaymentModalProps {
   projectId?: string;
   item: any | null;
@@ -59,6 +79,37 @@ export function PaymentModal({
   onDeletePayment,
 }: PaymentModalProps) {
   const amountRef = useRef<HTMLInputElement>(null);
+  const [selectedReceipt, setSelectedReceipt] = useState<File | null>(null);
+  const [receiptPreviewUrl, setReceiptPreviewUrl] = useState('');
+  const [isReceiptDragOver, setIsReceiptDragOver] = useState(false);
+
+  useEffect(() => {
+    setSelectedReceipt(null);
+    setReceiptPreviewUrl('');
+    setIsReceiptDragOver(false);
+  }, [isOpen, item?.id]);
+
+  useEffect(() => {
+    if (!selectedReceipt || !selectedReceipt.type.startsWith('image/')) {
+      setReceiptPreviewUrl('');
+      return;
+    }
+
+    const url = URL.createObjectURL(selectedReceipt);
+    setReceiptPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [selectedReceipt]);
+
+  const attachReceipt = (file?: File | null) => {
+    if (!file) return;
+    const error = validateReceiptFile(file);
+    if (error) {
+      alert(error);
+      return;
+    }
+
+    setSelectedReceipt(file);
+  };
 
   if (!isOpen || !item) return null;
 
@@ -121,7 +172,8 @@ export function PaymentModal({
               const formData = new FormData(e.currentTarget);
               const customDate = formData.get('paymentDate') as string;
               const amount = Number(formData.get('amount'));
-              const receiptFile = formData.get('receipt') as File | null;
+              const formReceiptFile = formData.get('receipt') as File | null;
+              const receiptFile = selectedReceipt || (formReceiptFile && formReceiptFile.size > 0 ? formReceiptFile : null);
               
               if (!amount || amount <= 0) {
                 alert('Por favor ingrese un monto válido');
@@ -129,14 +181,9 @@ export function PaymentModal({
               }
 
               if (receiptFile && receiptFile.size > 0) {
-                const allowedReceiptTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
-                if (!allowedReceiptTypes.includes(receiptFile.type)) {
-                  alert('El comprobante debe ser PDF, JPG, PNG o WEBP.');
-                  return;
-                }
-
-                if (receiptFile.size > 15 * 1024 * 1024) {
-                  alert('El comprobante es muy pesado. El maximo permitido es 15 MB.');
+                const receiptError = validateReceiptFile(receiptFile);
+                if (receiptError) {
+                  alert(receiptError);
                   return;
                 }
               }
@@ -201,6 +248,7 @@ export function PaymentModal({
                 onPaymentStateChange(currentItemId, collectionName, updatedHistory, isFullyPaid);
                 
                 (e.target as HTMLFormElement).reset();
+                setSelectedReceipt(null);
               } catch (err: any) {
                 console.error("Error updating payment:", err);
                 handleFirestoreError(err, 'update', `projects/${projectId}/${collectionName}/${currentItemId}`);
@@ -248,11 +296,61 @@ export function PaymentModal({
               </div>
               <div>
                 <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Comprobante de Pago</label>
-                <label className="w-full px-4 py-3 bg-slate-50 border border-dashed border-slate-200 rounded text-[10px] font-bold uppercase tracking-widest text-slate-400 hover:text-slate-900 hover:border-slate-900 transition-all flex items-center justify-center gap-2 cursor-pointer">
-                  <Paperclip className="w-3.5 h-3.5" />
-                  Adjuntar PDF / Imagen
-                  <input name="receipt" type="file" accept="application/pdf,image/jpeg,image/png,image/webp,.pdf,.jpg,.jpeg,.png,.webp" className="hidden" />
+                <label
+                  onDragEnter={(event) => {
+                    event.preventDefault();
+                    setIsReceiptDragOver(true);
+                  }}
+                  onDragOver={(event) => {
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = 'copy';
+                    setIsReceiptDragOver(true);
+                  }}
+                  onDragLeave={(event) => {
+                    if (!event.currentTarget.contains(event.relatedTarget as Node)) {
+                      setIsReceiptDragOver(false);
+                    }
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    setIsReceiptDragOver(false);
+                    attachReceipt(event.dataTransfer.files.item(0));
+                  }}
+                  className={cn(
+                    "w-full px-4 py-4 bg-slate-50 border border-dashed rounded text-[10px] font-bold uppercase tracking-widest transition-all flex flex-col items-center justify-center gap-2 cursor-pointer",
+                    isReceiptDragOver
+                      ? "border-emerald-500 bg-emerald-50 text-emerald-700"
+                      : "border-slate-200 text-slate-400 hover:text-slate-900 hover:border-slate-900"
+                  )}
+                >
+                  {receiptPreviewUrl ? (
+                    <img src={receiptPreviewUrl} alt="Previsualizacion del comprobante" className="h-20 max-w-full rounded border border-slate-200 object-contain bg-white" />
+                  ) : (
+                    <Paperclip className="w-5 h-5" />
+                  )}
+                  <span>{selectedReceipt ? 'Comprobante adjunto' : 'Arrastrar o adjuntar PDF / Imagen'}</span>
+                  {selectedReceipt && (
+                    <span className="text-[10px] normal-case tracking-normal text-slate-500 font-medium">
+                      {selectedReceipt.name} · {formatFileSize(selectedReceipt.size)}
+                    </span>
+                  )}
+                  <input
+                    name="receipt"
+                    type="file"
+                    accept="application/pdf,image/jpeg,image/png,image/webp,.pdf,.jpg,.jpeg,.png,.webp"
+                    className="hidden"
+                    onChange={(event) => attachReceipt(event.target.files?.[0])}
+                  />
                 </label>
+                {selectedReceipt && (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedReceipt(null)}
+                    className="mt-2 text-[10px] font-bold uppercase tracking-widest text-slate-400 hover:text-red-500 transition-colors"
+                  >
+                    Quitar comprobante
+                  </button>
+                )}
               </div>
               <button type="submit" className="w-full py-4 bg-emerald-600 text-white rounded-xl text-[10px] font-bold tracking-widest uppercase hover:bg-emerald-700 transition-colors flex items-center justify-center gap-2">
                  <DollarSign className="w-4 h-4" /> Registrar Pago
