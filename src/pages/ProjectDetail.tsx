@@ -235,6 +235,12 @@ const providerExportRow = (provider: any, extra: Record<string, any> = {}) => {
   };
 };
 
+const PROJECT_KEY_PEOPLE = [
+  { id: 'director', label: 'Director' },
+  { id: 'lineProducer', label: 'Line Producer' },
+  { id: 'producer', label: 'Productor' },
+];
+
 export default function ProjectDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -1439,6 +1445,57 @@ export default function ProjectDetail() {
     setProject({ ...project, resultIncidences: nextIncidences });
   };
 
+  const projectKeyPeople = React.useMemo(() => {
+    const assignments = project?.keyPeople || {};
+    return PROJECT_KEY_PEOPLE.map((role) => {
+      const providerId = assignments?.[role.id]?.providerId || '';
+      const provider = providers.find((item) => item.id === providerId) || null;
+      return {
+        ...role,
+        providerId,
+        provider,
+      };
+    });
+  }, [project?.keyPeople, providers]);
+
+  const updateProjectKeyPerson = async (roleId: string, providerId: string) => {
+    if (!id || !isProjectAdmin) return;
+    const provider = providers.find((item) => item.id === providerId);
+    const nextKeyPeople = {
+      ...(project?.keyPeople || {}),
+      [roleId]: provider
+        ? { providerId: provider.id, providerName: providerDisplayName(provider) }
+        : { providerId: '', providerName: '' },
+    };
+
+    await updateDoc(doc(db, 'projects', id), {
+      keyPeople: nextKeyPeople,
+      updatedAt: serverTimestamp(),
+    });
+    setProject({ ...project, keyPeople: nextKeyPeople });
+  };
+
+  const areaSummaryRows = React.useMemo(() => {
+    const targetAreas = isProjectAdmin
+      ? categories
+      : safeArray(userPermissions?.allowedCategories);
+
+    return targetAreas
+      .map((area) => {
+        const assigned = budgetItems
+          .filter((item) => item.area === area)
+          .reduce((acc, item) => acc + (Number(item.total) || 0), 0);
+        const spent = areaExpenses
+          .filter((item) => item.area === area)
+          .reduce((acc, item) => acc + (Number(item.total) || 0), 0);
+        const balance = assigned - spent;
+        const usedPercent = assigned > 0 ? Math.min(100, (spent / assigned) * 100) : 0;
+
+        return { area, assigned, spent, balance, usedPercent };
+      })
+      .filter((row) => row.assigned > 0 || row.spent > 0 || !isProjectAdmin);
+  }, [areaExpenses, budgetItems, categories, isProjectAdmin, userPermissions]);
+
   const addCollaborator = async (selectedUser: any) => {
     if (!id || !selectedUser?.email) return;
 
@@ -1676,6 +1733,105 @@ export default function ProjectDetail() {
         {activeTab === 'resumen' && (
           <div className="grid grid-cols-12 gap-8">
             <div className="col-span-12 lg:col-span-8 space-y-8">
+              <section className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="px-5 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/30">
+                  <div>
+                    <h3 className="font-bold text-[10px] uppercase tracking-widest">Dirección y Producción</h3>
+                    <p className="text-[10px] text-slate-400 mt-1">Responsables clave del proyecto</p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-slate-100">
+                  {projectKeyPeople.map(({ id: roleId, label, provider }) => {
+                    const inferred = provider ? inferLegacyIdentifiers(provider) : null;
+                    return (
+                      <div key={roleId} className="p-5 space-y-3">
+                        <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">{label}</div>
+                        {isProjectAdmin && (
+                          <select
+                            value={provider?.id || ''}
+                            onChange={(event) => updateProjectKeyPerson(roleId, event.target.value)}
+                            className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black"
+                          >
+                            <option value="">Sin asignar</option>
+                            {providers.map((candidate) => (
+                              <option key={candidate.id} value={candidate.id}>{providerDisplayName(candidate)}</option>
+                            ))}
+                          </select>
+                        )}
+                        {provider ? (
+                          <details className="group">
+                            <summary className="list-none cursor-pointer">
+                              <div className="flex items-center gap-3">
+                                <div className="w-9 h-9 rounded-full bg-slate-900 text-white flex items-center justify-center text-xs font-black uppercase">
+                                  {providerDisplayName(provider)[0] || 'P'}
+                                </div>
+                                <div className="min-w-0">
+                                  <div className="text-sm font-bold text-slate-900 truncate">{providerDisplayName(provider)}</div>
+                                  <div className="text-[10px] font-bold text-blue-600 uppercase tracking-widest group-open:text-slate-400">Ver datos</div>
+                                </div>
+                              </div>
+                            </summary>
+                            <div className="mt-4 text-xs text-slate-500 space-y-2 border-t border-slate-100 pt-4">
+                              <div><span className="font-bold text-slate-700">Email:</span> {provider.email || provider.adminEmail || '-'}</div>
+                              <div><span className="font-bold text-slate-700">Tel:</span> {provider.phone || '-'}</div>
+                              <div><span className="font-bold text-slate-700">CUIT:</span> {formatIdentifier(provider.cuit || inferred?.cuitNormalized) || '-'}</div>
+                              <div><span className="font-bold text-slate-700">Dirección:</span> {provider.address || '-'}</div>
+                            </div>
+                          </details>
+                        ) : (
+                          <div className="py-4 text-[10px] font-bold uppercase tracking-widest text-slate-300">Sin asignar</div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+
+              <section className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="px-5 py-4 border-b border-slate-100 bg-slate-50/30">
+                  <h3 className="font-bold text-[10px] uppercase tracking-widest">
+                    {isProjectAdmin ? 'Presupuesto por áreas' : 'Mis áreas asignadas'}
+                  </h3>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-5">
+                  {areaSummaryRows.map((row) => (
+                    <div key={row.area} className="border border-slate-200 rounded-lg p-4">
+                      <div className="flex items-start justify-between gap-4 mb-4">
+                        <div>
+                          <div className="text-xs font-black uppercase tracking-wider text-slate-900">{row.area}</div>
+                          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">{row.usedPercent.toFixed(0)}% consumido</div>
+                        </div>
+                        <div className={cn("text-sm font-black font-mono", row.balance >= 0 ? "text-emerald-600" : "text-rose-600")}>
+                          ${row.balance.toLocaleString()}
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-3 gap-3 text-center">
+                        <div>
+                          <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400">Asignado</div>
+                          <div className="text-xs font-bold text-slate-900">${row.assigned.toLocaleString()}</div>
+                        </div>
+                        <div>
+                          <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400">Gastado</div>
+                          <div className="text-xs font-bold text-slate-900">${row.spent.toLocaleString()}</div>
+                        </div>
+                        <div>
+                          <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400">Diferencia</div>
+                          <div className={cn("text-xs font-bold", row.balance >= 0 ? "text-emerald-600" : "text-rose-600")}>${row.balance.toLocaleString()}</div>
+                        </div>
+                      </div>
+                      <div className="mt-4 h-2 bg-slate-100 rounded-full overflow-hidden">
+                        <div className={cn("h-full rounded-full", row.balance < 0 ? "bg-rose-500" : row.usedPercent >= 85 ? "bg-yellow-400" : "bg-emerald-500")} style={{ width: `${row.usedPercent}%` }} />
+                      </div>
+                    </div>
+                  ))}
+                  {areaSummaryRows.length === 0 && (
+                    <div className="md:col-span-2 p-10 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
+                      No hay áreas asignadas con presupuesto o gastos
+                    </div>
+                  )}
+                </div>
+              </section>
+
               {/* KPIs Section */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {(isProjectAdmin || (userPermissions && userPermissions.allowedCategories.length > 0)) && (
