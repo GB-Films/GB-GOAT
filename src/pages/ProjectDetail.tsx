@@ -278,6 +278,7 @@ export default function ProjectDetail() {
   const [showExportModal, setShowExportModal] = useState(false);
   const [locationDraft, setLocationDraft] = useState('');
   const [isSavingLocation, setIsSavingLocation] = useState(false);
+  const [expandedKeyPerson, setExpandedKeyPerson] = useState<string | null>(null);
   const areaSelectorRef = useRef<HTMLDivElement>(null);
   const isGlobalAdmin = profile?.role === 'admin';
   
@@ -1367,14 +1368,21 @@ export default function ProjectDetail() {
 
   const resultCategoryTotals = React.useMemo(() => (
     categories
-      .map((area) => ({
-        area,
-        total: budgetItems
+      .map((area) => {
+        const assigned = budgetItems
           .filter((item) => item.area === area)
-          .reduce((acc, item) => acc + (Number(item.total) || 0), 0),
-      }))
+          .reduce((acc, item) => acc + (Number(item.total) || 0), 0);
+        const spent = areaExpenses
+          .filter((item) => item.area === area)
+          .reduce((acc, item) => acc + (Number(item.total) || 0), 0);
+
+        return {
+          area,
+          total: spent > 0 ? spent : assigned,
+        };
+      })
       .filter((item) => item.total > 0)
-  ), [budgetItems, categories]);
+  ), [areaExpenses, budgetItems, categories]);
 
   const productionTotal = resultCategoryTotals.reduce((acc, item) => acc + item.total, 0);
   const indirectTotal = resultIndirectExpenses.reduce((acc: number, item: any) => acc + (Number(item.total) || 0), 0);
@@ -1491,10 +1499,19 @@ export default function ProjectDetail() {
         const balance = assigned - spent;
         const usedPercent = assigned > 0 ? Math.min(100, (spent / assigned) * 100) : 0;
 
-        return { area, assigned, spent, balance, usedPercent };
+        return { area, assigned, spent, balance, usedPercent, actualCost: isProjectAdmin && spent === 0 ? assigned : spent };
       })
       .filter((row) => row.assigned > 0 || row.spent > 0 || !isProjectAdmin);
   }, [areaExpenses, budgetItems, categories, isProjectAdmin, userPermissions]);
+
+  const areaSummaryTotals = React.useMemo(() => (
+    areaSummaryRows.reduce((acc, row) => ({
+      assigned: acc.assigned + row.assigned,
+      spent: acc.spent + row.spent,
+      balance: acc.balance + row.balance,
+      actualCost: acc.actualCost + row.actualCost,
+    }), { assigned: 0, spent: 0, balance: 0, actualCost: 0 })
+  ), [areaSummaryRows]);
 
   const addCollaborator = async (selectedUser: any) => {
     if (!id || !selectedUser?.email) return;
@@ -1741,9 +1758,7 @@ export default function ProjectDetail() {
                   </div>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-slate-100">
-                  {projectKeyPeople.map(({ id: roleId, label, provider }) => {
-                    const inferred = provider ? inferLegacyIdentifiers(provider) : null;
-                    return (
+                  {projectKeyPeople.map(({ id: roleId, label, provider }) => (
                       <div key={roleId} className="p-5 space-y-3">
                         <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">{label}</div>
                         {isProjectAdmin && (
@@ -1759,31 +1774,36 @@ export default function ProjectDetail() {
                           </select>
                         )}
                         {provider ? (
-                          <details className="group">
-                            <summary className="list-none cursor-pointer">
+                          <div>
+                            <button
+                              type="button"
+                              onClick={() => setExpandedKeyPerson(expandedKeyPerson === roleId ? null : roleId)}
+                              className="w-full text-left"
+                            >
                               <div className="flex items-center gap-3">
                                 <div className="w-9 h-9 rounded-full bg-slate-900 text-white flex items-center justify-center text-xs font-black uppercase">
                                   {providerDisplayName(provider)[0] || 'P'}
                                 </div>
                                 <div className="min-w-0">
                                   <div className="text-sm font-bold text-slate-900 truncate">{providerDisplayName(provider)}</div>
-                                  <div className="text-[10px] font-bold text-blue-600 uppercase tracking-widest group-open:text-slate-400">Ver datos</div>
+                                  <div className="text-[10px] font-bold text-blue-600 uppercase tracking-widest">
+                                    {expandedKeyPerson === roleId ? 'Ocultar datos' : 'Ver datos'}
+                                  </div>
                                 </div>
                               </div>
-                            </summary>
-                            <div className="mt-4 text-xs text-slate-500 space-y-2 border-t border-slate-100 pt-4">
-                              <div><span className="font-bold text-slate-700">Email:</span> {provider.email || provider.adminEmail || '-'}</div>
-                              <div><span className="font-bold text-slate-700">Tel:</span> {provider.phone || '-'}</div>
-                              <div><span className="font-bold text-slate-700">CUIT:</span> {formatIdentifier(provider.cuit || inferred?.cuitNormalized) || '-'}</div>
-                              <div><span className="font-bold text-slate-700">Dirección:</span> {provider.address || '-'}</div>
-                            </div>
-                          </details>
+                            </button>
+                            {expandedKeyPerson === roleId && (
+                              <div className="mt-4 text-xs text-slate-500 space-y-2 border-t border-slate-100 pt-4">
+                                <div><span className="font-bold text-slate-700">Email:</span> {provider.email || provider.adminEmail || '-'}</div>
+                                <div><span className="font-bold text-slate-700">Tel:</span> {provider.phone || '-'}</div>
+                              </div>
+                            )}
+                          </div>
                         ) : (
                           <div className="py-4 text-[10px] font-bold uppercase tracking-widest text-slate-300">Sin asignar</div>
                         )}
                       </div>
-                    );
-                  })}
+                  ))}
                 </div>
               </section>
 
@@ -1794,6 +1814,28 @@ export default function ProjectDetail() {
                   </h3>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-5">
+                  <div className="md:col-span-2 border border-slate-900 rounded-lg p-4 bg-slate-950 text-white">
+                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                      <div>
+                        <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Saldo global</div>
+                        <div className="text-2xl font-black mt-1">${areaSummaryTotals.balance.toLocaleString()}</div>
+                      </div>
+                      <div className="grid grid-cols-3 gap-4 text-right">
+                        <div>
+                          <div className="text-[9px] font-bold uppercase tracking-widest text-slate-500">Asignado</div>
+                          <div className="text-xs font-bold">${areaSummaryTotals.assigned.toLocaleString()}</div>
+                        </div>
+                        <div>
+                          <div className="text-[9px] font-bold uppercase tracking-widest text-slate-500">Gastado</div>
+                          <div className="text-xs font-bold">${areaSummaryTotals.spent.toLocaleString()}</div>
+                        </div>
+                        <div>
+                          <div className="text-[9px] font-bold uppercase tracking-widest text-slate-500">Costo real</div>
+                          <div className="text-xs font-bold">${areaSummaryTotals.actualCost.toLocaleString()}</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                   {areaSummaryRows.map((row) => (
                     <div key={row.area} className="border border-slate-200 rounded-lg p-4">
                       <div className="flex items-start justify-between gap-4 mb-4">
@@ -1862,9 +1904,9 @@ export default function ProjectDetail() {
                         Costos Reales
                         <BarChart2 className="w-3 h-3 opacity-20" />
                       </div>
-                      <div className="text-2xl font-bold">${visibleBudgetItems.reduce((acc, curr) => acc + (curr.total || 0), 0).toLocaleString()}</div>
+                      <div className="text-2xl font-bold">${areaSummaryTotals.actualCost.toLocaleString()}</div>
                       <div className="mt-4 h-1 bg-slate-50 rounded-full overflow-hidden">
-                        <div className="h-full bg-blue-500 transition-all duration-500" style={{ width: `${Math.min(100, (visibleBudgetItems.reduce((acc, curr) => acc + (curr.total || 0), 0) / (project.budgetTotal || 1)) * 100)}%` }}></div>
+                        <div className="h-full bg-blue-500 transition-all duration-500" style={{ width: `${Math.min(100, (areaSummaryTotals.actualCost / (areaSummaryTotals.assigned || project.budgetTotal || 1)) * 100)}%` }}></div>
                       </div>
                     </div>
 
