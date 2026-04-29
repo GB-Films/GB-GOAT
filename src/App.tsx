@@ -10,6 +10,7 @@ import Team from './pages/Team';
 import Providers from './pages/Providers';
 import ProviderInvite from './pages/ProviderInvite';
 import Clients from './pages/Clients';
+import Reports from './pages/Reports';
 import PlaceholderPage from './pages/PlaceholderPage';
 
 function AdminRoute({ children }: { children: ReactNode }) {
@@ -37,7 +38,7 @@ export default function App() {
             <Route path="/proveedores" element={<AdminRoute><Providers /></AdminRoute>} />
             <Route path="/clientes" element={<AdminRoute><Clients /></AdminRoute>} />
             <Route path="/equipo" element={<AdminRoute><Team /></AdminRoute>} />
-            <Route path="/reportes" element={<AdminRoute><PlaceholderPage title="Reportes" /></AdminRoute>} />
+            <Route path="/reportes" element={<AdminRoute><Reports /></AdminRoute>} />
             <Route path="/configuracion" element={<AdminRoute><PlaceholderPage title="Configuración" /></AdminRoute>} />
           </Route>
 
