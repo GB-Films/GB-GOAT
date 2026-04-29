@@ -29,7 +29,8 @@ import {
   ExternalLink as LinkIcon,
   FileText,
   Paperclip,
-  X
+  X,
+  Truck
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
@@ -39,12 +40,14 @@ import { cn } from '../lib/utils';
 import { BudgetRowCell } from './project-detail/BudgetRowCell';
 import { PaymentModal } from './project-detail/PaymentModal';
 import type { BudgetItem, Collaborator, Payment, PaymentCollection } from './project-detail/types';
+import { formatIdentifier, inferLegacyIdentifiers, providerDisplayName } from '../lib/providerConstants';
 
 const tabs = [
   { id: 'resumen', label: 'Resumen', icon: Info },
   { id: 'presupuesto', label: 'Presupuesto Principal', icon: DollarSign },
   { id: 'areas', label: 'Áreas', icon: LayoutGrid },
   { id: 'saldos', label: 'Saldos', icon: Wallet },
+  { id: 'proveedores', label: 'Proveedores', icon: Truck },
   { id: 'equipo', label: 'Equipo', icon: Users },
   { id: 'permisos', label: 'Permisos', icon: Settings },
 ];
@@ -70,7 +73,7 @@ const roleLabels: Record<Collaborator['role'], string> = {
 };
 
 const PROJECT_TAB_IDS = tabs.map(tab => tab.id);
-const DEFAULT_COLLABORATOR_TABS = ['resumen', 'areas', 'saldos'];
+const DEFAULT_COLLABORATOR_TABS = ['resumen', 'areas', 'saldos', 'proveedores'];
 const safeArray = (value: any): string[] => Array.isArray(value) ? value : [];
 const normalizeAllowedTabs = (allowedTabs: any, role?: Collaborator['role']) => {
   const normalized = safeArray(allowedTabs).filter(tabId => PROJECT_TAB_IDS.includes(tabId));
@@ -78,7 +81,12 @@ const normalizeAllowedTabs = (allowedTabs: any, role?: Collaborator['role']) => 
 
   const looksLikeLegacyDefault = normalized.includes('presupuesto') && !normalized.includes('saldos');
   if (looksLikeLegacyDefault) {
-    return Array.from(new Set([...normalized.filter(tabId => tabId !== 'presupuesto'), 'saldos']));
+    return Array.from(new Set([...normalized.filter(tabId => tabId !== 'presupuesto'), 'saldos', 'proveedores']));
+  }
+
+  const looksLikeCurrentDefault = normalized.includes('areas') && normalized.includes('saldos') && !normalized.includes('presupuesto');
+  if (looksLikeCurrentDefault && !normalized.includes('proveedores')) {
+    return Array.from(new Set([...normalized, 'proveedores']));
   }
 
   return normalized.length ? normalized : DEFAULT_COLLABORATOR_TABS;
@@ -98,7 +106,7 @@ const getDefaultCollaboratorPermissions = (role: Collaborator['role'], categorie
 
   if (role === 'lector') {
     return {
-      allowedTabs: ['resumen', 'saldos'],
+      allowedTabs: ['resumen', 'saldos', 'proveedores'],
       allowedCategories: chosenCategories,
       canEditBudgetAreas: false,
       canViewBudgetTotals: false,
@@ -163,6 +171,61 @@ const buildInvoiceFileName = (expense: any) => {
 };
 
 const normalizeEmail = (email?: string | null) => (email || '').trim().toLowerCase();
+const normalizeText = (value: unknown) => String(value || '')
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .toLowerCase();
+
+const isProductionArea = (area: unknown) => normalizeText(area).includes('producci');
+
+const formatExportDate = (dateValue: any) => {
+  if (!dateValue) return '';
+  const date = dateValue.seconds ? new Date(dateValue.seconds * 1000) : new Date(dateValue);
+  if (Number.isNaN(date.getTime())) return String(dateValue);
+  return date.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+};
+
+const downloadCsv = (rows: Record<string, any>[], fileName: string) => {
+  const csv = Papa.unparse(rows);
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  link.click();
+  URL.revokeObjectURL(url);
+};
+
+const downloadXlsx = (rows: Record<string, any>[], sheetName: string, fileName: string) => {
+  const worksheet = XLSX.utils.json_to_sheet(rows);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+  XLSX.writeFile(workbook, fileName);
+};
+
+const providerExportRow = (provider: any, extra: Record<string, any> = {}) => {
+  const inferred = inferLegacyIdentifiers(provider);
+  const category = provider.category === 'Otra'
+    ? `Otra: ${provider.categoryOther || ''}`.trim()
+    : provider.category || '';
+
+  return {
+    ...extra,
+    Tipo: provider.type === 'empresa' ? 'Empresa' : 'Persona',
+    'Nombre / Razon Social': providerDisplayName(provider),
+    Nombre: provider.name || '',
+    Apellido: provider.lastName || '',
+    DNI: formatIdentifier(provider.dni || inferred.dniNormalized) || '',
+    CUIT: formatIdentifier(provider.cuit || inferred.cuitNormalized) || '',
+    Domicilio: provider.address || '',
+    'Fecha Nacimiento': provider.birthDate || '',
+    Email: provider.email || provider.adminEmail || '',
+    Telefono: provider.phone || '',
+    Categoria: category,
+    'Restriccion Alimentaria': provider.dietaryRestriction || '',
+    Origen: provider.source === 'provider_invite' ? 'Alta por link' : 'Carga interna',
+  };
+};
 
 export default function ProjectDetail() {
   const { id } = useParams();
@@ -198,6 +261,7 @@ export default function ProjectDetail() {
   const [uploadingInvoices, setUploadingInvoices] = useState<Record<string, boolean>>({});
   const [dragOverExpenseId, setDragOverExpenseId] = useState<string | null>(null);
   const [isDeletingProject, setIsDeletingProject] = useState(false);
+  const [showExportModal, setShowExportModal] = useState(false);
   const areaSelectorRef = useRef<HTMLDivElement>(null);
   const isGlobalAdmin = profile?.role === 'admin';
   
@@ -1116,6 +1180,134 @@ export default function ProjectDetail() {
 
   const providerSaldos = providerSaldosByArea.flatMap(group => group.rows);
 
+  const projectAreaProviderRows = React.useMemo(() => {
+    const allowedCategories = isProjectAdmin ? categories : safeArray(userPermissions?.allowedCategories);
+    const canSeeArea = (area?: string) => isProjectAdmin || allowedCategories.includes(area || '');
+    const byProvider = new Map<string, { provider: any; areas: Set<string>; concepts: Set<string> }>();
+
+    areaExpenses.forEach((expense) => {
+      if (!expense.providerId || !canSeeArea(expense.area)) return;
+      const provider = providers.find(item => item.id === expense.providerId);
+      if (!provider) return;
+
+      if (!byProvider.has(expense.providerId)) {
+        byProvider.set(expense.providerId, {
+          provider,
+          areas: new Set<string>(),
+          concepts: new Set<string>(),
+        });
+      }
+
+      const row = byProvider.get(expense.providerId)!;
+      if (expense.area) row.areas.add(expense.area);
+      if (expense.description) row.concepts.add(expense.description);
+    });
+
+    return Array.from(byProvider.values())
+      .map(row => ({
+        provider: row.provider,
+        areas: Array.from(row.areas).sort(),
+        concepts: Array.from(row.concepts).sort(),
+      }))
+      .sort((a, b) => providerDisplayName(a.provider).localeCompare(providerDisplayName(b.provider), 'es'));
+  }, [areaExpenses, categories, isProjectAdmin, providers, userPermissions]);
+
+  const allProjectAreaProviderRows = React.useMemo(() => {
+    const byProvider = new Map<string, { provider: any; areas: Set<string>; concepts: Set<string> }>();
+
+    areaExpenses.forEach((expense) => {
+      if (!expense.providerId) return;
+      const provider = providers.find(item => item.id === expense.providerId);
+      if (!provider) return;
+
+      if (!byProvider.has(expense.providerId)) {
+        byProvider.set(expense.providerId, {
+          provider,
+          areas: new Set<string>(),
+          concepts: new Set<string>(),
+        });
+      }
+
+      const row = byProvider.get(expense.providerId)!;
+      if (expense.area) row.areas.add(expense.area);
+      if (expense.description) row.concepts.add(expense.description);
+    });
+
+    return Array.from(byProvider.values())
+      .map(row => ({
+        provider: row.provider,
+        areas: Array.from(row.areas).sort(),
+        concepts: Array.from(row.concepts).sort(),
+      }))
+      .sort((a, b) => providerDisplayName(a.provider).localeCompare(providerDisplayName(b.provider), 'es'));
+  }, [areaExpenses, providers]);
+
+  const canExportPayroll = isProjectAdmin || safeArray(userPermissions?.allowedCategories).some(isProductionArea);
+  const hasExportOptions = isProjectAdmin || canExportPayroll;
+
+  const exportNomina = (format: 'xlsx' | 'csv') => {
+    const rows = allProjectAreaProviderRows.map(row => providerExportRow(row.provider, {
+      Areas: row.areas.join(', '),
+      Conceptos: row.concepts.join(', '),
+    }));
+
+    if (rows.length === 0) {
+      alert('No hay proveedores cargados en Gestion por Areas para exportar.');
+      return;
+    }
+
+    if (format === 'csv') {
+      downloadCsv(rows, `nomina_proveedores_${project?.name || 'proyecto'}.csv`);
+    } else {
+      downloadXlsx(rows, 'Nomina', `nomina_proveedores_${project?.name || 'proyecto'}.xlsx`);
+    }
+  };
+
+  const exportMainBudget = (format: 'xlsx' | 'csv') => {
+    const rows = budgetItems.map(item => ({
+      Area: item.area || '',
+      Proveedor: item.providerName || '',
+      Descripcion: item.description || '',
+      Unidad: item.unit || '',
+      Cantidad: item.quantity || 0,
+      'P Unitario': item.unitPrice || 0,
+      Total: item.total || 0,
+      Pagado: item.paid ? 'Si' : 'No',
+      Orden: item.order || 0,
+    }));
+
+    if (format === 'csv') {
+      downloadCsv(rows, `presupuesto_principal_${project?.name || 'proyecto'}.csv`);
+    } else {
+      downloadXlsx(rows, 'Presupuesto Principal', `presupuesto_principal_${project?.name || 'proyecto'}.xlsx`);
+    }
+  };
+
+  const exportAreaBudget = (format: 'xlsx' | 'csv') => {
+    const rows = areaExpenses.map(item => {
+      const paid = (item.paymentHistory || []).reduce((acc: number, payment: any) => acc + (Number(payment.amount) || 0), 0);
+      return {
+        Area: item.area || '',
+        Proveedor: item.providerName || '',
+        Descripcion: item.description || '',
+        Unidad: item.unit || '',
+        Cantidad: item.quantity || 0,
+        'P Unitario': item.unitPrice || 0,
+        Total: item.total || 0,
+        Pagado: paid,
+        Deuda: (Number(item.total) || 0) - paid,
+        Factura: item.invoice?.url || '',
+        Actualizado: formatExportDate(item.updatedAt),
+      };
+    });
+
+    if (format === 'csv') {
+      downloadCsv(rows, `gestion_por_areas_${project?.name || 'proyecto'}.csv`);
+    } else {
+      downloadXlsx(rows, 'Gestion por Areas', `gestion_por_areas_${project?.name || 'proyecto'}.xlsx`);
+    }
+  };
+
   const addCollaborator = async (selectedUser: any) => {
     if (!id || !selectedUser?.email) return;
 
@@ -1297,7 +1489,12 @@ export default function ProjectDetail() {
                 Editar Proyecto
               </button>
             )}
-            <button className="px-4 py-2 border border-slate-200 rounded text-[10px] font-bold uppercase tracking-widest hover:bg-slate-50 transition-colors">
+            <button
+              onClick={() => setShowExportModal(true)}
+              disabled={!hasExportOptions}
+              className="px-4 py-2 border border-slate-200 rounded text-[10px] font-bold uppercase tracking-widest hover:bg-slate-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              title={hasExportOptions ? 'Exportar reportes del proyecto' : 'No tenes reportes disponibles para exportar'}
+            >
                 Exportar
             </button>
         </div>
@@ -2100,6 +2297,76 @@ export default function ProjectDetail() {
           </div>
         )}
 
+        {activeTab === 'proveedores' && (
+          <div className="space-y-6 pb-20">
+            <header>
+              <h2 className="text-xl font-bold text-slate-900">Proveedores del Proyecto</h2>
+              <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest mt-1">
+                Proveedores cargados en Gestion por Areas
+              </p>
+            </header>
+
+            <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200">
+                    <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Tipo</th>
+                    <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Proveedor</th>
+                    <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">DNI</th>
+                    <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">CUIT</th>
+                    <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Categoria</th>
+                    <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Contacto</th>
+                    <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Areas</th>
+                    <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Domicilio</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {projectAreaProviderRows.map(({ provider, areas }) => {
+                    const inferred = inferLegacyIdentifiers(provider);
+                    const category = provider.category === 'Otra'
+                      ? `Otra: ${provider.categoryOther || '-'}`
+                      : provider.category || 'Sin categoria';
+
+                    return (
+                      <tr key={provider.id} className="hover:bg-slate-50/50 transition-colors">
+                        <td className="px-5 py-4 text-xs font-bold uppercase tracking-widest text-slate-400">
+                          {provider.type === 'empresa' ? 'Empresa' : 'Persona'}
+                        </td>
+                        <td className="px-5 py-4">
+                          <div className="text-sm font-bold text-slate-900">{providerDisplayName(provider)}</div>
+                          <div className="text-[10px] text-slate-400 font-medium">{provider.source === 'provider_invite' ? 'Alta por link' : 'Carga interna'}</div>
+                        </td>
+                        <td className="px-5 py-4 text-xs text-slate-600 font-medium whitespace-nowrap">
+                          {formatIdentifier(provider.dni || inferred.dniNormalized) || '-'}
+                        </td>
+                        <td className="px-5 py-4 text-xs text-slate-600 font-medium whitespace-nowrap">
+                          {formatIdentifier(provider.cuit || inferred.cuitNormalized) || '-'}
+                        </td>
+                        <td className="px-5 py-4 text-xs text-slate-500">{category}</td>
+                        <td className="px-5 py-4 text-xs text-slate-500">
+                          <div>{provider.email || provider.adminEmail || '-'}</div>
+                          <div className="text-slate-400">{provider.phone || '-'}</div>
+                        </td>
+                        <td className="px-5 py-4 text-xs text-slate-500 max-w-[180px]">
+                          {areas.join(', ') || '-'}
+                        </td>
+                        <td className="px-5 py-4 text-xs text-slate-500 max-w-[220px] truncate">{provider.address || '-'}</td>
+                      </tr>
+                    );
+                  })}
+                  {projectAreaProviderRows.length === 0 && (
+                    <tr>
+                      <td colSpan={8} className="px-6 py-12 text-center text-[10px] font-bold uppercase text-slate-300 tracking-widest italic">
+                        No hay proveedores cargados en Gestion por Areas
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
         {activeTab === 'saldos' && (
           <div className="space-y-6 pb-20">
             <header>
@@ -2575,7 +2842,7 @@ export default function ProjectDetail() {
         )}
 
 
-        {(activeTab !== 'resumen' && activeTab !== 'presupuesto' && activeTab !== 'equipo' && activeTab !== 'areas' && activeTab !== 'saldos' && activeTab !== 'permisos') && (
+        {(activeTab !== 'resumen' && activeTab !== 'presupuesto' && activeTab !== 'equipo' && activeTab !== 'areas' && activeTab !== 'saldos' && activeTab !== 'proveedores' && activeTab !== 'permisos') && (
            <div className="py-32 text-center border border-dashed border-slate-200 rounded-2xl bg-white">
               <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest animate-pulse">Integrando módulo {activeTab}...</span>
            </div>
@@ -2583,6 +2850,105 @@ export default function ProjectDetail() {
       </motion.div>
 
       <AnimatePresence>
+        {showExportModal && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[250] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden"
+            >
+              <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/30">
+                <h2 className="text-xs font-bold uppercase tracking-widest text-slate-900 flex items-center gap-2">
+                  <Download className="w-4 h-4" />
+                  Exportar Reportes
+                </h2>
+                <button onClick={() => setShowExportModal(false)} className="text-slate-400 hover:text-black">
+                  <Plus className="w-5 h-5 rotate-45" />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-4">
+                {canExportPayroll && (
+                  <div className="border border-slate-200 rounded-xl p-5 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                    <div>
+                      <div className="text-sm font-bold text-slate-900">Exportar Nomina</div>
+                      <p className="text-xs text-slate-500 mt-1">
+                        Proveedores cargados en Gestion por Areas con todos sus datos visibles, sin CBU.
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => exportNomina('xlsx')}
+                        className="px-4 py-2 bg-black text-white rounded text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 transition-all"
+                      >
+                        Excel
+                      </button>
+                      <button
+                        onClick={() => exportNomina('csv')}
+                        className="px-4 py-2 bg-white border border-slate-200 text-slate-600 rounded text-[10px] font-bold uppercase tracking-widest hover:bg-slate-50 transition-all"
+                      >
+                        CSV
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {isProjectAdmin && (
+                  <>
+                    <div className="border border-slate-200 rounded-xl p-5 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                      <div>
+                        <div className="text-sm font-bold text-slate-900">Presupuesto Principal</div>
+                        <p className="text-xs text-slate-500 mt-1">Partidas, proveedores, cantidades, precios y totales del presupuesto principal.</p>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => exportMainBudget('xlsx')}
+                          className="px-4 py-2 bg-black text-white rounded text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 transition-all"
+                        >
+                          Excel
+                        </button>
+                        <button
+                          onClick={() => exportMainBudget('csv')}
+                          className="px-4 py-2 bg-white border border-slate-200 text-slate-600 rounded text-[10px] font-bold uppercase tracking-widest hover:bg-slate-50 transition-all"
+                        >
+                          CSV
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="border border-slate-200 rounded-xl p-5 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                      <div>
+                        <div className="text-sm font-bold text-slate-900">Gestion por Areas</div>
+                        <p className="text-xs text-slate-500 mt-1">Gastos registrados por area, pagos, deuda y facturas asociadas.</p>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => exportAreaBudget('xlsx')}
+                          className="px-4 py-2 bg-black text-white rounded text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 transition-all"
+                        >
+                          Excel
+                        </button>
+                        <button
+                          onClick={() => exportAreaBudget('csv')}
+                          className="px-4 py-2 bg-white border border-slate-200 text-slate-600 rounded text-[10px] font-bold uppercase tracking-widest hover:bg-slate-50 transition-all"
+                        >
+                          CSV
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {!hasExportOptions && (
+                  <div className="py-10 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
+                    No tenes reportes disponibles para exportar
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </div>
+        )}
         <PaymentModal
           projectId={id}
           item={selectedItemForPayment}
