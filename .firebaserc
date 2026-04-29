@@ -1,5 +1,7 @@
 {
   "projects": {
     "default": "gb-goat"
-  }
+  },
+  "targets": {},
+  "etags": {}
 }
