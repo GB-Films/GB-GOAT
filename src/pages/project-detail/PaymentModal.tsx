@@ -1,8 +1,9 @@
 import { useRef } from 'react';
 import { doc, serverTimestamp, updateDoc } from 'firebase/firestore';
-import { Calendar, DollarSign, History, Plus, Trash2, Wallet } from 'lucide-react';
+import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
+import { Calendar, DollarSign, ExternalLink, History, Paperclip, Plus, Trash2, Wallet } from 'lucide-react';
 import { motion } from 'motion/react';
-import { db } from '../../lib/firebase';
+import { db, storage } from '../../lib/firebase';
 import { handleFirestoreError } from '../../lib/firestoreUtils';
 import { cn } from '../../lib/utils';
 import type { Payment, PaymentCollection } from './types';
@@ -11,6 +12,22 @@ const formatDate = (dateString: string | any) => {
   if (!dateString) return 'Sin fecha';
   const date = dateString.seconds ? new Date(dateString.seconds * 1000) : new Date(dateString);
   return date.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+};
+
+const sanitizeFileName = (fileName: string) => {
+  return fileName
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9._-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 120);
+};
+
+const buildReceiptFileName = (paymentId: string, file: File) => {
+  const cleanBase = sanitizeFileName(file.name.replace(/\.[^.]+$/, '') || 'comprobante').slice(0, 70);
+  const ext = sanitizeFileName(file.name.split('.').pop() || 'pdf').toLowerCase();
+  return `comprobante-${paymentId}-${cleanBase}.${ext}`;
 };
 
 interface PaymentModalProps {
@@ -104,18 +121,33 @@ export function PaymentModal({
               const formData = new FormData(e.currentTarget);
               const customDate = formData.get('paymentDate') as string;
               const amount = Number(formData.get('amount'));
+              const receiptFile = formData.get('receipt') as File | null;
               
               if (!amount || amount <= 0) {
                 alert('Por favor ingrese un monto válido');
                 return;
               }
 
+              if (receiptFile && receiptFile.size > 0) {
+                const allowedReceiptTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
+                if (!allowedReceiptTypes.includes(receiptFile.type)) {
+                  alert('El comprobante debe ser PDF, JPG, PNG o WEBP.');
+                  return;
+                }
+
+                if (receiptFile.size > 15 * 1024 * 1024) {
+                  alert('El comprobante es muy pesado. El maximo permitido es 15 MB.');
+                  return;
+                }
+              }
+
               const currentItemId = item.id;
               const totalPaidBefore = paymentHistory.reduce((acc: number, p: any) => acc + p.amount, 0);
               const isRemainingBalance = Math.abs(amount - ((Number(item.total) || 0) - totalPaidBefore)) < 0.01;
+              const paymentId = Math.random().toString(36).substr(2, 9);
 
               const newPayment: Payment = {
-                id: Math.random().toString(36).substr(2, 9),
+                id: paymentId,
                 amount,
                 detail: formData.get('detail') as string,
                 date: customDate ? new Date(customDate + 'T12:00:00') : new Date(),
@@ -131,6 +163,35 @@ export function PaymentModal({
               const docRef = doc(db, 'projects', projectId, collectionName, currentItemId);
               
               try {
+                if (receiptFile && receiptFile.size > 0) {
+                  const fileName = buildReceiptFileName(paymentId, receiptFile);
+                  const path = `projects/${projectId}/${collectionName}/${currentItemId}/comprobantes/${fileName}`;
+                  const storageRef = ref(storage, path);
+
+                  await uploadBytes(storageRef, receiptFile, {
+                    contentType: receiptFile.type,
+                    customMetadata: {
+                      projectId,
+                      collectionName,
+                      itemId: currentItemId,
+                      paymentId,
+                      originalFileName: receiptFile.name,
+                    },
+                  });
+
+                  const url = await getDownloadURL(storageRef);
+                  newPayment.receipt = {
+                    fileName,
+                    originalFileName: receiptFile.name,
+                    url,
+                    path,
+                    contentType: receiptFile.type,
+                    size: receiptFile.size,
+                    uploadedAt: new Date(),
+                    uploadedBy: '',
+                  };
+                }
+
                 await updateDoc(docRef, {
                   paymentHistory: updatedHistory,
                   paid: isFullyPaid,
@@ -185,6 +246,14 @@ export function PaymentModal({
                 <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Detalle / Referencia</label>
                 <input name="detail" placeholder="Ej: Transferencia Banco X, Pago en efectivo..." className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all" />
               </div>
+              <div>
+                <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Comprobante de Pago</label>
+                <label className="w-full px-4 py-3 bg-slate-50 border border-dashed border-slate-200 rounded text-[10px] font-bold uppercase tracking-widest text-slate-400 hover:text-slate-900 hover:border-slate-900 transition-all flex items-center justify-center gap-2 cursor-pointer">
+                  <Paperclip className="w-3.5 h-3.5" />
+                  Adjuntar PDF / Imagen
+                  <input name="receipt" type="file" accept="application/pdf,image/jpeg,image/png,image/webp,.pdf,.jpg,.jpeg,.png,.webp" className="hidden" />
+                </label>
+              </div>
               <button type="submit" className="w-full py-4 bg-emerald-600 text-white rounded-xl text-[10px] font-bold tracking-widest uppercase hover:bg-emerald-700 transition-colors flex items-center justify-center gap-2">
                  <DollarSign className="w-4 h-4" /> Registrar Pago
               </button>
@@ -202,6 +271,17 @@ export function PaymentModal({
                     <div className="flex-1">
                       <div className="text-xs font-bold text-slate-900">${payment.amount.toLocaleString()}</div>
                       <div className="text-[9px] text-slate-400 uppercase font-medium">{payment.detail || 'Sin detalle'}</div>
+                      {payment.receipt?.url && (
+                        <a
+                          href={payment.receipt.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="mt-2 inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-widest text-blue-600 hover:underline"
+                        >
+                          <ExternalLink className="w-2.5 h-2.5" />
+                          Ver comprobante
+                        </a>
+                      )}
                     </div>
                     <div className="text-right flex flex-col items-end gap-1">
                        <div className="text-[9px] text-slate-400 font-bold uppercase flex items-center gap-1 justify-end">

@@ -70,8 +70,19 @@ const roleLabels: Record<Collaborator['role'], string> = {
 };
 
 const PROJECT_TAB_IDS = tabs.map(tab => tab.id);
-const DEFAULT_AREA_TABS = ['resumen', 'presupuesto', 'areas'];
+const DEFAULT_COLLABORATOR_TABS = ['resumen', 'areas', 'saldos'];
 const safeArray = (value: any): string[] => Array.isArray(value) ? value : [];
+const normalizeAllowedTabs = (allowedTabs: any, role?: Collaborator['role']) => {
+  const normalized = safeArray(allowedTabs).filter(tabId => PROJECT_TAB_IDS.includes(tabId));
+  if (role === 'admin') return normalized.length ? normalized : PROJECT_TAB_IDS;
+
+  const looksLikeLegacyDefault = normalized.includes('presupuesto') && !normalized.includes('saldos');
+  if (looksLikeLegacyDefault) {
+    return Array.from(new Set([...normalized.filter(tabId => tabId !== 'presupuesto'), 'saldos']));
+  }
+
+  return normalized.length ? normalized : DEFAULT_COLLABORATOR_TABS;
+};
 
 const getDefaultCollaboratorPermissions = (role: Collaborator['role'], categories: string[], selectedCategories?: string[]) => {
   const chosenCategories = selectedCategories?.length ? selectedCategories : categories.slice(0, 1);
@@ -87,7 +98,7 @@ const getDefaultCollaboratorPermissions = (role: Collaborator['role'], categorie
 
   if (role === 'lector') {
     return {
-      allowedTabs: ['resumen', 'presupuesto'],
+      allowedTabs: ['resumen', 'saldos'],
       allowedCategories: chosenCategories,
       canEditBudgetAreas: false,
       canViewBudgetTotals: false,
@@ -95,7 +106,7 @@ const getDefaultCollaboratorPermissions = (role: Collaborator['role'], categorie
   }
 
   return {
-    allowedTabs: DEFAULT_AREA_TABS,
+    allowedTabs: DEFAULT_COLLABORATOR_TABS,
     allowedCategories: chosenCategories,
     canEditBudgetAreas: true,
     canViewBudgetTotals: false,
@@ -217,7 +228,7 @@ export default function ProjectDetail() {
             const perms: Collaborator = {
               email: normalizeEmail(rawPerms.email || colSnapshot.id),
               role: rawPerms.role || 'colaborador',
-              allowedTabs: safeArray(rawPerms.allowedTabs),
+              allowedTabs: normalizeAllowedTabs(rawPerms.allowedTabs, rawPerms.role || 'colaborador'),
               allowedCategories: safeArray(rawPerms.allowedCategories),
               canEditBudgetAreas: rawPerms.canEditBudgetAreas ?? rawPerms.role !== 'lector',
               canViewBudgetTotals: rawPerms.canViewBudgetTotals ?? rawPerms.role === 'admin',
@@ -253,7 +264,7 @@ export default function ProjectDetail() {
             return {
               email: normalizeEmail(data.email || d.id),
               role: data.role || 'colaborador',
-              allowedTabs: safeArray(data.allowedTabs),
+              allowedTabs: normalizeAllowedTabs(data.allowedTabs, data.role || 'colaborador'),
               allowedCategories: safeArray(data.allowedCategories),
               canEditBudgetAreas: data.canEditBudgetAreas ?? data.role !== 'lector',
               canViewBudgetTotals: data.canViewBudgetTotals ?? data.role === 'admin',
@@ -815,6 +826,10 @@ export default function ProjectDetail() {
         updatedAt: serverTimestamp()
       });
 
+      if (paymentToDelete.receipt?.path) {
+        deleteObject(ref(storage, paymentToDelete.receipt.path)).catch(() => {});
+      }
+
       updatePaymentState(currentItemId, collectionName, updatedHistory, isFullyPaid);
     } catch (error: any) {
       console.error('Error deleting payment:', error);
@@ -973,9 +988,14 @@ export default function ProjectDetail() {
   // Filtered views based on permissions
   const visibleTabs = tabs.filter(tab => {
     if (isProjectAdmin) return true;
-    if (userPermissions?.role === 'jefe_area' && ['resumen', 'presupuesto', 'areas'].includes(tab.id)) return true;
     return safeArray(userPermissions?.allowedTabs).includes(tab.id);
   });
+
+  useEffect(() => {
+    if (!loading && visibleTabs.length > 0 && !visibleTabs.some(tab => tab.id === activeTab)) {
+      setActiveTab(visibleTabs[0].id);
+    }
+  }, [activeTab, loading, visibleTabs]);
 
   const visibleCategories = categories.filter(cat => {
     if (activeTab === 'areas') {
@@ -1018,9 +1038,12 @@ export default function ProjectDetail() {
     })
     .slice(0, 8);
 
-  const providerSaldos = React.useMemo(() => {
+  const providerSaldosByArea = React.useMemo(() => {
+    const allowedCategories = isProjectAdmin ? categories : safeArray(userPermissions?.allowedCategories);
+    const canSeeArea = (area?: string) => isProjectAdmin || allowedCategories.includes(area || '');
     const saldosMap = new Map<string, { 
       id: string, 
+      area: string,
       name: string, 
       cbu: string, 
       budgeted: number, 
@@ -1029,14 +1052,14 @@ export default function ProjectDetail() {
       debt: number 
     }>();
 
-    // Process Budget Items
-    budgetItems.forEach(item => {
-      if (!item.providerId) return;
-      const provider = providers.find(p => p.id === item.providerId);
-      if (!saldosMap.has(item.providerId)) {
-        saldosMap.set(item.providerId, {
-          id: item.providerId,
-          name: item.providerName || (provider ? `${provider.name} ${provider.lastName}` : 'Desconocido'),
+    const ensureSaldo = (area: string, providerId: string, providerName?: string) => {
+      const provider = providers.find(p => p.id === providerId);
+      const key = `${area}__${providerId}`;
+      if (!saldosMap.has(key)) {
+        saldosMap.set(key, {
+          id: key,
+          area,
+          name: providerName || (provider ? `${provider.name} ${provider.lastName}` : 'Desconocido'),
           cbu: provider?.bankAccount_cbu || 'No especificado',
           budgeted: 0,
           spent: 0,
@@ -1044,37 +1067,54 @@ export default function ProjectDetail() {
           debt: 0
         });
       }
-      const s = saldosMap.get(item.providerId)!;
+
+      return saldosMap.get(key)!;
+    };
+
+    budgetItems.forEach(item => {
+      if (!item.providerId || !canSeeArea(item.area)) return;
+      const s = ensureSaldo(item.area || 'Sin area', item.providerId, item.providerName);
       s.budgeted += item.total || 0;
+
+      if (!activeAreas.includes(item.area)) {
+        s.spent += item.total || 0;
+        const itemPaid = (item.paymentHistory || []).reduce((acc: number, p: any) => acc + (Number(p.amount) || 0), 0);
+        s.paid += itemPaid;
+      }
     });
 
-    // Process Expenses
     areaExpenses.forEach(item => {
-      if (!item.providerId) return;
-      const provider = providers.find(p => p.id === item.providerId);
-      if (!saldosMap.has(item.providerId)) {
-        saldosMap.set(item.providerId, {
-          id: item.providerId,
-          name: item.providerName || (provider ? `${provider.name} ${provider.lastName}` : 'Desconocido'),
-          cbu: provider?.bankAccount_cbu || 'No especificado',
-          budgeted: 0,
-          spent: 0,
-          paid: 0,
-          debt: 0
-        });
-      }
-      const s = saldosMap.get(item.providerId)!;
+      if (!item.providerId || !canSeeArea(item.area)) return;
+      const s = ensureSaldo(item.area || 'Sin area', item.providerId, item.providerName);
       s.spent += item.total || 0;
       
-      const itemPaid = (item.paymentHistory || []).reduce((acc: number, p: any) => acc + p.amount, 0);
+      const itemPaid = (item.paymentHistory || []).reduce((acc: number, p: any) => acc + (Number(p.amount) || 0), 0);
       s.paid += itemPaid;
     });
 
-    return Array.from(saldosMap.values()).map(s => ({
-      ...s,
-      debt: s.spent - s.paid
-    }));
-  }, [budgetItems, areaExpenses, providers]);
+    const rows = Array.from(saldosMap.values())
+      .map(s => ({
+        ...s,
+        debt: s.spent - s.paid
+      }))
+      .filter(s => s.spent > 0 || s.paid > 0)
+      .sort((a, b) => {
+        const areaDiff = categories.indexOf(a.area) - categories.indexOf(b.area);
+        if (areaDiff !== 0) return areaDiff;
+        return b.debt - a.debt;
+      });
+
+    const orderedAreas = Array.from(new Set([...categories, ...rows.map(row => row.area)]));
+
+    return orderedAreas
+      .map(area => ({
+        area,
+        rows: rows.filter(row => row.area === area),
+      }))
+      .filter(group => group.rows.length > 0);
+  }, [activeAreas, areaExpenses, budgetItems, categories, isProjectAdmin, providers, userPermissions]);
+
+  const providerSaldos = providerSaldosByArea.flatMap(group => group.rows);
 
   const addCollaborator = async (selectedUser: any) => {
     if (!id || !selectedUser?.email) return;
@@ -2060,11 +2100,13 @@ export default function ProjectDetail() {
           </div>
         )}
 
-        {activeTab === 'saldos' && isProjectAdmin && (
+        {activeTab === 'saldos' && (
           <div className="space-y-6 pb-20">
             <header>
               <h2 className="text-xl font-bold text-slate-900">Estado de Saldos y Deudas</h2>
-              <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest mt-1">Resumen de pagos realizados y pendientes por proveedor</p>
+              <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest mt-1">
+                {isProjectAdmin ? 'Resumen de pagos realizados y pendientes por proveedor' : 'Resumen limitado a tus areas asignadas'}
+              </p>
             </header>
 
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -2099,34 +2141,43 @@ export default function ProjectDetail() {
                    </tr>
                  </thead>
                  <tbody className="divide-y divide-slate-100">
-                   {providerSaldos.sort((a, b) => b.debt - a.debt).map((saldo) => (
-                     <tr key={saldo.id} className="hover:bg-slate-50/50 transition-colors group">
-                       <td className="px-6 py-4">
-                         <div className="text-xs font-bold text-slate-900 uppercase">{saldo.name}</div>
-                       </td>
-                       <td className="px-6 py-4">
-                         <div className="text-[10px] font-mono text-slate-500 bg-slate-50 px-2 py-1 rounded inline-block border border-slate-100">
-                           {saldo.cbu}
-                         </div>
-                       </td>
-                       <td className="px-6 py-4 text-right text-xs font-medium text-slate-400">
-                         ${saldo.budgeted.toLocaleString()}
-                       </td>
-                       <td className="px-6 py-4 text-right text-xs font-medium text-slate-600">
-                         ${saldo.spent.toLocaleString()}
-                       </td>
-                       <td className="px-6 py-4 text-right text-xs font-medium text-emerald-600">
-                         ${saldo.paid.toLocaleString()}
-                       </td>
-                       <td className="px-6 py-4 text-right">
-                         <div className={cn(
-                           "text-sm font-bold font-mono",
-                           saldo.debt > 0 ? "text-rose-600" : "text-emerald-600"
-                         )}>
-                           ${saldo.debt.toLocaleString()}
-                         </div>
-                       </td>
-                     </tr>
+                   {providerSaldosByArea.map((group) => (
+                     <React.Fragment key={group.area}>
+                       <tr className="bg-slate-100/70">
+                         <td colSpan={6} className="px-6 py-3 text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">
+                           {group.area}
+                         </td>
+                       </tr>
+                       {group.rows.map((saldo) => (
+                         <tr key={saldo.id} className="hover:bg-slate-50/50 transition-colors group">
+                           <td className="px-6 py-4">
+                             <div className="text-xs font-bold text-slate-900 uppercase">{saldo.name}</div>
+                           </td>
+                           <td className="px-6 py-4">
+                             <div className="text-[10px] font-mono text-slate-500 bg-slate-50 px-2 py-1 rounded inline-block border border-slate-100">
+                               {saldo.cbu}
+                             </div>
+                           </td>
+                           <td className="px-6 py-4 text-right text-xs font-medium text-slate-400">
+                             ${saldo.budgeted.toLocaleString()}
+                           </td>
+                           <td className="px-6 py-4 text-right text-xs font-medium text-slate-600">
+                             ${saldo.spent.toLocaleString()}
+                           </td>
+                           <td className="px-6 py-4 text-right text-xs font-medium text-emerald-600">
+                             ${saldo.paid.toLocaleString()}
+                           </td>
+                           <td className="px-6 py-4 text-right">
+                             <div className={cn(
+                               "text-sm font-bold font-mono",
+                               saldo.debt > 0 ? "text-rose-600" : "text-emerald-600"
+                             )}>
+                               ${saldo.debt.toLocaleString()}
+                             </div>
+                           </td>
+                         </tr>
+                       ))}
+                     </React.Fragment>
                    ))}
                    {providerSaldos.length === 0 && (
                      <tr>
@@ -2439,7 +2490,7 @@ export default function ProjectDetail() {
                             <div>
                               <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3 font-mono">Pestañas Permitidas</div>
                               <div className="flex flex-wrap gap-2">
-                                {tabs.filter(t => t.id !== 'permisos' && t.id !== 'saldos').map(tab => {
+                                {tabs.filter(t => t.id !== 'permisos').map(tab => {
                                   const enabled = safeArray(col.allowedTabs).includes(tab.id);
                                   return (
                                     <button
@@ -2524,7 +2575,7 @@ export default function ProjectDetail() {
         )}
 
 
-        {(activeTab !== 'resumen' && activeTab !== 'presupuesto' && activeTab !== 'equipo' && activeTab !== 'areas' && activeTab !== 'permisos') && (
+        {(activeTab !== 'resumen' && activeTab !== 'presupuesto' && activeTab !== 'equipo' && activeTab !== 'areas' && activeTab !== 'saldos' && activeTab !== 'permisos') && (
            <div className="py-32 text-center border border-dashed border-slate-200 rounded-2xl bg-white">
               <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest animate-pulse">Integrando módulo {activeTab}...</span>
            </div>

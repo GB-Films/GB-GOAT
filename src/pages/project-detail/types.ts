@@ -4,6 +4,16 @@ export interface Payment {
   detail: string;
   date: any;
   type: 'partial' | 'total';
+  receipt?: {
+    fileName: string;
+    originalFileName: string;
+    url: string;
+    path: string;
+    contentType: string;
+    size: number;
+    uploadedAt: any;
+    uploadedBy: string;
+  } | null;
 }
 
 export interface BudgetItem {

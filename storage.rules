@@ -59,6 +59,20 @@ service firebase.storage {
       allow delete: if isProjectAdmin(projectId);
     }
 
+    match /projects/{projectId}/{collectionName}/{itemId}/comprobantes/{fileName} {
+      allow read: if hasProjectAccess(projectId);
+      allow create, update: if isProjectAdmin(projectId)
+        && collectionName in ['budgetItems', 'areaExpenses']
+        && request.resource.size <= 15 * 1024 * 1024
+        && (
+          request.resource.contentType == 'application/pdf'
+          || request.resource.contentType == 'image/jpeg'
+          || request.resource.contentType == 'image/png'
+          || request.resource.contentType == 'image/webp'
+        );
+      allow delete: if isProjectAdmin(projectId);
+    }
+
     // Legacy path kept so previously uploaded invoices can still be managed.
     match /projects/{projectId}/areaExpenses/{expenseId}/{fileName} {
       allow read: if hasProjectAccess(projectId);
