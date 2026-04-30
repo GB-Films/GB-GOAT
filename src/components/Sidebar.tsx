@@ -31,13 +31,11 @@ export default function Sidebar() {
     <aside className="w-64 bg-white border-r border-slate-200 flex flex-col h-screen sticky top-0">
       <div className="p-6">
         <div className="mb-10 flex justify-center">
-          <div className="inline-flex flex-col items-center">
-            <div className="flex gap-px mb-1 bg-white">
-              <div className="bg-black text-white w-12 h-12 flex items-center justify-center text-3xl font-black tracking-tighter">G</div>
-              <div className="bg-black text-white w-12 h-12 flex items-center justify-center text-3xl font-black tracking-tighter">B</div>
-            </div>
-            <div className="bg-black text-white w-[97px] text-center text-[10px] font-black tracking-[0.5em] py-1.5 pl-1 uppercase">Films</div>
-          </div>
+          <img
+            src="/gb-films-logo.png"
+            alt="GB Films"
+            className="w-28 h-auto object-contain"
+          />
         </div>
         <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4 px-3">Menú</div>
 
