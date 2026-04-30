@@ -61,6 +61,14 @@ const RESULT_INCIDENCES = [
   { id: 'administracion', label: 'Administracion' },
 ];
 
+const DOCUMENT_FAMILIES = [
+  { id: 'todos', label: 'Todos' },
+  { id: 'finanzas', label: 'Finanzas' },
+  { id: 'contratos', label: 'Contratos' },
+  { id: 'seguros', label: 'Seguros' },
+  { id: 'locaciones', label: 'Locaciones' },
+] as const;
+
 const BUDGET_AREAS = [
   'Producción', 'Dirección', 'Guion', 'Arte', 'Vestuario', 
   'Maquillaje', 'Fotografía', 'Sonido', 'Logística', 'Post-producción', 'Varios'
@@ -284,6 +292,7 @@ export default function ProjectDetail() {
   const [financeStatusFilter, setFinanceStatusFilter] = useState<'all' | 'pendiente' | 'parcial' | 'pagado'>('all');
   const [financeInvoiceFilter, setFinanceInvoiceFilter] = useState<'all' | 'with' | 'without'>('all');
   const [financeSearch, setFinanceSearch] = useState('');
+  const [documentFamilyFilter, setDocumentFamilyFilter] = useState<'todos' | 'finanzas' | 'contratos' | 'seguros' | 'locaciones'>('todos');
   const [documentTypeFilter, setDocumentTypeFilter] = useState<'all' | 'factura' | 'comprobante'>('all');
   const [documentAreaFilter, setDocumentAreaFilter] = useState('all');
   const [documentSearch, setDocumentSearch] = useState('');
@@ -1313,6 +1322,7 @@ export default function ProjectDetail() {
   const projectDocuments = React.useMemo(() => {
     const docs: Array<{
       id: string;
+      family: 'finanzas' | 'contratos' | 'seguros' | 'locaciones';
       type: 'factura' | 'comprobante';
       area: string;
       providerName: string;
@@ -1331,6 +1341,7 @@ export default function ProjectDetail() {
           if (entry.invoice?.url) {
             docs.push({
               id: `invoice-${entry.collectionName}-${entry.id}`,
+              family: 'finanzas',
               type: 'factura',
               area: saldo.area,
               providerName: saldo.name,
@@ -1347,6 +1358,7 @@ export default function ProjectDetail() {
             if (!payment.receipt?.url) return;
             docs.push({
               id: `receipt-${entry.collectionName}-${entry.id}-${payment.id || index}`,
+              family: 'finanzas',
               type: 'comprobante',
               area: saldo.area,
               providerName: saldo.name,
@@ -1373,6 +1385,7 @@ export default function ProjectDetail() {
   const filteredProjectDocuments = React.useMemo(() => {
     const search = documentSearch.trim().toLowerCase();
     return projectDocuments.filter((docItem) => {
+      const matchesFamily = documentFamilyFilter === 'todos' || docItem.family === documentFamilyFilter;
       const matchesType = documentTypeFilter === 'all' || docItem.type === documentTypeFilter;
       const matchesArea = documentAreaFilter === 'all' || docItem.area === documentAreaFilter;
       const matchesSearch = !search
@@ -1380,13 +1393,17 @@ export default function ProjectDetail() {
         || docItem.description.toLowerCase().includes(search)
         || docItem.fileName.toLowerCase().includes(search);
 
-      return matchesType && matchesArea && matchesSearch;
+      return matchesFamily && matchesType && matchesArea && matchesSearch;
     });
-  }, [documentAreaFilter, documentSearch, documentTypeFilter, projectDocuments]);
+  }, [documentAreaFilter, documentFamilyFilter, documentSearch, documentTypeFilter, projectDocuments]);
 
   const documentTotals = React.useMemo(() => ({
     invoices: projectDocuments.filter((docItem) => docItem.type === 'factura').length,
     receipts: projectDocuments.filter((docItem) => docItem.type === 'comprobante').length,
+    finances: projectDocuments.filter((docItem) => docItem.family === 'finanzas').length,
+    contracts: projectDocuments.filter((docItem) => docItem.family === 'contratos').length,
+    insurance: projectDocuments.filter((docItem) => docItem.family === 'seguros').length,
+    locations: projectDocuments.filter((docItem) => docItem.family === 'locaciones').length,
     visible: filteredProjectDocuments.length,
   }), [filteredProjectDocuments.length, projectDocuments]);
 
@@ -3378,7 +3395,7 @@ export default function ProjectDetail() {
               <div>
                 <h2 className="text-xl font-bold text-slate-900">Documentos del Proyecto</h2>
                 <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest mt-1">
-                  Facturas y comprobantes centralizados desde finanzas y gestion por areas
+                  Centro documental por familia: finanzas, contratos, seguros y locaciones
                 </p>
               </div>
               <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
@@ -3386,22 +3403,56 @@ export default function ProjectDetail() {
               </div>
             </header>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Facturas</div>
-                <div className="text-2xl font-bold text-slate-900">{documentTotals.invoices}</div>
-              </div>
-              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Comprobantes</div>
-                <div className="text-2xl font-bold text-slate-900">{documentTotals.receipts}</div>
-              </div>
-              <div className="bg-slate-900 p-5 rounded-xl border border-slate-900 shadow-sm text-white">
-                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Resultado filtrado</div>
-                <div className="text-2xl font-bold">{documentTotals.visible}</div>
-              </div>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-2 p-1 bg-slate-100 rounded-xl">
+              {DOCUMENT_FAMILIES.map((family) => {
+                const count = family.id === 'todos'
+                  ? projectDocuments.length
+                  : projectDocuments.filter((docItem) => docItem.family === family.id).length;
+                const selected = documentFamilyFilter === family.id;
+                return (
+                  <button
+                    key={family.id}
+                    type="button"
+                    onClick={() => setDocumentFamilyFilter(family.id)}
+                    className={cn(
+                      "px-4 py-3 rounded-lg text-left transition-all",
+                      selected ? "bg-white shadow-sm text-slate-900" : "text-slate-400 hover:text-slate-700"
+                    )}
+                  >
+                    <div className="text-[10px] font-black uppercase tracking-widest">{family.label}</div>
+                    <div className="text-lg font-black mt-1">{count}</div>
+                  </button>
+                );
+              })}
             </div>
 
-            <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              {[
+                { label: 'Facturas', value: documentTotals.invoices },
+                { label: 'Comprobantes', value: documentTotals.receipts },
+                { label: 'Contratos', value: documentTotals.contracts },
+                { label: 'Seguros / Locaciones', value: documentTotals.insurance + documentTotals.locations },
+              ].map((item) => (
+                <div key={item.label} className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                  <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">{item.label}</div>
+                  <div className="text-2xl font-bold text-slate-900">{item.value}</div>
+                </div>
+              ))}
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 grid grid-cols-1 md:grid-cols-4 gap-3">
+              <div>
+                <label className="block text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Familia</label>
+                <select
+                  value={documentFamilyFilter}
+                  onChange={(event) => setDocumentFamilyFilter(event.target.value as any)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black"
+                >
+                  {DOCUMENT_FAMILIES.map((family) => (
+                    <option key={family.id} value={family.id}>{family.label}</option>
+                  ))}
+                </select>
+              </div>
               <div>
                 <label className="block text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Buscar</label>
                 <input
@@ -3442,6 +3493,7 @@ export default function ProjectDetail() {
               <table className="w-full text-left">
                 <thead>
                   <tr className="bg-slate-50 border-b border-slate-200">
+                    <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Familia</th>
                     <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Tipo</th>
                     <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Documento</th>
                     <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Proveedor</th>
@@ -3454,6 +3506,11 @@ export default function ProjectDetail() {
                 <tbody className="divide-y divide-slate-100">
                   {filteredProjectDocuments.map((docItem) => (
                     <tr key={docItem.id} className="hover:bg-slate-50/60 transition-colors">
+                      <td className="px-5 py-4">
+                        <span className="inline-flex px-2 py-1 rounded border border-slate-100 bg-slate-50 text-[9px] font-black uppercase tracking-widest text-slate-500">
+                          {DOCUMENT_FAMILIES.find((family) => family.id === docItem.family)?.label || docItem.family}
+                        </span>
+                      </td>
                       <td className="px-5 py-4">
                         <span className={cn(
                           "inline-flex items-center gap-1 px-2 py-1 rounded border text-[9px] font-black uppercase tracking-widest",
@@ -3488,8 +3545,14 @@ export default function ProjectDetail() {
                   ))}
                   {filteredProjectDocuments.length === 0 && (
                     <tr>
-                      <td colSpan={7} className="px-6 py-12 text-center text-[10px] font-bold uppercase text-slate-300 tracking-widest italic">
-                        No hay documentos que coincidan con los filtros
+                      <td colSpan={8} className="px-6 py-12 text-center text-[10px] font-bold uppercase text-slate-300 tracking-widest italic">
+                        {documentFamilyFilter === 'contratos'
+                          ? 'Todavia no hay contratos cargados en el proyecto'
+                          : documentFamilyFilter === 'seguros'
+                            ? 'Todavia no hay seguros cargados en el proyecto'
+                            : documentFamilyFilter === 'locaciones'
+                              ? 'Todavia no hay documentos de locaciones cargados'
+                              : 'No hay documentos que coincidan con los filtros'}
                       </td>
                     </tr>
                   )}
