@@ -69,6 +69,14 @@ const DOCUMENT_FAMILIES = [
   { id: 'locaciones', label: 'Locaciones' },
 ] as const;
 
+const MANUAL_DOCUMENT_FAMILIES = DOCUMENT_FAMILIES.filter((family) => family.id !== 'todos' && family.id !== 'finanzas');
+
+const DOCUMENT_SUBTYPES: Record<string, string[]> = {
+  contratos: ['Contrato proveedor', 'Contrato talento / crew', 'Prestacion de servicios', 'Cesion de derechos', 'Release', 'Otro'],
+  seguros: ['Seguro tecnico / equipos', 'ART / accidentes personales', 'Responsabilidad civil', 'Seguro de locacion', 'Poliza / certificado', 'Otro'],
+  locaciones: ['Permiso de filmacion', 'Autorizacion de locacion', 'Condiciones de uso', 'Contacto / datos utiles', 'Otro'],
+};
+
 const BUDGET_AREAS = [
   'Producción', 'Dirección', 'Guion', 'Arte', 'Vestuario', 
   'Maquillaje', 'Fotografía', 'Sonido', 'Logística', 'Post-producción', 'Varios'
@@ -187,6 +195,18 @@ const buildInvoiceFileName = (expense: any) => {
   return `factura-${baseName}-${shortId}.pdf`;
 };
 
+const validateProjectDocumentFile = (file?: File | null) => {
+  if (!file) return 'Selecciona un archivo para subir.';
+  const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
+  if (!allowedTypes.includes(file.type)) {
+    return 'El documento debe ser PDF, JPG, PNG o WEBP.';
+  }
+  if (file.size > 15 * 1024 * 1024) {
+    return 'El documento es muy pesado. El maximo permitido es 15 MB.';
+  }
+  return '';
+};
+
 const normalizeEmail = (email?: string | null) => (email || '').trim().toLowerCase();
 const normalizeText = (value: unknown) => String(value || '')
   .normalize('NFD')
@@ -262,6 +282,7 @@ export default function ProjectDetail() {
   // Data for specific tabs
   const [budgetItems, setBudgetItems] = useState<BudgetItem[]>([]);
   const [areaExpenses, setAreaExpenses] = useState<any[]>([]);
+  const [manualProjectDocuments, setManualProjectDocuments] = useState<any[]>([]);
   const [providers, setProviders] = useState<any[]>([]);
   const [clients, setClients] = useState<any[]>([]);
   const [categories, setCategories] = useState<string[]>(BUDGET_AREAS);
@@ -296,6 +317,8 @@ export default function ProjectDetail() {
   const [documentTypeFilter, setDocumentTypeFilter] = useState<'all' | 'factura' | 'comprobante'>('all');
   const [documentAreaFilter, setDocumentAreaFilter] = useState('all');
   const [documentSearch, setDocumentSearch] = useState('');
+  const [showDocumentUploadModal, setShowDocumentUploadModal] = useState(false);
+  const [isUploadingProjectDocument, setIsUploadingProjectDocument] = useState(false);
   const areaSelectorRef = useRef<HTMLDivElement>(null);
   const isGlobalAdmin = profile?.role === 'admin';
   
@@ -386,6 +409,10 @@ export default function ProjectDetail() {
         const eq = query(collection(db, 'projects', id, 'areaExpenses'));
         const eSnap = await getDocs(eq);
         setAreaExpenses(eSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+
+        const dq = query(collection(db, 'projects', id, 'projectDocuments'));
+        const dSnap = await getDocs(dq);
+        setManualProjectDocuments(dSnap.docs.map(d => ({ id: d.id, ...d.data() })));
 
         // Fetch all Providers (for selection)
         const pq = query(collection(db, 'providers'));
@@ -809,6 +836,79 @@ export default function ProjectDetail() {
       handleFirestoreError(error, 'update', `projects/${id}/areaExpenses/${expense.id}`);
     } finally {
       setUploadingInvoices(prev => ({ ...prev, [expense.id]: false }));
+    }
+  };
+
+  const uploadProjectDocument = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!id || !isProjectAdmin) return;
+
+    const formData = new FormData(event.currentTarget);
+    const file = formData.get('file') as File | null;
+    const fileError = validateProjectDocumentFile(file);
+    if (fileError) {
+      alert(fileError);
+      return;
+    }
+
+    const family = String(formData.get('family') || 'contratos');
+    const subtype = String(formData.get('subtype') || 'Otro');
+    const providerId = String(formData.get('providerId') || '');
+    const provider = providers.find((item) => item.id === providerId);
+    const area = String(formData.get('area') || '');
+    const title = String(formData.get('title') || '').trim() || subtype;
+    const expirationDate = String(formData.get('expirationDate') || '');
+    const notes = String(formData.get('notes') || '').trim();
+    const docRef = doc(collection(db, 'projects', id, 'projectDocuments'));
+    const cleanBase = sanitizeFileName(file!.name.replace(/\.[^.]+$/, '') || title).slice(0, 80) || 'documento';
+    const extension = file!.name.includes('.') ? file!.name.split('.').pop() : 'pdf';
+    const fileName = `${family}-${docRef.id}-${cleanBase}.${extension}`;
+    const path = `projects/${id}/documents/${docRef.id}/${fileName}`;
+
+    setIsUploadingProjectDocument(true);
+    try {
+      const storageRef = ref(storage, path);
+      await uploadBytes(storageRef, file!, {
+        contentType: file!.type,
+        customMetadata: {
+          projectId: id,
+          family,
+          subtype,
+          uploadedBy: user?.email || '',
+        },
+      });
+      const url = await getDownloadURL(storageRef);
+      const payload = {
+        family,
+        type: subtype,
+        subtype,
+        title,
+        providerId,
+        providerName: provider ? providerDisplayName(provider) : '',
+        area,
+        expirationDate,
+        notes,
+        fileName,
+        originalFileName: file!.name,
+        url,
+        path,
+        contentType: file!.type,
+        size: file!.size,
+        source: 'Carga manual',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        uploadedBy: user?.email || '',
+      };
+
+      await setDoc(docRef, payload);
+      setManualProjectDocuments((current) => [{ id: docRef.id, ...payload, createdAt: new Date(), updatedAt: new Date() }, ...current]);
+      setDocumentFamilyFilter(family as any);
+      setShowDocumentUploadModal(false);
+    } catch (error) {
+      console.error('Error uploading project document:', error);
+      alert('No se pudo subir el documento. Revisa permisos de Firebase Storage.');
+    } finally {
+      setIsUploadingProjectDocument(false);
     }
   };
 
@@ -1323,7 +1423,7 @@ export default function ProjectDetail() {
     const docs: Array<{
       id: string;
       family: 'finanzas' | 'contratos' | 'seguros' | 'locaciones';
-      type: 'factura' | 'comprobante';
+      type: string;
       area: string;
       providerName: string;
       description: string;
@@ -1375,12 +1475,28 @@ export default function ProjectDetail() {
       });
     });
 
+    manualProjectDocuments.forEach((document) => {
+      docs.push({
+        id: `manual-${document.id}`,
+        family: document.family || 'contratos',
+        type: document.type || document.subtype || 'Documento',
+        area: document.area || 'General',
+        providerName: document.providerName || 'Sin proveedor',
+        description: document.title || document.notes || document.subtype || 'Documento',
+        fileName: document.originalFileName || document.fileName || 'Documento',
+        url: document.url,
+        amount: 0,
+        source: document.expirationDate ? `Carga manual / vence ${document.expirationDate}` : 'Carga manual',
+        uploadedAt: document.createdAt,
+      });
+    });
+
     return docs.sort((a, b) => {
       const typeDiff = a.type.localeCompare(b.type);
       if (typeDiff !== 0) return typeDiff;
       return a.providerName.localeCompare(b.providerName, 'es');
     });
-  }, [providerSaldosByArea]);
+  }, [manualProjectDocuments, providerSaldosByArea]);
 
   const filteredProjectDocuments = React.useMemo(() => {
     const search = documentSearch.trim().toLowerCase();
@@ -3401,6 +3517,16 @@ export default function ProjectDetail() {
               <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
                 {documentTotals.visible} documentos visibles
               </div>
+              {isProjectAdmin && (
+                <button
+                  type="button"
+                  onClick={() => setShowDocumentUploadModal(true)}
+                  className="px-4 py-2 bg-black text-white text-[10px] font-bold uppercase tracking-widest rounded flex items-center gap-2 hover:bg-slate-800 transition-all"
+                >
+                  <Upload className="w-3 h-3" />
+                  Subir documento
+                </button>
+              )}
             </header>
 
             <div className="grid grid-cols-2 md:grid-cols-5 gap-2 p-1 bg-slate-100 rounded-xl">
@@ -3528,7 +3654,7 @@ export default function ProjectDetail() {
                       </td>
                       <td className="px-5 py-4 text-xs font-bold text-slate-700">{docItem.providerName}</td>
                       <td className="px-5 py-4 text-xs text-slate-500">{docItem.area}</td>
-                      <td className="px-5 py-4 text-right text-xs font-bold text-slate-700">${docItem.amount.toLocaleString()}</td>
+                      <td className="px-5 py-4 text-right text-xs font-bold text-slate-700">{docItem.amount > 0 ? `$${docItem.amount.toLocaleString()}` : '-'}</td>
                       <td className="px-5 py-4 text-xs text-slate-500">{docItem.paymentDate ? `${docItem.source} / ${docItem.paymentDate}` : docItem.source}</td>
                       <td className="px-5 py-4 text-right">
                         <a
@@ -4050,6 +4176,101 @@ export default function ProjectDetail() {
           onPaymentStateChange={updatePaymentState}
           onDeletePayment={deletePaymentFromSelectedItem}
         />
+        {showDocumentUploadModal && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[260] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden"
+            >
+              <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/30">
+                <div>
+                  <h2 className="text-xs font-bold uppercase tracking-widest text-slate-900 flex items-center gap-2">
+                    <Upload className="w-4 h-4" />
+                    Subir Documento
+                  </h2>
+                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">Contratos, seguros y locaciones</p>
+                </div>
+                <button onClick={() => setShowDocumentUploadModal(false)} className="text-slate-400 hover:text-black">
+                  <Plus className="w-5 h-5 rotate-45" />
+                </button>
+              </div>
+
+              <form onSubmit={uploadProjectDocument} className="p-6 space-y-5">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Familia</label>
+                    <select name="family" defaultValue={documentFamilyFilter !== 'todos' && documentFamilyFilter !== 'finanzas' ? documentFamilyFilter : 'contratos'} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black">
+                      {MANUAL_DOCUMENT_FAMILIES.map((family) => (
+                        <option key={family.id} value={family.id}>{family.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Tipo</label>
+                    <select name="subtype" className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black">
+                      {[...DOCUMENT_SUBTYPES.contratos, ...DOCUMENT_SUBTYPES.seguros, ...DOCUMENT_SUBTYPES.locaciones]
+                        .filter((value, index, array) => array.indexOf(value) === index)
+                        .map((subtype) => (
+                          <option key={subtype} value={subtype}>{subtype}</option>
+                        ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Titulo</label>
+                  <input name="title" className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black" placeholder="Ej: Poliza RC productora / Contrato director" />
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Proveedor</label>
+                    <select name="providerId" className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black">
+                      <option value="">Sin proveedor</option>
+                      {providers.map((provider) => (
+                        <option key={provider.id} value={provider.id}>{providerDisplayName(provider)}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Area</label>
+                    <select name="area" className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black">
+                      <option value="">General</option>
+                      {categories.map((area) => (
+                        <option key={area} value={area}>{area}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Vencimiento</label>
+                    <input name="expirationDate" type="date" className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black" />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Archivo</label>
+                  <input name="file" type="file" accept="application/pdf,image/jpeg,image/png,image/webp,.pdf,.jpg,.jpeg,.png,.webp" className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black" required />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Notas</label>
+                  <textarea name="notes" rows={3} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black resize-none" placeholder="Observaciones, condiciones o datos utiles" />
+                </div>
+
+                <div className="flex justify-end gap-3 pt-2">
+                  <button type="button" onClick={() => setShowDocumentUploadModal(false)} className="px-5 py-3 text-[10px] font-bold uppercase tracking-widest text-slate-400 hover:text-black">
+                    Cancelar
+                  </button>
+                  <button disabled={isUploadingProjectDocument} type="submit" className="px-5 py-3 bg-black text-white rounded text-[10px] font-bold uppercase tracking-widest disabled:bg-slate-300">
+                    {isUploadingProjectDocument ? 'Subiendo...' : 'Subir documento'}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
         {showEditProjectModal && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
             <motion.div 

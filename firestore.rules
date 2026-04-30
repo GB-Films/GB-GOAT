@@ -163,6 +163,11 @@ service cloud.firestore {
       match /invoices/{invoiceId} {
         allow read, write: if hasProjectAccess(projectId);
       }
+
+      match /projectDocuments/{documentId} {
+        allow read: if hasProjectAccess(projectId);
+        allow create, update, delete: if isProjectAdmin(projectId);
+      }
     }
 
     match /clients/{clientId} {

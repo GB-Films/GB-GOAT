@@ -24,6 +24,7 @@ const menuItems = [
 
 export default function Sidebar() {
   const { profile } = useAuth();
+  const logoSrc = `${(import.meta as any).env.BASE_URL}gb-films-logo.png`;
 
   const filteredMenuItems = menuItems.filter(item => profile?.role === 'admin' || !item.adminOnly);
 
@@ -32,7 +33,7 @@ export default function Sidebar() {
       <div className="p-6">
         <div className="mb-10 flex justify-center">
           <img
-            src="/gb-films-logo.png"
+            src={logoSrc}
             alt="GB Films"
             className="w-28 h-auto object-contain"
           />

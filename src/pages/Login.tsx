@@ -9,6 +9,7 @@ export default function Login() {
   const { user, loading } = useAuth();
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [loginError, setLoginError] = useState('');
+  const logoSrc = `${(import.meta as any).env.BASE_URL}gb-films-logo.png`;
 
   useEffect(() => {
     getRedirectResult(auth).catch((error) => {
@@ -57,7 +58,7 @@ export default function Login() {
       >
         <div className="flex flex-col items-center text-center mb-8">
           <img
-            src="/gb-films-logo.png"
+            src={logoSrc}
             alt="GB Films"
             className="w-28 h-auto object-contain mb-6"
           />
