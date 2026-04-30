@@ -47,6 +47,7 @@ const tabs = [
   { id: 'presupuesto', label: 'Presupuesto Principal', icon: DollarSign },
   { id: 'areas', label: 'Áreas', icon: LayoutGrid },
   { id: 'saldos', label: 'Finanzas', icon: Wallet },
+  { id: 'documentos', label: 'Documentos', icon: FileText },
   { id: 'resultado', label: 'Resultado', icon: BarChart2 },
   { id: 'proveedores', label: 'Proveedores', icon: Truck },
   { id: 'equipo', label: 'Equipo', icon: Users },
@@ -81,7 +82,7 @@ const roleLabels: Record<Collaborator['role'], string> = {
 };
 
 const PROJECT_TAB_IDS = tabs.map(tab => tab.id);
-const DEFAULT_COLLABORATOR_TABS = ['resumen', 'areas', 'saldos', 'proveedores'];
+const DEFAULT_COLLABORATOR_TABS = ['resumen', 'areas', 'saldos', 'documentos', 'proveedores'];
 const safeArray = (value: any): string[] => Array.isArray(value) ? value : [];
 const normalizeAllowedTabs = (allowedTabs: any, role?: Collaborator['role']) => {
   const normalized = safeArray(allowedTabs).filter(tabId => PROJECT_TAB_IDS.includes(tabId));
@@ -89,12 +90,12 @@ const normalizeAllowedTabs = (allowedTabs: any, role?: Collaborator['role']) => 
 
   const looksLikeLegacyDefault = normalized.includes('presupuesto') && !normalized.includes('saldos');
   if (looksLikeLegacyDefault) {
-    return Array.from(new Set([...normalized.filter(tabId => tabId !== 'presupuesto'), 'saldos', 'proveedores']));
+    return Array.from(new Set([...normalized.filter(tabId => tabId !== 'presupuesto'), 'saldos', 'documentos', 'proveedores']));
   }
 
   const looksLikeCurrentDefault = normalized.includes('areas') && normalized.includes('saldos') && !normalized.includes('presupuesto');
-  if (looksLikeCurrentDefault && !normalized.includes('proveedores')) {
-    return Array.from(new Set([...normalized, 'proveedores']));
+  if (looksLikeCurrentDefault && (!normalized.includes('proveedores') || !normalized.includes('documentos'))) {
+    return Array.from(new Set([...normalized, 'documentos', 'proveedores']));
   }
 
   return normalized.length ? normalized : DEFAULT_COLLABORATOR_TABS;
@@ -114,7 +115,7 @@ const getDefaultCollaboratorPermissions = (role: Collaborator['role'], categorie
 
   if (role === 'lector') {
     return {
-      allowedTabs: ['resumen', 'saldos', 'proveedores'],
+      allowedTabs: ['resumen', 'saldos', 'documentos', 'proveedores'],
       allowedCategories: chosenCategories,
       canEditBudgetAreas: false,
       canViewBudgetTotals: false,
@@ -283,6 +284,9 @@ export default function ProjectDetail() {
   const [financeStatusFilter, setFinanceStatusFilter] = useState<'all' | 'pendiente' | 'parcial' | 'pagado'>('all');
   const [financeInvoiceFilter, setFinanceInvoiceFilter] = useState<'all' | 'with' | 'without'>('all');
   const [financeSearch, setFinanceSearch] = useState('');
+  const [documentTypeFilter, setDocumentTypeFilter] = useState<'all' | 'factura' | 'comprobante'>('all');
+  const [documentAreaFilter, setDocumentAreaFilter] = useState('all');
+  const [documentSearch, setDocumentSearch] = useState('');
   const areaSelectorRef = useRef<HTMLDivElement>(null);
   const isGlobalAdmin = profile?.role === 'admin';
   
@@ -1305,6 +1309,86 @@ export default function ProjectDetail() {
       ), 0),
     }), { budgeted: 0, spent: 0, paid: 0, debt: 0, invoices: 0, receipts: 0 })
   ), [filteredProviderSaldos]);
+
+  const projectDocuments = React.useMemo(() => {
+    const docs: Array<{
+      id: string;
+      type: 'factura' | 'comprobante';
+      area: string;
+      providerName: string;
+      description: string;
+      fileName: string;
+      url: string;
+      amount: number;
+      source: string;
+      uploadedAt?: any;
+      paymentDate?: string;
+    }> = [];
+
+    providerSaldosByArea.forEach((group) => {
+      group.rows.forEach((saldo) => {
+        saldo.entries.forEach((entry) => {
+          if (entry.invoice?.url) {
+            docs.push({
+              id: `invoice-${entry.collectionName}-${entry.id}`,
+              type: 'factura',
+              area: saldo.area,
+              providerName: saldo.name,
+              description: entry.description,
+              fileName: entry.invoice.fileName || entry.invoice.originalFileName || 'Factura',
+              url: entry.invoice.url,
+              amount: entry.total,
+              source: entry.collectionName === 'areaExpenses' ? 'Gestion por Areas' : 'Presupuesto Principal',
+              uploadedAt: entry.invoice.uploadedAt,
+            });
+          }
+
+          safeArray(entry.item?.paymentHistory).forEach((payment: any, index) => {
+            if (!payment.receipt?.url) return;
+            docs.push({
+              id: `receipt-${entry.collectionName}-${entry.id}-${payment.id || index}`,
+              type: 'comprobante',
+              area: saldo.area,
+              providerName: saldo.name,
+              description: entry.description,
+              fileName: payment.receipt.originalFileName || payment.receipt.fileName || 'Comprobante',
+              url: payment.receipt.url,
+              amount: Number(payment.amount) || 0,
+              source: 'Pago registrado',
+              uploadedAt: payment.receipt.uploadedAt,
+              paymentDate: payment.date,
+            });
+          });
+        });
+      });
+    });
+
+    return docs.sort((a, b) => {
+      const typeDiff = a.type.localeCompare(b.type);
+      if (typeDiff !== 0) return typeDiff;
+      return a.providerName.localeCompare(b.providerName, 'es');
+    });
+  }, [providerSaldosByArea]);
+
+  const filteredProjectDocuments = React.useMemo(() => {
+    const search = documentSearch.trim().toLowerCase();
+    return projectDocuments.filter((docItem) => {
+      const matchesType = documentTypeFilter === 'all' || docItem.type === documentTypeFilter;
+      const matchesArea = documentAreaFilter === 'all' || docItem.area === documentAreaFilter;
+      const matchesSearch = !search
+        || docItem.providerName.toLowerCase().includes(search)
+        || docItem.description.toLowerCase().includes(search)
+        || docItem.fileName.toLowerCase().includes(search);
+
+      return matchesType && matchesArea && matchesSearch;
+    });
+  }, [documentAreaFilter, documentSearch, documentTypeFilter, projectDocuments]);
+
+  const documentTotals = React.useMemo(() => ({
+    invoices: projectDocuments.filter((docItem) => docItem.type === 'factura').length,
+    receipts: projectDocuments.filter((docItem) => docItem.type === 'comprobante').length,
+    visible: filteredProjectDocuments.length,
+  }), [filteredProjectDocuments.length, projectDocuments]);
 
   const projectAreaProviderRows = React.useMemo(() => {
     const allowedCategories = isProjectAdmin ? categories : safeArray(userPermissions?.allowedCategories);
@@ -3288,6 +3372,133 @@ export default function ProjectDetail() {
           </div>
         )}
 
+        {activeTab === 'documentos' && (
+          <div className="space-y-6 pb-20">
+            <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+              <div>
+                <h2 className="text-xl font-bold text-slate-900">Documentos del Proyecto</h2>
+                <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest mt-1">
+                  Facturas y comprobantes centralizados desde finanzas y gestion por areas
+                </p>
+              </div>
+              <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                {documentTotals.visible} documentos visibles
+              </div>
+            </header>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Facturas</div>
+                <div className="text-2xl font-bold text-slate-900">{documentTotals.invoices}</div>
+              </div>
+              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Comprobantes</div>
+                <div className="text-2xl font-bold text-slate-900">{documentTotals.receipts}</div>
+              </div>
+              <div className="bg-slate-900 p-5 rounded-xl border border-slate-900 shadow-sm text-white">
+                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Resultado filtrado</div>
+                <div className="text-2xl font-bold">{documentTotals.visible}</div>
+              </div>
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Buscar</label>
+                <input
+                  value={documentSearch}
+                  onChange={(event) => setDocumentSearch(event.target.value)}
+                  placeholder="Proveedor, concepto o archivo"
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs font-medium focus:outline-none focus:border-black"
+                />
+              </div>
+              <div>
+                <label className="block text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Tipo</label>
+                <select
+                  value={documentTypeFilter}
+                  onChange={(event) => setDocumentTypeFilter(event.target.value as any)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black"
+                >
+                  <option value="all">Todos</option>
+                  <option value="factura">Facturas</option>
+                  <option value="comprobante">Comprobantes</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Area</label>
+                <select
+                  value={documentAreaFilter}
+                  onChange={(event) => setDocumentAreaFilter(event.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black"
+                >
+                  <option value="all">Todas</option>
+                  {providerSaldosByArea.map((group) => (
+                    <option key={group.area} value={group.area}>{group.area}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200">
+                    <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Tipo</th>
+                    <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Documento</th>
+                    <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Proveedor</th>
+                    <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Area</th>
+                    <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Monto</th>
+                    <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Origen</th>
+                    <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Archivo</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredProjectDocuments.map((docItem) => (
+                    <tr key={docItem.id} className="hover:bg-slate-50/60 transition-colors">
+                      <td className="px-5 py-4">
+                        <span className={cn(
+                          "inline-flex items-center gap-1 px-2 py-1 rounded border text-[9px] font-black uppercase tracking-widest",
+                          docItem.type === 'factura'
+                            ? "bg-emerald-50 border-emerald-100 text-emerald-700"
+                            : "bg-blue-50 border-blue-100 text-blue-700"
+                        )}>
+                          {docItem.type === 'factura' ? <FileText className="w-3 h-3" /> : <Paperclip className="w-3 h-3" />}
+                          {docItem.type}
+                        </span>
+                      </td>
+                      <td className="px-5 py-4 max-w-[260px]">
+                        <div className="text-xs font-bold text-slate-900 truncate">{docItem.fileName}</div>
+                        <div className="text-[10px] text-slate-400 truncate">{docItem.description}</div>
+                      </td>
+                      <td className="px-5 py-4 text-xs font-bold text-slate-700">{docItem.providerName}</td>
+                      <td className="px-5 py-4 text-xs text-slate-500">{docItem.area}</td>
+                      <td className="px-5 py-4 text-right text-xs font-bold text-slate-700">${docItem.amount.toLocaleString()}</td>
+                      <td className="px-5 py-4 text-xs text-slate-500">{docItem.paymentDate ? `${docItem.source} / ${docItem.paymentDate}` : docItem.source}</td>
+                      <td className="px-5 py-4 text-right">
+                        <a
+                          href={docItem.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-2 px-3 py-1.5 rounded border border-slate-200 text-[10px] font-bold uppercase tracking-widest text-slate-600 hover:border-black hover:text-black"
+                        >
+                          Abrir
+                          <LinkIcon className="w-3 h-3" />
+                        </a>
+                      </td>
+                    </tr>
+                  ))}
+                  {filteredProjectDocuments.length === 0 && (
+                    <tr>
+                      <td colSpan={7} className="px-6 py-12 text-center text-[10px] font-bold uppercase text-slate-300 tracking-widest italic">
+                        No hay documentos que coincidan con los filtros
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
         {activeTab === 'equipo' && (
           <div className="space-y-12">
             <header className="flex justify-between items-center">
@@ -3658,7 +3869,7 @@ export default function ProjectDetail() {
         )}
 
 
-        {(activeTab !== 'resumen' && activeTab !== 'presupuesto' && activeTab !== 'equipo' && activeTab !== 'areas' && activeTab !== 'saldos' && activeTab !== 'resultado' && activeTab !== 'proveedores' && activeTab !== 'permisos') && (
+        {(activeTab !== 'resumen' && activeTab !== 'presupuesto' && activeTab !== 'equipo' && activeTab !== 'areas' && activeTab !== 'saldos' && activeTab !== 'documentos' && activeTab !== 'resultado' && activeTab !== 'proveedores' && activeTab !== 'permisos') && (
            <div className="py-32 text-center border border-dashed border-slate-200 rounded-2xl bg-white">
               <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest animate-pulse">Integrando módulo {activeTab}...</span>
            </div>
