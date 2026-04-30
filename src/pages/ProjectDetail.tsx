@@ -46,7 +46,7 @@ const tabs = [
   { id: 'resumen', label: 'Resumen', icon: Info },
   { id: 'presupuesto', label: 'Presupuesto Principal', icon: DollarSign },
   { id: 'areas', label: 'Áreas', icon: LayoutGrid },
-  { id: 'saldos', label: 'Saldos', icon: Wallet },
+  { id: 'saldos', label: 'Finanzas', icon: Wallet },
   { id: 'resultado', label: 'Resultado', icon: BarChart2 },
   { id: 'proveedores', label: 'Proveedores', icon: Truck },
   { id: 'equipo', label: 'Equipo', icon: Users },
@@ -279,6 +279,10 @@ export default function ProjectDetail() {
   const [locationDraft, setLocationDraft] = useState('');
   const [isSavingLocation, setIsSavingLocation] = useState(false);
   const [expandedKeyPerson, setExpandedKeyPerson] = useState<string | null>(null);
+  const [financeAreaFilter, setFinanceAreaFilter] = useState('all');
+  const [financeStatusFilter, setFinanceStatusFilter] = useState<'all' | 'pendiente' | 'parcial' | 'pagado'>('all');
+  const [financeInvoiceFilter, setFinanceInvoiceFilter] = useState<'all' | 'with' | 'without'>('all');
+  const [financeSearch, setFinanceSearch] = useState('');
   const areaSelectorRef = useRef<HTMLDivElement>(null);
   const isGlobalAdmin = profile?.role === 'admin';
   
@@ -1256,6 +1260,51 @@ export default function ProjectDetail() {
   }, [activeAreas, areaExpenses, budgetItems, categories, isProjectAdmin, providers, userPermissions]);
 
   const providerSaldos = providerSaldosByArea.flatMap(group => group.rows);
+
+  const getFinanceStatus = (saldo: { debt: number; paid: number }) => {
+    if (saldo.debt <= 0.01 && saldo.paid > 0) return 'pagado';
+    if (saldo.paid > 0 && saldo.debt > 0.01) return 'parcial';
+    return 'pendiente';
+  };
+
+  const filteredProviderSaldosByArea = React.useMemo(() => {
+    const search = financeSearch.trim().toLowerCase();
+
+    return providerSaldosByArea
+      .map((group) => {
+        const rows = group.rows.filter((saldo) => {
+          const status = getFinanceStatus(saldo);
+          const hasInvoice = saldo.entries.some((entry) => entry.invoice?.url);
+          const matchesArea = financeAreaFilter === 'all' || saldo.area === financeAreaFilter;
+          const matchesStatus = financeStatusFilter === 'all' || status === financeStatusFilter;
+          const matchesInvoice = financeInvoiceFilter === 'all'
+            || (financeInvoiceFilter === 'with' && hasInvoice)
+            || (financeInvoiceFilter === 'without' && !hasInvoice);
+          const matchesSearch = !search
+            || saldo.name.toLowerCase().includes(search)
+            || saldo.entries.some((entry) => entry.description.toLowerCase().includes(search));
+
+          return matchesArea && matchesStatus && matchesInvoice && matchesSearch;
+        });
+
+        return { ...group, rows };
+      })
+      .filter((group) => group.rows.length > 0);
+  }, [financeAreaFilter, financeInvoiceFilter, financeSearch, financeStatusFilter, providerSaldosByArea]);
+
+  const filteredProviderSaldos = filteredProviderSaldosByArea.flatMap(group => group.rows);
+  const financeTotals = React.useMemo(() => (
+    filteredProviderSaldos.reduce((acc, saldo) => ({
+      budgeted: acc.budgeted + saldo.budgeted,
+      spent: acc.spent + saldo.spent,
+      paid: acc.paid + saldo.paid,
+      debt: acc.debt + saldo.debt,
+      invoices: acc.invoices + saldo.entries.filter((entry) => entry.invoice?.url).length,
+      receipts: acc.receipts + saldo.entries.reduce((count, entry) => (
+        count + safeArray(entry.item?.paymentHistory).filter((payment: any) => payment.receipt?.url).length
+      ), 0),
+    }), { budgeted: 0, spent: 0, paid: 0, debt: 0, invoices: 0, receipts: 0 })
+  ), [filteredProviderSaldos]);
 
   const projectAreaProviderRows = React.useMemo(() => {
     const allowedCategories = isProjectAdmin ? categories : safeArray(userPermissions?.allowedCategories);
@@ -3008,29 +3057,89 @@ export default function ProjectDetail() {
 
         {activeTab === 'saldos' && (
           <div className="space-y-6 pb-20">
-            <header>
-              <h2 className="text-xl font-bold text-slate-900">Estado de Saldos y Deudas</h2>
+            <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+              <div>
+              <h2 className="text-xl font-bold text-slate-900">Finanzas del Proyecto</h2>
               <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest mt-1">
-                {isProjectAdmin ? 'Resumen de pagos realizados y pendientes por proveedor' : 'Resumen limitado a tus areas asignadas'}
+                {isProjectAdmin ? 'Pagos, deuda, facturas y comprobantes por proveedor' : 'Vista financiera limitada a tus areas asignadas'}
               </p>
+              </div>
+              <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                {filteredProviderSaldos.length} proveedores con movimientos
+              </div>
             </header>
 
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
               <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Total Presupuestado</div>
-                <div className="text-2xl font-bold text-slate-900">${providerSaldos.reduce((acc, s) => acc + s.budgeted, 0).toLocaleString()}</div>
+                <div className="text-2xl font-bold text-slate-900">${financeTotals.budgeted.toLocaleString()}</div>
               </div>
               <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Total Gastado (Facturado)</div>
-                <div className="text-2xl font-bold text-slate-900">${providerSaldos.reduce((acc, s) => acc + s.spent, 0).toLocaleString()}</div>
+                <div className="text-2xl font-bold text-slate-900">${financeTotals.spent.toLocaleString()}</div>
               </div>
               <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 text-emerald-600">Total Pagado</div>
-                <div className="text-2xl font-bold text-emerald-600">${providerSaldos.reduce((acc, s) => acc + s.paid, 0).toLocaleString()}</div>
+                <div className="text-2xl font-bold text-emerald-600">${financeTotals.paid.toLocaleString()}</div>
               </div>
               <div className="bg-slate-900 p-5 rounded-xl border border-slate-900 shadow-sm text-white">
                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Deuda Pendiente</div>
-                <div className="text-2xl font-bold font-mono">${providerSaldos.reduce((acc, s) => acc + s.debt, 0).toLocaleString()}</div>
+                <div className="text-2xl font-bold font-mono">${financeTotals.debt.toLocaleString()}</div>
+              </div>
+              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Docs</div>
+                <div className="text-2xl font-bold text-slate-900">{financeTotals.invoices}/{financeTotals.receipts}</div>
+                <div className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mt-2">Facturas / comprobantes</div>
+              </div>
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 grid grid-cols-1 md:grid-cols-4 gap-3">
+              <div>
+                <label className="block text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Buscar</label>
+                <input
+                  value={financeSearch}
+                  onChange={(event) => setFinanceSearch(event.target.value)}
+                  placeholder="Proveedor o concepto"
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs font-medium focus:outline-none focus:border-black"
+                />
+              </div>
+              <div>
+                <label className="block text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Area</label>
+                <select
+                  value={financeAreaFilter}
+                  onChange={(event) => setFinanceAreaFilter(event.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black"
+                >
+                  <option value="all">Todas</option>
+                  {providerSaldosByArea.map((group) => (
+                    <option key={group.area} value={group.area}>{group.area}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Estado de pago</label>
+                <select
+                  value={financeStatusFilter}
+                  onChange={(event) => setFinanceStatusFilter(event.target.value as any)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black"
+                >
+                  <option value="all">Todos</option>
+                  <option value="pendiente">Pendiente</option>
+                  <option value="parcial">Parcial</option>
+                  <option value="pagado">Pagado</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Factura</label>
+                <select
+                  value={financeInvoiceFilter}
+                  onChange={(event) => setFinanceInvoiceFilter(event.target.value as any)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black"
+                >
+                  <option value="all">Todas</option>
+                  <option value="with">Con factura</option>
+                  <option value="without">Sin factura</option>
+                </select>
               </div>
             </div>
 
@@ -3039,16 +3148,16 @@ export default function ProjectDetail() {
                  <thead>
                    <tr className="bg-slate-50 border-b border-slate-200">
                      <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Proveedor</th>
-                     <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">CBU / Cuenta</th>
+                     <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Cuenta</th>
                      <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Presupuesto</th>
                      <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Gastado</th>
                      <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Pagado</th>
-                     <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Saldo Deudor</th>
-                     <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Facturas / Pagos</th>
+                     <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Deuda</th>
+                     <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Documentos / Pagos</th>
                    </tr>
                  </thead>
                  <tbody className="divide-y divide-slate-100">
-                   {providerSaldosByArea.map((group) => (
+                   {filteredProviderSaldosByArea.map((group) => (
                      <React.Fragment key={group.area}>
                        <tr className="bg-slate-100/70">
                          <td colSpan={7} className="px-6 py-3 text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">
@@ -3062,7 +3171,7 @@ export default function ProjectDetail() {
                            </td>
                            <td className="px-6 py-4">
                              <div className="text-[10px] font-mono text-slate-500 bg-slate-50 px-2 py-1 rounded inline-block border border-slate-100">
-                               {saldo.cbu}
+                               {isProjectAdmin ? saldo.cbu : 'Disponible para admins'}
                              </div>
                            </td>
                            <td className="px-6 py-4 text-right text-xs font-medium text-slate-400">
@@ -3086,10 +3195,17 @@ export default function ProjectDetail() {
                          <div className="space-y-2">
                            {saldo.entries.map((entry) => {
                              const entryDebt = entry.total - entry.paid;
+                             const paymentReceipts = safeArray(entry.item?.paymentHistory).filter((payment: any) => payment.receipt?.url);
                              return (
                                <div key={`${entry.collectionName}-${entry.id}`} className="flex flex-wrap items-center gap-2 text-[10px]">
                                  <span className="max-w-[170px] truncate text-slate-500" title={entry.description}>
                                    {entry.description || 'Movimiento'}
+                                 </span>
+                                 <span className={cn(
+                                   "px-2 py-1 rounded border font-bold uppercase tracking-widest",
+                                   entryDebt > 0 ? "bg-rose-50 border-rose-100 text-rose-700" : "bg-emerald-50 border-emerald-100 text-emerald-700"
+                                 )}>
+                                   {entryDebt > 0 ? `$${entryDebt.toLocaleString()} debe` : 'Pagado'}
                                  </span>
                                  {entry.invoice?.url && (
                                    <a
@@ -3103,6 +3219,19 @@ export default function ProjectDetail() {
                                      Factura
                                    </a>
                                  )}
+                                 {paymentReceipts.map((payment: any, index: number) => (
+                                   <a
+                                     key={payment.id || index}
+                                     href={payment.receipt.url}
+                                     target="_blank"
+                                     rel="noreferrer"
+                                     className="inline-flex items-center gap-1 px-2 py-1 rounded bg-blue-50 text-blue-700 border border-blue-100 font-bold uppercase tracking-widest hover:bg-blue-600 hover:text-white"
+                                     title={payment.receipt.originalFileName || 'Ver comprobante'}
+                                   >
+                                     <Paperclip className="w-3 h-3" />
+                                     Comp.
+                                   </a>
+                                 ))}
                                  {isProjectAdmin && (
                                    <button
                                      type="button"
@@ -3130,6 +3259,13 @@ export default function ProjectDetail() {
                      <tr>
                        <td colSpan={7} className="px-6 py-12 text-center text-[10px] font-bold uppercase text-slate-300 tracking-widest italic">
                          No hay movimientos financieros con proveedores registrados
+                       </td>
+                     </tr>
+                   )}
+                   {providerSaldos.length > 0 && filteredProviderSaldos.length === 0 && (
+                     <tr>
+                       <td colSpan={7} className="px-6 py-12 text-center text-[10px] font-bold uppercase text-slate-300 tracking-widest italic">
+                         No hay movimientos que coincidan con los filtros
                        </td>
                      </tr>
                    )}
