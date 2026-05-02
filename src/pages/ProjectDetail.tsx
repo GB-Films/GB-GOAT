@@ -7,6 +7,7 @@ import { handleFirestoreError } from '../lib/firestoreUtils';
 import { useAuth } from '../context/AuthContext';
 import { 
   ChevronLeft, 
+  Calendar,
   Info, 
   DollarSign, 
   Users, 
@@ -30,7 +31,8 @@ import {
   FileText,
   Paperclip,
   X,
-  Truck
+  Truck,
+  Clapperboard
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
@@ -1985,59 +1987,82 @@ export default function ProjectDetail() {
   if (!project) return <div className="p-8 text-center text-slate-900 font-bold uppercase tracking-widest">Proyecto no encontrado</div>;
 
   return (
-    <div className="max-w-6xl mx-auto">
-      <Link 
-        to="/proyectos" 
-        className="inline-flex items-center gap-2 text-[9px] font-bold text-slate-400 hover:text-black mb-4 transition-colors uppercase tracking-widest"
-      >
-        <ChevronLeft className="w-3 h-3" />
-        Volver
-      </Link>
+    <div className="max-w-[1500px] mx-auto">
+      <div className="rounded-3xl border border-white/80 bg-white/90 shadow-[0_24px_70px_rgba(15,23,42,0.10)] ring-1 ring-slate-200/80 backdrop-blur-sm overflow-hidden mb-6">
+        <header className="px-5 md:px-8 py-5 md:py-7">
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-xs font-semibold text-slate-500 mb-4">
+                <Link to="/proyectos" className="inline-flex items-center gap-1 hover:text-blue-700 transition-colors">
+                  <ChevronLeft className="w-4 h-4" />
+                  Proyectos
+                </Link>
+                <span className="text-slate-300">/</span>
+                <span>Rodaje</span>
+                <span className="text-slate-300">/</span>
+                <span className="text-blue-700 font-black uppercase">{project.name}</span>
+              </div>
 
-      <header className="mb-6 flex flex-col md:flex-row md:items-end justify-between gap-4 pb-4 border-b border-slate-200">
-        <div>
-          <div className="text-[9px] text-slate-400 uppercase tracking-widest font-bold mb-1">Proyectos / {project.status}</div>
-          <h1 className="text-3xl font-bold text-black">{project.name}</h1>
-        </div>
+              <div className="flex items-center gap-5">
+                <div className="hidden sm:flex w-16 h-16 rounded-2xl bg-slate-50 border border-slate-200 shadow-lg shadow-slate-200/70 items-center justify-center">
+                  <Clapperboard className="w-8 h-8 text-slate-900" />
+                </div>
+                <div>
+                  <h1 className="text-5xl md:text-6xl font-black tracking-[-0.06em] text-slate-950 leading-none">{project.name}</h1>
+                  <div className="flex flex-wrap items-center gap-3 mt-4 text-xs font-semibold text-slate-600">
+                    <span className={cn("px-3 py-1 rounded-full border text-[10px] font-black uppercase tracking-wider", statusColors[project.status || 'Presupuesto'] || 'bg-emerald-100 text-emerald-700 border-emerald-200')}>
+                      {project.status || 'En producción'}
+                    </span>
+                    <span className="inline-flex items-center gap-1.5"><Calendar className="w-4 h-4 text-slate-500" /> {project.shootingDate ? `Rodaje: ${formatDate(project.shootingDate)}` : 'Sin fecha de rodaje'}</span>
+                    <span className="hidden sm:inline text-slate-300">•</span>
+                    <span className="inline-flex items-center gap-1.5"><MapPin className="w-4 h-4 text-slate-500" /> {project.location || 'Locación sin definir'}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
 
-        <div className="flex gap-2">
-            {isProjectAdmin && (
-              <button 
-                onClick={() => setShowEditProjectModal(true)}
-                className="px-4 py-2 border border-slate-200 rounded text-[10px] font-bold uppercase tracking-widest hover:bg-slate-50 transition-colors flex items-center gap-2"
+            <div className="flex gap-3 lg:pt-2">
+              {isProjectAdmin && (
+                <button 
+                  onClick={() => setShowEditProjectModal(true)}
+                  className="px-5 py-3 border border-slate-300 bg-white rounded-xl text-sm font-bold hover:bg-slate-50 hover:border-slate-400 transition-all flex items-center gap-2 shadow-md shadow-slate-200/70"
+                >
+                  <Settings className="w-4 h-4" />
+                  Editar proyecto
+                </button>
+              )}
+              <button
+                onClick={() => setShowExportModal(true)}
+                disabled={!hasExportOptions}
+                className="px-5 py-3 border border-slate-950 bg-slate-950 text-white rounded-xl text-sm font-bold hover:bg-slate-800 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 shadow-lg shadow-slate-900/20"
+                title={hasExportOptions ? 'Exportar reportes del proyecto' : 'No tenes reportes disponibles para exportar'}
               >
-                <Settings className="w-3 h-3" />
-                Editar Proyecto
-              </button>
-            )}
-            <button
-              onClick={() => setShowExportModal(true)}
-              disabled={!hasExportOptions}
-              className="px-4 py-2 border border-slate-200 rounded text-[10px] font-bold uppercase tracking-widest hover:bg-slate-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              title={hasExportOptions ? 'Exportar reportes del proyecto' : 'No tenes reportes disponibles para exportar'}
-            >
+                <Download className="w-4 h-4" />
                 Exportar
-            </button>
-        </div>
-      </header>
+                <ChevronDown className="w-4 h-4 opacity-70" />
+              </button>
+            </div>
+          </div>
+        </header>
 
-      <nav className="flex gap-6 text-[10px] uppercase font-bold border-b border-slate-200 mb-6 overflow-x-auto scrollbar-hide">
-        {visibleTabs.map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={cn(
-              "pb-3 border-b-2 transition-all whitespace-nowrap tracking-widest flex items-center gap-2",
-              activeTab === tab.id 
-                ? "border-black text-black" 
-                : "border-transparent text-slate-400 hover:text-slate-600"
-            )}
-          >
-            <tab.icon className="w-3 h-3" />
-            {tab.label}
-          </button>
-        ))}
-      </nav>
+        <nav className="flex gap-2 px-4 md:px-6 py-3 text-sm font-bold border-t border-slate-200 bg-slate-100/90 overflow-x-auto scrollbar-hide shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]">
+          {visibleTabs.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={cn(
+                "px-4 py-3 rounded-xl transition-all whitespace-nowrap flex items-center gap-2 border",
+                activeTab === tab.id 
+                  ? "bg-white border-blue-200 text-blue-700 shadow-lg shadow-slate-300/50" 
+                  : "border-transparent text-slate-600 hover:text-slate-950 hover:bg-white/70"
+              )}
+            >
+              <tab.icon className="w-4 h-4" />
+              {tab.label}
+            </button>
+          ))}
+        </nav>
+      </div>
 
       <motion.div
         key={activeTab}
@@ -2045,24 +2070,24 @@ export default function ProjectDetail() {
         animate={{ opacity: 1, y: 0 }}
       >
         {activeTab === 'resumen' && (
-          <div className="grid grid-cols-12 gap-8">
-            <div className="col-span-12 lg:col-span-8 space-y-8">
-              <section className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                <div className="px-5 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/30">
+          <div className="grid grid-cols-12 gap-6 lg:gap-7">
+            <div className="col-span-12 lg:col-span-9 space-y-6">
+              <section className="bg-white rounded-2xl border border-slate-200/90 shadow-[0_18px_45px_rgba(15,23,42,0.10)] ring-1 ring-white overflow-hidden">
+                <div className="px-6 py-5 border-b border-slate-200 flex justify-between items-center bg-gradient-to-r from-slate-100 to-white">
                   <div>
-                    <h3 className="font-bold text-[10px] uppercase tracking-widest">Dirección y Producción</h3>
-                    <p className="text-[10px] text-slate-400 mt-1">Responsables clave del proyecto</p>
+                    <h3 className="font-black text-xl tracking-[-0.02em] text-slate-950">Dirección & Producción</h3>
+                    <p className="text-sm font-medium text-slate-500 mt-1">Responsables clave del proyecto</p>
                   </div>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-slate-100">
+                <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-slate-200">
                   {projectKeyPeople.map(({ id: roleId, label, provider }) => (
-                      <div key={roleId} className="p-5 space-y-3">
-                        <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">{label}</div>
+                      <div key={roleId} className="p-6 space-y-4">
+                        <div className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">{label}</div>
                         {isProjectAdmin && (
                           <select
                             value={provider?.id || ''}
                             onChange={(event) => updateProjectKeyPerson(roleId, event.target.value)}
-                            className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black"
+                            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:outline-none focus:border-blue-500"
                           >
                             <option value="">Sin asignar</option>
                             {providers.map((candidate) => (
@@ -2078,12 +2103,12 @@ export default function ProjectDetail() {
                               className="w-full text-left"
                             >
                               <div className="flex items-center gap-3">
-                                <div className="w-9 h-9 rounded-full bg-slate-900 text-white flex items-center justify-center text-xs font-black uppercase">
+                                <div className="w-12 h-12 rounded-full bg-slate-950 text-white flex items-center justify-center text-sm font-black uppercase shadow-lg shadow-slate-900/20">
                                   {providerDisplayName(provider)[0] || 'P'}
                                 </div>
                                 <div className="min-w-0">
-                                  <div className="text-sm font-bold text-slate-900 truncate">{providerDisplayName(provider)}</div>
-                                  <div className="text-[10px] font-bold text-blue-600 uppercase tracking-widest">
+                                  <div className="text-sm font-black text-slate-950 truncate">{providerDisplayName(provider)}</div>
+                                  <div className="text-[10px] font-black text-blue-700 uppercase tracking-widest">
                                     {expandedKeyPerson === roleId ? 'Ocultar datos' : 'Ver datos'}
                                   </div>
                                 </div>
@@ -2104,41 +2129,41 @@ export default function ProjectDetail() {
                 </div>
               </section>
 
-              <section className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                <div className="px-5 py-4 border-b border-slate-100 bg-slate-50/30">
-                  <h3 className="font-bold text-[10px] uppercase tracking-widest">
+              <section className="space-y-4">
+                <div className="flex items-center justify-between px-1">
+                  <h3 className="text-2xl font-black tracking-[-0.04em] text-slate-950">
                     {isProjectAdmin ? 'Presupuesto por áreas' : 'Mis áreas asignadas'}
                   </h3>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-5">
-                  <div className="md:col-span-2 border border-slate-900 rounded-lg p-4 bg-slate-950 text-white">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="md:col-span-2 border border-slate-800 rounded-2xl p-6 bg-[radial-gradient(circle_at_7%_30%,rgba(37,99,235,0.34),transparent_20%),linear-gradient(135deg,#020617,#0f172a_62%,#020617)] text-white shadow-[0_22px_45px_rgba(2,6,23,0.28)]">
                     <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                       <div>
-                        <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Saldo global</div>
-                        <div className="text-2xl font-black mt-1">${areaSummaryTotals.balance.toLocaleString()}</div>
+                        <div className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-400">Saldo global</div>
+                        <div className="text-4xl font-black mt-1 tracking-[-0.04em]">${areaSummaryTotals.balance.toLocaleString()}</div>
                       </div>
                       <div className="grid grid-cols-3 gap-4 text-right">
                         <div>
                           <div className="text-[9px] font-bold uppercase tracking-widest text-slate-500">Asignado</div>
-                          <div className="text-xs font-bold">${areaSummaryTotals.assigned.toLocaleString()}</div>
+                          <div className="text-lg font-black">${areaSummaryTotals.assigned.toLocaleString()}</div>
                         </div>
                         <div>
                           <div className="text-[9px] font-bold uppercase tracking-widest text-slate-500">Gastado</div>
-                          <div className="text-xs font-bold">${areaSummaryTotals.spent.toLocaleString()}</div>
+                          <div className="text-lg font-black">${areaSummaryTotals.spent.toLocaleString()}</div>
                         </div>
                         <div>
                           <div className="text-[9px] font-bold uppercase tracking-widest text-slate-500">Costo real</div>
-                          <div className="text-xs font-bold">${areaSummaryTotals.actualCost.toLocaleString()}</div>
+                          <div className="text-lg font-black">${areaSummaryTotals.actualCost.toLocaleString()}</div>
                         </div>
                       </div>
                     </div>
                   </div>
                   {areaSummaryRows.map((row) => (
-                    <div key={row.area} className="border border-slate-200 rounded-lg p-4">
+                    <div key={row.area} className="border border-slate-200 rounded-2xl p-5 bg-white shadow-[0_14px_32px_rgba(15,23,42,0.09)] ring-1 ring-white hover:-translate-y-0.5 hover:shadow-[0_20px_42px_rgba(15,23,42,0.13)] transition-all">
                       <div className="flex items-start justify-between gap-4 mb-4">
                         <div>
-                          <div className="text-xs font-black uppercase tracking-wider text-slate-900">{row.area}</div>
-                          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">{row.usedPercent.toFixed(0)}% consumido</div>
+                          <div className="text-lg font-black tracking-[-0.02em] text-slate-950">{row.area}</div>
+                          <div className="text-[10px] font-black text-blue-700 uppercase tracking-widest mt-1">{row.usedPercent.toFixed(0)}% consumido</div>
                         </div>
                         <div className={cn("text-sm font-black font-mono", row.balance >= 0 ? "text-emerald-600" : "text-rose-600")}>
                           ${row.balance.toLocaleString()}
@@ -2158,7 +2183,7 @@ export default function ProjectDetail() {
                           <div className={cn("text-xs font-bold", row.balance >= 0 ? "text-emerald-600" : "text-rose-600")}>${row.balance.toLocaleString()}</div>
                         </div>
                       </div>
-                      <div className="mt-4 h-2 bg-slate-100 rounded-full overflow-hidden">
+                      <div className="mt-5 h-2.5 bg-slate-200 rounded-full overflow-hidden shadow-inner">
                         <div className={cn("h-full rounded-full", row.balance < 0 ? "bg-rose-500" : row.usedPercent >= 85 ? "bg-yellow-400" : "bg-emerald-500")} style={{ width: `${row.usedPercent}%` }} />
                       </div>
                     </div>
@@ -2345,9 +2370,9 @@ export default function ProjectDetail() {
               </div>
             </div>
 
-            <div className="col-span-12 lg:col-span-4 space-y-8">
-              <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-                <h3 className="text-[10px] font-bold text-slate-400 uppercase mb-6 tracking-widest">
+            <div className="col-span-12 lg:col-span-3 space-y-6">
+              <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-[0_18px_45px_rgba(15,23,42,0.10)] ring-1 ring-white">
+                <h3 className="text-xl font-black tracking-[-0.03em] text-slate-950 mb-6 flex items-center gap-2">
                   {isProjectAdmin ? 'Staff Destacado' : 'Dirección y Producción'}
                 </h3>
                 <div className="space-y-6">
@@ -2362,12 +2387,12 @@ export default function ProjectDetail() {
                       return filteredStaff.slice(0, 5).map((item, i) => (
                         <div key={i} className="flex justify-between items-center">
                           <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-[10px] font-bold">
+                            <div className="w-10 h-10 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-xs font-black shadow-sm">
                               {item.providerName?.[0]}
                             </div>
                             <div>
-                              <div className="text-[10px] font-bold uppercase">{item.providerName}</div>
-                              <div className="text-[10px] text-slate-400 font-medium">{item.area}</div>
+                              <div className="text-sm font-black text-slate-950">{item.providerName}</div>
+                              <div className="text-xs text-slate-500 font-semibold">{item.area}</div>
                             </div>
                           </div>
                         </div>
@@ -2379,7 +2404,7 @@ export default function ProjectDetail() {
                 {isProjectAdmin && (
                   <button 
                     onClick={() => setActiveTab('equipo')}
-                    className="w-full mt-8 py-2.5 text-[10px] font-bold uppercase tracking-widest border border-dashed border-slate-200 rounded text-slate-400 hover:text-black hover:bg-slate-50 transition-all flex items-center justify-center gap-2"
+                    className="w-full mt-8 py-3 text-sm font-black border border-blue-200 rounded-xl text-blue-700 hover:text-blue-800 hover:bg-blue-50 transition-all flex items-center justify-center gap-2"
                   >
                     Ver Listado de Equipo
                     <ArrowRight className="w-3 h-3" />
