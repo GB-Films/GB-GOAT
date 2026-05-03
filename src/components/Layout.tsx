@@ -23,7 +23,7 @@ export default function Layout() {
   return (
     <div className="flex min-h-screen bg-[#e9edf4]">
       <Sidebar />
-      <main className="flex-1 bg-[radial-gradient(circle_at_top_left,#ffffff_0,#f5f7fb_34%,#e9edf4_100%)] p-6 lg:p-8 overflow-auto">
+      <main className="flex-1 bg-[radial-gradient(circle_at_top_left,#ffffff_0,#f5f7fb_34%,#e9edf4_100%)] p-3 lg:p-4 overflow-auto">
         <Outlet />
       </main>
     </div>

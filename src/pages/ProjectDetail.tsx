@@ -1987,12 +1987,12 @@ export default function ProjectDetail() {
   if (!project) return <div className="p-8 text-center text-slate-900 font-bold uppercase tracking-widest">Proyecto no encontrado</div>;
 
   return (
-    <div className="max-w-[1500px] mx-auto">
-      <div className="rounded-3xl border border-white/80 bg-white/90 shadow-[0_24px_70px_rgba(15,23,42,0.10)] ring-1 ring-slate-200/80 backdrop-blur-sm overflow-hidden mb-6">
-        <header className="px-5 md:px-8 py-5 md:py-7">
-          <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+    <div className="max-w-[1600px] mx-auto">
+      <div className="rounded-2xl border border-slate-200 bg-white/95 shadow-[0_16px_45px_rgba(15,23,42,0.12)] ring-1 ring-white backdrop-blur-sm overflow-hidden mb-4">
+        <header className="px-4 md:px-5 py-3 md:py-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
             <div className="min-w-0">
-              <div className="flex items-center gap-2 text-xs font-semibold text-slate-500 mb-4">
+              <div className="flex items-center gap-2 text-[11px] font-semibold text-slate-500 mb-2">
                 <Link to="/proyectos" className="inline-flex items-center gap-1 hover:text-blue-700 transition-colors">
                   <ChevronLeft className="w-4 h-4" />
                   Proyectos
@@ -2003,29 +2003,29 @@ export default function ProjectDetail() {
                 <span className="text-blue-700 font-black uppercase">{project.name}</span>
               </div>
 
-              <div className="flex items-center gap-5">
-                <div className="hidden sm:flex w-16 h-16 rounded-2xl bg-slate-50 border border-slate-200 shadow-lg shadow-slate-200/70 items-center justify-center">
-                  <Clapperboard className="w-8 h-8 text-slate-900" />
+              <div className="flex items-center gap-3">
+                <div className="hidden sm:flex w-11 h-11 rounded-xl bg-slate-50 border border-slate-200 shadow-lg shadow-slate-200/70 items-center justify-center">
+                  <Clapperboard className="w-5 h-5 text-slate-900" />
                 </div>
                 <div>
-                  <h1 className="text-5xl md:text-6xl font-black tracking-[-0.06em] text-slate-950 leading-none">{project.name}</h1>
-                  <div className="flex flex-wrap items-center gap-3 mt-4 text-xs font-semibold text-slate-600">
-                    <span className={cn("px-3 py-1 rounded-full border text-[10px] font-black uppercase tracking-wider", statusColors[project.status || 'Presupuesto'] || 'bg-emerald-100 text-emerald-700 border-emerald-200')}>
+                  <h1 className="text-3xl md:text-4xl font-black tracking-[-0.06em] text-slate-950 leading-none">{project.name}</h1>
+                  <div className="flex flex-wrap items-center gap-2 mt-2 text-[11px] font-semibold text-slate-600">
+                    <span className={cn("px-2.5 py-0.5 rounded-full border text-[9px] font-black uppercase tracking-wider", statusColors[project.status || 'Presupuesto'] || 'bg-emerald-100 text-emerald-700 border-emerald-200')}>
                       {project.status || 'En producción'}
                     </span>
-                    <span className="inline-flex items-center gap-1.5"><Calendar className="w-4 h-4 text-slate-500" /> {project.shootingDate ? `Rodaje: ${formatDate(project.shootingDate)}` : 'Sin fecha de rodaje'}</span>
+                    <span className="inline-flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5 text-slate-500" /> {project.shootingDate ? `Rodaje: ${formatDate(project.shootingDate)}` : 'Sin fecha de rodaje'}</span>
                     <span className="hidden sm:inline text-slate-300">•</span>
-                    <span className="inline-flex items-center gap-1.5"><MapPin className="w-4 h-4 text-slate-500" /> {project.location || 'Locación sin definir'}</span>
+                    <span className="inline-flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5 text-slate-500" /> {project.location || 'Locación sin definir'}</span>
                   </div>
                 </div>
               </div>
             </div>
 
-            <div className="flex gap-3 lg:pt-2">
+            <div className="flex gap-2 lg:pt-0">
               {isProjectAdmin && (
                 <button 
                   onClick={() => setShowEditProjectModal(true)}
-                  className="px-5 py-3 border border-slate-300 bg-white rounded-xl text-sm font-bold hover:bg-slate-50 hover:border-slate-400 transition-all flex items-center gap-2 shadow-md shadow-slate-200/70"
+                  className="px-3.5 py-2 border border-slate-300 bg-white rounded-lg text-[11px] font-bold hover:bg-slate-50 hover:border-slate-400 transition-all flex items-center gap-2 shadow-md shadow-slate-200/70"
                 >
                   <Settings className="w-4 h-4" />
                   Editar proyecto
@@ -2034,7 +2034,7 @@ export default function ProjectDetail() {
               <button
                 onClick={() => setShowExportModal(true)}
                 disabled={!hasExportOptions}
-                className="px-5 py-3 border border-slate-950 bg-slate-950 text-white rounded-xl text-sm font-bold hover:bg-slate-800 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 shadow-lg shadow-slate-900/20"
+                className="px-3.5 py-2 border border-slate-950 bg-slate-950 text-white rounded-lg text-[11px] font-bold hover:bg-slate-800 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 shadow-lg shadow-slate-900/20"
                 title={hasExportOptions ? 'Exportar reportes del proyecto' : 'No tenes reportes disponibles para exportar'}
               >
                 <Download className="w-4 h-4" />
@@ -2045,13 +2045,13 @@ export default function ProjectDetail() {
           </div>
         </header>
 
-        <nav className="flex gap-2 px-4 md:px-6 py-3 text-sm font-bold border-t border-slate-200 bg-slate-100/90 overflow-x-auto scrollbar-hide shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]">
+        <nav className="flex gap-1.5 px-3 md:px-4 py-2 text-xs font-bold border-t border-slate-200 bg-slate-100/90 overflow-x-auto scrollbar-hide shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]">
           {visibleTabs.map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
               className={cn(
-                "px-4 py-3 rounded-xl transition-all whitespace-nowrap flex items-center gap-2 border",
+                "px-3 py-2 rounded-lg transition-all whitespace-nowrap flex items-center gap-1.5 border",
                 activeTab === tab.id 
                   ? "bg-white border-blue-200 text-blue-700 shadow-lg shadow-slate-300/50" 
                   : "border-transparent text-slate-600 hover:text-slate-950 hover:bg-white/70"
@@ -2070,24 +2070,24 @@ export default function ProjectDetail() {
         animate={{ opacity: 1, y: 0 }}
       >
         {activeTab === 'resumen' && (
-          <div className="grid grid-cols-12 gap-6 lg:gap-7">
-            <div className="col-span-12 lg:col-span-9 space-y-6">
-              <section className="bg-white rounded-2xl border border-slate-200/90 shadow-[0_18px_45px_rgba(15,23,42,0.10)] ring-1 ring-white overflow-hidden">
-                <div className="px-6 py-5 border-b border-slate-200 flex justify-between items-center bg-gradient-to-r from-slate-100 to-white">
+          <div className="grid grid-cols-12 gap-3 lg:gap-5">
+            <div className="col-span-12 lg:col-span-9 space-y-4">
+              <section className="bg-white rounded-xl border border-slate-200 shadow-[0_12px_32px_rgba(15,23,42,0.10)] ring-1 ring-white overflow-hidden">
+                <div className="px-4 py-3 border-b border-slate-200 flex justify-between items-center bg-gradient-to-r from-slate-100 to-white">
                   <div>
-                    <h3 className="font-black text-xl tracking-[-0.02em] text-slate-950">Dirección & Producción</h3>
-                    <p className="text-sm font-medium text-slate-500 mt-1">Responsables clave del proyecto</p>
+                    <h3 className="font-black text-lg tracking-[-0.02em] text-slate-950">Dirección & Producción</h3>
+                    <p className="text-xs font-medium text-slate-500 mt-0.5">Responsables clave del proyecto</p>
                   </div>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-slate-200">
                   {projectKeyPeople.map(({ id: roleId, label, provider }) => (
-                      <div key={roleId} className="p-6 space-y-4">
-                        <div className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">{label}</div>
+                      <div key={roleId} className="p-4 space-y-3">
+                        <div className="text-[9px] font-black uppercase tracking-[0.16em] text-slate-500">{label}</div>
                         {isProjectAdmin && (
                           <select
                             value={provider?.id || ''}
                             onChange={(event) => updateProjectKeyPerson(roleId, event.target.value)}
-                            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:outline-none focus:border-blue-500"
+                            className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-[11px] font-bold focus:outline-none focus:border-blue-500"
                           >
                             <option value="">Sin asignar</option>
                             {providers.map((candidate) => (
@@ -2135,14 +2135,14 @@ export default function ProjectDetail() {
                     {isProjectAdmin ? 'Presupuesto por áreas' : 'Mis áreas asignadas'}
                   </h3>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div className="md:col-span-2 border border-slate-800 rounded-2xl p-6 bg-[radial-gradient(circle_at_7%_30%,rgba(37,99,235,0.34),transparent_20%),linear-gradient(135deg,#020617,#0f172a_62%,#020617)] text-white shadow-[0_22px_45px_rgba(2,6,23,0.28)]">
-                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                       <div>
                         <div className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-400">Saldo global</div>
                         <div className="text-4xl font-black mt-1 tracking-[-0.04em]">${areaSummaryTotals.balance.toLocaleString()}</div>
                       </div>
-                      <div className="grid grid-cols-3 gap-4 text-right">
+                      <div className="grid grid-cols-3 gap-3 text-right">
                         <div>
                           <div className="text-[9px] font-bold uppercase tracking-widest text-slate-500">Asignado</div>
                           <div className="text-lg font-black">${areaSummaryTotals.assigned.toLocaleString()}</div>
@@ -2159,17 +2159,17 @@ export default function ProjectDetail() {
                     </div>
                   </div>
                   {areaSummaryRows.map((row) => (
-                    <div key={row.area} className="border border-slate-200 rounded-2xl p-5 bg-white shadow-[0_14px_32px_rgba(15,23,42,0.09)] ring-1 ring-white hover:-translate-y-0.5 hover:shadow-[0_20px_42px_rgba(15,23,42,0.13)] transition-all">
-                      <div className="flex items-start justify-between gap-4 mb-4">
+                    <div key={row.area} className="border border-slate-200 rounded-xl p-4 bg-white shadow-[0_10px_26px_rgba(15,23,42,0.10)] ring-1 ring-white hover:-translate-y-0.5 hover:shadow-[0_20px_42px_rgba(15,23,42,0.13)] transition-all">
+                      <div className="flex items-start justify-between gap-3 mb-3">
                         <div>
-                          <div className="text-lg font-black tracking-[-0.02em] text-slate-950">{row.area}</div>
+                          <div className="text-base font-black tracking-[-0.02em] text-slate-950">{row.area}</div>
                           <div className="text-[10px] font-black text-blue-700 uppercase tracking-widest mt-1">{row.usedPercent.toFixed(0)}% consumido</div>
                         </div>
                         <div className={cn("text-sm font-black font-mono", row.balance >= 0 ? "text-emerald-600" : "text-rose-600")}>
                           ${row.balance.toLocaleString()}
                         </div>
                       </div>
-                      <div className="grid grid-cols-3 gap-3 text-center">
+                      <div className="grid grid-cols-3 gap-2 text-center">
                         <div>
                           <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400">Asignado</div>
                           <div className="text-xs font-bold text-slate-900">${row.assigned.toLocaleString()}</div>
@@ -2183,13 +2183,13 @@ export default function ProjectDetail() {
                           <div className={cn("text-xs font-bold", row.balance >= 0 ? "text-emerald-600" : "text-rose-600")}>${row.balance.toLocaleString()}</div>
                         </div>
                       </div>
-                      <div className="mt-5 h-2.5 bg-slate-200 rounded-full overflow-hidden shadow-inner">
+                      <div className="mt-3 h-2 bg-slate-200 rounded-full overflow-hidden shadow-inner">
                         <div className={cn("h-full rounded-full", row.balance < 0 ? "bg-rose-500" : row.usedPercent >= 85 ? "bg-yellow-400" : "bg-emerald-500")} style={{ width: `${row.usedPercent}%` }} />
                       </div>
                     </div>
                   ))}
                   {areaSummaryRows.length === 0 && (
-                    <div className="md:col-span-2 p-10 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
+                    <div className="md:col-span-2 p-6 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
                       No hay áreas asignadas con presupuesto o gastos
                     </div>
                   )}
@@ -2197,23 +2197,23 @@ export default function ProjectDetail() {
               </section>
 
               {/* KPIs Section */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 {(isProjectAdmin || (userPermissions && userPermissions.allowedCategories.length > 0)) && (
                   <>
                     {isProjectAdmin ? (
-                      <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm group">
+                      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)] group">
                         <div className="text-[10px] text-slate-400 font-bold uppercase mb-2 tracking-widest flex justify-between">
                           Presupuesto
                           <DollarSign className="w-3 h-3 opacity-20" />
                         </div>
-                        <div className="text-2xl font-bold">${project.budgetTotal?.toLocaleString() || '0'}</div>
+                        <div className="text-xl font-bold">${project.budgetTotal?.toLocaleString() || '0'}</div>
                         <div className="mt-4 text-[9px] text-slate-400 font-medium">Cliente: <span className="text-slate-900">{project.clientName || 'Sin asignar'}</span></div>
                       </div>
                     ) : (
                       userPermissions && userPermissions.allowedCategories.length > 0 && (
-                        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
                           <div className="text-[10px] text-slate-400 font-bold uppercase mb-2 tracking-widest">Presupuesto Asignado (Mis Áreas)</div>
-                          <div className="text-2xl font-bold">
+                          <div className="text-xl font-bold">
                             ${visibleBudgetItems.reduce((acc, curr) => acc + (curr.total || 0), 0).toLocaleString()}
                           </div>
                           <div className="mt-4 text-[9px] text-slate-400 font-medium">{userPermissions.allowedCategories.join(', ')}</div>
@@ -2221,23 +2221,23 @@ export default function ProjectDetail() {
                       )
                     )}
 
-                    <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                    <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
                       <div className="text-[10px] text-slate-400 font-bold uppercase mb-2 tracking-widest flex justify-between">
                         Costos Reales
                         <BarChart2 className="w-3 h-3 opacity-20" />
                       </div>
-                      <div className="text-2xl font-bold">${areaSummaryTotals.actualCost.toLocaleString()}</div>
+                      <div className="text-xl font-bold">${areaSummaryTotals.actualCost.toLocaleString()}</div>
                       <div className="mt-4 h-1 bg-slate-50 rounded-full overflow-hidden">
                         <div className="h-full bg-blue-500 transition-all duration-500" style={{ width: `${Math.min(100, (areaSummaryTotals.actualCost / (areaSummaryTotals.assigned || project.budgetTotal || 1)) * 100)}%` }}></div>
                       </div>
                     </div>
 
-                    <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                    <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
                       <div className="text-[10px] text-slate-400 font-bold uppercase mb-2 tracking-widest flex justify-between">
                         Equipo Asignado
                         <Users className="w-3 h-3 opacity-20" />
                       </div>
-                      <div className="text-2xl font-bold">{visibleBudgetItems.filter(i => i.providerId).length} Proveedores</div>
+                      <div className="text-xl font-bold">{visibleBudgetItems.filter(i => i.providerId).length} Proveedores</div>
                       <div className="mt-4 text-[9px] text-slate-400 font-medium">Staff activo en rubros</div>
                     </div>
                   </>
@@ -2245,8 +2245,8 @@ export default function ProjectDetail() {
               </div>
 
               {/* Status and Shooting Date Section */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
                   <h3 className="text-[10px] font-bold text-slate-400 uppercase mb-4 tracking-widest">Estado del Proyecto</h3>
                   {isProjectAdmin ? (
                     <div className="relative">
@@ -2278,7 +2278,7 @@ export default function ProjectDetail() {
                   )}
                 </div>
 
-                <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-6">
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)] space-y-4">
                   <div>
                     <h3 className="text-[10px] font-bold text-slate-400 uppercase mb-4 tracking-widest">Fecha de Rodaje</h3>
                     {isProjectAdmin ? (
@@ -2293,7 +2293,7 @@ export default function ProjectDetail() {
                         className="w-full p-3 bg-slate-50 border border-slate-100 rounded text-xs font-medium focus:outline-none focus:border-black"
                       />
                     ) : (
-                      <div className="text-xl font-bold text-slate-900 first-letter:uppercase">
+                      <div className="text-lg font-bold text-slate-900 first-letter:uppercase">
                         {formatShootingDate(project.shootingDate)}
                       </div>
                     )}
@@ -2370,12 +2370,12 @@ export default function ProjectDetail() {
               </div>
             </div>
 
-            <div className="col-span-12 lg:col-span-3 space-y-6">
+            <div className="col-span-12 lg:col-span-3 space-y-4">
               <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-[0_18px_45px_rgba(15,23,42,0.10)] ring-1 ring-white">
-                <h3 className="text-xl font-black tracking-[-0.03em] text-slate-950 mb-6 flex items-center gap-2">
+                <h3 className="text-xl font-black tracking-[-0.03em] text-slate-950 mb-4 flex items-center gap-2">
                   {isProjectAdmin ? 'Staff Destacado' : 'Dirección y Producción'}
                 </h3>
-                <div className="space-y-6">
+                <div className="space-y-4">
                   {(() => {
                     const filteredStaff = (isProjectAdmin ? visibleBudgetItems : budgetItems).filter(i => {
                       if (isProjectAdmin) return i.providerId;
@@ -2416,10 +2416,10 @@ export default function ProjectDetail() {
         )}
 
         {activeTab === 'presupuesto' && (
-          <div className="space-y-6 pb-20">
+          <div className="space-y-4 pb-20">
             <header className="flex justify-between items-center">
               <div>
-                <h2 className="text-xl font-bold text-slate-900">Planilla de Presupuesto</h2>
+                <h2 className="text-lg font-bold text-slate-900">Planilla de Presupuesto</h2>
                 <div className="text-[10px] uppercase font-bold text-slate-400 tracking-widest mt-1">
                   {canEditMainBudget ? 'Categorías dinámicas y ordenables' : 'Vista restringida por rol'}
                 </div>
@@ -2499,7 +2499,7 @@ export default function ProjectDetail() {
                                 >
                                   {/* Category Row */}
                                   <div className="bg-slate-900 text-white px-4 py-3 flex items-center justify-between group border-l-4 border-emerald-400 shadow-sm">
-                                    <div className="flex items-center gap-4 flex-1">
+                                    <div className="flex items-center gap-3 flex-1">
                                       <div {...provided.dragHandleProps} className={cn("text-slate-300", canEditMainBudget ? "hover:text-slate-500 cursor-grab active:cursor-grabbing" : "opacity-30")}>
                                         <GripVertical className="w-4 h-4" />
                                       </div>
@@ -2670,10 +2670,10 @@ export default function ProjectDetail() {
         )}
 
         {activeTab === 'areas' && (
-          <div className="space-y-6 pb-20">
+          <div className="space-y-4 pb-20">
             <header className="flex justify-between items-center">
               <div>
-                <h2 className="text-xl font-bold text-slate-900">Gestión por Áreas</h2>
+                <h2 className="text-lg font-bold text-slate-900">Gestión por Áreas</h2>
                 <div className="text-[10px] uppercase font-bold text-slate-400 tracking-widest mt-1">
                   Control de gastos y saldos por especialidad
                 </div>
@@ -2767,9 +2767,9 @@ export default function ProjectDetail() {
             </div>
 
             {selectedAreaDashboardRows.length > 0 && (
-              <div className="space-y-6">
+              <div className="space-y-4">
                 {/* Summary Header */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   {(() => {
                     const assigned = areaDashboardTotals.assigned;
                     const spent = areaDashboardTotals.spent;
@@ -2780,12 +2780,12 @@ export default function ProjectDetail() {
                       <>
                         <div className="bg-white border border-slate-200 p-5 rounded-xl shadow-sm">
                           <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Presupuesto Global</div>
-                          <div className="text-2xl font-bold text-slate-900">${assigned.toLocaleString()}</div>
+                          <div className="text-lg font-bold text-slate-900">${assigned.toLocaleString()}</div>
                           <div className="text-[9px] text-slate-400 mt-2 italic">{selectedAreaDashboardRows.length} áreas seleccionadas</div>
                         </div>
                         <div className="bg-white border border-slate-200 p-5 rounded-xl shadow-sm">
                           <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Gasto Global</div>
-                          <div className="text-2xl font-bold text-emerald-600">${spent.toLocaleString()}</div>
+                          <div className="text-xl font-bold text-emerald-600">${spent.toLocaleString()}</div>
                           <div className="mt-3 h-1.5 bg-slate-100 rounded-full overflow-hidden">
                             <div
                               className={cn("h-full rounded-full", balance < 0 ? "bg-red-500" : usedPercent >= 85 ? "bg-yellow-400" : "bg-emerald-500")}
@@ -2799,7 +2799,7 @@ export default function ProjectDetail() {
                           balance >= 0 ? "bg-slate-900 border-slate-900 text-white" : "bg-red-50 border-red-100 text-red-600"
                         )}>
                           <div className={cn("text-[10px] font-bold uppercase tracking-widest mb-1", balance >= 0 ? "text-slate-400" : "text-red-400")}>Saldo Global</div>
-                          <div className="text-2xl font-bold font-mono tracking-tight">${balance.toLocaleString()}</div>
+                          <div className="text-xl font-bold font-mono tracking-tight">${balance.toLocaleString()}</div>
                           {balance < 0 && <div className="text-[9px] font-bold uppercase mt-2">¡EXCEDIDO!</div>}
                         </div>
                       </>
@@ -2810,7 +2810,7 @@ export default function ProjectDetail() {
                 {selectedAreaDashboardRows.map((areaRow) => (
                 <div key={areaRow.area} className="bg-white border border-slate-200 rounded-xl shadow-sm">
                   <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center rounded-t-xl">
-                    <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-3">
                        <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-900 flex items-center gap-2">
                          <LayoutGrid className="w-3 h-3" />
                          Carga de Gastos: {areaRow.area}
@@ -3029,7 +3029,7 @@ export default function ProjectDetail() {
               </div>
             )}
             {visibleCategories.length > 0 && selectedAreaDashboardRows.length === 0 && (
-              <div className="bg-white border border-dashed border-slate-200 rounded-xl p-10 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
+              <div className="bg-white border border-dashed border-slate-200 rounded-xl p-6 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
                 Seleccioná una o más áreas para ver gastos y presupuesto
               </div>
             )}
@@ -3037,9 +3037,9 @@ export default function ProjectDetail() {
         )}
 
         {activeTab === 'proveedores' && (
-          <div className="space-y-6 pb-20">
+          <div className="space-y-4 pb-20">
             <header>
-              <h2 className="text-xl font-bold text-slate-900">Proveedores del Proyecto</h2>
+              <h2 className="text-lg font-bold text-slate-900">Proveedores del Proyecto</h2>
               <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest mt-1">
                 Proveedores cargados en Gestion por Areas
               </p>
@@ -3107,10 +3107,10 @@ export default function ProjectDetail() {
         )}
 
         {activeTab === 'resultado' && isProjectAdmin && (
-          <div className="space-y-6 pb-20">
-            <header className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
+          <div className="space-y-4 pb-20">
+            <header className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-3">
               <div>
-                <h2 className="text-xl font-bold text-slate-900">Resultado del Proyecto</h2>
+                <h2 className="text-lg font-bold text-slate-900">Resultado del Proyecto</h2>
                 <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest mt-1">
                   Analisis de venta, costos, incidencias y margen
                 </p>
@@ -3129,30 +3129,30 @@ export default function ProjectDetail() {
               </div>
             </header>
 
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+              <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Valor de Venta</div>
-                <div className="text-2xl font-bold text-slate-900">${saleValue.toLocaleString()}</div>
+                <div className="text-lg font-bold text-slate-900">${saleValue.toLocaleString()}</div>
                 <div className="text-[9px] text-slate-400 mt-2">Presupuesto cargado en el proyecto</div>
               </div>
-              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+              <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Produccion</div>
-                <div className="text-2xl font-bold text-slate-900">${productionTotal.toLocaleString()}</div>
+                <div className="text-lg font-bold text-slate-900">${productionTotal.toLocaleString()}</div>
                 <div className="text-[9px] text-slate-400 mt-2">{resultCategoryTotals.length} categorias con costo</div>
               </div>
-              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+              <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Indirectos</div>
-                <div className="text-2xl font-bold text-slate-900">${indirectTotal.toLocaleString()}</div>
+                <div className="text-lg font-bold text-slate-900">${indirectTotal.toLocaleString()}</div>
                 <div className="text-[9px] text-slate-400 mt-2">{resultIndirectExpenses.length} registros</div>
               </div>
-              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+              <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Incidencias</div>
-                <div className="text-2xl font-bold text-slate-900">${incidenceTotal.toLocaleString()}</div>
+                <div className="text-lg font-bold text-slate-900">${incidenceTotal.toLocaleString()}</div>
                 <div className="text-[9px] text-slate-400 mt-2">Sobre valor de venta</div>
               </div>
               <div className="bg-slate-900 p-5 rounded-xl border border-slate-900 shadow-sm text-white">
                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Costo Total</div>
-                <div className="text-2xl font-bold font-mono">${totalCost.toLocaleString()}</div>
+                <div className="text-xl font-bold font-mono">${totalCost.toLocaleString()}</div>
                 <div className="text-[9px] text-slate-400 mt-2">Produccion + indirectos + incidencias</div>
               </div>
             </div>
@@ -3167,7 +3167,7 @@ export default function ProjectDetail() {
                     const percent = productionTotal > 0 ? (category.total / productionTotal) * 100 : 0;
                     return (
                       <div key={category.area} className="p-4">
-                        <div className="flex items-center justify-between gap-4 mb-2">
+                        <div className="flex items-center justify-between gap-3 mb-2">
                           <div className="text-xs font-black uppercase tracking-wider text-slate-900">{category.area}</div>
                           <div className="text-sm font-bold font-mono text-slate-900">${category.total.toLocaleString()}</div>
                         </div>
@@ -3179,16 +3179,16 @@ export default function ProjectDetail() {
                     );
                   })}
                   {resultCategoryTotals.length === 0 && (
-                    <div className="p-10 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
+                    <div className="p-6 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
                       Sin categorias con costo
                     </div>
                   )}
                 </div>
               </section>
 
-              <section className="lg:col-span-7 space-y-6">
+              <section className="lg:col-span-7 space-y-4">
                 <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-                  <div className="px-5 py-4 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between gap-4">
+                  <div className="px-5 py-4 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between gap-3">
                     <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500">Gastos Indirectos</h3>
                     <button
                       onClick={addResultIndirectExpense}
@@ -3237,7 +3237,7 @@ export default function ProjectDetail() {
                         </div>
                       ))}
                       {resultIndirectExpenses.length === 0 && (
-                        <div className="p-10 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
+                        <div className="p-6 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
                           Sin gastos indirectos cargados
                         </div>
                       )}
@@ -3251,7 +3251,7 @@ export default function ProjectDetail() {
                   </div>
                   <div className="divide-y divide-slate-100">
                     {incidenceRows.map((incidence) => (
-                      <div key={incidence.id} className="grid grid-cols-12 gap-4 px-5 py-4 items-center">
+                      <div key={incidence.id} className="grid grid-cols-12 gap-3 px-5 py-4 items-center">
                         <div className="col-span-5 text-xs font-bold uppercase tracking-wider text-slate-700">{incidence.label}</div>
                         <div className="col-span-3">
                           <div className="relative">
@@ -3298,10 +3298,10 @@ export default function ProjectDetail() {
         )}
 
         {activeTab === 'saldos' && (
-          <div className="space-y-6 pb-20">
-            <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div className="space-y-4 pb-20">
+            <header className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
               <div>
-              <h2 className="text-xl font-bold text-slate-900">Finanzas del Proyecto</h2>
+              <h2 className="text-lg font-bold text-slate-900">Finanzas del Proyecto</h2>
               <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest mt-1">
                 {isProjectAdmin ? 'Pagos, deuda, facturas y comprobantes por proveedor' : 'Vista financiera limitada a tus areas asignadas'}
               </p>
@@ -3311,26 +3311,26 @@ export default function ProjectDetail() {
               </div>
             </header>
 
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+              <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Total Presupuestado</div>
-                <div className="text-2xl font-bold text-slate-900">${financeTotals.budgeted.toLocaleString()}</div>
+                <div className="text-lg font-bold text-slate-900">${financeTotals.budgeted.toLocaleString()}</div>
               </div>
-              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+              <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Total Gastado (Facturado)</div>
-                <div className="text-2xl font-bold text-slate-900">${financeTotals.spent.toLocaleString()}</div>
+                <div className="text-lg font-bold text-slate-900">${financeTotals.spent.toLocaleString()}</div>
               </div>
-              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+              <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 text-emerald-600">Total Pagado</div>
-                <div className="text-2xl font-bold text-emerald-600">${financeTotals.paid.toLocaleString()}</div>
+                <div className="text-xl font-bold text-emerald-600">${financeTotals.paid.toLocaleString()}</div>
               </div>
               <div className="bg-slate-900 p-5 rounded-xl border border-slate-900 shadow-sm text-white">
                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Deuda Pendiente</div>
-                <div className="text-2xl font-bold font-mono">${financeTotals.debt.toLocaleString()}</div>
+                <div className="text-xl font-bold font-mono">${financeTotals.debt.toLocaleString()}</div>
               </div>
-              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+              <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Docs</div>
-                <div className="text-2xl font-bold text-slate-900">{financeTotals.invoices}/{financeTotals.receipts}</div>
+                <div className="text-lg font-bold text-slate-900">{financeTotals.invoices}/{financeTotals.receipts}</div>
                 <div className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mt-2">Facturas / comprobantes</div>
               </div>
             </div>
@@ -3342,7 +3342,7 @@ export default function ProjectDetail() {
                   value={financeSearch}
                   onChange={(event) => setFinanceSearch(event.target.value)}
                   placeholder="Proveedor o concepto"
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs font-medium focus:outline-none focus:border-black"
+                  className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-100 rounded text-xs font-medium focus:outline-none focus:border-black"
                 />
               </div>
               <div>
@@ -3350,7 +3350,7 @@ export default function ProjectDetail() {
                 <select
                   value={financeAreaFilter}
                   onChange={(event) => setFinanceAreaFilter(event.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black"
+                  className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black"
                 >
                   <option value="all">Todas</option>
                   {providerSaldosByArea.map((group) => (
@@ -3363,7 +3363,7 @@ export default function ProjectDetail() {
                 <select
                   value={financeStatusFilter}
                   onChange={(event) => setFinanceStatusFilter(event.target.value as any)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black"
+                  className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black"
                 >
                   <option value="all">Todos</option>
                   <option value="pendiente">Pendiente</option>
@@ -3376,7 +3376,7 @@ export default function ProjectDetail() {
                 <select
                   value={financeInvoiceFilter}
                   onChange={(event) => setFinanceInvoiceFilter(event.target.value as any)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black"
+                  className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black"
                 >
                   <option value="all">Todas</option>
                   <option value="with">Con factura</option>
@@ -3402,7 +3402,7 @@ export default function ProjectDetail() {
                    {filteredProviderSaldosByArea.map((group) => (
                      <React.Fragment key={group.area}>
                        <tr className="bg-slate-100/70">
-                         <td colSpan={7} className="px-6 py-3 text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">
+                         <td colSpan={7} className="px-6 py-3 text-[9px] font-black uppercase tracking-[0.16em] text-slate-500">
                            {group.area}
                          </td>
                        </tr>
@@ -3515,7 +3515,7 @@ export default function ProjectDetail() {
                </table>
             </div>
 
-            <div className="p-6 bg-blue-50 border border-blue-100 rounded-xl flex items-start gap-4">
+            <div className="p-6 bg-blue-50 border border-blue-100 rounded-xl flex items-start gap-3">
               <div className="w-10 h-10 rounded-full bg-white flex items-center justify-center text-blue-600 shadow-sm">
                 <Info className="w-5 h-5" />
               </div>
@@ -3531,10 +3531,10 @@ export default function ProjectDetail() {
         )}
 
         {activeTab === 'documentos' && (
-          <div className="space-y-6 pb-20">
-            <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div className="space-y-4 pb-20">
+            <header className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
               <div>
-                <h2 className="text-xl font-bold text-slate-900">Documentos del Proyecto</h2>
+                <h2 className="text-lg font-bold text-slate-900">Documentos del Proyecto</h2>
                 <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest mt-1">
                   Centro documental por familia: finanzas, contratos, seguros y locaciones
                 </p>
@@ -3577,16 +3577,16 @@ export default function ProjectDetail() {
               })}
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
               {[
                 { label: 'Facturas', value: documentTotals.invoices },
                 { label: 'Comprobantes', value: documentTotals.receipts },
                 { label: 'Contratos', value: documentTotals.contracts },
                 { label: 'Seguros / Locaciones', value: documentTotals.insurance + documentTotals.locations },
               ].map((item) => (
-                <div key={item.label} className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                <div key={item.label} className="bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
                   <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">{item.label}</div>
-                  <div className="text-2xl font-bold text-slate-900">{item.value}</div>
+                  <div className="text-lg font-bold text-slate-900">{item.value}</div>
                 </div>
               ))}
             </div>
@@ -3597,7 +3597,7 @@ export default function ProjectDetail() {
                 <select
                   value={documentFamilyFilter}
                   onChange={(event) => setDocumentFamilyFilter(event.target.value as any)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black"
+                  className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black"
                 >
                   {DOCUMENT_FAMILIES.map((family) => (
                     <option key={family.id} value={family.id}>{family.label}</option>
@@ -3610,7 +3610,7 @@ export default function ProjectDetail() {
                   value={documentSearch}
                   onChange={(event) => setDocumentSearch(event.target.value)}
                   placeholder="Proveedor, concepto o archivo"
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs font-medium focus:outline-none focus:border-black"
+                  className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-100 rounded text-xs font-medium focus:outline-none focus:border-black"
                 />
               </div>
               <div>
@@ -3618,7 +3618,7 @@ export default function ProjectDetail() {
                 <select
                   value={documentTypeFilter}
                   onChange={(event) => setDocumentTypeFilter(event.target.value as any)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black"
+                  className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black"
                 >
                   <option value="all">Todos</option>
                   <option value="factura">Facturas</option>
@@ -3630,7 +3630,7 @@ export default function ProjectDetail() {
                 <select
                   value={documentAreaFilter}
                   onChange={(event) => setDocumentAreaFilter(event.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black"
+                  className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black"
                 >
                   <option value="all">Todas</option>
                   {providerSaldosByArea.map((group) => (
@@ -3717,7 +3717,7 @@ export default function ProjectDetail() {
           <div className="space-y-12">
             <header className="flex justify-between items-center">
               <div className="space-y-1">
-                <h2 className="text-xl font-bold text-slate-900">Equipo de Trabajo</h2>
+                <h2 className="text-lg font-bold text-slate-900">Equipo de Trabajo</h2>
                 <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">
                   Producción y Staff de Producción por rubro
                 </p>
@@ -3725,15 +3725,15 @@ export default function ProjectDetail() {
             </header>
 
             {/* Equipo de Producción */}
-            <section className="space-y-6">
-              <div className="flex items-center gap-4">
+            <section className="space-y-4">
+              <div className="flex items-center gap-3">
                 <h3 className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400 underline decoration-slate-200 underline-offset-8">Dirección y Producción</h3>
                 <div className="h-[1px] bg-slate-100 flex-1"></div>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                 {/* Dueño / Creador */}
                 <div className="bg-white border-2 border-slate-900 p-5 rounded-xl shadow-sm flex items-center justify-between group hover:shadow-md transition-all">
-                  <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-3">
                     <div className="w-10 h-10 bg-slate-900 text-white rounded-full flex items-center justify-center font-bold text-xs uppercase">
                       {project.createdByEmail?.[0] || 'D'}
                     </div>
@@ -3748,7 +3748,7 @@ export default function ProjectDetail() {
                 {/* Colaboradores */}
                 {collaborators.map((col) => (
                   <div key={col.email} className="bg-white border border-slate-200 p-5 rounded-xl shadow-sm flex items-center justify-between group hover:border-black transition-all">
-                    <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-3">
                       <div className="w-10 h-10 bg-slate-100 text-slate-900 rounded-full flex items-center justify-center font-bold text-xs uppercase">
                         {col.email[0]}
                       </div>
@@ -3772,7 +3772,7 @@ export default function ProjectDetail() {
                 {/* Tomas @ Gran Berta fallback */}
                 {!collaborators.find(c => c.email === 'tomas@granberta.com') && project.createdByEmail !== 'tomas@granberta.com' && (
                   <div className="bg-slate-50 border border-dashed border-slate-200 p-5 rounded-xl flex items-center justify-between opacity-50">
-                    <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-3">
                       <div className="w-10 h-10 bg-slate-200 text-slate-400 rounded-full flex items-center justify-center font-bold text-xs uppercase">T</div>
                       <div>
                         <div className="text-xs font-bold text-slate-400 truncate">tomas@granberta.com</div>
@@ -3787,7 +3787,7 @@ export default function ProjectDetail() {
 
             {/* Personal de Rubros */}
             <section className="space-y-8">
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-3">
                 <h3 className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400 underline decoration-slate-200 underline-offset-8">Personal de Rubros</h3>
                 <div className="h-[1px] bg-slate-100 flex-1"></div>
               </div>
@@ -3798,10 +3798,10 @@ export default function ProjectDetail() {
                 return (
                   <div key={area} className="space-y-4 px-4">
                     <div className="text-[9px] font-black uppercase tracking-widest text-slate-300">{area}</div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                       {areaTeam.map((member) => (
                         <div key={member.id} className="bg-white border border-slate-100 p-4 rounded-xl shadow-sm flex items-center justify-between group hover:border-slate-300 transition-all">
-                          <div className="flex items-center gap-4">
+                          <div className="flex items-center gap-3">
                             <div className="w-8 h-8 bg-slate-50 text-slate-900 rounded-full flex items-center justify-center font-bold text-[10px] uppercase border border-slate-100">
                               {member.providerName?.[0] || 'P'}
                             </div>
@@ -3883,7 +3883,7 @@ export default function ProjectDetail() {
                   </div>
                 </div>
 
-                <div className="lg:col-span-7 space-y-5">
+                <div className="lg:col-span-7 space-y-4">
                   <div>
                     <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Rol dentro del proyecto</div>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
@@ -3946,7 +3946,7 @@ export default function ProjectDetail() {
               </div>
 
               <div className="pt-8 border-t border-slate-100">
-                <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-6 font-mono">Colaboradores Activos</h3>
+                <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4 font-mono">Colaboradores Activos</h3>
                 <div className="space-y-4">
                   {collaborators.length === 0 ? (
                     <div className="text-center py-10 border border-dashed border-slate-200 rounded-lg text-slate-300 font-bold uppercase text-[10px] tracking-widest">
@@ -3955,7 +3955,7 @@ export default function ProjectDetail() {
                   ) : (
                     collaborators.map(col => (
                       <div key={col.email} className="p-6 bg-slate-50 rounded-xl border border-slate-100">
-                        <div className="flex flex-col lg:flex-row lg:justify-between lg:items-start gap-4 mb-8">
+                        <div className="flex flex-col lg:flex-row lg:justify-between lg:items-start gap-3 mb-8">
                           <div className="flex items-center gap-3 min-w-0">
                             <img
                               src={col.photoURL || `https://ui-avatars.com/api/?name=${col.displayName || col.email || 'U'}&background=000&color=fff`}
@@ -4109,9 +4109,9 @@ export default function ProjectDetail() {
                 </button>
               </div>
 
-              <div className="p-6 space-y-4">
+              <div className="p-4 space-y-3">
                 {canExportPayroll && (
-                  <div className="border border-slate-200 rounded-xl p-5 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                  <div className="border border-slate-200 rounded-xl p-5 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                     <div>
                       <div className="text-sm font-bold text-slate-900">Exportar Nomina</div>
                       <p className="text-xs text-slate-500 mt-1">
@@ -4137,7 +4137,7 @@ export default function ProjectDetail() {
 
                 {isProjectAdmin && (
                   <>
-                    <div className="border border-slate-200 rounded-xl p-5 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                    <div className="border border-slate-200 rounded-xl p-5 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                       <div>
                         <div className="text-sm font-bold text-slate-900">Presupuesto Principal</div>
                         <p className="text-xs text-slate-500 mt-1">Partidas, proveedores, cantidades, precios y totales del presupuesto principal.</p>
@@ -4158,7 +4158,7 @@ export default function ProjectDetail() {
                       </div>
                     </div>
 
-                    <div className="border border-slate-200 rounded-xl p-5 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                    <div className="border border-slate-200 rounded-xl p-5 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                       <div>
                         <div className="text-sm font-bold text-slate-900">Gestion por Areas</div>
                         <p className="text-xs text-slate-500 mt-1">Gastos registrados por area, pagos, deuda y facturas asociadas.</p>
@@ -4222,8 +4222,8 @@ export default function ProjectDetail() {
                 </button>
               </div>
 
-              <form onSubmit={uploadProjectDocument} className="p-6 space-y-5">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <form onSubmit={uploadProjectDocument} className="p-6 space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Familia</label>
                     <select name="family" defaultValue={documentFamilyFilter !== 'todos' && documentFamilyFilter !== 'finanzas' ? documentFamilyFilter : 'contratos'} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black">
@@ -4249,7 +4249,7 @@ export default function ProjectDetail() {
                   <input name="title" className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black" placeholder="Ej: Poliza RC productora / Contrato director" />
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <div>
                     <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Proveedor</label>
                     <select name="providerId" className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black">
@@ -4330,12 +4330,12 @@ export default function ProjectDetail() {
                   console.error("Error updating project:", err);
                   alert("Error al actualizar el proyecto.");
                 }
-              }} className="p-8 space-y-6">
+              }} className="p-8 space-y-4">
                 <div>
                   <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Nombre de la Producción</label>
                   <input name="name" defaultValue={project.name} required className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all" />
                 </div>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Cliente</label>
                     <select name="clientName" defaultValue={project.clientName} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all appearance-none">
