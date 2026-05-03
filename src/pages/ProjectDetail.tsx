@@ -2010,12 +2010,82 @@ export default function ProjectDetail() {
                 <div>
                   <h1 className="text-3xl md:text-4xl font-black tracking-[-0.06em] text-slate-950 leading-none">{project.name}</h1>
                   <div className="flex flex-wrap items-center gap-2 mt-2 text-[11px] font-semibold text-slate-600">
-                    <span className={cn("px-2.5 py-0.5 rounded-full border text-[9px] font-black uppercase tracking-wider", statusColors[project.status || 'Presupuesto'] || 'bg-emerald-100 text-emerald-700 border-emerald-200')}>
-                      {project.status || 'En producción'}
-                    </span>
-                    <span className="inline-flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5 text-slate-500" /> {project.shootingDate ? `Rodaje: ${formatDate(project.shootingDate)}` : 'Sin fecha de rodaje'}</span>
-                    <span className="hidden sm:inline text-slate-300">•</span>
-                    <span className="inline-flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5 text-slate-500" /> {project.location || 'Locación sin definir'}</span>
+                    {isProjectAdmin ? (
+                      <>
+                        <div className="relative group">
+                          <select
+                            aria-label="Estado del proyecto"
+                            value={project.status || 'Presupuesto'}
+                            onChange={async (e) => {
+                              const newStatus = e.target.value;
+                              await updateDoc(doc(db, 'projects', id!), { status: newStatus, updatedAt: serverTimestamp() });
+                              setProject({ ...project, status: newStatus });
+                            }}
+                            className={cn(
+                              "h-8 max-w-[180px] appearance-none rounded-full border px-3 pr-8 text-[10px] font-black uppercase tracking-wider outline-none transition-all cursor-pointer shadow-sm hover:shadow-md focus:ring-2 focus:ring-blue-100",
+                              statusColors[project.status || 'Presupuesto'] || 'bg-emerald-100 text-emerald-700 border-emerald-200'
+                            )}
+                          >
+                            {['Presupuesto', 'Pre Producción', 'Rodaje', 'Post', 'Aprobado'].map(status => (
+                              <option key={status} value={status} className="bg-white text-slate-900">{status}</option>
+                            ))}
+                          </select>
+                          <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 opacity-60" />
+                        </div>
+
+                        <label className="inline-flex h-8 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 shadow-sm hover:border-blue-200 hover:shadow-md transition-all cursor-pointer">
+                          <Calendar className="w-3.5 h-3.5 text-slate-500" />
+                          <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">Rodaje</span>
+                          <input
+                            type="date"
+                            value={project.shootingDate || ''}
+                            onChange={async (e) => {
+                              const newDate = e.target.value;
+                              await updateDoc(doc(db, 'projects', id!), { shootingDate: newDate, updatedAt: serverTimestamp() });
+                              setProject({ ...project, shootingDate: newDate });
+                            }}
+                            className="w-[118px] bg-transparent text-[11px] font-bold text-slate-900 outline-none"
+                          />
+                        </label>
+
+                        <label className="inline-flex h-8 min-w-[220px] max-w-[360px] flex-1 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 shadow-sm hover:border-blue-200 hover:shadow-md transition-all">
+                          <MapPin className="w-3.5 h-3.5 flex-none text-slate-500" />
+                          <input
+                            type="text"
+                            aria-label="Locación"
+                            placeholder="Locación sin definir"
+                            value={locationDraft}
+                            onChange={(e) => setLocationDraft(e.target.value)}
+                            onBlur={saveLocation}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter') event.currentTarget.blur();
+                            }}
+                            className="min-w-0 flex-1 bg-transparent text-[11px] font-bold text-slate-900 outline-none placeholder:text-slate-400"
+                          />
+                          {isSavingLocation && <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">Guardando</span>}
+                        </label>
+
+                        {mapsSearchUrl && (
+                          <a
+                            href={mapsSearchUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex h-8 items-center gap-1.5 rounded-full border border-blue-100 bg-blue-50 px-3 text-[10px] font-black uppercase tracking-wider text-blue-700 hover:border-blue-200 hover:bg-blue-100 transition-all"
+                          >
+                            <LinkIcon className="w-3.5 h-3.5" /> Maps
+                          </a>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <span className={cn("px-2.5 py-0.5 rounded-full border text-[9px] font-black uppercase tracking-wider", statusColors[project.status || 'Presupuesto'] || 'bg-emerald-100 text-emerald-700 border-emerald-200')}>
+                          {project.status || 'En producción'}
+                        </span>
+                        <span className="inline-flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5 text-slate-500" /> {project.shootingDate ? `Rodaje: ${formatDate(project.shootingDate)}` : 'Sin fecha de rodaje'}</span>
+                        <span className="hidden sm:inline text-slate-300">•</span>
+                        <span className="inline-flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5 text-slate-500" /> {project.location || 'Locación sin definir'}</span>
+                      </>
+                    )}
                   </div>
                 </div>
               </div>
@@ -2071,7 +2141,7 @@ export default function ProjectDetail() {
       >
         {activeTab === 'resumen' && (
           <div className="grid grid-cols-12 gap-3 lg:gap-5">
-            <div className="col-span-12 lg:col-span-9 space-y-4">
+            <div className="col-span-12 space-y-4">
               <section className="bg-white rounded-xl border border-slate-200 shadow-[0_12px_32px_rgba(15,23,42,0.10)] ring-1 ring-white overflow-hidden">
                 <div className="px-4 py-3 border-b border-slate-200 flex justify-between items-center bg-gradient-to-r from-slate-100 to-white">
                   <div>
@@ -2136,24 +2206,24 @@ export default function ProjectDetail() {
                   </h3>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div className="md:col-span-2 border border-slate-800 rounded-2xl p-6 bg-[radial-gradient(circle_at_7%_30%,rgba(37,99,235,0.34),transparent_20%),linear-gradient(135deg,#020617,#0f172a_62%,#020617)] text-white shadow-[0_22px_45px_rgba(2,6,23,0.28)]">
+                  <div className="md:col-span-2 border border-slate-200 rounded-2xl p-5 bg-white text-slate-950 shadow-[0_14px_34px_rgba(15,23,42,0.11)] ring-1 ring-white">
                     <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                       <div>
-                        <div className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-400">Saldo global</div>
-                        <div className="text-4xl font-black mt-1 tracking-[-0.04em]">${areaSummaryTotals.balance.toLocaleString()}</div>
+                        <div className="text-[10px] font-black uppercase tracking-[0.22em] text-blue-700">Saldo global</div>
+                        <div className="text-3xl font-black mt-1 tracking-[-0.04em] text-slate-950">${areaSummaryTotals.balance.toLocaleString()}</div>
                       </div>
                       <div className="grid grid-cols-3 gap-3 text-right">
                         <div>
-                          <div className="text-[9px] font-bold uppercase tracking-widest text-slate-500">Asignado</div>
-                          <div className="text-lg font-black">${areaSummaryTotals.assigned.toLocaleString()}</div>
+                          <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400">Asignado</div>
+                          <div className="text-lg font-black text-slate-950">${areaSummaryTotals.assigned.toLocaleString()}</div>
                         </div>
                         <div>
-                          <div className="text-[9px] font-bold uppercase tracking-widest text-slate-500">Gastado</div>
-                          <div className="text-lg font-black">${areaSummaryTotals.spent.toLocaleString()}</div>
+                          <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400">Gastado</div>
+                          <div className="text-lg font-black text-slate-950">${areaSummaryTotals.spent.toLocaleString()}</div>
                         </div>
                         <div>
-                          <div className="text-[9px] font-bold uppercase tracking-widest text-slate-500">Costo real</div>
-                          <div className="text-lg font-black">${areaSummaryTotals.actualCost.toLocaleString()}</div>
+                          <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400">Costo real</div>
+                          <div className="text-lg font-black text-slate-950">${areaSummaryTotals.actualCost.toLocaleString()}</div>
                         </div>
                       </div>
                     </div>
@@ -2197,7 +2267,7 @@ export default function ProjectDetail() {
               </section>
 
               {/* KPIs Section */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {(isProjectAdmin || (userPermissions && userPermissions.allowedCategories.length > 0)) && (
                   <>
                     {isProjectAdmin ? (
@@ -2231,133 +2301,8 @@ export default function ProjectDetail() {
                         <div className="h-full bg-blue-500 transition-all duration-500" style={{ width: `${Math.min(100, (areaSummaryTotals.actualCost / (areaSummaryTotals.assigned || project.budgetTotal || 1)) * 100)}%` }}></div>
                       </div>
                     </div>
-
-                    <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
-                      <div className="text-[10px] text-slate-400 font-bold uppercase mb-2 tracking-widest flex justify-between">
-                        Equipo Asignado
-                        <Users className="w-3 h-3 opacity-20" />
-                      </div>
-                      <div className="text-xl font-bold">{visibleBudgetItems.filter(i => i.providerId).length} Proveedores</div>
-                      <div className="mt-4 text-[9px] text-slate-400 font-medium">Staff activo en rubros</div>
-                    </div>
                   </>
                 )}
-              </div>
-
-              {/* Status and Shooting Date Section */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
-                  <h3 className="text-[10px] font-bold text-slate-400 uppercase mb-4 tracking-widest">Estado del Proyecto</h3>
-                  {isProjectAdmin ? (
-                    <div className="relative">
-                      <select 
-                        value={project.status || 'Presupuesto'}
-                        onChange={async (e) => {
-                          const newStatus = e.target.value;
-                          await updateDoc(doc(db, 'projects', id!), { status: newStatus });
-                          setProject({ ...project, status: newStatus });
-                        }}
-                        className={cn(
-                          "w-full p-3 border rounded text-xs font-bold uppercase tracking-widest focus:outline-none appearance-none cursor-pointer pr-10 transition-colors",
-                          statusColors[project.status || 'Presupuesto'] || 'bg-slate-50 border-slate-100 text-slate-900'
-                        )}
-                      >
-                        {['Presupuesto', 'Pre Producción', 'Rodaje', 'Post', 'Aprobado'].map(s => (
-                          <option key={s} value={s} className="bg-white text-slate-900">{s}</option>
-                        ))}
-                      </select>
-                      <ChevronDown className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none opacity-50" />
-                    </div>
-                  ) : (
-                    <div className={cn(
-                      "px-4 py-3 rounded text-xs font-bold uppercase tracking-widest inline-block border",
-                      statusColors[project.status || 'Presupuesto'] || 'bg-black text-white'
-                    )}>
-                      {project.status || 'Presupuesto'}
-                    </div>
-                  )}
-                </div>
-
-                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)] space-y-4">
-                  <div>
-                    <h3 className="text-[10px] font-bold text-slate-400 uppercase mb-4 tracking-widest">Fecha de Rodaje</h3>
-                    {isProjectAdmin ? (
-                      <input 
-                        type="date"
-                        value={project.shootingDate || ''}
-                        onChange={async (e) => {
-                          const newDate = e.target.value;
-                          await updateDoc(doc(db, 'projects', id!), { shootingDate: newDate });
-                          setProject({ ...project, shootingDate: newDate });
-                        }}
-                        className="w-full p-3 bg-slate-50 border border-slate-100 rounded text-xs font-medium focus:outline-none focus:border-black"
-                      />
-                    ) : (
-                      <div className="text-lg font-bold text-slate-900 first-letter:uppercase">
-                        {formatShootingDate(project.shootingDate)}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="pt-4 border-t border-slate-50">
-                    <h3 className="text-[10px] font-bold text-slate-400 uppercase mb-4 tracking-widest flex items-center gap-2">
-                       <MapPin className="w-3 h-3" />
-                       Locación
-                    </h3>
-                    {isProjectAdmin ? (
-                      <div className="space-y-3">
-                        <input 
-                          type="text"
-                          placeholder="Direccion o link de Google Maps..."
-                          value={locationDraft}
-                          onChange={(e) => setLocationDraft(e.target.value)}
-                          onBlur={saveLocation}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Enter') {
-                              event.currentTarget.blur();
-                            }
-                          }}
-                          className="w-full p-3 bg-slate-50 border border-slate-100 rounded text-xs font-medium focus:outline-none focus:border-black"
-                        />
-                        <div className="flex flex-wrap items-center gap-3">
-                          {mapsSearchUrl && (
-                            <a 
-                              href={mapsSearchUrl}
-                              target="_blank" 
-                              rel="noopener noreferrer"
-                              className="text-[10px] font-bold text-blue-600 flex items-center gap-1 hover:underline"
-                            >
-                              <LinkIcon className="w-3 h-3" /> Buscar en Google Maps
-                            </a>
-                          )}
-                          {isSavingLocation && (
-                            <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Guardando...</span>
-                          )}
-                        </div>
-                        {project.location?.startsWith('http') && (
-                          <a 
-                            href={project.location} 
-                            target="_blank" 
-                            rel="noopener noreferrer"
-                            className="text-[10px] font-bold text-blue-600 flex items-center gap-1 hover:underline"
-                          >
-                            <LinkIcon className="w-3 h-3" /> Abrir en Maps
-                          </a>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="text-sm font-medium text-slate-800">
-                        {project.location ? (
-                          project.location.startsWith('http') ? (
-                            <a href={project.location} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-blue-600 hover:underline">
-                              <LinkIcon className="w-4 h-4" /> Ver Ubicación en Maps
-                            </a>
-                          ) : project.location
-                        ) : 'Sin locación definida'}
-                      </div>
-                    )}
-                  </div>
-                </div>
               </div>
 
               <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
@@ -2367,49 +2312,6 @@ export default function ProjectDetail() {
                 <div className="p-8 text-slate-600 leading-relaxed text-sm">
                     {project.description || 'No hay una descripción extendida registrada para esta producción audiovisual.'}
                 </div>
-              </div>
-            </div>
-
-            <div className="col-span-12 lg:col-span-3 space-y-4">
-              <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-[0_18px_45px_rgba(15,23,42,0.10)] ring-1 ring-white">
-                <h3 className="text-xl font-black tracking-[-0.03em] text-slate-950 mb-4 flex items-center gap-2">
-                  {isProjectAdmin ? 'Staff Destacado' : 'Dirección y Producción'}
-                </h3>
-                <div className="space-y-4">
-                  {(() => {
-                    const filteredStaff = (isProjectAdmin ? visibleBudgetItems : budgetItems).filter(i => {
-                      if (isProjectAdmin) return i.providerId;
-                      // Restrict to Direction and Production for simple collaborators
-                      return i.providerId && (i.area === 'Producción' || i.area === 'Dirección');
-                    });
-
-                    if (filteredStaff.length > 0) {
-                      return filteredStaff.slice(0, 5).map((item, i) => (
-                        <div key={i} className="flex justify-between items-center">
-                          <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-xs font-black shadow-sm">
-                              {item.providerName?.[0]}
-                            </div>
-                            <div>
-                              <div className="text-sm font-black text-slate-950">{item.providerName}</div>
-                              <div className="text-xs text-slate-500 font-semibold">{item.area}</div>
-                            </div>
-                          </div>
-                        </div>
-                      ));
-                    }
-                    return <div className="text-center py-4 text-[10px] text-slate-300 font-bold uppercase italic">Sin staff asignado</div>;
-                  })()}
-                </div>
-                {isProjectAdmin && (
-                  <button 
-                    onClick={() => setActiveTab('equipo')}
-                    className="w-full mt-8 py-3 text-sm font-black border border-blue-200 rounded-xl text-blue-700 hover:text-blue-800 hover:bg-blue-50 transition-all flex items-center justify-center gap-2"
-                  >
-                    Ver Listado de Equipo
-                    <ArrowRight className="w-3 h-3" />
-                  </button>
-                )}
               </div>
             </div>
           </div>
@@ -2795,10 +2697,10 @@ export default function ProjectDetail() {
                           <div className="text-[9px] text-slate-400 mt-2 italic">{areaDashboardTotals.records} registros cargados</div>
                         </div>
                         <div className={cn(
-                          "p-5 rounded-xl shadow-sm border",
-                          balance >= 0 ? "bg-slate-900 border-slate-900 text-white" : "bg-red-50 border-red-100 text-red-600"
+                          "p-5 rounded-xl shadow-[0_8px_22px_rgba(15,23,42,0.08)] border bg-white",
+                          balance >= 0 ? "border-slate-200 text-slate-950" : "border-red-100 text-red-600"
                         )}>
-                          <div className={cn("text-[10px] font-bold uppercase tracking-widest mb-1", balance >= 0 ? "text-slate-400" : "text-red-400")}>Saldo Global</div>
+                          <div className={cn("text-[10px] font-bold uppercase tracking-widest mb-1", balance >= 0 ? "text-blue-700" : "text-red-400")}>Saldo Global</div>
                           <div className="text-xl font-bold font-mono tracking-tight">${balance.toLocaleString()}</div>
                           {balance < 0 && <div className="text-[9px] font-bold uppercase mt-2">¡EXCEDIDO!</div>}
                         </div>
