@@ -31,8 +31,7 @@ import {
   FileText,
   Paperclip,
   X,
-  Truck,
-  Clapperboard
+  Truck
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
@@ -322,6 +321,7 @@ export default function ProjectDetail() {
   const [showDocumentUploadModal, setShowDocumentUploadModal] = useState(false);
   const [isUploadingProjectDocument, setIsUploadingProjectDocument] = useState(false);
   const areaSelectorRef = useRef<HTMLDivElement>(null);
+  const shootingDateInputRef = useRef<HTMLInputElement>(null);
   const isGlobalAdmin = profile?.role === 'admin';
   
   useEffect(() => {
@@ -1803,14 +1803,19 @@ export default function ProjectDetail() {
       .filter((row) => row.assigned > 0 || row.spent > 0 || !isProjectAdmin);
   }, [areaExpenses, budgetItems, categories, isProjectAdmin, userPermissions]);
 
-  const areaSummaryTotals = React.useMemo(() => (
-    areaSummaryRows.reduce((acc, row) => ({
+  const areaSummaryTotals = React.useMemo(() => {
+    const totals = areaSummaryRows.reduce((acc, row) => ({
       assigned: acc.assigned + row.assigned,
       spent: acc.spent + row.spent,
       balance: acc.balance + row.balance,
       actualCost: acc.actualCost + row.actualCost,
-    }), { assigned: 0, spent: 0, balance: 0, actualCost: 0 })
-  ), [areaSummaryRows]);
+    }), { assigned: 0, spent: 0, balance: 0, actualCost: 0 });
+
+    return {
+      ...totals,
+      projectedBalance: totals.assigned - totals.actualCost,
+    };
+  }, [areaSummaryRows]);
 
   const addCollaborator = async (selectedUser: any) => {
     if (!id || !selectedUser?.email) return;
@@ -2004,9 +2009,6 @@ export default function ProjectDetail() {
               </div>
 
               <div className="flex items-center gap-3">
-                <div className="hidden sm:flex w-11 h-11 rounded-xl bg-slate-50 border border-slate-200 shadow-lg shadow-slate-200/70 items-center justify-center">
-                  <Clapperboard className="w-5 h-5 text-slate-900" />
-                </div>
                 <div>
                   <h1 className="text-3xl md:text-4xl font-black tracking-[-0.06em] text-slate-950 leading-none">{project.name}</h1>
                   <div className="flex flex-wrap items-center gap-2 mt-2 text-[11px] font-semibold text-slate-600">
@@ -2033,10 +2035,14 @@ export default function ProjectDetail() {
                           <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 opacity-60" />
                         </div>
 
-                        <label className="inline-flex h-8 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 shadow-sm hover:border-blue-200 hover:shadow-md transition-all cursor-pointer">
+                        <label
+                          className="inline-flex h-8 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 shadow-sm hover:border-blue-200 hover:shadow-md transition-all cursor-pointer"
+                          onClick={() => shootingDateInputRef.current?.showPicker?.()}
+                        >
                           <Calendar className="w-3.5 h-3.5 text-slate-500" />
                           <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">Rodaje</span>
                           <input
+                            ref={shootingDateInputRef}
                             type="date"
                             value={project.shootingDate || ''}
                             onChange={async (e) => {
@@ -2202,28 +2208,38 @@ export default function ProjectDetail() {
               <section className="space-y-4">
                 <div className="flex items-center justify-between px-1">
                   <h3 className="text-2xl font-black tracking-[-0.04em] text-slate-950">
-                    {isProjectAdmin ? 'Presupuesto por áreas' : 'Mis áreas asignadas'}
+                    {isProjectAdmin ? 'Presupuesto' : 'Mis áreas asignadas'}
                   </h3>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div className="md:col-span-2 border border-slate-200 rounded-2xl p-5 bg-white text-slate-950 shadow-[0_14px_34px_rgba(15,23,42,0.11)] ring-1 ring-white">
-                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                  <div className="border border-slate-200 rounded-2xl p-5 bg-white text-slate-950 shadow-[0_14px_34px_rgba(15,23,42,0.11)] ring-1 ring-white">
+                    <div className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-500">Presupuesto</div>
+                    <div className="text-3xl font-black mt-1 tracking-[-0.04em] text-slate-950">${Number(project.budgetTotal || 0).toLocaleString()}</div>
+                    <div className="mt-3 text-[10px] font-semibold text-slate-500">
+                      Valor total del proyecto
+                      <span className="mx-2 text-slate-300">•</span>
+                      Cliente: <span className="font-black text-slate-800">{project.clientName || 'Sin asignar'}</span>
+                    </div>
+                  </div>
+
+                  <div className="border border-slate-200 rounded-2xl p-5 bg-white text-slate-950 shadow-[0_14px_34px_rgba(15,23,42,0.11)] ring-1 ring-white">
+                    <div className="flex flex-col gap-3">
                       <div>
-                        <div className="text-[10px] font-black uppercase tracking-[0.22em] text-blue-700">Saldo global</div>
-                        <div className="text-3xl font-black mt-1 tracking-[-0.04em] text-slate-950">${areaSummaryTotals.balance.toLocaleString()}</div>
+                        <div className="text-[10px] font-black uppercase tracking-[0.22em] text-blue-700">Saldo Proyectado</div>
+                        <div className={cn("text-3xl font-black mt-1 tracking-[-0.04em]", areaSummaryTotals.projectedBalance >= 0 ? "text-slate-950" : "text-rose-600")}>${areaSummaryTotals.projectedBalance.toLocaleString()}</div>
                       </div>
-                      <div className="grid grid-cols-3 gap-3 text-right">
+                      <div className="grid grid-cols-3 gap-3 text-left md:text-right">
                         <div>
-                          <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400">Asignado</div>
-                          <div className="text-lg font-black text-slate-950">${areaSummaryTotals.assigned.toLocaleString()}</div>
+                          <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400">Asignado áreas</div>
+                          <div className="text-base font-black text-slate-950">${areaSummaryTotals.assigned.toLocaleString()}</div>
                         </div>
                         <div>
                           <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400">Gastado</div>
-                          <div className="text-lg font-black text-slate-950">${areaSummaryTotals.spent.toLocaleString()}</div>
+                          <div className="text-base font-black text-slate-950">${areaSummaryTotals.spent.toLocaleString()}</div>
                         </div>
                         <div>
-                          <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400">Costo real</div>
-                          <div className="text-lg font-black text-slate-950">${areaSummaryTotals.actualCost.toLocaleString()}</div>
+                          <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400">Costo proyectado</div>
+                          <div className="text-base font-black text-slate-950">${areaSummaryTotals.actualCost.toLocaleString()}</div>
                         </div>
                       </div>
                     </div>
@@ -2267,43 +2283,17 @@ export default function ProjectDetail() {
               </section>
 
               {/* KPIs Section */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {(isProjectAdmin || (userPermissions && userPermissions.allowedCategories.length > 0)) && (
-                  <>
-                    {isProjectAdmin ? (
-                      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)] group">
-                        <div className="text-[10px] text-slate-400 font-bold uppercase mb-2 tracking-widest flex justify-between">
-                          Presupuesto
-                          <DollarSign className="w-3 h-3 opacity-20" />
-                        </div>
-                        <div className="text-xl font-bold">${project.budgetTotal?.toLocaleString() || '0'}</div>
-                        <div className="mt-4 text-[9px] text-slate-400 font-medium">Cliente: <span className="text-slate-900">{project.clientName || 'Sin asignar'}</span></div>
-                      </div>
-                    ) : (
-                      userPermissions && userPermissions.allowedCategories.length > 0 && (
-                        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
-                          <div className="text-[10px] text-slate-400 font-bold uppercase mb-2 tracking-widest">Presupuesto Asignado (Mis Áreas)</div>
-                          <div className="text-xl font-bold">
-                            ${visibleBudgetItems.reduce((acc, curr) => acc + (curr.total || 0), 0).toLocaleString()}
-                          </div>
-                          <div className="mt-4 text-[9px] text-slate-400 font-medium">{userPermissions.allowedCategories.join(', ')}</div>
-                        </div>
-                      )
-                    )}
-
-                    <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
-                      <div className="text-[10px] text-slate-400 font-bold uppercase mb-2 tracking-widest flex justify-between">
-                        Costos Reales
-                        <BarChart2 className="w-3 h-3 opacity-20" />
-                      </div>
-                      <div className="text-xl font-bold">${areaSummaryTotals.actualCost.toLocaleString()}</div>
-                      <div className="mt-4 h-1 bg-slate-50 rounded-full overflow-hidden">
-                        <div className="h-full bg-blue-500 transition-all duration-500" style={{ width: `${Math.min(100, (areaSummaryTotals.actualCost / (areaSummaryTotals.assigned || project.budgetTotal || 1)) * 100)}%` }}></div>
-                      </div>
+              {!isProjectAdmin && userPermissions && userPermissions.allowedCategories.length > 0 && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
+                    <div className="text-[10px] text-slate-400 font-bold uppercase mb-2 tracking-widest">Presupuesto Asignado (Mis Áreas)</div>
+                    <div className="text-xl font-bold">
+                      ${visibleBudgetItems.reduce((acc, curr) => acc + (curr.total || 0), 0).toLocaleString()}
                     </div>
-                  </>
-                )}
-              </div>
+                    <div className="mt-4 text-[9px] text-slate-400 font-medium">{userPermissions.allowedCategories.join(', ')}</div>
+                  </div>
+                </div>
+              )}
 
               <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                 <div className="px-5 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/30">
@@ -2681,7 +2671,7 @@ export default function ProjectDetail() {
                     return (
                       <>
                         <div className="bg-white border border-slate-200 p-5 rounded-xl shadow-sm">
-                          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Presupuesto Global</div>
+                          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Presupuesto</div>
                           <div className="text-lg font-bold text-slate-900">${assigned.toLocaleString()}</div>
                           <div className="text-[9px] text-slate-400 mt-2 italic">{selectedAreaDashboardRows.length} áreas seleccionadas</div>
                         </div>
@@ -2700,7 +2690,7 @@ export default function ProjectDetail() {
                           "p-5 rounded-xl shadow-[0_8px_22px_rgba(15,23,42,0.08)] border bg-white",
                           balance >= 0 ? "border-slate-200 text-slate-950" : "border-red-100 text-red-600"
                         )}>
-                          <div className={cn("text-[10px] font-bold uppercase tracking-widest mb-1", balance >= 0 ? "text-blue-700" : "text-red-400")}>Saldo Global</div>
+                          <div className={cn("text-[10px] font-bold uppercase tracking-widest mb-1", balance >= 0 ? "text-blue-700" : "text-red-400")}>Saldo Proyectado</div>
                           <div className="text-xl font-bold font-mono tracking-tight">${balance.toLocaleString()}</div>
                           {balance < 0 && <div className="text-[9px] font-bold uppercase mt-2">¡EXCEDIDO!</div>}
                         </div>
