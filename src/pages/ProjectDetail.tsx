@@ -2213,13 +2213,29 @@ export default function ProjectDetail() {
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div className="border border-slate-200 rounded-2xl p-5 bg-white text-slate-950 shadow-[0_14px_34px_rgba(15,23,42,0.11)] ring-1 ring-white">
-                    <div className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-500">Presupuesto</div>
-                    <div className="text-3xl font-black mt-1 tracking-[-0.04em] text-slate-950">${Number(project.budgetTotal || 0).toLocaleString()}</div>
-                    <div className="mt-3 text-[10px] font-semibold text-slate-500">
-                      Valor total del proyecto
-                      <span className="mx-2 text-slate-300">•</span>
-                      Cliente: <span className="font-black text-slate-800">{project.clientName || 'Sin asignar'}</span>
-                    </div>
+                    {isProjectAdmin ? (
+                      <>
+                        <div className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-500">Presupuesto</div>
+                        <div className="text-3xl font-black mt-1 tracking-[-0.04em] text-slate-950">${Number(project.budgetTotal || 0).toLocaleString()}</div>
+                        <div className="mt-3 text-[10px] font-semibold text-slate-500">
+                          Valor total del proyecto
+                          <span className="mx-2 text-slate-300">•</span>
+                          Cliente: <span className="font-black text-slate-800">{project.clientName || 'Sin asignar'}</span>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-500">Presupuesto Asignado (Mis Áreas)</div>
+                        <div className="text-3xl font-black mt-1 tracking-[-0.04em] text-slate-950">
+                          ${visibleBudgetItems.reduce((acc, curr) => acc + (curr.total || 0), 0).toLocaleString()}
+                        </div>
+                        <div className="mt-3 text-[10px] font-semibold text-slate-500 truncate">
+                          {userPermissions?.allowedCategories?.length
+                            ? userPermissions.allowedCategories.join(', ')
+                            : 'Sin áreas asignadas'}
+                        </div>
+                      </>
+                    )}
                   </div>
 
                   <div className="border border-slate-200 rounded-2xl p-5 bg-white text-slate-950 shadow-[0_14px_34px_rgba(15,23,42,0.11)] ring-1 ring-white">
@@ -2281,19 +2297,6 @@ export default function ProjectDetail() {
                   )}
                 </div>
               </section>
-
-              {/* KPIs Section */}
-              {!isProjectAdmin && userPermissions && userPermissions.allowedCategories.length > 0 && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
-                    <div className="text-[10px] text-slate-400 font-bold uppercase mb-2 tracking-widest">Presupuesto Asignado (Mis Áreas)</div>
-                    <div className="text-xl font-bold">
-                      ${visibleBudgetItems.reduce((acc, curr) => acc + (curr.total || 0), 0).toLocaleString()}
-                    </div>
-                    <div className="mt-4 text-[9px] text-slate-400 font-medium">{userPermissions.allowedCategories.join(', ')}</div>
-                  </div>
-                </div>
-              )}
 
               <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                 <div className="px-5 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/30">
