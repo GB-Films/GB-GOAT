@@ -1,11 +1,12 @@
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, BarChart3, Building2, Download, FileSpreadsheet, Layers3, ReceiptText, Wallet } from 'lucide-react';
+import { AlertTriangle, BarChart3, Building2, CalendarDays, Download, FileSpreadsheet, Layers3, ReceiptText, Wallet } from 'lucide-react';
 import { collection, getDocs, orderBy, query } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { cn } from '../lib/utils';
+import { buildPaymentBuckets, formatDateKey, formatPeriodLabel, formatScheduleDate, getOverdueLines, getTodayLines, getUnscheduledLines, sumDebt, type PaymentScheduleLine, type PaymentScheduleView } from '../lib/paymentSchedule';
 
-type ReportView = 'resumen' | 'proyectos' | 'proveedores' | 'areas';
+type ReportView = 'resumen' | 'proyectos' | 'proveedores' | 'areas' | 'pagos';
 
 interface PayableLine {
   id: string;
@@ -19,6 +20,7 @@ interface PayableLine {
   total: number;
   paid: number;
   debt: number;
+  paymentDate?: any;
   source: 'area' | 'budget';
 }
 
@@ -63,6 +65,7 @@ const reportTabs: Array<{ id: ReportView; label: string; icon: any }> = [
   { id: 'proyectos', label: 'Proyectos', icon: FileSpreadsheet },
   { id: 'proveedores', label: 'Proveedores', icon: Building2 },
   { id: 'areas', label: 'Areas', icon: Layers3 },
+  { id: 'pagos', label: 'Proyección de Pagos', icon: CalendarDays },
 ];
 
 const formatCurrency = (value: number) => `$${Math.round(value || 0).toLocaleString('es-AR')}`;
@@ -125,6 +128,7 @@ const buildProjectReport = (project: any, budgetItems: any[], areaExpenses: any[
         total,
         paid,
         debt: Math.max(0, total - paid),
+        paymentDate: item.paymentDate,
         source: 'area' as const,
       };
     }),
@@ -143,6 +147,7 @@ const buildProjectReport = (project: any, budgetItems: any[], areaExpenses: any[
         total,
         paid,
         debt: Math.max(0, total - paid),
+        paymentDate: item.paymentDate,
         source: 'budget' as const,
       };
     }),
@@ -175,6 +180,10 @@ export default function Reports() {
   const [projects, setProjects] = useState<ProjectReport[]>([]);
   const [activeView, setActiveView] = useState<ReportView>('resumen');
   const [loading, setLoading] = useState(true);
+  const [paymentProjectionView, setPaymentProjectionView] = useState<PaymentScheduleView>('week');
+  const [paymentProjectionAnchor, setPaymentProjectionAnchor] = useState(() => formatDateKey(new Date()));
+  const [paymentProjectFilter, setPaymentProjectFilter] = useState('all');
+  const [selectedPaymentBucketKey, setSelectedPaymentBucketKey] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchReports = async () => {
@@ -274,6 +283,87 @@ export default function Reports() {
     return Array.from(map.values()).sort((a, b) => b.spent - a.spent);
   }, [projects]);
 
+  const paymentScheduleLines = useMemo<PaymentScheduleLine[]>(() => (
+    projects.flatMap((project) => (
+      project.payableLines.map((line) => ({
+        id: `${project.id}-${line.source}-${line.id}`,
+        projectId: project.id,
+        projectName: project.name,
+        area: line.area || 'Sin area',
+        providerName: line.providerName || 'Sin proveedor asignado',
+        description: line.description || 'Movimiento',
+        total: line.total,
+        paid: line.paid,
+        debt: line.debt,
+        paymentDate: line.paymentDate,
+        source: line.source === 'area' ? 'Gestion por Areas' : 'Presupuesto Principal',
+      }))
+    ))
+    .filter((line) => line.debt > 0.01)
+  ), [projects]);
+
+  const filteredPaymentScheduleLines = useMemo(() => (
+    paymentProjectFilter === 'all'
+      ? paymentScheduleLines
+      : paymentScheduleLines.filter((line) => line.projectId === paymentProjectFilter)
+  ), [paymentProjectFilter, paymentScheduleLines]);
+
+  const paymentProjectionBuckets = useMemo(() => (
+    buildPaymentBuckets(filteredPaymentScheduleLines, paymentProjectionAnchor, paymentProjectionView)
+  ), [filteredPaymentScheduleLines, paymentProjectionAnchor, paymentProjectionView]);
+
+  const selectedPaymentBucket = useMemo(() => {
+    if (paymentProjectionBuckets.length === 0) return null;
+    return paymentProjectionBuckets.find((bucket) => bucket.key === selectedPaymentBucketKey)
+      || paymentProjectionBuckets.find((bucket) => bucket.isToday)
+      || paymentProjectionBuckets[0];
+  }, [paymentProjectionBuckets, selectedPaymentBucketKey]);
+
+  const paymentProjectionStats = useMemo(() => {
+    const periodLines = paymentProjectionBuckets.flatMap((bucket) => bucket.lines);
+    const todayLines = getTodayLines(filteredPaymentScheduleLines);
+    const overdueLines = getOverdueLines(filteredPaymentScheduleLines);
+    const unscheduledLines = getUnscheduledLines(filteredPaymentScheduleLines);
+
+    return {
+      periodLines,
+      periodDebt: sumDebt(periodLines),
+      todayLines,
+      todayDebt: sumDebt(todayLines),
+      overdueLines,
+      overdueDebt: sumDebt(overdueLines),
+      unscheduledLines,
+      unscheduledDebt: sumDebt(unscheduledLines),
+    };
+  }, [filteredPaymentScheduleLines, paymentProjectionBuckets]);
+
+  const paymentByProject = useMemo(() => {
+    const selectedProjects = paymentProjectFilter === 'all'
+      ? projects
+      : projects.filter((project) => project.id === paymentProjectFilter);
+    const periodLines = paymentProjectionBuckets.flatMap((bucket) => bucket.lines);
+
+    return selectedProjects.map((project) => {
+      const lines = filteredPaymentScheduleLines.filter((line) => line.projectId === project.id);
+      const todayLines = getTodayLines(lines);
+      const overdueLines = getOverdueLines(lines);
+      const unscheduledLines = getUnscheduledLines(lines);
+      const projectPeriodLines = periodLines.filter((line) => line.projectId === project.id);
+
+      return {
+        id: project.id,
+        name: project.name,
+        today: sumDebt(todayLines),
+        period: sumDebt(projectPeriodLines),
+        overdue: sumDebt(overdueLines),
+        unscheduled: sumDebt(unscheduledLines),
+        items: lines.length,
+      };
+    })
+    .filter((row) => row.today > 0 || row.period > 0 || row.overdue > 0 || row.unscheduled > 0)
+    .sort((a, b) => b.period - a.period || b.overdue - a.overdue);
+  }, [filteredPaymentScheduleLines, paymentProjectFilter, paymentProjectionBuckets, projects]);
+
   const attentionProjects = useMemo(() => (
     projects
       .filter((project) => project.overBudget > 0 || project.debt > 0 || project.usagePercent >= 85)
@@ -311,6 +401,19 @@ export default function Reports() {
     Proyectos: area.projects.join(' / '),
   })));
 
+
+  const exportPayments = () => downloadCsv('proyeccion-pagos.csv', filteredPaymentScheduleLines.map((line) => ({
+    Fecha: line.paymentDate ? formatScheduleDate(line.paymentDate) : 'Sin fecha',
+    Proyecto: line.projectName || '',
+    Proveedor: line.providerName,
+    Area: line.area,
+    Concepto: line.description,
+    Fuente: line.source || '',
+    Total: line.total,
+    Pagado: line.paid,
+    Pendiente: line.debt,
+  })));
+
   return (
     <div className="max-w-full mx-auto space-y-6">
       <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
@@ -335,6 +438,10 @@ export default function Reports() {
           <button onClick={exportAreas} className="px-3 py-2 bg-white border border-slate-200 text-slate-600 text-[10px] font-bold uppercase tracking-widest rounded flex items-center gap-2 hover:border-black">
             <Download className="w-3 h-3" />
             Areas CSV
+          </button>
+          <button onClick={exportPayments} className="px-3 py-2 bg-white border border-slate-200 text-slate-600 text-[10px] font-bold uppercase tracking-widest rounded flex items-center gap-2 hover:border-black">
+            <Download className="w-3 h-3" />
+            Pagos CSV
           </button>
         </div>
       </header>
@@ -487,6 +594,165 @@ export default function Reports() {
             ],
           }))}
         />
+      )}
+
+
+      {activeView === 'pagos' && (
+        <div className="space-y-4">
+          <section className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
+            <div className="p-4 border-b border-slate-100 flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
+              <div>
+                <h2 className="text-sm font-black text-slate-900">Proyección de Pagos</h2>
+                <p className="text-[10px] uppercase font-bold tracking-widest text-slate-400 mt-1">
+                  Todos los proyectos · {formatPeriodLabel(paymentProjectionAnchor, paymentProjectionView)}
+                </p>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <select
+                  value={paymentProjectFilter}
+                  onChange={(event) => {
+                    setPaymentProjectFilter(event.target.value);
+                    setSelectedPaymentBucketKey(null);
+                  }}
+                  className="px-3 py-2 bg-slate-50 border border-slate-100 rounded-lg text-xs font-bold focus:outline-none focus:border-black"
+                >
+                  <option value="all">Todos los proyectos</option>
+                  {projects.map((project) => (
+                    <option key={project.id} value={project.id}>{project.name}</option>
+                  ))}
+                </select>
+                <div className="flex p-1 bg-slate-100 rounded-lg">
+                  {(['week', 'month'] as PaymentScheduleView[]).map((view) => (
+                    <button
+                      key={view}
+                      type="button"
+                      onClick={() => {
+                        setPaymentProjectionView(view);
+                        setSelectedPaymentBucketKey(null);
+                      }}
+                      className={cn(
+                        "flex-1 px-3 py-1.5 rounded-md text-[10px] font-black uppercase tracking-widest transition-all",
+                        paymentProjectionView === view ? "bg-white text-black shadow-sm" : "text-slate-400 hover:text-slate-700"
+                      )}
+                    >
+                      {view === 'week' ? 'Semana' : 'Mes'}
+                    </button>
+                  ))}
+                </div>
+                <input
+                  type="date"
+                  value={paymentProjectionAnchor}
+                  onChange={(event) => {
+                    setPaymentProjectionAnchor(event.target.value);
+                    setSelectedPaymentBucketKey(null);
+                  }}
+                  className="px-3 py-2 bg-slate-50 border border-slate-100 rounded-lg text-xs font-bold focus:outline-none focus:border-black"
+                />
+              </div>
+            </div>
+
+            <div className="p-4 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3 border-b border-slate-100">
+              {[
+                { label: 'A pagar hoy', value: paymentProjectionStats.todayDebt, count: paymentProjectionStats.todayLines.length, tone: 'text-slate-900' },
+                { label: paymentProjectionView === 'week' ? 'A pagar semana' : 'A pagar mes', value: paymentProjectionStats.periodDebt, count: paymentProjectionStats.periodLines.length, tone: 'text-blue-700' },
+                { label: 'Vencidos', value: paymentProjectionStats.overdueDebt, count: paymentProjectionStats.overdueLines.length, tone: 'text-rose-600' },
+                { label: 'Sin fecha', value: paymentProjectionStats.unscheduledDebt, count: paymentProjectionStats.unscheduledLines.length, tone: 'text-amber-600' },
+                { label: 'Total proyectado', value: sumDebt(filteredPaymentScheduleLines), count: filteredPaymentScheduleLines.length, tone: 'text-slate-900' },
+              ].map((item) => (
+                <div key={item.label} className="rounded-lg border border-slate-100 bg-slate-50/50 p-4">
+                  <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">{item.label}</div>
+                  <div className={cn("mt-1 text-xl font-black font-mono", item.tone)}>{formatCurrency(item.value)}</div>
+                  <div className="text-[9px] font-bold uppercase tracking-widest text-slate-300 mt-1">{item.count} pagos</div>
+                </div>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-1 xl:grid-cols-[1fr_420px]">
+              <div className="p-4 border-b xl:border-b-0 xl:border-r border-slate-100">
+                <div className="h-64 rounded-xl border border-slate-100 bg-gradient-to-b from-slate-50 to-white p-4 flex items-end gap-2 overflow-x-auto">
+                  {paymentProjectionBuckets.map((bucket) => {
+                    const maxTotal = Math.max(...paymentProjectionBuckets.map((item) => item.total), 1);
+                    const isSelected = selectedPaymentBucket?.key === bucket.key;
+                    const height = bucket.total > 0 ? Math.max(12, (bucket.total / maxTotal) * 170) : 6;
+                    return (
+                      <button
+                        key={bucket.key}
+                        type="button"
+                        onClick={() => setSelectedPaymentBucketKey(bucket.key)}
+                        className="min-w-[82px] flex-1 h-full flex flex-col justify-end items-center gap-2 group"
+                        title={`${bucket.label}: ${formatCurrency(bucket.total)}`}
+                      >
+                        <div className="text-[9px] font-black text-slate-500 font-mono">{formatCurrency(bucket.total)}</div>
+                        <div
+                          className={cn(
+                            "w-full rounded-t-xl transition-all border",
+                            isSelected ? "bg-slate-900 border-slate-900" : bucket.isToday ? "bg-blue-600 border-blue-600" : "bg-slate-300 border-slate-300 group-hover:bg-slate-500 group-hover:border-slate-500"
+                          )}
+                          style={{ height }}
+                        />
+                        <div className="text-center">
+                          <div className={cn("text-[9px] font-black uppercase tracking-widest", isSelected ? "text-slate-900" : "text-slate-400")}>{bucket.shortLabel}</div>
+                          <div className="text-[8px] text-slate-300 font-bold uppercase tracking-widest">{bucket.count} pagos</div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <aside className="p-4 bg-slate-50/50">
+                <div className="flex items-start justify-between gap-3 mb-3">
+                  <div>
+                    <h3 className="text-xs font-black text-slate-900">{selectedPaymentBucket?.label || 'Sin selección'}</h3>
+                    <p className="text-[9px] uppercase font-bold tracking-widest text-slate-400">Pagos dentro del rango seleccionado</p>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-sm font-black font-mono text-slate-900">{formatCurrency(selectedPaymentBucket?.total || 0)}</div>
+                    <div className="text-[9px] uppercase font-bold tracking-widest text-slate-300">Total</div>
+                  </div>
+                </div>
+                <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+                  {(selectedPaymentBucket?.lines || []).map((line) => (
+                    <div key={line.id} className="rounded-lg border border-slate-100 bg-white p-3">
+                      <div className="flex justify-between gap-3">
+                        <div className="min-w-0">
+                          <Link to={`/proyectos/${line.projectId}`} className="text-[10px] font-black text-slate-400 uppercase tracking-widest hover:text-black truncate block">
+                            {line.projectName}
+                          </Link>
+                          <div className="text-xs font-black text-slate-900 truncate">{line.providerName}</div>
+                          <div className="text-[10px] text-slate-500 truncate">{line.description}</div>
+                          <div className="text-[9px] uppercase font-bold tracking-widest text-slate-300 mt-1">{line.area} · {line.source}</div>
+                        </div>
+                        <div className="text-right text-xs font-black font-mono text-rose-600 whitespace-nowrap">{formatCurrency(line.debt)}</div>
+                      </div>
+                    </div>
+                  ))}
+                  {selectedPaymentBucket && selectedPaymentBucket.lines.length === 0 && (
+                    <div className="rounded-lg border border-dashed border-slate-200 bg-white p-8 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
+                      Sin pagos programados
+                    </div>
+                  )}
+                </div>
+              </aside>
+            </div>
+          </section>
+
+          <ReportTable
+            emptyLabel="No hay proyección de pagos por proyecto"
+            headers={['Proyecto', 'Hoy', paymentProjectionView === 'week' ? 'Semana' : 'Mes', 'Vencidos', 'Sin fecha', 'Partidas']}
+            rows={paymentByProject.map((row) => ({
+              key: row.id,
+              cells: [
+                <Link to={`/proyectos/${row.id}`} className="font-bold text-slate-900 hover:underline">{row.name}</Link>,
+                formatCurrency(row.today),
+                <span className="font-black text-blue-700">{formatCurrency(row.period)}</span>,
+                <span className={row.overdue > 0 ? 'text-rose-600 font-black' : 'text-slate-400'}>{formatCurrency(row.overdue)}</span>,
+                <span className={row.unscheduled > 0 ? 'text-amber-600 font-black' : 'text-slate-400'}>{formatCurrency(row.unscheduled)}</span>,
+                row.items,
+              ],
+            }))}
+          />
+        </div>
       )}
     </div>
   );
