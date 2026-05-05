@@ -792,6 +792,8 @@ export default function ProjectDetail() {
 
   const updateScheduledPaymentDate = async (item: any, collectionName: PaymentCollection, paymentDate: string) => {
     if (!item?.id) return;
+    if (collectionName === 'budgetItems' && activeAreas.includes(item.area)) return;
+
     const currentDate = toDateInputValue(item.paymentDate);
     if (currentDate === paymentDate) return;
 
@@ -2487,11 +2489,11 @@ export default function ProjectDetail() {
                 {/* Header Row */}
                 <div className="grid grid-cols-12 bg-slate-50 border-b border-slate-200 px-4 py-3 gap-2">
                   <div className="col-span-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">Proveedor / Profesional</div>
-                  <div className="col-span-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">Descripción / Tarea</div>
+                  <div className="col-span-3 text-[10px] font-bold uppercase tracking-widest text-slate-400">Descripción / Tarea</div>
                   <div className="col-span-1 text-[10px] font-bold uppercase tracking-widest text-slate-400">P. Unitario</div>
                   <div className="col-span-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Cant.</div>
                   <div className="col-span-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Total</div>
-                  <div className="col-span-2 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Fecha Pago</div>
+                  <div className="col-span-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Fecha Pago</div>
                   <div className="col-span-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Rodaje → Pago</div>
                   <div className="col-span-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Pagado</div>
                   <div className="col-span-1"></div>
@@ -2606,7 +2608,7 @@ export default function ProjectDetail() {
                                                             disabled={!canEditMainBudget}
                                                           />
                                                         </div>
-                                                        <div className="col-span-2">
+                                                        <div className="col-span-3">
                                                           <BudgetRowCell 
                                                             item={item} 
                                                             onUpdate={updateBudgetItem} 
@@ -2633,8 +2635,8 @@ export default function ProjectDetail() {
                                                         <div className="col-span-1 text-right font-bold text-slate-900 text-xs">
                                                           ${item.total?.toLocaleString()}
                                                         </div>
-                                                        <div className="col-span-2">
-                                                          {renderPaymentScheduleCell(item, 'budgetItems', !canEditMainBudget)}
+                                                        <div className="col-span-1">
+                                                          {renderPaymentScheduleCell(item, 'budgetItems', !canEditMainBudget || activeAreas.includes(item.area))}
                                                         </div>
                                                         <div className="col-span-1">
                                                           {renderPaymentLeadTimeCell(item)}
