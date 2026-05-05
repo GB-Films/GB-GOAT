@@ -79,7 +79,7 @@ const DOCUMENT_SUBTYPES: Record<string, string[]> = {
 };
 
 const BUDGET_AREAS = [
-  'Producción', 'Dirección', 'Guion', 'Arte', 'Vestuario', 
+  'Ejecutiva', 'Producción', 'Dirección', 'Guion', 'Arte', 'Vestuario', 
   'Maquillaje', 'Fotografía', 'Sonido', 'Logística', 'Post-producción', 'Varios'
 ];
 
@@ -177,6 +177,48 @@ const formatShootingDate = (dateValue: any) => {
   return formatted.charAt(0).toUpperCase() + formatted.slice(1);
 };
 
+const parseProjectDate = (dateValue: any): Date | null => {
+  if (!dateValue) return null;
+  if (typeof dateValue === 'string') {
+    const value = dateValue.trim();
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(value)
+      ? new Date(`${value}T12:00:00`)
+      : new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  if (dateValue.seconds) {
+    const date = new Date(dateValue.seconds * 1000);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  const date = new Date(dateValue);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const toDateInputValue = (dateValue: any) => {
+  if (!dateValue) return '';
+  if (typeof dateValue === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateValue)) return dateValue;
+  const date = parseProjectDate(dateValue);
+  if (!date) return '';
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const getPaymentLeadTimeLabel = (paymentDate: any, shootingDate: any) => {
+  if (!paymentDate) return 'Sin fecha';
+  const payment = parseProjectDate(paymentDate);
+  const shooting = parseProjectDate(shootingDate);
+  if (!payment) return 'Fecha inválida';
+  if (!shooting) return 'Sin rodaje';
+  const dayMs = 24 * 60 * 60 * 1000;
+  const diffDays = Math.round((payment.getTime() - shooting.getTime()) / dayMs);
+  if (diffDays === 0) return 'Mismo día';
+  const absDays = Math.abs(diffDays);
+  const suffix = absDays === 1 ? 'día' : 'días';
+  return diffDays > 0 ? `${absDays} ${suffix} después` : `${absDays} ${suffix} antes`;
+};
+
 const sanitizeFileName = (fileName: string) => {
   return fileName
     .normalize('NFD')
@@ -215,6 +257,11 @@ const normalizeText = (value: unknown) => String(value || '')
   .toLowerCase();
 
 const isProductionArea = (area: unknown) => normalizeText(area).includes('producci');
+const isExecutiveArea = (area: unknown) => normalizeText(area).includes('ejecutiv');
+const isPostProductionArea = (area: unknown) => {
+  const normalized = normalizeText(area);
+  return normalized.includes('post') && normalized.includes('producci');
+};
 
 const formatExportDate = (dateValue: any) => {
   if (!dateValue) return '';
@@ -376,9 +423,22 @@ export default function ProjectDetail() {
             setSelectedAreaTabs([]);
           }
 
-          if (data.categories && Array.isArray(data.categories)) {
-            // Merge with defaults to ensure none are lost, but respect project specific ones if any
-            setCategories(Array.from(new Set([...BUDGET_AREAS, ...data.categories])));
+          if (data.categories && Array.isArray(data.categories) && data.categories.length > 0) {
+            // Once a project has saved categories, respect them exactly.
+            // A one-time migration adds Ejecutiva to older projects; after that, admins can delete it and it stays deleted.
+            const savedCategories = Array.from(new Set(data.categories));
+            const needsExecutiveDefault = !data.executiveCategoryDefaultApplied && !savedCategories.some(isExecutiveArea);
+            const resolvedCategories = needsExecutiveDefault
+              ? ['Ejecutiva', ...savedCategories]
+              : savedCategories;
+            setCategories(resolvedCategories);
+            if (needsExecutiveDefault) {
+              updateDoc(doc(db, 'projects', id), {
+                categories: resolvedCategories,
+                executiveCategoryDefaultApplied: true,
+                updatedAt: serverTimestamp(),
+              }).catch((error) => console.error('Error applying executive category default:', error));
+            }
           } else {
             setCategories(BUDGET_AREAS);
           }
@@ -729,6 +789,42 @@ export default function ProjectDetail() {
       console.error("Error updating area expense:", e);
     }
   };
+
+  const updateScheduledPaymentDate = async (item: any, collectionName: PaymentCollection, paymentDate: string) => {
+    if (!item?.id) return;
+    const currentDate = toDateInputValue(item.paymentDate);
+    if (currentDate === paymentDate) return;
+
+    if (collectionName === 'budgetItems') {
+      await updateBudgetItem(item.id, { paymentDate });
+    } else {
+      await updateAreaExpense(item.id, { paymentDate });
+    }
+  };
+
+  const renderPaymentScheduleCell = (item: any, collectionName: PaymentCollection, disabled: boolean) => (
+    <div className="space-y-1">
+      <input
+        type="date"
+        defaultValue={toDateInputValue(item.paymentDate)}
+        disabled={disabled}
+        onBlur={(event) => updateScheduledPaymentDate(item, collectionName, event.target.value)}
+        className={cn(
+          "w-full px-2 py-1.5 bg-slate-50 border border-slate-100 rounded text-[10px] font-bold focus:outline-none focus:border-black transition-all",
+          disabled && "cursor-not-allowed text-slate-400 bg-slate-100"
+        )}
+      />
+    </div>
+  );
+
+  const renderPaymentLeadTimeCell = (item: any) => (
+    <div className={cn(
+      "text-[9px] font-black uppercase tracking-widest text-center px-2 py-1.5 rounded border",
+      item.paymentDate ? "bg-slate-50 border-slate-100 text-slate-600" : "bg-white border-slate-100 text-slate-300"
+    )}>
+      {getPaymentLeadTimeLabel(item.paymentDate, project?.shootingDate)}
+    </div>
+  );
 
   const deleteAreaExpense = async (expenseId: string) => {
     const currentExpense = areaExpenses.find(e => e.id === expenseId);
@@ -1170,17 +1266,32 @@ export default function ProjectDetail() {
     
     const itemsToDelete = budgetItems.filter(i => i.area === area);
     const newCategories = categories.filter(c => c !== area);
+    const newActiveAreas = activeAreas.filter(a => a !== area);
     
     try {
       // Delete items in category
       for (const item of itemsToDelete) {
         await deleteDoc(doc(db, 'projects', id, 'budgetItems', item.id));
       }
-      // Update categories in project
-      await updateDoc(doc(db, 'projects', id), { categories: newCategories });
+      // Update categories in project and remove it from active area management if needed
+      await updateDoc(doc(db, 'projects', id), { categories: newCategories, activeAreas: newActiveAreas });
+
+      const collaboratorsToUpdate = collaborators.filter(col => safeArray(col.allowedCategories).includes(area));
+      for (const col of collaboratorsToUpdate) {
+        await updateDoc(doc(db, 'projects', id, 'collaborators', normalizeEmail(col.email)), {
+          allowedCategories: safeArray(col.allowedCategories).filter(cat => cat !== area),
+          updatedAt: serverTimestamp(),
+        });
+      }
       
       setCategories(newCategories);
+      setActiveAreas(newActiveAreas);
+      setSelectedAreaTabs(current => current.filter(tab => tab !== area));
       setBudgetItems(prev => prev.filter(i => i.area !== area));
+      setCollaborators(prev => prev.map(col => ({
+        ...col,
+        allowedCategories: safeArray(col.allowedCategories).filter(cat => cat !== area),
+      })));
     } catch (e) {
       console.error("Error deleting category:", e);
     }
@@ -1619,6 +1730,8 @@ export default function ProjectDetail() {
       Cantidad: item.quantity || 0,
       'P Unitario': item.unitPrice || 0,
       Total: item.total || 0,
+      'Fecha Pago': item.paymentDate || '',
+      'Rodaje a Pago': getPaymentLeadTimeLabel(item.paymentDate, project?.shootingDate),
       Pagado: item.paid ? 'Si' : 'No',
       Orden: item.order || 0,
     }));
@@ -1641,6 +1754,8 @@ export default function ProjectDetail() {
         Cantidad: item.quantity || 0,
         'P Unitario': item.unitPrice || 0,
         Total: item.total || 0,
+        'Fecha Pago': item.paymentDate || '',
+        'Rodaje a Pago': getPaymentLeadTimeLabel(item.paymentDate, project?.shootingDate),
         Pagado: paid,
         Deuda: (Number(item.total) || 0) - paid,
         Factura: item.invoice?.url || '',
@@ -1683,7 +1798,15 @@ export default function ProjectDetail() {
       .filter((item) => item.total > 0)
   ), [areaExpenses, budgetItems, categories]);
 
-  const productionTotal = resultCategoryTotals.reduce((acc, item) => acc + item.total, 0);
+  const executiveTotal = resultCategoryTotals
+    .filter((item) => isExecutiveArea(item.area))
+    .reduce((acc, item) => acc + item.total, 0);
+  const postProductionTotal = resultCategoryTotals
+    .filter((item) => isPostProductionArea(item.area))
+    .reduce((acc, item) => acc + item.total, 0);
+  const productionCategoryTotals = resultCategoryTotals.filter((item) => !isExecutiveArea(item.area) && !isPostProductionArea(item.area));
+  const productionTotal = productionCategoryTotals.reduce((acc, item) => acc + item.total, 0);
+  const directCostTotal = productionTotal + executiveTotal + postProductionTotal;
   const indirectTotal = resultIndirectExpenses.reduce((acc: number, item: any) => acc + (Number(item.total) || 0), 0);
   const saleValue = Number(project?.budgetTotal) || 0;
   const incidenceRows = RESULT_INCIDENCES.map((incidence) => {
@@ -1695,7 +1818,7 @@ export default function ProjectDetail() {
     };
   });
   const incidenceTotal = incidenceRows.reduce((acc, item) => acc + item.amount, 0);
-  const totalCost = productionTotal + indirectTotal + incidenceTotal;
+  const totalCost = directCostTotal + indirectTotal + incidenceTotal;
   const margin = saleValue - totalCost;
   const marginPercent = saleValue > 0 ? (margin / saleValue) * 100 : 0;
 
@@ -2360,16 +2483,18 @@ export default function ProjectDetail() {
             </header>
 
             <div className="bg-white border border-slate-200 rounded-xl shadow-sm">
-              <div className="min-w-[1000px]">
+              <div className="min-w-[1200px]">
                 {/* Header Row */}
-                <div className="grid grid-cols-12 bg-slate-50 border-b border-slate-200 px-4 py-3">
+                <div className="grid grid-cols-12 bg-slate-50 border-b border-slate-200 px-4 py-3 gap-2">
                   <div className="col-span-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">Proveedor / Profesional</div>
-                  <div className="col-span-3 text-[10px] font-bold uppercase tracking-widest text-slate-400">Descripción / Tarea</div>
-                  <div className="col-span-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">P. Unitario</div>
+                  <div className="col-span-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">Descripción / Tarea</div>
+                  <div className="col-span-1 text-[10px] font-bold uppercase tracking-widest text-slate-400">P. Unitario</div>
                   <div className="col-span-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Cant.</div>
                   <div className="col-span-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Total</div>
+                  <div className="col-span-2 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Fecha Pago</div>
+                  <div className="col-span-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Rodaje → Pago</div>
                   <div className="col-span-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Pagado</div>
-                  <div className="col-span-2"></div>
+                  <div className="col-span-1"></div>
                 </div>
 
                 <DragDropContext onDragEnd={canEditMainBudget ? onDragEnd : () => {}}>
@@ -2470,7 +2595,7 @@ export default function ProjectDetail() {
                                                       <div {...provided.dragHandleProps} className={cn("mr-2 text-slate-300", canEditMainBudget ? "hover:text-slate-500 cursor-grab active:cursor-grabbing" : "opacity-30")}>
                                                         <GripVertical className="w-4 h-4" />
                                                       </div>
-                                                      <div className="grid grid-cols-12 w-full items-center">
+                                                      <div className="grid grid-cols-12 w-full items-center gap-2">
                                                         <div className="col-span-2">
                                                           <BudgetRowCell 
                                                             item={item} 
@@ -2481,7 +2606,7 @@ export default function ProjectDetail() {
                                                             disabled={!canEditMainBudget}
                                                           />
                                                         </div>
-                                                        <div className="col-span-3">
+                                                        <div className="col-span-2">
                                                           <BudgetRowCell 
                                                             item={item} 
                                                             onUpdate={updateBudgetItem} 
@@ -2489,7 +2614,7 @@ export default function ProjectDetail() {
                                                             disabled={!canEditMainBudget}
                                                           />
                                                         </div>
-                                                        <div className="col-span-2">
+                                                        <div className="col-span-1">
                                                           <BudgetRowCell 
                                                             item={item} 
                                                             onUpdate={updateBudgetItem} 
@@ -2508,6 +2633,12 @@ export default function ProjectDetail() {
                                                         <div className="col-span-1 text-right font-bold text-slate-900 text-xs">
                                                           ${item.total?.toLocaleString()}
                                                         </div>
+                                                        <div className="col-span-2">
+                                                          {renderPaymentScheduleCell(item, 'budgetItems', !canEditMainBudget)}
+                                                        </div>
+                                                        <div className="col-span-1">
+                                                          {renderPaymentLeadTimeCell(item)}
+                                                        </div>
                                                         <div className="col-span-1">
                                                           <BudgetRowCell 
                                                             item={item} 
@@ -2518,7 +2649,7 @@ export default function ProjectDetail() {
                                                             disabled={!canEditMainBudget}
                                                           />
                                                         </div>
-                                                        <div className="col-span-2 text-right">
+                                                        <div className="col-span-1 text-right">
                                                           {canEditMainBudget && (
                                                           <button 
                                                             onClick={() => deleteBudgetItem(item.id)}
@@ -2553,8 +2684,8 @@ export default function ProjectDetail() {
 
                 {/* Footer Total Row */}
                 <div className="grid grid-cols-12 bg-slate-900 text-white px-4 py-5 items-center">
-                  <div className="col-span-9 text-right text-[11px] font-bold uppercase tracking-widest text-slate-400">Total presupuesto del proyecto</div>
-                  <div className="col-span-2 text-right text-xl font-bold font-mono">
+                  <div className="col-span-10 text-right text-[11px] font-bold uppercase tracking-widest text-slate-400">Total presupuesto del proyecto</div>
+                  <div className="col-span-1 text-right text-xl font-bold font-mono">
                     ${visibleBudgetItems.reduce((acc, curr) => acc + (curr.total || 0), 0).toLocaleString()}
                   </div>
                   <div className="col-span-1"></div>
@@ -2754,16 +2885,17 @@ export default function ProjectDetail() {
                     </div>
                   </div>
                   
-                  <div className="min-w-[800px]">
-                    <div className="grid grid-cols-12 bg-slate-50 border-b border-slate-200 px-6 py-3">
+                  <div className="min-w-[1200px]">
+                    <div className="grid grid-cols-12 bg-slate-50 border-b border-slate-200 px-6 py-3 gap-2">
                       <div className="col-span-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">Proveedor / Concepto</div>
-                      <div className="col-span-3 text-[10px] font-bold uppercase tracking-widest text-slate-400">Descripción Detallada</div>
+                      <div className="col-span-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">Descripción Detallada</div>
                       <div className="col-span-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Factura</div>
-                      <div className="col-span-2 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">P. Unitario</div>
+                      <div className="col-span-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">P. Unitario</div>
                       <div className="col-span-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Cant.</div>
                       <div className="col-span-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Total</div>
+                      <div className="col-span-2 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Fecha Pago</div>
+                      <div className="col-span-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Rodaje → Pago</div>
                       <div className="col-span-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Pagado</div>
-                      <div className="col-span-1"></div>
                     </div>
 
                     <div className="divide-y divide-slate-100">
@@ -2786,7 +2918,7 @@ export default function ProjectDetail() {
                             }}
                             onDrop={(event) => canUploadAreaFiles(item.area) && handleInvoiceDrop(event, item)}
                             className={cn(
-                              "relative grid grid-cols-12 px-6 py-3 items-center transition-colors group",
+                              "relative grid grid-cols-12 px-6 py-3 items-center gap-2 transition-colors group",
                               dragOverExpenseId === item.id
                                 ? "bg-emerald-50 ring-2 ring-inset ring-emerald-400"
                                 : "hover:bg-slate-50"
@@ -2810,7 +2942,7 @@ export default function ProjectDetail() {
                                 disabled={!canEditArea(item.area)}
                               />
                             </div>
-                            <div className="col-span-3">
+                            <div className="col-span-2">
                               <BudgetRowCell 
                                 item={item} 
                                 onUpdate={updateAreaExpense} 
@@ -2872,7 +3004,7 @@ export default function ProjectDetail() {
                                 )}
                               </div>
                             </div>
-                            <div className="col-span-2">
+                            <div className="col-span-1">
                               <BudgetRowCell 
                                 item={item} 
                                 onUpdate={updateAreaExpense} 
@@ -2891,7 +3023,13 @@ export default function ProjectDetail() {
                             <div className="col-span-1 text-right font-bold text-slate-900 text-xs">
                               ${item.total?.toLocaleString()}
                             </div>
+                            <div className="col-span-2">
+                              {renderPaymentScheduleCell(item, 'areaExpenses', !canEditArea(item.area))}
+                            </div>
                             <div className="col-span-1">
+                              {renderPaymentLeadTimeCell(item)}
+                            </div>
+                            <div className="col-span-1 flex items-center justify-center gap-2">
                                <BudgetRowCell 
                                  item={item} 
                                  onUpdate={updateAreaExpense} 
@@ -2899,8 +3037,6 @@ export default function ProjectDetail() {
                                  onManagePayment={(item) => openPaymentModal(item, 'areaExpenses')}
                                  disabledPayment={!canEditArea(item.area)}
                                />
-                            </div>
-                            <div className="col-span-1 text-right">
                                {canEditArea(item.area) && (
                                  <button 
                                    onClick={() => deleteAreaExpense(item.id)}
@@ -3024,7 +3160,7 @@ export default function ProjectDetail() {
               </div>
             </header>
 
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-3">
               <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Valor de Venta</div>
                 <div className="text-lg font-bold text-slate-900">${saleValue.toLocaleString()}</div>
@@ -3033,7 +3169,17 @@ export default function ProjectDetail() {
               <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Produccion</div>
                 <div className="text-lg font-bold text-slate-900">${productionTotal.toLocaleString()}</div>
-                <div className="text-[9px] text-slate-400 mt-2">{resultCategoryTotals.length} categorias con costo</div>
+                <div className="text-[9px] text-slate-400 mt-2">{productionCategoryTotals.length} categorias con costo</div>
+              </div>
+              <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
+                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Ejecutiva</div>
+                <div className="text-lg font-bold text-slate-900">${executiveTotal.toLocaleString()}</div>
+                <div className="text-[9px] text-slate-400 mt-2">Separado de Produccion</div>
+              </div>
+              <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
+                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Post Produccion</div>
+                <div className="text-lg font-bold text-slate-900">${postProductionTotal.toLocaleString()}</div>
+                <div className="text-[9px] text-slate-400 mt-2">Separado de Produccion</div>
               </div>
               <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Indirectos</div>
@@ -3048,7 +3194,7 @@ export default function ProjectDetail() {
               <div className="bg-slate-900 p-5 rounded-xl border border-slate-900 shadow-sm text-white">
                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Costo Total</div>
                 <div className="text-xl font-bold font-mono">${totalCost.toLocaleString()}</div>
-                <div className="text-[9px] text-slate-400 mt-2">Produccion + indirectos + incidencias</div>
+                <div className="text-[9px] text-slate-400 mt-2">Directos + indirectos + incidencias</div>
               </div>
             </div>
 
@@ -3059,7 +3205,7 @@ export default function ProjectDetail() {
                 </div>
                 <div className="divide-y divide-slate-100">
                   {resultCategoryTotals.map((category) => {
-                    const percent = productionTotal > 0 ? (category.total / productionTotal) * 100 : 0;
+                    const percent = directCostTotal > 0 ? (category.total / directCostTotal) * 100 : 0;
                     return (
                       <div key={category.area} className="p-4">
                         <div className="flex items-center justify-between gap-3 mb-2">
@@ -3172,10 +3318,12 @@ export default function ProjectDetail() {
             </div>
 
             <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-              <div className="grid grid-cols-1 md:grid-cols-5 divide-y md:divide-y-0 md:divide-x divide-slate-100">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 divide-y lg:divide-y-0 lg:divide-x divide-slate-100">
                 {[
                   { label: 'Valor de venta', value: saleValue, tone: 'text-slate-900' },
                   { label: 'Produccion', value: -productionTotal, tone: 'text-rose-600' },
+                  { label: 'Ejecutiva', value: -executiveTotal, tone: 'text-rose-600' },
+                  { label: 'Post Produccion', value: -postProductionTotal, tone: 'text-rose-600' },
                   { label: 'Indirectos', value: -indirectTotal, tone: 'text-rose-600' },
                   { label: 'Incidencias', value: -incidenceTotal, tone: 'text-rose-600' },
                   { label: 'Margen', value: margin, tone: margin >= 0 ? 'text-emerald-600' : 'text-rose-600' },
@@ -3338,6 +3486,11 @@ export default function ProjectDetail() {
                                  <span className="max-w-[170px] truncate text-slate-500" title={entry.description}>
                                    {entry.description || 'Movimiento'}
                                  </span>
+                                 {entry.item?.paymentDate && (
+                                   <span className="px-2 py-1 rounded bg-slate-50 border border-slate-100 text-slate-500 font-bold uppercase tracking-widest">
+                                     Pago {formatDate(entry.item.paymentDate)} · {getPaymentLeadTimeLabel(entry.item.paymentDate, project?.shootingDate)}
+                                   </span>
+                                 )}
                                  <span className={cn(
                                    "px-2 py-1 rounded border font-bold uppercase tracking-widest",
                                    entryDebt > 0 ? "bg-rose-50 border-rose-100 text-rose-700" : "bg-emerald-50 border-emerald-100 text-emerald-700"

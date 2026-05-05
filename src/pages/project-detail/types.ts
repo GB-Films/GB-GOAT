@@ -28,6 +28,7 @@ export interface BudgetItem {
   unitPrice: number;
   total: number;
   paid?: boolean;
+  paymentDate?: string;
   paymentHistory?: Payment[];
   order: number;
   createdAt: any;
