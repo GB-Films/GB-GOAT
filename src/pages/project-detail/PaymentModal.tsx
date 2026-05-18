@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { doc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { collection, doc, serverTimestamp, updateDoc, writeBatch } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { Calendar, DollarSign, ExternalLink, History, Paperclip, Plus, Trash2, Wallet } from 'lucide-react';
 import { motion } from 'motion/react';
@@ -55,6 +55,10 @@ interface PaymentModalProps {
   item: any | null;
   isOpen: boolean;
   canManagePayments: boolean;
+  canUseCashBox: boolean;
+  cashBoxBalance: number;
+  cashOwnerEmail?: string;
+  cashOwnerName?: string;
   paymentType: PaymentCollection;
   isDeletingPayment: number | null;
   onClose: () => void;
@@ -65,6 +69,7 @@ interface PaymentModalProps {
     isFullyPaid: boolean
   ) => void;
   onDeletePayment: (paymentIndex: number) => Promise<void>;
+  onCashMovementCreated?: (movement: any) => void;
 }
 
 export function PaymentModal({
@@ -72,11 +77,16 @@ export function PaymentModal({
   item,
   isOpen,
   canManagePayments,
+  canUseCashBox,
+  cashBoxBalance,
+  cashOwnerEmail,
+  cashOwnerName,
   paymentType,
   isDeletingPayment,
   onClose,
   onPaymentStateChange,
   onDeletePayment,
+  onCashMovementCreated,
 }: PaymentModalProps) {
   const amountRef = useRef<HTMLInputElement>(null);
   const [selectedReceipt, setSelectedReceipt] = useState<File | null>(null);
@@ -174,9 +184,15 @@ export function PaymentModal({
               const amount = Number(formData.get('amount'));
               const formReceiptFile = formData.get('receipt') as File | null;
               const receiptFile = selectedReceipt || (formReceiptFile && formReceiptFile.size > 0 ? formReceiptFile : null);
+              const useCashBox = formData.get('useCashBox') === 'on';
               
               if (!amount || amount <= 0) {
                 alert('Por favor ingrese un monto válido');
+                return;
+              }
+
+              if (useCashBox && amount > cashBoxBalance + 0.01) {
+                alert('El monto supera el saldo disponible en caja.');
                 return;
               }
 
@@ -198,7 +214,8 @@ export function PaymentModal({
                 amount,
                 detail: formData.get('detail') as string,
                 date: customDate ? new Date(customDate + 'T12:00:00') : new Date(),
-                type: isRemainingBalance ? 'total' : 'partial'
+                type: isRemainingBalance ? 'total' : 'partial',
+                method: useCashBox ? 'caja_efectivo' : 'otro',
               };
 
               const updatedHistory = [...paymentHistory, newPayment];
@@ -208,8 +225,15 @@ export function PaymentModal({
 
               const collectionName: PaymentCollection = item.__paymentCollection || paymentType;
               const docRef = doc(db, 'projects', projectId, collectionName, currentItemId);
+              const cashMovementRef = useCashBox ? doc(collection(db, 'projects', projectId, 'cashMovements')) : null;
               
               try {
+                if (useCashBox && cashMovementRef) {
+                  newPayment.paidByEmail = cashOwnerEmail || '';
+                  newPayment.paidByName = cashOwnerName || '';
+                  newPayment.cashMovementId = cashMovementRef.id;
+                }
+
                 if (receiptFile && receiptFile.size > 0) {
                   const fileName = buildReceiptFileName(paymentId, receiptFile);
                   const path = `projects/${projectId}/${collectionName}/${currentItemId}/comprobantes/${fileName}`;
@@ -239,11 +263,41 @@ export function PaymentModal({
                   };
                 }
 
-                await updateDoc(docRef, {
-                  paymentHistory: updatedHistory,
-                  paid: isFullyPaid,
-                  updatedAt: serverTimestamp()
-                });
+                if (useCashBox && cashMovementRef) {
+                  const paymentDate = customDate ? new Date(customDate + 'T12:00:00') : new Date();
+                  const movement = {
+                    type: 'pago',
+                    amount,
+                    date: paymentDate,
+                    fromUserEmail: cashOwnerEmail || '',
+                    fromUserName: cashOwnerName || '',
+                    area: item.area || '',
+                    collectionName,
+                    itemId: currentItemId,
+                    paymentId,
+                    description: item.description || '',
+                    notes: formData.get('detail') as string || '',
+                    createdByEmail: cashOwnerEmail || '',
+                    createdByName: cashOwnerName || '',
+                    createdAt: serverTimestamp(),
+                    updatedAt: serverTimestamp(),
+                  };
+                  const batch = writeBatch(db);
+                  batch.set(cashMovementRef, movement);
+                  batch.update(docRef, {
+                    paymentHistory: updatedHistory,
+                    paid: isFullyPaid,
+                    updatedAt: serverTimestamp()
+                  });
+                  await batch.commit();
+                  onCashMovementCreated?.({ id: cashMovementRef.id, ...movement, createdAt: new Date(), updatedAt: new Date() });
+                } else {
+                  await updateDoc(docRef, {
+                    paymentHistory: updatedHistory,
+                    paid: isFullyPaid,
+                    updatedAt: serverTimestamp()
+                  });
+                }
 
                 onPaymentStateChange(currentItemId, collectionName, updatedHistory, isFullyPaid);
                 
@@ -294,6 +348,15 @@ export function PaymentModal({
                 <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Detalle / Referencia</label>
                 <input name="detail" placeholder="Ej: Transferencia Banco X, Pago en efectivo..." className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all" />
               </div>
+              {canUseCashBox && (
+                <label className="flex items-center justify-between gap-4 p-4 bg-amber-50 border border-amber-100 rounded-xl cursor-pointer">
+                  <div>
+                    <div className="text-[10px] font-bold uppercase tracking-widest text-amber-700">Usar caja en efectivo</div>
+                    <div className="text-xs text-amber-700/70 mt-1">Saldo disponible: ${cashBoxBalance.toLocaleString()}</div>
+                  </div>
+                  <input name="useCashBox" type="checkbox" className="w-4 h-4 accent-amber-600" />
+                </label>
+              )}
               <div>
                 <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Comprobante de Pago</label>
                 <label

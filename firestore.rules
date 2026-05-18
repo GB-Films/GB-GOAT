@@ -33,9 +33,18 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/projects/$(projectId)/collaborators/$(userEmail())).data;
     }
 
+    function collaboratorDocByEmail(projectId, email) {
+      return get(/databases/$(database)/documents/projects/$(projectId)/collaborators/$(email)).data;
+    }
+
     function hasCollaboratorDoc(projectId) {
       return isSignedIn()
         && exists(/databases/$(database)/documents/projects/$(projectId)/collaborators/$(userEmail()));
+    }
+
+    function hasCollaboratorDocByEmail(projectId, email) {
+      return email is string
+        && exists(/databases/$(database)/documents/projects/$(projectId)/collaborators/$(email));
     }
 
     function isProjectOwner(projectId) {
@@ -98,6 +107,47 @@ service cloud.firestore {
     function canUpdatePaymentFields(projectId, area) {
       return canWriteArea(projectId, area)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['paymentHistory', 'paid', 'updatedAt']);
+    }
+
+    function cashMovementBaseIsValid() {
+      return request.resource.data.amount is number
+        && request.resource.data.amount > 0
+        && request.resource.data.date is timestamp;
+    }
+
+    function canCreateCashMovement(projectId) {
+      return cashMovementBaseIsValid()
+        && (
+          (
+            isProjectAdmin(projectId)
+            && request.resource.data.type == 'entrega'
+            && hasCollaboratorDocByEmail(projectId, request.resource.data.toUserEmail)
+            && collaboratorDocByEmail(projectId, request.resource.data.toUserEmail).role in ['jefe_produccion', 'jefe_area']
+          )
+          || (
+            isProjectProductionLead(projectId)
+            && request.resource.data.type == 'transferencia'
+            && request.resource.data.fromUserEmail == userEmail()
+            && hasCollaboratorDocByEmail(projectId, request.resource.data.toUserEmail)
+            && collaboratorDocByEmail(projectId, request.resource.data.toUserEmail).role == 'jefe_area'
+            && collaboratorDocByEmail(projectId, request.resource.data.toUserEmail).allowedCategories.hasAny(collaboratorDoc(projectId).allowedCategories)
+          )
+          || (
+            request.resource.data.type == 'pago'
+            && request.resource.data.fromUserEmail == userEmail()
+            && request.resource.data.collectionName in ['budgetItems', 'areaExpenses']
+            && canWriteArea(projectId, request.resource.data.area)
+          )
+        );
+    }
+
+    function canDeleteCashMovement(projectId) {
+      return isProjectAdmin(projectId)
+        || (
+          resource.data.type == 'pago'
+          && resource.data.fromUserEmail == userEmail()
+          && canWriteArea(projectId, resource.data.area)
+        );
     }
 
     function inviteIsPending(token) {
@@ -201,6 +251,13 @@ service cloud.firestore {
         allow read: if hasProjectAccess(projectId);
         allow create: if canWriteProjectDocument(projectId);
         allow update, delete: if isProjectAdmin(projectId);
+      }
+
+      match /cashMovements/{movementId} {
+        allow read: if hasProjectAccess(projectId);
+        allow create: if canCreateCashMovement(projectId);
+        allow update: if false;
+        allow delete: if canDeleteCashMovement(projectId);
       }
     }
 

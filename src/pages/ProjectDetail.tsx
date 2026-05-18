@@ -41,13 +41,14 @@ import { cn } from '../lib/utils';
 import { buildPaymentBuckets, formatDateKey, formatPeriodLabel, getOverdueLines, getTodayLines, getUnscheduledLines, sumDebt, type PaymentScheduleLine, type PaymentScheduleView } from '../lib/paymentSchedule';
 import { BudgetRowCell } from './project-detail/BudgetRowCell';
 import { PaymentModal } from './project-detail/PaymentModal';
-import type { BudgetItem, Collaborator, Payment, PaymentCollection } from './project-detail/types';
+import type { BudgetItem, CashMovement, Collaborator, Payment, PaymentCollection } from './project-detail/types';
 import { formatIdentifier, inferLegacyIdentifiers, providerDisplayName } from '../lib/providerConstants';
 
 const tabs = [
   { id: 'resumen', label: 'Resumen', icon: Info },
   { id: 'presupuesto', label: 'Presupuesto Principal', icon: DollarSign },
   { id: 'areas', label: 'Áreas', icon: LayoutGrid },
+  { id: 'cajas', label: 'Cajas', icon: Wallet },
   { id: 'saldos', label: 'Finanzas', icon: Wallet },
   { id: 'documentos', label: 'Documentos', icon: FileText },
   { id: 'resultado', label: 'Resultado', icon: BarChart2 },
@@ -99,8 +100,8 @@ const roleLabels: Record<Collaborator['role'], string> = {
 };
 
 const PROJECT_TAB_IDS = tabs.map(tab => tab.id);
-const DEFAULT_AREA_LEAD_TABS = ['resumen', 'areas', 'saldos', 'documentos', 'proveedores'];
-const DEFAULT_PRODUCTION_LEAD_TABS = ['resumen', 'areas', 'saldos', 'documentos', 'proveedores', 'permisos'];
+const DEFAULT_AREA_LEAD_TABS = ['resumen', 'areas', 'cajas', 'saldos', 'documentos', 'proveedores'];
+const DEFAULT_PRODUCTION_LEAD_TABS = ['resumen', 'areas', 'cajas', 'saldos', 'documentos', 'proveedores', 'permisos'];
 const PROJECT_ADMIN_ROLE_OPTIONS: Collaborator['role'][] = ['admin', 'jefe_produccion', 'jefe_area'];
 const PRODUCTION_LEAD_ROLE_OPTIONS: Collaborator['role'][] = ['jefe_area'];
 const safeArray = (value: any): string[] => Array.isArray(value) ? value : [];
@@ -123,6 +124,10 @@ const normalizeAllowedTabs = (allowedTabs: any, role?: Collaborator['role'] | st
   const looksLikeCurrentDefault = normalized.includes('areas') && normalized.includes('saldos') && !normalized.includes('presupuesto');
   if (looksLikeCurrentDefault && (!normalized.includes('proveedores') || !normalized.includes('documentos'))) {
     return Array.from(new Set([...normalized, 'documentos', 'proveedores']));
+  }
+
+  if (looksLikeCurrentDefault && !normalized.includes('cajas')) {
+    return Array.from(new Set([...normalized, 'cajas']));
   }
 
   return normalized.length ? normalized : DEFAULT_AREA_LEAD_TABS;
@@ -347,6 +352,9 @@ export default function ProjectDetail() {
   const [activeAreas, setActiveAreas] = useState<string[]>([]);
   const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>({});
   const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
+  const [cashMovements, setCashMovements] = useState<CashMovement[]>([]);
+  const [cashRecipientEmail, setCashRecipientEmail] = useState('');
+  const [cashTransferTargetEmail, setCashTransferTargetEmail] = useState('');
   const [availableUsers, setAvailableUsers] = useState<any[]>([]);
   const [newCollaboratorSearch, setNewCollaboratorSearch] = useState('');
   const [selectedUserToAdd, setSelectedUserToAdd] = useState<any | null>(null);
@@ -490,6 +498,9 @@ export default function ProjectDetail() {
         const dq = query(collection(db, 'projects', id, 'projectDocuments'));
         const dSnap = await getDocs(dq);
         setManualProjectDocuments(dSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+
+        const cashSnap = await getDocs(collection(db, 'projects', id, 'cashMovements'));
+        setCashMovements(cashSnap.docs.map(d => ({ id: d.id, ...d.data() } as CashMovement)));
 
         // Fetch all Providers (for selection)
         const pq = query(collection(db, 'providers'));
@@ -1145,6 +1156,11 @@ export default function ProjectDetail() {
         deleteObject(ref(storage, paymentToDelete.receipt.path)).catch(() => {});
       }
 
+      if (paymentToDelete.cashMovementId) {
+        await deleteDoc(doc(db, 'projects', id, 'cashMovements', paymentToDelete.cashMovementId));
+        setCashMovements((current) => current.filter((movement) => movement.id !== paymentToDelete.cashMovementId));
+      }
+
       updatePaymentState(currentItemId, collectionName, updatedHistory, isFullyPaid);
     } catch (error: any) {
       console.error('Error deleting payment:', error);
@@ -1386,6 +1402,8 @@ export default function ProjectDetail() {
   );
   const canSeeFullPayroll = isProjectAdmin || isProductionLead;
   const roleOptionsForCurrentUser = isProjectAdmin ? PROJECT_ADMIN_ROLE_OPTIONS : PRODUCTION_LEAD_ROLE_OPTIONS;
+  const currentUserEmail = normalizeEmail(user?.email);
+  const currentUserName = profile?.displayName || user?.displayName || currentUserEmail;
   const canEditMainBudget = isProjectAdmin;
   const canEditArea = (area?: string | null) => {
     if (!area) return false;
@@ -1416,6 +1434,94 @@ export default function ProjectDetail() {
       return [candidate.displayName, candidate.email].filter(Boolean).join(' ').toLowerCase().includes(term);
     })
     .slice(0, 8);
+
+  const cashResponsibles = React.useMemo(() => (
+    collaborators
+      .filter((col) => col.role === 'jefe_produccion' || col.role === 'jefe_area')
+      .map((col) => ({
+        ...col,
+        email: normalizeEmail(col.email),
+        displayName: col.displayName || col.email,
+      }))
+      .sort((a, b) => (a.displayName || a.email).localeCompare(b.displayName || b.email, 'es'))
+  ), [collaborators]);
+
+  const cashBalanceByEmail = React.useMemo(() => {
+    const balances = new Map<string, number>();
+    cashMovements.forEach((movement) => {
+      const amount = Number(movement.amount) || 0;
+      const toEmail = normalizeEmail(movement.toUserEmail);
+      const fromEmail = normalizeEmail(movement.fromUserEmail);
+      if (toEmail) balances.set(toEmail, (balances.get(toEmail) || 0) + amount);
+      if (fromEmail) balances.set(fromEmail, (balances.get(fromEmail) || 0) - amount);
+    });
+    return balances;
+  }, [cashMovements]);
+
+  const currentCashBalance = cashBalanceByEmail.get(currentUserEmail) || 0;
+  const productionTransferTargets = React.useMemo(() => (
+    cashResponsibles.filter((responsible) => {
+      if (responsible.role !== 'jefe_area') return false;
+      if (normalizeEmail(responsible.email) === currentUserEmail) return false;
+      if (isProjectAdmin) return true;
+      const ownAreas = safeArray(userPermissions?.allowedCategories);
+      return safeArray(responsible.allowedCategories).some((area) => ownAreas.includes(area));
+    })
+  ), [cashResponsibles, currentUserEmail, isProjectAdmin, userPermissions]);
+
+  const visibleCashRows = React.useMemo(() => (
+    cashResponsibles
+      .filter((responsible) => (
+        isProjectAdmin
+        || normalizeEmail(responsible.email) === currentUserEmail
+        || (
+          isProductionLead
+          && responsible.role === 'jefe_area'
+          && safeArray(responsible.allowedCategories).some((area) => safeArray(userPermissions?.allowedCategories).includes(area))
+        )
+      ))
+      .map((responsible) => {
+        const email = normalizeEmail(responsible.email);
+        const movements = cashMovements
+          .filter((movement) => normalizeEmail(movement.toUserEmail) === email || normalizeEmail(movement.fromUserEmail) === email)
+          .sort((a, b) => {
+            const ad = a.createdAt?.seconds ? a.createdAt.seconds : new Date(a.date || 0).getTime() / 1000;
+            const bd = b.createdAt?.seconds ? b.createdAt.seconds : new Date(b.date || 0).getTime() / 1000;
+            return bd - ad;
+          });
+        const received = movements
+          .filter((movement) => normalizeEmail(movement.toUserEmail) === email)
+          .reduce((acc, movement) => acc + (Number(movement.amount) || 0), 0);
+        const used = movements
+          .filter((movement) => normalizeEmail(movement.fromUserEmail) === email && movement.type === 'pago')
+          .reduce((acc, movement) => acc + (Number(movement.amount) || 0), 0);
+        const transferred = movements
+          .filter((movement) => normalizeEmail(movement.fromUserEmail) === email && movement.type === 'transferencia')
+          .reduce((acc, movement) => acc + (Number(movement.amount) || 0), 0);
+
+        return {
+          responsible,
+          email,
+          movements,
+          received,
+          used,
+          transferred,
+          balance: cashBalanceByEmail.get(email) || 0,
+        };
+      })
+  ), [cashBalanceByEmail, cashMovements, cashResponsibles, currentUserEmail, isProductionLead, isProjectAdmin, userPermissions]);
+
+  useEffect(() => {
+    if (!cashRecipientEmail && cashResponsibles.length > 0) {
+      setCashRecipientEmail(cashResponsibles[0].email);
+    }
+  }, [cashRecipientEmail, cashResponsibles]);
+
+  useEffect(() => {
+    if (!cashTransferTargetEmail && productionTransferTargets.length > 0) {
+      setCashTransferTargetEmail(productionTransferTargets[0].email);
+    }
+  }, [cashTransferTargetEmail, productionTransferTargets]);
 
   const providerSaldosByArea = React.useMemo(() => {
     const allowedCategories = isProjectAdmin ? categories : safeArray(userPermissions?.allowedCategories);
@@ -2064,6 +2170,72 @@ export default function ProjectDetail() {
     };
   }, [areaSummaryRows]);
 
+  const createCashDelivery = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!id || !isProjectAdmin) return;
+
+    const formData = new FormData(event.currentTarget);
+    const toEmail = normalizeEmail(formData.get('toUserEmail') as string);
+    const amount = Number(formData.get('amount'));
+    const notes = String(formData.get('notes') || '').trim();
+    const recipient = cashResponsibles.find((item) => normalizeEmail(item.email) === toEmail);
+
+    if (!recipient || !amount || amount <= 0) return;
+
+    const payload = {
+      type: 'entrega',
+      amount,
+      date: new Date(),
+      toUserEmail: recipient.email,
+      toUserName: recipient.displayName || recipient.email,
+      notes,
+      createdByEmail: currentUserEmail,
+      createdByName: currentUserName,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    };
+
+    const docRef = await addDoc(collection(db, 'projects', id, 'cashMovements'), payload);
+    setCashMovements((current) => [{ id: docRef.id, ...payload, createdAt: new Date(), updatedAt: new Date() } as CashMovement, ...current]);
+    event.currentTarget.reset();
+  };
+
+  const createCashTransfer = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!id || !isProductionLead) return;
+
+    const formData = new FormData(event.currentTarget);
+    const toEmail = normalizeEmail(formData.get('toUserEmail') as string);
+    const amount = Number(formData.get('amount'));
+    const notes = String(formData.get('notes') || '').trim();
+    const recipient = productionTransferTargets.find((item) => normalizeEmail(item.email) === toEmail);
+
+    if (!recipient || !amount || amount <= 0) return;
+    if (amount > currentCashBalance + 0.01) {
+      alert('El monto supera tu saldo disponible en caja.');
+      return;
+    }
+
+    const payload = {
+      type: 'transferencia',
+      amount,
+      date: new Date(),
+      fromUserEmail: currentUserEmail,
+      fromUserName: currentUserName,
+      toUserEmail: recipient.email,
+      toUserName: recipient.displayName || recipient.email,
+      notes,
+      createdByEmail: currentUserEmail,
+      createdByName: currentUserName,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    };
+
+    const docRef = await addDoc(collection(db, 'projects', id, 'cashMovements'), payload);
+    setCashMovements((current) => [{ id: docRef.id, ...payload, createdAt: new Date(), updatedAt: new Date() } as CashMovement, ...current]);
+    event.currentTarget.reset();
+  };
+
   const addCollaborator = async (selectedUser: any) => {
     if (!id || !selectedUser?.email || !canManageProjectRoles) return;
 
@@ -2207,6 +2379,8 @@ export default function ProjectDetail() {
         'teamMembers',
         'payments',
         'invoices',
+        'projectDocuments',
+        'cashMovements',
       ];
 
       for (const subcollection of subcollections) {
@@ -3214,6 +3388,155 @@ export default function ProjectDetail() {
                 Seleccioná una o más áreas para ver gastos y presupuesto
               </div>
             )}
+          </div>
+        )}
+
+        {activeTab === 'cajas' && (
+          <div className="space-y-5 pb-20">
+            <header className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">Cajas por Responsable</h2>
+                <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest mt-1">
+                  Entregas de efectivo, pagos rendidos y saldos disponibles por persona
+                </p>
+              </div>
+              <div className="px-4 py-3 bg-slate-900 text-white rounded-xl text-right">
+                <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Mi saldo</div>
+                <div className="text-xl font-black font-mono">${currentCashBalance.toLocaleString()}</div>
+              </div>
+            </header>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {isProjectAdmin && (
+                <form onSubmit={createCashDelivery} className="bg-white border border-slate-200 rounded-xl shadow-sm p-5 space-y-4">
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900">Entregar efectivo</h3>
+                    <p className="text-[10px] uppercase tracking-widest text-slate-400 font-bold mt-1">Admin a responsable del proyecto</p>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Responsable</label>
+                      <select
+                        name="toUserEmail"
+                        value={cashRecipientEmail}
+                        onChange={(event) => setCashRecipientEmail(event.target.value)}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black"
+                      >
+                        {cashResponsibles.map((responsible) => (
+                          <option key={responsible.email} value={responsible.email}>
+                            {responsible.displayName || responsible.email} · {roleLabels[responsible.role]}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Monto</label>
+                      <input name="amount" type="number" min="0" step="0.01" required className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black" />
+                    </div>
+                  </div>
+                  <input name="notes" placeholder="Nota opcional" className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs focus:outline-none focus:border-black" />
+                  <button type="submit" className="w-full px-4 py-3 bg-black text-white rounded text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 transition-all">
+                    Registrar entrega
+                  </button>
+                </form>
+              )}
+
+              {isProductionLead && (
+                <form onSubmit={createCashTransfer} className="bg-white border border-slate-200 rounded-xl shadow-sm p-5 space-y-4">
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900">Transferir a Jefe de Área</h3>
+                    <p className="text-[10px] uppercase tracking-widest text-slate-400 font-bold mt-1">Desde tu caja disponible</p>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Destino</label>
+                      <select
+                        name="toUserEmail"
+                        value={cashTransferTargetEmail}
+                        onChange={(event) => setCashTransferTargetEmail(event.target.value)}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black"
+                      >
+                        {productionTransferTargets.map((responsible) => (
+                          <option key={responsible.email} value={responsible.email}>
+                            {responsible.displayName || responsible.email}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Monto</label>
+                      <input name="amount" type="number" min="0" max={Math.max(0, currentCashBalance)} step="0.01" required className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black" />
+                    </div>
+                  </div>
+                  <input name="notes" placeholder="Nota opcional" className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs focus:outline-none focus:border-black" />
+                  <button type="submit" disabled={currentCashBalance <= 0 || productionTransferTargets.length === 0} className="w-full px-4 py-3 bg-black text-white rounded text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 transition-all disabled:bg-slate-300 disabled:cursor-not-allowed">
+                    Transferir efectivo
+                  </button>
+                </form>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+              {visibleCashRows.map((row) => (
+                <div key={row.email} className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+                  <div className="px-5 py-4 bg-slate-50 border-b border-slate-200 flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      <div className="text-sm font-black text-slate-900 truncate">{row.responsible.displayName || row.email}</div>
+                      <div className="text-[10px] uppercase tracking-widest text-slate-400 font-bold mt-1">{roleLabels[row.responsible.role]} · {safeArray(row.responsible.allowedCategories).join(', ') || 'Sin áreas'}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className={cn("text-xl font-black font-mono", row.balance >= 0 ? "text-emerald-600" : "text-red-600")}>${row.balance.toLocaleString()}</div>
+                      <div className="text-[9px] uppercase tracking-widest text-slate-400 font-bold">Saldo</div>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-3 divide-x divide-slate-100 border-b border-slate-100">
+                    <div className="p-4">
+                      <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Recibido</div>
+                      <div className="text-sm font-black text-slate-900 mt-1">${row.received.toLocaleString()}</div>
+                    </div>
+                    <div className="p-4">
+                      <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Pagado</div>
+                      <div className="text-sm font-black text-slate-900 mt-1">${row.used.toLocaleString()}</div>
+                    </div>
+                    <div className="p-4">
+                      <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Transferido</div>
+                      <div className="text-sm font-black text-slate-900 mt-1">${row.transferred.toLocaleString()}</div>
+                    </div>
+                  </div>
+                  <div className="max-h-64 overflow-y-auto divide-y divide-slate-100">
+                    {row.movements.slice(0, 12).map((movement) => {
+                      const incoming = normalizeEmail(movement.toUserEmail) === row.email;
+                      const signedAmount = incoming ? Number(movement.amount) || 0 : -(Number(movement.amount) || 0);
+                      return (
+                        <div key={movement.id} className="px-5 py-3 flex items-center justify-between gap-4">
+                          <div className="min-w-0">
+                            <div className="text-xs font-bold text-slate-900 truncate">
+                              {movement.type === 'entrega' ? 'Entrega recibida' : movement.type === 'transferencia' ? (incoming ? 'Transferencia recibida' : 'Transferencia enviada') : 'Pago en efectivo'}
+                            </div>
+                            <div className="text-[10px] text-slate-400 truncate">
+                              {movement.description || movement.notes || movement.area || 'Movimiento de caja'} · {formatDate(movement.date || movement.createdAt)}
+                            </div>
+                          </div>
+                          <div className={cn("text-xs font-black font-mono", signedAmount >= 0 ? "text-emerald-600" : "text-rose-600")}>
+                            {signedAmount >= 0 ? '+' : '-'}${Math.abs(signedAmount).toLocaleString()}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {row.movements.length === 0 && (
+                      <div className="px-5 py-8 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
+                        Sin movimientos de caja
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {visibleCashRows.length === 0 && (
+                <div className="xl:col-span-2 bg-white border border-dashed border-slate-200 rounded-xl p-8 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
+                  No hay responsables con caja para mostrar
+                </div>
+              )}
+            </div>
           </div>
         )}
 
@@ -4538,11 +4861,16 @@ export default function ProjectDetail() {
           item={selectedItemForPayment}
           isOpen={paymentModalOpen}
           canManagePayments={canManagePaymentForItem(selectedItemForPayment, selectedItemForPayment?.__paymentCollection || paymentType)}
+          canUseCashBox={canManagePaymentForItem(selectedItemForPayment, selectedItemForPayment?.__paymentCollection || paymentType) && currentCashBalance > 0}
+          cashBoxBalance={currentCashBalance}
+          cashOwnerEmail={currentUserEmail}
+          cashOwnerName={currentUserName}
           paymentType={paymentType}
           isDeletingPayment={isDeletingPayment}
           onClose={() => setPaymentModalOpen(false)}
           onPaymentStateChange={updatePaymentState}
           onDeletePayment={deletePaymentFromSelectedItem}
+          onCashMovementCreated={(movement) => setCashMovements((current) => [movement as CashMovement, ...current])}
         />
         {showDocumentUploadModal && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[260] flex items-center justify-center p-4">
