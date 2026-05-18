@@ -29,6 +29,15 @@ service firebase.storage {
       return firestore.get(/databases/(default)/documents/projects/$(projectId)).data;
     }
 
+    function collaboratorDoc(projectId) {
+      return firestore.get(/databases/(default)/documents/projects/$(projectId)/collaborators/$(userEmail())).data;
+    }
+
+    function hasCollaboratorDoc(projectId) {
+      return isSignedIn()
+        && firestore.exists(/databases/(default)/documents/projects/$(projectId)/collaborators/$(userEmail()));
+    }
+
     function isProjectOwner(projectId) {
       return isSignedIn() && projectDoc(projectId).createdBy == request.auth.uid;
     }
@@ -41,14 +50,26 @@ service firebase.storage {
       return isAppAdmin()
         || isProjectOwner(projectId)
         || (
-          isSignedIn()
-          && firestore.exists(/databases/(default)/documents/projects/$(projectId)/collaborators/$(userEmail()))
-          && firestore.get(/databases/(default)/documents/projects/$(projectId)/collaborators/$(userEmail())).data.role == 'admin'
+          hasCollaboratorDoc(projectId)
+          && collaboratorDoc(projectId).role == 'admin'
         );
+    }
+
+    function isProjectProductionLead(projectId) {
+      return hasCollaboratorDoc(projectId)
+        && collaboratorDoc(projectId).role == 'jefe_produccion';
     }
 
     function hasProjectAccess(projectId) {
       return isProjectAdmin(projectId) || isProjectCollaborator(projectId);
+    }
+
+    function canWriteProjectDocument(projectId) {
+      return isProjectAdmin(projectId)
+        || (
+          isProjectProductionLead(projectId)
+          && 'documentos' in collaboratorDoc(projectId).allowedTabs
+        );
     }
 
     match /projects/{projectId}/areas/{area}/facturas/{fileName} {
@@ -75,7 +96,7 @@ service firebase.storage {
 
     match /projects/{projectId}/documents/{documentId}/{fileName} {
       allow read: if hasProjectAccess(projectId);
-      allow create, update: if isProjectAdmin(projectId)
+      allow create, update: if canWriteProjectDocument(projectId)
         && request.resource.size <= 15 * 1024 * 1024
         && (
           request.resource.contentType == 'application/pdf'

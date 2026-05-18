@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Plus } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { providerDisplayName } from '../../lib/providerConstants';
+import { providerDisplayName, providerMatchesSearch } from '../../lib/providerConstants';
 
 interface BudgetRowCellProps {
   item: any;
@@ -108,10 +108,7 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
                 >
                   X Desvincular actual
                 </button>
-                {providers?.filter(p => {
-                  const text = providerDisplayName(p).toLowerCase();
-                  return !providerSearch || text.includes(providerSearch.toLowerCase());
-                }).map(p => (
+                {providers?.filter(p => providerMatchesSearch(p, providerSearch)).slice(0, 40).map(p => (
                   <button
                     key={p.id}
                     onClick={() => {

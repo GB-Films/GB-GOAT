@@ -80,14 +80,34 @@ export const providerDisplayName = (provider: any) => {
 
 export const providerSearchText = (provider: any) => [
   providerDisplayName(provider),
+  provider?.name,
+  provider?.lastName,
+  provider?.fullName,
+  provider?.businessName,
   provider?.dni,
+  provider?.dniNormalized,
   provider?.cuit,
+  provider?.cuitNormalized,
   provider?.dni_cuit,
   provider?.email,
   provider?.adminEmail,
+  provider?.phone,
+  provider?.address,
   provider?.category,
   provider?.categoryOther,
 ].filter(Boolean).join(' ').toLowerCase();
+
+export const providerMatchesSearch = (provider: any, search: string) => {
+  const terms = String(search || '')
+    .toLowerCase()
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (terms.length === 0) return true;
+  const haystack = providerSearchText(provider);
+  return terms.every((term) => haystack.includes(term));
+};
 
 export const inferLegacyIdentifiers = (provider: any) => {
   const dni = normalizeDigits(provider?.dni);

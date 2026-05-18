@@ -94,17 +94,26 @@ const statusColors: Record<string, string> = {
 
 const roleLabels: Record<Collaborator['role'], string> = {
   admin: 'Admin de proyecto',
+  jefe_produccion: 'Jefe de Produccion',
   jefe_area: 'Jefe de Área',
-  colaborador: 'Colaborador',
-  lector: 'Lector',
 };
 
 const PROJECT_TAB_IDS = tabs.map(tab => tab.id);
-const DEFAULT_COLLABORATOR_TABS = ['resumen', 'areas', 'saldos', 'documentos', 'proveedores'];
+const DEFAULT_AREA_LEAD_TABS = ['resumen', 'areas', 'saldos', 'documentos', 'proveedores'];
+const DEFAULT_PRODUCTION_LEAD_TABS = ['resumen', 'areas', 'saldos', 'documentos', 'proveedores', 'permisos'];
+const PROJECT_ADMIN_ROLE_OPTIONS: Collaborator['role'][] = ['admin', 'jefe_produccion', 'jefe_area'];
+const PRODUCTION_LEAD_ROLE_OPTIONS: Collaborator['role'][] = ['jefe_area'];
 const safeArray = (value: any): string[] => Array.isArray(value) ? value : [];
-const normalizeAllowedTabs = (allowedTabs: any, role?: Collaborator['role']) => {
+const normalizeProjectRole = (role: unknown): Collaborator['role'] => {
+  if (role === 'admin' || role === 'jefe_produccion' || role === 'jefe_area') return role;
+  return 'jefe_area';
+};
+
+const normalizeAllowedTabs = (allowedTabs: any, role?: Collaborator['role'] | string) => {
+  const normalizedRole = normalizeProjectRole(role);
   const normalized = safeArray(allowedTabs).filter(tabId => PROJECT_TAB_IDS.includes(tabId));
-  if (role === 'admin') return normalized.length ? normalized : PROJECT_TAB_IDS;
+  if (normalizedRole === 'admin') return normalized.length ? normalized : PROJECT_TAB_IDS;
+  if (normalizedRole === 'jefe_produccion' && normalized.length === 0) return DEFAULT_PRODUCTION_LEAD_TABS;
 
   const looksLikeLegacyDefault = normalized.includes('presupuesto') && !normalized.includes('saldos');
   if (looksLikeLegacyDefault) {
@@ -116,7 +125,7 @@ const normalizeAllowedTabs = (allowedTabs: any, role?: Collaborator['role']) => 
     return Array.from(new Set([...normalized, 'documentos', 'proveedores']));
   }
 
-  return normalized.length ? normalized : DEFAULT_COLLABORATOR_TABS;
+  return normalized.length ? normalized : DEFAULT_AREA_LEAD_TABS;
 };
 
 const getDefaultCollaboratorPermissions = (role: Collaborator['role'], categories: string[], selectedCategories?: string[]) => {
@@ -131,17 +140,17 @@ const getDefaultCollaboratorPermissions = (role: Collaborator['role'], categorie
     };
   }
 
-  if (role === 'lector') {
+  if (role === 'jefe_produccion') {
     return {
-      allowedTabs: ['resumen', 'saldos', 'documentos', 'proveedores'],
+      allowedTabs: DEFAULT_PRODUCTION_LEAD_TABS,
       allowedCategories: chosenCategories,
-      canEditBudgetAreas: false,
+      canEditBudgetAreas: true,
       canViewBudgetTotals: false,
     };
   }
 
   return {
-    allowedTabs: DEFAULT_COLLABORATOR_TABS,
+    allowedTabs: DEFAULT_AREA_LEAD_TABS,
     allowedCategories: chosenCategories,
     canEditBudgetAreas: true,
     canViewBudgetTotals: false,
@@ -341,7 +350,7 @@ export default function ProjectDetail() {
   const [availableUsers, setAvailableUsers] = useState<any[]>([]);
   const [newCollaboratorSearch, setNewCollaboratorSearch] = useState('');
   const [selectedUserToAdd, setSelectedUserToAdd] = useState<any | null>(null);
-  const [newCollaboratorRole, setNewCollaboratorRole] = useState<Collaborator['role']>('jefe_area');
+  const [newCollaboratorRole, setNewCollaboratorRole] = useState<Collaborator['role']>('jefe_produccion');
   const [newCollaboratorCategories, setNewCollaboratorCategories] = useState<string[]>([]);
   const [userPermissions, setUserPermissions] = useState<Collaborator | null>(null);
   const [isOwner, setIsOwner] = useState(false);
@@ -400,14 +409,15 @@ export default function ProjectDetail() {
           
           if (colSnapshot.exists()) {
             const rawPerms = colSnapshot.data() as Collaborator;
+            const role = normalizeProjectRole(rawPerms.role);
             const perms: Collaborator = {
-              email: normalizeEmail(rawPerms.email || colSnapshot.id),
-              role: rawPerms.role || 'colaborador',
-              allowedTabs: normalizeAllowedTabs(rawPerms.allowedTabs, rawPerms.role || 'colaborador'),
-              allowedCategories: safeArray(rawPerms.allowedCategories),
-              canEditBudgetAreas: rawPerms.canEditBudgetAreas ?? rawPerms.role !== 'lector',
-              canViewBudgetTotals: rawPerms.canViewBudgetTotals ?? rawPerms.role === 'admin',
               ...rawPerms,
+              email: normalizeEmail(rawPerms.email || colSnapshot.id),
+              role,
+              allowedTabs: normalizeAllowedTabs(rawPerms.allowedTabs, role),
+              allowedCategories: safeArray(rawPerms.allowedCategories),
+              canEditBudgetAreas: rawPerms.canEditBudgetAreas ?? true,
+              canViewBudgetTotals: rawPerms.canViewBudgetTotals ?? role === 'admin',
             };
             setUserPermissions(perms);
             setIsProjectAdmin(owner || perms.role === 'admin' || isGlobalAdmin);
@@ -451,14 +461,15 @@ export default function ProjectDetail() {
           const colSnap = await getDocs(collection(db, 'projects', id, 'collaborators'));
           setCollaborators(colSnap.docs.map(d => {
             const data = d.data() as any;
+            const role = normalizeProjectRole(data.role);
             return {
-              email: normalizeEmail(data.email || d.id),
-              role: data.role || 'colaborador',
-              allowedTabs: normalizeAllowedTabs(data.allowedTabs, data.role || 'colaborador'),
-              allowedCategories: safeArray(data.allowedCategories),
-              canEditBudgetAreas: data.canEditBudgetAreas ?? data.role !== 'lector',
-              canViewBudgetTotals: data.canViewBudgetTotals ?? data.role === 'admin',
               ...data,
+              email: normalizeEmail(data.email || d.id),
+              role,
+              allowedTabs: normalizeAllowedTabs(data.allowedTabs, role),
+              allowedCategories: safeArray(data.allowedCategories),
+              canEditBudgetAreas: data.canEditBudgetAreas ?? true,
+              canViewBudgetTotals: data.canViewBudgetTotals ?? role === 'admin',
             } as Collaborator;
           }));
         }
@@ -945,7 +956,7 @@ export default function ProjectDetail() {
 
   const uploadProjectDocument = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!id || !isProjectAdmin) return;
+    if (!id || !canUploadProjectDocuments) return;
 
     const formData = new FormData(event.currentTarget);
     const file = formData.get('file') as File | null;
@@ -1306,6 +1317,7 @@ export default function ProjectDetail() {
   // Filtered views based on permissions
   const visibleTabs = tabs.filter(tab => {
     if (tab.id === 'resultado') return isProjectAdmin;
+    if (tab.id === 'permisos' && userPermissions?.role === 'jefe_produccion') return true;
     if (isProjectAdmin) return true;
     return safeArray(userPermissions?.allowedTabs).includes(tab.id);
   });
@@ -1365,6 +1377,14 @@ export default function ProjectDetail() {
     records: acc.records + row.expenses.length,
   }), { assigned: 0, spent: 0, balance: 0, records: 0 });
 
+  const isProductionLead = userPermissions?.role === 'jefe_produccion';
+  const canManageProjectRoles = isProjectAdmin;
+  const canAssignProjectAreas = isProjectAdmin || isProductionLead;
+  const canUploadProjectDocuments = isProjectAdmin || (
+    isProductionLead && safeArray(userPermissions?.allowedTabs).includes('documentos')
+  );
+  const canSeeFullPayroll = isProjectAdmin || isProductionLead;
+  const roleOptionsForCurrentUser = isProjectAdmin ? PROJECT_ADMIN_ROLE_OPTIONS : PRODUCTION_LEAD_ROLE_OPTIONS;
   const canEditMainBudget = isProjectAdmin;
   const canEditArea = (area?: string | null) => {
     if (!area) return false;
@@ -1377,6 +1397,9 @@ export default function ProjectDetail() {
   };
   const canUploadAreaFiles = (area?: string | null) => canEditArea(area);
   const collaboratorEmails = collaborators.map((col) => normalizeEmail(col.email));
+  const visiblePermissionCollaborators = isProjectAdmin
+    ? collaborators
+    : collaborators.filter((col) => col.role === 'jefe_area');
   const filteredAvailableUsers = availableUsers
     .filter((candidate) => {
       const email = normalizeEmail(candidate.email);
@@ -1696,9 +1719,27 @@ export default function ProjectDetail() {
   }), [filteredProjectDocuments.length, projectDocuments]);
 
   const projectAreaProviderRows = React.useMemo(() => {
-    const allowedCategories = isProjectAdmin ? categories : safeArray(userPermissions?.allowedCategories);
-    const canSeeArea = (area?: string) => isProjectAdmin || allowedCategories.includes(area || '');
+    const allowedCategories = canSeeFullPayroll ? categories : safeArray(userPermissions?.allowedCategories);
+    const canSeeArea = (area?: string) => canSeeFullPayroll || allowedCategories.includes(area || '');
     const byProvider = new Map<string, { provider: any; areas: Set<string>; concepts: Set<string> }>();
+
+    budgetItems.forEach((item) => {
+      if (!item.providerId || !canSeeArea(item.area)) return;
+      const provider = providers.find(candidate => candidate.id === item.providerId);
+      if (!provider) return;
+
+      if (!byProvider.has(item.providerId)) {
+        byProvider.set(item.providerId, {
+          provider,
+          areas: new Set<string>(),
+          concepts: new Set<string>(),
+        });
+      }
+
+      const row = byProvider.get(item.providerId)!;
+      if (item.area) row.areas.add(item.area);
+      if (item.description) row.concepts.add(item.description);
+    });
 
     areaExpenses.forEach((expense) => {
       if (!expense.providerId || !canSeeArea(expense.area)) return;
@@ -1725,10 +1766,28 @@ export default function ProjectDetail() {
         concepts: Array.from(row.concepts).sort(),
       }))
       .sort((a, b) => providerDisplayName(a.provider).localeCompare(providerDisplayName(b.provider), 'es'));
-  }, [areaExpenses, categories, isProjectAdmin, providers, userPermissions]);
+  }, [areaExpenses, budgetItems, canSeeFullPayroll, categories, providers, userPermissions]);
 
   const allProjectAreaProviderRows = React.useMemo(() => {
     const byProvider = new Map<string, { provider: any; areas: Set<string>; concepts: Set<string> }>();
+
+    budgetItems.forEach((item) => {
+      if (!item.providerId) return;
+      const provider = providers.find(candidate => candidate.id === item.providerId);
+      if (!provider) return;
+
+      if (!byProvider.has(item.providerId)) {
+        byProvider.set(item.providerId, {
+          provider,
+          areas: new Set<string>(),
+          concepts: new Set<string>(),
+        });
+      }
+
+      const row = byProvider.get(item.providerId)!;
+      if (item.area) row.areas.add(item.area);
+      if (item.description) row.concepts.add(item.description);
+    });
 
     areaExpenses.forEach((expense) => {
       if (!expense.providerId) return;
@@ -1755,9 +1814,9 @@ export default function ProjectDetail() {
         concepts: Array.from(row.concepts).sort(),
       }))
       .sort((a, b) => providerDisplayName(a.provider).localeCompare(providerDisplayName(b.provider), 'es'));
-  }, [areaExpenses, providers]);
+  }, [areaExpenses, budgetItems, providers]);
 
-  const canExportPayroll = isProjectAdmin || safeArray(userPermissions?.allowedCategories).some(isProductionArea);
+  const canExportPayroll = canSeeFullPayroll || safeArray(userPermissions?.allowedCategories).some(isProductionArea);
   const hasExportOptions = isProjectAdmin || canExportPayroll;
 
   const exportNomina = (format: 'xlsx' | 'csv') => {
@@ -2000,7 +2059,7 @@ export default function ProjectDetail() {
   }, [areaSummaryRows]);
 
   const addCollaborator = async (selectedUser: any) => {
-    if (!id || !selectedUser?.email) return;
+    if (!id || !selectedUser?.email || !canManageProjectRoles) return;
 
     const email = normalizeEmail(selectedUser.email);
     const selectedCategories = newCollaboratorRole === 'admin'
@@ -2042,7 +2101,7 @@ export default function ProjectDetail() {
   };
 
   const updateCollaboratorRole = async (col: Collaborator, role: Collaborator['role']) => {
-    if (!id) return;
+    if (!id || !canManageProjectRoles) return;
 
     const defaults = getDefaultCollaboratorPermissions(
       role,
@@ -2066,6 +2125,14 @@ export default function ProjectDetail() {
 
   const updateCollaboratorPermissions = async (col: Collaborator, updates: Partial<Collaborator>) => {
     if (!id) return;
+    if (!isProjectAdmin) {
+      if (col.role !== 'jefe_area') return;
+      const updateKeys = Object.keys(updates);
+      if (updateKeys.some((key) => key !== 'allowedCategories')) return;
+      const nextCategories = safeArray(updates.allowedCategories);
+      const ownCategories = safeArray(userPermissions?.allowedCategories);
+      if (nextCategories.some((category) => !ownCategories.includes(category))) return;
+    }
 
     try {
       const payload = { ...updates, updatedAt: serverTimestamp() };
@@ -2078,7 +2145,7 @@ export default function ProjectDetail() {
   };
 
   const removeCollaborator = async (col: Collaborator) => {
-    if (!id || !confirm('¿Quitar acceso a ' + col.email + '?')) return;
+    if (!id || !canManageProjectRoles || !confirm('¿Quitar acceso a ' + col.email + '?')) return;
     const email = normalizeEmail(col.email);
 
     try {
@@ -2893,31 +2960,37 @@ export default function ProjectDetail() {
                 </div>
 
                 {selectedAreaDashboardRows.map((areaRow) => (
-                <div key={areaRow.area} className="bg-white border border-slate-200 rounded-xl shadow-sm">
-                  <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center rounded-t-xl">
+                <div key={areaRow.area} className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+                  <div className="bg-slate-900 text-white px-4 py-3 flex justify-between items-center border-l-4 border-emerald-400 shadow-sm">
                     <div className="flex items-center gap-3">
-                       <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-900 flex items-center gap-2">
+                       <h3 className="text-[12px] font-black uppercase tracking-[0.18em] text-white flex items-center gap-2">
                          <LayoutGrid className="w-3 h-3" />
-                         Carga de Gastos: {areaRow.area}
+                         {areaRow.area}
                        </h3>
+                       <span className="text-[10px] text-slate-300 font-bold">({areaRow.expenses.length} ítems)</span>
                        {isProjectAdmin && (
                          <button 
                            onClick={() => removeActiveArea(areaRow.area)}
-                           className="text-[9px] text-slate-400 hover:text-red-500 font-bold uppercase tracking-widest transition-colors"
+                           className="text-[9px] text-slate-400 hover:text-red-300 font-bold uppercase tracking-widest transition-colors"
                            title="Desactivar gestión de esta área"
                          >
                            Desactivar Gestión
                          </button>
                        )}
                     </div>
-                    <button 
-                      onClick={() => addAreaExpense(areaRow.area)}
-                      disabled={!canEditArea(areaRow.area)}
-                      className="px-3 py-1.5 bg-black text-white text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 transition-all flex items-center gap-2 rounded disabled:bg-slate-300 disabled:cursor-not-allowed"
-                    >
-                      <Plus className="w-3 h-3" />
-                      Registrar Gasto
-                    </button>
+                    <div className="flex items-center gap-4">
+                      <div className="text-[10px] font-black tracking-widest text-emerald-300">
+                        SUBTOTAL: ${areaRow.spent.toLocaleString()}
+                      </div>
+                      <button
+                        onClick={() => addAreaExpense(areaRow.area)}
+                        disabled={!canEditArea(areaRow.area)}
+                        className="p-1.5 text-slate-800 bg-white border border-slate-200 rounded hover:bg-slate-100 transition-colors disabled:bg-slate-300 disabled:cursor-not-allowed"
+                        title="Registrar gasto"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3 px-6 py-4 border-b border-slate-100 bg-white">
                     <div>
@@ -3778,7 +3851,7 @@ export default function ProjectDetail() {
               <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
                 {documentTotals.visible} documentos visibles
               </div>
-              {isProjectAdmin && (
+              {canUploadProjectDocuments && (
                 <button
                   type="button"
                   onClick={() => setShowDocumentUploadModal(true)}
@@ -4059,17 +4132,20 @@ export default function ProjectDetail() {
           </div>
         )}
 
-        {activeTab === 'permisos' && isProjectAdmin && (
+        {activeTab === 'permisos' && canAssignProjectAreas && (
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden p-8">
             <div className="max-w-5xl mx-auto space-y-12">
               <header className="text-center">
                 <Shield className="w-12 h-12 text-slate-900 mx-auto mb-4" />
                 <h2 className="text-xl font-bold mb-2">Permisos del Proyecto</h2>
                 <p className="text-sm text-slate-500 max-w-2xl mx-auto">
-                  Agregá usuarios que ya se hayan logueado en la plataforma y definí si son admins del proyecto, jefes de área, colaboradores o lectores. Esto no cambia su rol global en la app.
+                  {isProjectAdmin
+                    ? 'Agregá usuarios que ya se hayan logueado y definí si son admins del proyecto, jefes de producción o jefes de área. Esto no cambia su rol global en la app.'
+                    : 'Como Jefe de Producción podés asignar tus áreas a otros Jefes de Área del proyecto, sin cambiar roles ni permisos de administración.'}
                 </p>
               </header>
 
+              {canManageProjectRoles ? (
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 p-6 bg-slate-50 border border-slate-100 rounded-2xl">
                 <div className="lg:col-span-5 space-y-4">
                   <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400">Buscar usuario logueado</label>
@@ -4123,7 +4199,7 @@ export default function ProjectDetail() {
                   <div>
                     <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Rol dentro del proyecto</div>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                      {(['admin', 'jefe_area', 'colaborador', 'lector'] as Collaborator['role'][]).map((role) => (
+                      {PROJECT_ADMIN_ROLE_OPTIONS.map((role) => (
                         <button
                           key={role}
                           type="button"
@@ -4180,16 +4256,21 @@ export default function ProjectDetail() {
                   </button>
                 </div>
               </div>
+              ) : (
+                <div className="p-5 bg-slate-50 border border-slate-100 rounded-2xl text-sm text-slate-500">
+                  Seleccioná abajo qué áreas propias querés habilitar para cada Jefe de Área. Tu acceso a esas áreas se mantiene intacto.
+                </div>
+              )}
 
               <div className="pt-8 border-t border-slate-100">
-                <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4 font-mono">Colaboradores Activos</h3>
+                <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4 font-mono">Jefes del Proyecto</h3>
                 <div className="space-y-4">
-                  {collaborators.length === 0 ? (
+                  {visiblePermissionCollaborators.length === 0 ? (
                     <div className="text-center py-10 border border-dashed border-slate-200 rounded-lg text-slate-300 font-bold uppercase text-[10px] tracking-widest">
-                      No hay colaboradores externos en este proyecto
+                      No hay jefes de área disponibles en este proyecto
                     </div>
                   ) : (
-                    collaborators.map(col => (
+                    visiblePermissionCollaborators.map(col => (
                       <div key={col.email} className="p-6 bg-slate-50 rounded-xl border border-slate-100">
                         <div className="flex flex-col lg:flex-row lg:justify-between lg:items-start gap-3 mb-8">
                           <div className="flex items-center gap-3 min-w-0">
@@ -4201,13 +4282,14 @@ export default function ProjectDetail() {
                             <div className="min-w-0">
                               <div className="text-xs font-bold truncate">{col.displayName || col.email}</div>
                               <div className="text-[10px] text-slate-400 font-medium truncate">{col.email}</div>
-                              <div className="text-[9px] text-slate-400 font-bold uppercase mt-1">{roleLabels[col.role] || 'Colaborador'}</div>
+                              <div className="text-[9px] text-slate-400 font-bold uppercase mt-1">{roleLabels[col.role] || 'Jefe de Área'}</div>
                             </div>
                           </div>
 
                           <div className="flex flex-wrap gap-2 items-center justify-end">
+                            {canManageProjectRoles && (
                             <div className="flex gap-1 bg-white p-1 rounded border border-slate-200">
-                              {(['admin', 'jefe_area', 'colaborador', 'lector'] as Collaborator['role'][]).map((role) => (
+                              {roleOptionsForCurrentUser.map((role) => (
                                 <button
                                   key={role}
                                   onClick={() => updateCollaboratorRole(col, role)}
@@ -4216,21 +4298,25 @@ export default function ProjectDetail() {
                                     col.role === role ? "bg-black text-white" : "text-slate-400 hover:text-black"
                                   )}
                                 >
-                                  {role === 'jefe_area' ? 'Jefe' : role}
+                                  {role === 'jefe_area' ? 'Área' : role === 'jefe_produccion' ? 'Producción' : 'Admin'}
                                 </button>
                               ))}
                             </div>
+                            )}
+                            {canManageProjectRoles && (
                             <button
                               className="text-[10px] text-red-500 font-bold uppercase tracking-widest hover:underline"
                               onClick={() => removeCollaborator(col)}
                             >
                               Eliminar
                             </button>
+                            )}
                           </div>
                         </div>
 
                         {col.role !== 'admin' ? (
                           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                            {canManageProjectRoles && (
                             <div>
                               <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3 font-mono">Pestañas Permitidas</div>
                               <div className="flex flex-wrap gap-2">
@@ -4256,11 +4342,12 @@ export default function ProjectDetail() {
                                 })}
                               </div>
                             </div>
+                            )}
 
                             <div>
                               <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3 font-mono">Áreas de Presupuesto</div>
                               <div className="flex flex-wrap gap-2">
-                                {categories.map(cat => {
+                                {(isProjectAdmin ? categories : safeArray(userPermissions?.allowedCategories)).map(cat => {
                                   const enabled = safeArray(col.allowedCategories).includes(cat);
                                   return (
                                     <button
@@ -4283,6 +4370,7 @@ export default function ProjectDetail() {
                               </div>
                             </div>
 
+                            {canManageProjectRoles && (
                             <div className="lg:col-span-2 flex flex-wrap gap-2 pt-2">
                               <button
                                 onClick={() => updateCollaboratorPermissions(col, { canEditBudgetAreas: !col.canEditBudgetAreas })}
@@ -4303,6 +4391,7 @@ export default function ProjectDetail() {
                                 {col.canViewBudgetTotals ? 'Ve totales' : 'Totales restringidos'}
                               </button>
                             </div>
+                            )}
                           </div>
                         ) : (
                           <div className="px-4 py-3 bg-white rounded border border-slate-200 text-[10px] font-bold uppercase tracking-widest text-slate-500">

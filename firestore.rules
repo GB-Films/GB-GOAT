@@ -59,6 +59,11 @@ service cloud.firestore {
         );
     }
 
+    function isProjectProductionLead(projectId) {
+      return hasCollaboratorDoc(projectId)
+        && collaboratorDoc(projectId).role == 'jefe_produccion';
+    }
+
     function hasProjectAccess(projectId) {
       return isProjectAdmin(projectId) || isProjectCollaborator(projectId);
     }
@@ -70,6 +75,23 @@ service cloud.firestore {
           && collaboratorDoc(projectId).canEditBudgetAreas == true
           && area in collaboratorDoc(projectId).allowedCategories
           && 'areas' in collaboratorDoc(projectId).allowedTabs
+        );
+    }
+
+    function canAssignAreasAsProductionLead(projectId) {
+      return isProjectProductionLead(projectId)
+        && resource.data.role == 'jefe_area'
+        && request.resource.data.role == 'jefe_area'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['allowedCategories', 'updatedAt'])
+        && request.resource.data.allowedCategories is list
+        && request.resource.data.allowedCategories.hasOnly(collaboratorDoc(projectId).allowedCategories);
+    }
+
+    function canWriteProjectDocument(projectId) {
+      return isProjectAdmin(projectId)
+        || (
+          isProjectProductionLead(projectId)
+          && 'documentos' in collaboratorDoc(projectId).allowedTabs
         );
     }
 
@@ -128,7 +150,8 @@ service cloud.firestore {
 
       match /collaborators/{email} {
         allow read: if hasProjectAccess(projectId);
-        allow create, update, delete: if isProjectAdmin(projectId);
+        allow create, delete: if isProjectAdmin(projectId);
+        allow update: if isProjectAdmin(projectId) || canAssignAreasAsProductionLead(projectId);
       }
 
       match /budgetItems/{itemId} {
@@ -166,7 +189,8 @@ service cloud.firestore {
 
       match /projectDocuments/{documentId} {
         allow read: if hasProjectAccess(projectId);
-        allow create, update, delete: if isProjectAdmin(projectId);
+        allow create: if canWriteProjectDocument(projectId);
+        allow update, delete: if isProjectAdmin(projectId);
       }
     }
 

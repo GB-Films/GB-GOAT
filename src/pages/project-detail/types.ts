@@ -42,7 +42,7 @@ export interface Collaborator {
   email: string;
   displayName?: string;
   photoURL?: string;
-  role: 'admin' | 'jefe_area' | 'colaborador' | 'lector';
+  role: 'admin' | 'jefe_produccion' | 'jefe_area';
   allowedTabs: string[];
   allowedCategories: string[];
   canEditBudgetAreas?: boolean;
