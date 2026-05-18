@@ -1108,6 +1108,8 @@ export default function ProjectDetail() {
 
   const deletePaymentFromSelectedItem = async (paymentIndex: number) => {
     if (!id || !selectedItemForPayment) return;
+    const collectionName: PaymentCollection = selectedItemForPayment.__paymentCollection || paymentType;
+    if (!canManagePaymentForItem(selectedItemForPayment, collectionName)) return;
 
     if (!window.confirm('¿Borrar definitivamente este registro de pago?')) return;
 
@@ -1132,7 +1134,6 @@ export default function ProjectDetail() {
       const totalPaid = updatedHistory.reduce((acc: number, p: any) => acc + (Number(p.amount) || 0), 0);
       const itemTotal = Number(selectedItemForPayment.total) || 0;
       const isFullyPaid = totalPaid >= (itemTotal - 0.01);
-      const collectionName: PaymentCollection = selectedItemForPayment.__paymentCollection || paymentType;
 
       await updateDoc(doc(db, 'projects', id, collectionName, currentItemId), {
         paymentHistory: updatedHistory,
@@ -1394,6 +1395,11 @@ export default function ProjectDetail() {
       && safeArray(userPermissions.allowedCategories).includes(area)
       && safeArray(userPermissions.allowedTabs).includes('areas')
     );
+  };
+  const canManagePaymentForItem = (item?: any | null, collectionName?: PaymentCollection) => {
+    if (!item || !collectionName) return false;
+    if (isProjectAdmin) return true;
+    return canEditArea(item.area);
   };
   const canUploadAreaFiles = (area?: string | null) => canEditArea(area);
   const collaboratorEmails = collaborators.map((col) => normalizeEmail(col.email));
@@ -2978,10 +2984,18 @@ export default function ProjectDetail() {
                          </button>
                        )}
                     </div>
-                    <div className="flex items-center gap-4">
+                     <div className="flex items-center gap-4">
                       <div className="text-[10px] font-black tracking-widest text-emerald-300">
                         SUBTOTAL: ${areaRow.spent.toLocaleString()}
                       </div>
+                      <button
+                        type="button"
+                        onClick={() => toggleCategory(areaRow.area)}
+                        className="p-1.5 text-slate-300 hover:text-white transition-colors"
+                        title={collapsedCategories[areaRow.area] ? 'Expandir área' : 'Colapsar área'}
+                      >
+                        {collapsedCategories[areaRow.area] ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                      </button>
                       <button
                         onClick={() => addAreaExpense(areaRow.area)}
                         disabled={!canEditArea(areaRow.area)}
@@ -2992,6 +3006,8 @@ export default function ProjectDetail() {
                       </button>
                     </div>
                   </div>
+                  {!collapsedCategories[areaRow.area] && (
+                  <>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3 px-6 py-4 border-b border-slate-100 bg-white">
                     <div>
                       <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400">Asignado</div>
@@ -3187,6 +3203,8 @@ export default function ProjectDetail() {
                       )}
                     </div>
                   </div>
+                  </>
+                  )}
                 </div>
                 ))}
               </div>
@@ -3783,7 +3801,7 @@ export default function ProjectDetail() {
                                      Comp.
                                    </a>
                                  ))}
-                                 {isProjectAdmin && (
+                                 {canManagePaymentForItem(entry.item, entry.collectionName) && (
                                    <button
                                      type="button"
                                      onClick={() => openPaymentModal(entry.item, entry.collectionName)}
@@ -4519,7 +4537,7 @@ export default function ProjectDetail() {
           projectId={id}
           item={selectedItemForPayment}
           isOpen={paymentModalOpen}
-          isProjectAdmin={isProjectAdmin}
+          canManagePayments={canManagePaymentForItem(selectedItemForPayment, selectedItemForPayment?.__paymentCollection || paymentType)}
           paymentType={paymentType}
           isDeletingPayment={isDeletingPayment}
           onClose={() => setPaymentModalOpen(false)}

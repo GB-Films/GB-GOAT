@@ -95,6 +95,11 @@ service cloud.firestore {
         );
     }
 
+    function canUpdatePaymentFields(projectId, area) {
+      return canWriteArea(projectId, area)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['paymentHistory', 'paid', 'updatedAt']);
+    }
+
     function inviteIsPending(token) {
       return token is string
         && exists(/databases/$(database)/documents/providerInvites/$(token))
@@ -156,7 +161,12 @@ service cloud.firestore {
 
       match /budgetItems/{itemId} {
         allow read: if hasProjectAccess(projectId);
-        allow create, update, delete: if isProjectAdmin(projectId);
+        allow create, delete: if isProjectAdmin(projectId);
+        allow update: if isProjectAdmin(projectId)
+          || (
+            canUpdatePaymentFields(projectId, resource.data.area)
+            && request.resource.data.area == resource.data.area
+          );
       }
 
       match /areaExpenses/{expenseId} {

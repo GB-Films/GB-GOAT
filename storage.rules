@@ -72,6 +72,30 @@ service firebase.storage {
         );
     }
 
+    function canWriteArea(projectId, area) {
+      return isProjectAdmin(projectId)
+        || (
+          hasCollaboratorDoc(projectId)
+          && collaboratorDoc(projectId).canEditBudgetAreas == true
+          && area in collaboratorDoc(projectId).allowedCategories
+          && 'areas' in collaboratorDoc(projectId).allowedTabs
+        );
+    }
+
+    function canWritePaymentReceipt(projectId, collectionName, itemId) {
+      return isProjectAdmin(projectId)
+        || (
+          collectionName == 'budgetItems'
+          && firestore.exists(/databases/(default)/documents/projects/$(projectId)/budgetItems/$(itemId))
+          && canWriteArea(projectId, firestore.get(/databases/(default)/documents/projects/$(projectId)/budgetItems/$(itemId)).data.area)
+        )
+        || (
+          collectionName == 'areaExpenses'
+          && firestore.exists(/databases/(default)/documents/projects/$(projectId)/areaExpenses/$(itemId))
+          && canWriteArea(projectId, firestore.get(/databases/(default)/documents/projects/$(projectId)/areaExpenses/$(itemId)).data.area)
+        );
+    }
+
     match /projects/{projectId}/areas/{area}/facturas/{fileName} {
       allow read: if hasProjectAccess(projectId);
       allow create, update: if hasProjectAccess(projectId)
@@ -82,7 +106,7 @@ service firebase.storage {
 
     match /projects/{projectId}/{collectionName}/{itemId}/comprobantes/{fileName} {
       allow read: if hasProjectAccess(projectId);
-      allow create, update: if isProjectAdmin(projectId)
+      allow create, update: if canWritePaymentReceipt(projectId, collectionName, itemId)
         && collectionName in ['budgetItems', 'areaExpenses']
         && request.resource.size <= 15 * 1024 * 1024
         && (
@@ -91,7 +115,7 @@ service firebase.storage {
           || request.resource.contentType == 'image/png'
           || request.resource.contentType == 'image/webp'
         );
-      allow delete: if isProjectAdmin(projectId);
+      allow delete: if canWritePaymentReceipt(projectId, collectionName, itemId);
     }
 
     match /projects/{projectId}/documents/{documentId}/{fileName} {
