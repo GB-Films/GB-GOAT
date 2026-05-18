@@ -4,6 +4,10 @@ export interface Payment {
   detail: string;
   date: any;
   type: 'partial' | 'total';
+  method?: 'caja_efectivo' | 'otro';
+  paidByEmail?: string;
+  paidByName?: string;
+  cashMovementId?: string;
   receipt?: {
     fileName: string;
     originalFileName: string;
@@ -36,6 +40,27 @@ export interface BudgetItem {
 }
 
 export type PaymentCollection = 'budgetItems' | 'areaExpenses';
+
+export interface CashMovement {
+  id: string;
+  type: 'entrega' | 'transferencia' | 'pago';
+  amount: number;
+  date: any;
+  fromUserEmail?: string;
+  fromUserName?: string;
+  toUserEmail?: string;
+  toUserName?: string;
+  area?: string;
+  collectionName?: PaymentCollection;
+  itemId?: string;
+  paymentId?: string;
+  description?: string;
+  notes?: string;
+  createdByEmail?: string;
+  createdByName?: string;
+  createdAt?: any;
+  updatedAt?: any;
+}
 
 export interface Collaborator {
   uid?: string;

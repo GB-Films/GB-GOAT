@@ -364,6 +364,11 @@ export default function ProjectDetail() {
   const [isOwner, setIsOwner] = useState(false);
   const [isProjectAdmin, setIsProjectAdmin] = useState(false);
   const [showEditProjectModal, setShowEditProjectModal] = useState(false);
+  const [showCopyBudgetModal, setShowCopyBudgetModal] = useState(false);
+  const [copyBudgetSearch, setCopyBudgetSearch] = useState('');
+  const [sourceProjects, setSourceProjects] = useState<any[]>([]);
+  const [selectedSourceProjectId, setSelectedSourceProjectId] = useState('');
+  const [isCopyingBudget, setIsCopyingBudget] = useState(false);
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
   const [selectedItemForPayment, setSelectedItemForPayment] = useState<any>(null);
   const [paymentType, setPaymentType] = useState<PaymentCollection>('areaExpenses');
@@ -538,6 +543,25 @@ export default function ProjectDetail() {
 
     fetchUsers();
   }, [isProjectAdmin]);
+
+  useEffect(() => {
+    if (!isProjectAdmin || !id) return;
+
+    const fetchSourceProjects = async () => {
+      try {
+        const snap = await getDocs(collection(db, 'projects'));
+        const items = snap.docs
+          .map((projectDoc) => ({ id: projectDoc.id, ...projectDoc.data() }))
+          .filter((item) => item.id !== id)
+          .sort((a: any, b: any) => String(a.name || '').localeCompare(String(b.name || ''), 'es'));
+        setSourceProjects(items);
+      } catch (error) {
+        console.error('Error fetching source projects:', error);
+      }
+    };
+
+    fetchSourceProjects();
+  }, [isProjectAdmin, id]);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -1295,6 +1319,87 @@ export default function ProjectDetail() {
     }
   };
 
+  const copyBudgetFromProject = async () => {
+    if (!id || !canEditMainBudget || !selectedSourceProjectId) return;
+
+    const sourceProject = sourceProjects.find((item) => item.id === selectedSourceProjectId);
+    if (!sourceProject) return;
+
+    const shouldReplace = budgetItems.length > 0
+      ? window.confirm('Este proyecto ya tiene partidas en el presupuesto principal. ¿Querés reemplazarlas por el presupuesto copiado?')
+      : true;
+    if (!shouldReplace) return;
+
+    setIsCopyingBudget(true);
+    try {
+      const sourceItemsSnap = await getDocs(collection(db, 'projects', selectedSourceProjectId, 'budgetItems'));
+      const sourceCategories = safeArray(sourceProject.categories);
+      const sourceItems = sourceItemsSnap.docs
+        .map((itemDoc) => ({ id: itemDoc.id, ...itemDoc.data() } as any))
+        .sort((a, b) => {
+          const areaDiff = sourceCategories.indexOf(a.area) - sourceCategories.indexOf(b.area);
+          if (areaDiff !== 0) return areaDiff;
+          return (a.order || 0) - (b.order || 0);
+        });
+
+      if (sourceItems.length === 0) {
+        alert('El proyecto elegido no tiene partidas en el presupuesto principal.');
+        return;
+      }
+
+      const batch = writeBatch(db);
+      if (budgetItems.length > 0) {
+        budgetItems.forEach((item) => {
+          batch.delete(doc(db, 'projects', id, 'budgetItems', item.id));
+        });
+      }
+
+      const copiedItems = sourceItems.map((item, index) => {
+        const docRef = doc(collection(db, 'projects', id, 'budgetItems'));
+        const payload = {
+          projectId: id,
+          area: item.area || 'Producción',
+          providerId: item.providerId || '',
+          providerName: item.providerName || '',
+          description: item.description || '',
+          unit: item.unit || 'Unidad',
+          quantity: Number(item.quantity) || 0,
+          unitPrice: Number(item.unitPrice) || 0,
+          total: Number(item.total) || ((Number(item.quantity) || 0) * (Number(item.unitPrice) || 0)),
+          paymentDate: item.paymentDate || '',
+          order: typeof item.order === 'number' ? item.order : index,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        };
+        batch.set(docRef, payload);
+        return { id: docRef.id, ...payload };
+      });
+
+      const copiedCategories = Array.from(new Set([
+        ...sourceCategories,
+        ...sourceItems.map((item) => item.area).filter(Boolean),
+      ]));
+      const nextCategories = copiedCategories.length > 0 ? copiedCategories : BUDGET_AREAS;
+      batch.update(doc(db, 'projects', id), {
+        categories: nextCategories,
+        updatedAt: serverTimestamp(),
+      });
+
+      await batch.commit();
+      setBudgetItems(copiedItems as BudgetItem[]);
+      setCategories(nextCategories);
+      setShowCopyBudgetModal(false);
+      setSelectedSourceProjectId('');
+      setCopyBudgetSearch('');
+      alert(`${copiedItems.length} partidas copiadas desde ${sourceProject.name || 'otro proyecto'}.`);
+    } catch (error) {
+      console.error('Error copying budget:', error);
+      alert('No se pudo copiar el presupuesto. Revisá permisos o conexión.');
+    } finally {
+      setIsCopyingBudget(false);
+    }
+  };
+
   const deleteCategory = async (area: string) => {
     if (!id || !canEditMainBudget || !confirm(`¿Eliminar la categoría "${area}" y todos sus ítems?`)) return;
     
@@ -1434,6 +1539,18 @@ export default function ProjectDetail() {
       return [candidate.displayName, candidate.email].filter(Boolean).join(' ').toLowerCase().includes(term);
     })
     .slice(0, 8);
+
+  const filteredSourceProjects = React.useMemo(() => {
+    const term = copyBudgetSearch.trim().toLowerCase();
+    return sourceProjects.filter((sourceProject) => {
+      if (!term) return true;
+      return [sourceProject.name, sourceProject.clientName, sourceProject.status]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+        .includes(term);
+    });
+  }, [copyBudgetSearch, sourceProjects]);
 
   const cashResponsibles = React.useMemo(() => (
     collaborators
@@ -2758,6 +2875,14 @@ export default function ProjectDetail() {
                     >
                       <Download className="w-3 h-3" />
                       Plantilla
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowCopyBudgetModal(true)}
+                      className="px-4 py-2 bg-white border border-slate-200 text-slate-600 text-[10px] font-bold uppercase tracking-widest hover:bg-slate-50 transition-all flex items-center gap-2 rounded"
+                    >
+                      <ArrowRight className="w-3 h-3" />
+                      Copiar presupuesto
                     </button>
                     <label className="px-4 py-2 bg-white border border-slate-200 text-slate-600 text-[10px] font-bold uppercase tracking-widest hover:bg-slate-50 transition-all flex items-center gap-2 rounded cursor-pointer relative group">
                       <Upload className="w-3 h-3" />
@@ -4852,6 +4977,96 @@ export default function ProjectDetail() {
                     No tenes reportes disponibles para exportar
                   </div>
                 )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+        {showCopyBudgetModal && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[260] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-2xl w-full max-w-3xl shadow-2xl overflow-hidden"
+            >
+              <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/30">
+                <div>
+                  <h2 className="text-xs font-bold uppercase tracking-widest text-slate-900 flex items-center gap-2">
+                    <ArrowRight className="w-4 h-4" />
+                    Copiar presupuesto principal
+                  </h2>
+                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">
+                    Copia partidas y categorías sin pagos ni comprobantes
+                  </p>
+                </div>
+                <button onClick={() => setShowCopyBudgetModal(false)} className="text-slate-400 hover:text-black">
+                  <Plus className="w-5 h-5 rotate-45" />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-4">
+                <input
+                  value={copyBudgetSearch}
+                  onChange={(event) => setCopyBudgetSearch(event.target.value)}
+                  placeholder="Buscar proyecto por nombre, cliente o estado"
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black"
+                />
+
+                <div className="max-h-[360px] overflow-y-auto border border-slate-200 rounded-xl divide-y divide-slate-100">
+                  {filteredSourceProjects.map((sourceProject) => {
+                    const selected = selectedSourceProjectId === sourceProject.id;
+                    return (
+                      <button
+                        key={sourceProject.id}
+                        type="button"
+                        onClick={() => setSelectedSourceProjectId(sourceProject.id)}
+                        className={cn(
+                          "w-full text-left px-5 py-4 transition-all flex items-center justify-between gap-4",
+                          selected ? "bg-slate-900 text-white" : "bg-white hover:bg-slate-50 text-slate-700"
+                        )}
+                      >
+                        <div className="min-w-0">
+                          <div className="text-sm font-black truncate">{sourceProject.name || 'Proyecto sin nombre'}</div>
+                          <div className={cn("text-[10px] font-bold uppercase tracking-widest mt-1 truncate", selected ? "text-white/60" : "text-slate-400")}>
+                            {sourceProject.clientName || 'Sin cliente'} · {sourceProject.status || 'Sin estado'}
+                          </div>
+                        </div>
+                        <div className={cn("text-[10px] font-black uppercase tracking-widest", selected ? "text-emerald-300" : "text-slate-300")}>
+                          {selected ? 'Seleccionado' : 'Usar'}
+                        </div>
+                      </button>
+                    );
+                  })}
+                  {filteredSourceProjects.length === 0 && (
+                    <div className="px-5 py-10 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
+                      No hay proyectos disponibles para copiar
+                    </div>
+                  )}
+                </div>
+
+                {budgetItems.length > 0 && (
+                  <div className="p-4 bg-amber-50 border border-amber-100 rounded-xl text-xs text-amber-800">
+                    Este proyecto ya tiene {budgetItems.length} partidas. Al copiar, se reemplazará el presupuesto principal actual.
+                  </div>
+                )}
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowCopyBudgetModal(false)}
+                    className="px-4 py-3 bg-white border border-slate-200 text-slate-600 rounded text-[10px] font-bold uppercase tracking-widest hover:bg-slate-50"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!selectedSourceProjectId || isCopyingBudget}
+                    onClick={copyBudgetFromProject}
+                    className="px-4 py-3 bg-black text-white rounded text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 disabled:bg-slate-300 disabled:cursor-not-allowed"
+                  >
+                    {isCopyingBudget ? 'Copiando...' : 'Copiar presupuesto'}
+                  </button>
+                </div>
               </div>
             </motion.div>
           </div>
