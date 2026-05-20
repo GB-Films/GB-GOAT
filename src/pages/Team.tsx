@@ -1,14 +1,30 @@
 import { useState, useEffect } from 'react';
-import { collection, collectionGroup, getDocs, doc, query, updateDoc, where } from 'firebase/firestore';
+import type { FormEvent } from 'react';
+import { collection, collectionGroup, getDocs, doc, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { Users, Mail, Shield, ShieldCheck, MoreVertical, Lock } from 'lucide-react';
+import { Users, Mail, Shield, ShieldCheck, MoreVertical, Lock, Link2, Copy, CheckCircle2 } from 'lucide-react';
 import { useAuth, APP_OWNER_EMAIL } from '../context/AuthContext';
 
 const normalizeEmail = (email?: string | null) => (email || '').trim().toLowerCase();
 
+const generateInviteToken = () => {
+  const bytes = new Uint8Array(20);
+  window.crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+};
+
+const getUserInviteLink = (token: string) => {
+  const baseUrl = ((import.meta as ImportMeta & { env?: { BASE_URL?: string } }).env?.BASE_URL || '/');
+  return `${window.location.origin}${baseUrl}#/login?invite=${token}`;
+};
+
 export default function Team() {
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [generatedInviteLink, setGeneratedInviteLink] = useState('');
+  const [copiedInviteLink, setCopiedInviteLink] = useState(false);
+  const [generatingInvite, setGeneratingInvite] = useState(false);
   const { profile, isOwner, isAdmin } = useAuth();
 
   useEffect(() => {
@@ -75,12 +91,111 @@ export default function Team() {
     }
   };
 
+  const createUserInvite = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!isAdmin) return;
+
+    const email = normalizeEmail(inviteEmail);
+    if (!email) return;
+
+    setGeneratingInvite(true);
+    setGeneratedInviteLink('');
+    setCopiedInviteLink(false);
+
+    try {
+      const token = generateInviteToken();
+      await setDoc(doc(db, 'userInvites', token), {
+        token,
+        email,
+        status: 'pending',
+        used: false,
+        createdBy: profile?.uid,
+        createdByEmail: profile?.email,
+        createdAt: serverTimestamp(),
+      });
+
+      const link = getUserInviteLink(token);
+      setGeneratedInviteLink(link);
+      try {
+        await navigator.clipboard.writeText(link);
+        setCopiedInviteLink(true);
+      } catch (clipboardError) {
+        console.warn('No se pudo copiar automáticamente el link:', clipboardError);
+      }
+    } catch (error) {
+      console.error('Error creating user invite:', error);
+      alert('No se pudo generar la invitación.');
+    } finally {
+      setGeneratingInvite(false);
+    }
+  };
+
+  const copyInviteLink = async () => {
+    if (!generatedInviteLink) return;
+    await navigator.clipboard.writeText(generatedInviteLink);
+    setCopiedInviteLink(true);
+    window.setTimeout(() => setCopiedInviteLink(false), 2500);
+  };
+
   return (
     <div className="max-w-6xl mx-auto">
       <header className="mb-10">
         <h1 className="text-3xl font-bold tracking-tight text-slate-900">Equipo</h1>
         <p className="text-slate-500 mt-1">Gestiona los colaboradores y sus permisos de acceso</p>
       </header>
+
+      {isAdmin && (
+        <div className="mb-8 bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
+          <div className="flex flex-col lg:flex-row lg:items-end gap-4">
+            <form onSubmit={createUserInvite} className="flex-1">
+              <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">
+                Invitar usuario por email
+              </label>
+              <div className="flex flex-col md:flex-row gap-2">
+                <input
+                  type="email"
+                  value={inviteEmail}
+                  onChange={(event) => setInviteEmail(event.target.value)}
+                  placeholder="usuario@email.com"
+                  required
+                  className="flex-1 px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black"
+                />
+                <button
+                  type="submit"
+                  disabled={generatingInvite}
+                  className="px-4 py-3 bg-black text-white rounded text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 transition-colors disabled:bg-slate-300 flex items-center justify-center gap-2"
+                >
+                  <Link2 className="w-3.5 h-3.5" />
+                  {generatingInvite ? 'Generando...' : 'Generar link'}
+                </button>
+              </div>
+              <p className="text-[11px] text-slate-400 mt-2">
+                El usuario deberá iniciar sesión con este mismo email. Todos ingresan como colaboradores.
+              </p>
+            </form>
+          </div>
+
+          {generatedInviteLink && (
+            <div className="mt-4 p-4 rounded-xl border border-emerald-100 bg-emerald-50 flex flex-col lg:flex-row gap-3 lg:items-center justify-between">
+              <div className="min-w-0 flex-1">
+                <div className="text-[10px] font-bold uppercase tracking-widest text-emerald-700 mb-2 flex items-center gap-2">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  Invitación generada
+                </div>
+                <input readOnly value={generatedInviteLink} className="w-full px-3 py-2 bg-white border border-emerald-100 rounded text-xs text-slate-600" />
+              </div>
+              <button
+                type="button"
+                onClick={copyInviteLink}
+                className="px-4 py-3 bg-white border border-emerald-100 rounded text-[10px] font-bold uppercase tracking-widest hover:border-emerald-400 transition-colors flex items-center justify-center gap-2"
+              >
+                <Copy className="w-3.5 h-3.5" />
+                {copiedInviteLink ? 'Copiado' : 'Copiar'}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">

@@ -179,6 +179,18 @@ service cloud.firestore {
         && request.resource.data.address is string;
     }
 
+    function userInviteIsPending(token) {
+      return token is string
+        && exists(/databases/$(database)/documents/userInvites/$(token))
+        && get(/databases/$(database)/documents/userInvites/$(token)).data.used == false
+        && get(/databases/$(database)/documents/userInvites/$(token)).data.status == 'pending';
+    }
+
+    function userInviteMatchesSignedInEmail(token) {
+      return userInviteIsPending(token)
+        && get(/databases/$(database)/documents/userInvites/$(token)).data.email == userEmail();
+    }
+
     match /users/{userId} {
       allow get, list: if isSignedIn();
       allow create: if isSignedIn() && (
@@ -186,6 +198,8 @@ service cloud.firestore {
         || (
           request.auth.uid == userId
           && request.resource.data.role == 'colaborador'
+          && request.resource.data.inviteToken is string
+          && userInviteMatchesSignedInEmail(request.resource.data.inviteToken)
         )
       );
       allow update: if isAppOwner()
@@ -203,6 +217,31 @@ service cloud.firestore {
           && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role'])
         );
       allow delete: if isAppOwner();
+    }
+
+    match /userInvites/{token} {
+      allow get: if isAppAdmin() || (
+        isSignedIn()
+        && resource.data.email == userEmail()
+      );
+      allow list: if isAppAdmin();
+      allow create: if isAppAdmin()
+        && request.resource.data.email is string
+        && request.resource.data.status == 'pending'
+        && request.resource.data.used == false;
+      allow update: if isAppAdmin()
+        || (
+          isSignedIn()
+          && resource.data.email == userEmail()
+          && resource.data.status == 'pending'
+          && resource.data.used == false
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'used', 'usedAt', 'usedBy', 'usedByEmail'])
+          && request.resource.data.status == 'used'
+          && request.resource.data.used == true
+          && request.resource.data.usedBy == request.auth.uid
+          && request.resource.data.usedByEmail == userEmail()
+        );
+      allow delete: if isAppAdmin();
     }
 
     // The user directory is readable by signed-in users so project admins can add
