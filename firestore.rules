@@ -96,6 +96,17 @@ service cloud.firestore {
         && request.resource.data.allowedCategories.hasOnly(collaboratorDoc(projectId).allowedCategories);
     }
 
+    function canUpdateProjectOperations(projectId) {
+      return isProjectProductionLead(projectId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'shootingDate',
+          'shootingStartDate',
+          'shootingEndDate',
+          'location',
+          'updatedAt'
+        ]);
+    }
+
     function canWriteProjectDocument(projectId) {
       return isProjectAdmin(projectId)
         || (
@@ -257,7 +268,7 @@ service cloud.firestore {
       );
       allow get: if hasProjectAccess(projectId);
       allow create: if isAppAdmin() && request.resource.data.createdBy == request.auth.uid;
-      allow update: if isProjectAdmin(projectId);
+      allow update: if isProjectAdmin(projectId) || canUpdateProjectOperations(projectId);
       allow delete: if isAppAdmin();
 
       match /collaborators/{email} {

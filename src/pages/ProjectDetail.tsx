@@ -220,6 +220,29 @@ const toDateInputValue = (dateValue: any) => {
   return `${year}-${month}-${day}`;
 };
 
+const getShootingStartDate = (project: any) => (
+  project?.shootingStartDate || project?.shootingDate || ''
+);
+
+const getShootingEndDate = (project: any) => (
+  project?.shootingEndDate || project?.shootingStartDate || project?.shootingDate || ''
+);
+
+const formatShootingRange = (project: any) => {
+  const start = getShootingStartDate(project);
+  const end = getShootingEndDate(project);
+  if (!start && !end) return 'Sin fecha de rodaje';
+  if (!start || start === end) return `Rodaje: ${formatDate(end || start)}`;
+  return `Rodaje: ${formatDate(start)} a ${formatDate(end)}`;
+};
+
+const buildGoogleMapsLink = (value: string) => {
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${trimmed}, Buenos Aires, Argentina`)}`;
+};
+
 const getPaymentLeadTimeLabel = (paymentDate: any, shootingDate: any) => {
   if (!paymentDate) return 'Sin fecha';
   const payment = parseProjectDate(paymentDate);
@@ -394,7 +417,8 @@ export default function ProjectDetail() {
   const [showDocumentUploadModal, setShowDocumentUploadModal] = useState(false);
   const [isUploadingProjectDocument, setIsUploadingProjectDocument] = useState(false);
   const areaSelectorRef = useRef<HTMLDivElement>(null);
-  const shootingDateInputRef = useRef<HTMLInputElement>(null);
+  const shootingStartDateInputRef = useRef<HTMLInputElement>(null);
+  const shootingEndDateInputRef = useRef<HTMLInputElement>(null);
   const isGlobalAdmin = profile?.role === 'admin';
   
   useEffect(() => {
@@ -874,7 +898,7 @@ export default function ProjectDetail() {
       "text-[9px] font-black uppercase tracking-widest text-center px-2 py-1.5 rounded border",
       item.paymentDate ? "bg-slate-50 border-slate-100 text-slate-600" : "bg-white border-slate-100 text-slate-300"
     )}>
-      {getPaymentLeadTimeLabel(item.paymentDate, project?.shootingDate)}
+      {getPaymentLeadTimeLabel(item.paymentDate, getShootingEndDate(project))}
     </div>
   );
 
@@ -1500,6 +1524,7 @@ export default function ProjectDetail() {
   }), { assigned: 0, spent: 0, balance: 0, records: 0 });
 
   const isProductionLead = userPermissions?.role === 'jefe_produccion';
+  const canEditProjectOperations = isProjectAdmin || isProductionLead;
   const canManageProjectRoles = isProjectAdmin;
   const canAssignProjectAreas = isProjectAdmin || isProductionLead;
   const canUploadProjectDocuments = isProjectAdmin || (
@@ -2078,7 +2103,7 @@ export default function ProjectDetail() {
       'P Unitario': item.unitPrice || 0,
       Total: item.total || 0,
       'Fecha Pago': item.paymentDate || '',
-      'Rodaje a Pago': getPaymentLeadTimeLabel(item.paymentDate, project?.shootingDate),
+      'Rodaje a Pago': getPaymentLeadTimeLabel(item.paymentDate, getShootingEndDate(project)),
       Pagado: item.paid ? 'Si' : 'No',
       Orden: item.order || 0,
     }));
@@ -2102,7 +2127,7 @@ export default function ProjectDetail() {
         'P Unitario': item.unitPrice || 0,
         Total: item.total || 0,
         'Fecha Pago': item.paymentDate || '',
-        'Rodaje a Pago': getPaymentLeadTimeLabel(item.paymentDate, project?.shootingDate),
+        'Rodaje a Pago': getPaymentLeadTimeLabel(item.paymentDate, getShootingEndDate(project)),
         Pagado: paid,
         Deuda: (Number(item.total) || 0) - paid,
         Factura: item.invoice?.url || '',
@@ -2535,13 +2560,36 @@ export default function ProjectDetail() {
     }
   };
 
+  const updateShootingRange = async (updates: { shootingStartDate?: string; shootingEndDate?: string }) => {
+    if (!id || !canEditProjectOperations) return;
+
+    const nextStart = updates.shootingStartDate ?? getShootingStartDate(project);
+    const nextEnd = updates.shootingEndDate ?? (project.shootingEndDate || '');
+    const payload = {
+      ...updates,
+      shootingDate: nextStart,
+      shootingEndDate: nextEnd,
+      updatedAt: serverTimestamp(),
+    };
+
+    try {
+      await updateDoc(doc(db, 'projects', id), payload);
+      setProject({ ...project, ...payload, updatedAt: new Date() });
+    } catch (error) {
+      console.error('Error updating shooting range:', error);
+      alert('No se pudo guardar el rango de rodaje.');
+    }
+  };
+
   const saveLocation = async () => {
-    if (!id || !isProjectAdmin || locationDraft === (project.location || '')) return;
+    const nextLocation = buildGoogleMapsLink(locationDraft);
+    if (!id || !canEditProjectOperations || nextLocation === (project.location || '')) return;
 
     setIsSavingLocation(true);
     try {
-      await updateDoc(doc(db, 'projects', id), { location: locationDraft, updatedAt: serverTimestamp() });
-      setProject({ ...project, location: locationDraft });
+      await updateDoc(doc(db, 'projects', id), { location: nextLocation, updatedAt: serverTimestamp() });
+      setProject({ ...project, location: nextLocation });
+      setLocationDraft(nextLocation);
     } catch (error) {
       console.error('Error updating location:', error);
       alert('No se pudo guardar la locacion.');
@@ -2550,9 +2598,7 @@ export default function ProjectDetail() {
     }
   };
 
-  const mapsSearchUrl = locationDraft.trim()
-    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${locationDraft}, Buenos Aires, Argentina`)}`
-    : '';
+  const mapsSearchUrl = buildGoogleMapsLink(locationDraft || project.location || '');
 
   if (loading) return <div className="p-8 text-center text-slate-500 font-mono text-xs uppercase tracking-widest">Analizando proyecto...</div>;
   if (!project) return <div className="p-8 text-center text-slate-900 font-bold uppercase tracking-widest">Proyecto no encontrado</div>;
@@ -2599,29 +2645,43 @@ export default function ProjectDetail() {
 
                         <label
                           className="inline-flex h-8 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 shadow-sm hover:border-blue-200 hover:shadow-md transition-all cursor-pointer"
-                          onClick={() => shootingDateInputRef.current?.showPicker?.()}
+                          onClick={() => shootingStartDateInputRef.current?.showPicker?.()}
                         >
                           <Calendar className="w-3.5 h-3.5 text-slate-500" />
                           <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">Rodaje</span>
                           <input
-                            ref={shootingDateInputRef}
+                            ref={shootingStartDateInputRef}
                             type="date"
-                            value={project.shootingDate || ''}
-                            onChange={async (e) => {
-                              const newDate = e.target.value;
-                              await updateDoc(doc(db, 'projects', id!), { shootingDate: newDate, updatedAt: serverTimestamp() });
-                              setProject({ ...project, shootingDate: newDate });
+                            value={toDateInputValue(getShootingStartDate(project))}
+                            onChange={(e) => {
+                              const newStart = e.target.value;
+                              const currentEnd = toDateInputValue(project.shootingEndDate);
+                              updateShootingRange({
+                                shootingStartDate: newStart,
+                                shootingEndDate: currentEnd && currentEnd < newStart ? newStart : currentEnd,
+                              });
                             }}
                             className="w-[118px] bg-transparent text-[11px] font-bold text-slate-900 outline-none"
+                            title="Inicio de rodaje"
+                          />
+                          <span className="text-slate-300">a</span>
+                          <input
+                            ref={shootingEndDateInputRef}
+                            type="date"
+                            min={toDateInputValue(getShootingStartDate(project))}
+                            value={toDateInputValue(project.shootingEndDate)}
+                            onChange={(e) => updateShootingRange({ shootingEndDate: e.target.value })}
+                            className="w-[118px] bg-transparent text-[11px] font-bold text-slate-900 outline-none"
+                            title="Fin de rodaje"
                           />
                         </label>
 
-                        <label className="inline-flex h-8 min-w-[220px] max-w-[360px] flex-1 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 shadow-sm hover:border-blue-200 hover:shadow-md transition-all">
+                        <label className="inline-flex h-8 min-w-[260px] max-w-[430px] flex-1 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 shadow-sm hover:border-blue-200 hover:shadow-md transition-all">
                           <MapPin className="w-3.5 h-3.5 flex-none text-slate-500" />
                           <input
-                            type="text"
-                            aria-label="Locación"
-                            placeholder="Locación sin definir"
+                            type="url"
+                            aria-label="Link de Google Maps"
+                            placeholder="Link de Google Maps o dirección"
                             value={locationDraft}
                             onChange={(e) => setLocationDraft(e.target.value)}
                             onBlur={saveLocation}
@@ -2649,9 +2709,75 @@ export default function ProjectDetail() {
                         <span className={cn("px-2.5 py-0.5 rounded-full border text-[9px] font-black uppercase tracking-wider", statusColors[project.status || 'Presupuesto'] || 'bg-emerald-100 text-emerald-700 border-emerald-200')}>
                           {project.status || 'En producción'}
                         </span>
-                        <span className="inline-flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5 text-slate-500" /> {project.shootingDate ? `Rodaje: ${formatDate(project.shootingDate)}` : 'Sin fecha de rodaje'}</span>
-                        <span className="hidden sm:inline text-slate-300">•</span>
-                        <span className="inline-flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5 text-slate-500" /> {project.location || 'Locación sin definir'}</span>
+                        {canEditProjectOperations ? (
+                          <>
+                            <div className="inline-flex h-8 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 shadow-sm hover:border-blue-200 hover:shadow-md transition-all">
+                              <Calendar className="w-3.5 h-3.5 text-slate-500" />
+                              <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">Rodaje</span>
+                              <input
+                                type="date"
+                                value={toDateInputValue(getShootingStartDate(project))}
+                                onChange={(e) => {
+                                  const newStart = e.target.value;
+                                  const currentEnd = toDateInputValue(project.shootingEndDate);
+                                  updateShootingRange({
+                                    shootingStartDate: newStart,
+                                    shootingEndDate: currentEnd && currentEnd < newStart ? newStart : currentEnd,
+                                  });
+                                }}
+                                className="w-[118px] bg-transparent text-[11px] font-bold text-slate-900 outline-none"
+                                title="Inicio de rodaje"
+                              />
+                              <span className="text-slate-300">a</span>
+                              <input
+                                type="date"
+                                min={toDateInputValue(getShootingStartDate(project))}
+                                value={toDateInputValue(project.shootingEndDate)}
+                                onChange={(e) => updateShootingRange({ shootingEndDate: e.target.value })}
+                                className="w-[118px] bg-transparent text-[11px] font-bold text-slate-900 outline-none"
+                                title="Fin de rodaje"
+                              />
+                            </div>
+                            <label className="inline-flex h-8 min-w-[260px] max-w-[430px] flex-1 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 shadow-sm hover:border-blue-200 hover:shadow-md transition-all">
+                              <MapPin className="w-3.5 h-3.5 flex-none text-slate-500" />
+                              <input
+                                type="url"
+                                aria-label="Link de Google Maps"
+                                placeholder="Link de Google Maps o dirección"
+                                value={locationDraft}
+                                onChange={(e) => setLocationDraft(e.target.value)}
+                                onBlur={saveLocation}
+                                onKeyDown={(event) => {
+                                  if (event.key === 'Enter') event.currentTarget.blur();
+                                }}
+                                className="min-w-0 flex-1 bg-transparent text-[11px] font-bold text-slate-900 outline-none placeholder:text-slate-400"
+                              />
+                              {isSavingLocation && <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">Guardando</span>}
+                            </label>
+                            {mapsSearchUrl && (
+                              <a
+                                href={mapsSearchUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex h-8 items-center gap-1.5 rounded-full border border-blue-100 bg-blue-50 px-3 text-[10px] font-black uppercase tracking-wider text-blue-700 hover:border-blue-200 hover:bg-blue-100 transition-all"
+                              >
+                                <LinkIcon className="w-3.5 h-3.5" /> Maps
+                              </a>
+                            )}
+                          </>
+                        ) : (
+                          <>
+                            <span className="inline-flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5 text-slate-500" /> {formatShootingRange(project)}</span>
+                            <span className="hidden sm:inline text-slate-300">•</span>
+                            {mapsSearchUrl ? (
+                              <a href={mapsSearchUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-blue-700 hover:underline">
+                                <MapPin className="w-3.5 h-3.5 text-slate-500" /> Ver locación
+                              </a>
+                            ) : (
+                              <span className="inline-flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5 text-slate-500" /> Locación sin definir</span>
+                            )}
+                          </>
+                        )}
                       </>
                     )}
                   </div>
@@ -4229,7 +4355,7 @@ export default function ProjectDetail() {
                                  </span>
                                  {entry.item?.paymentDate && (
                                    <span className="px-2 py-1 rounded bg-slate-50 border border-slate-100 text-slate-500 font-bold uppercase tracking-widest">
-                                     Pago {formatDate(entry.item.paymentDate)} · {getPaymentLeadTimeLabel(entry.item.paymentDate, project?.shootingDate)}
+                                     Pago {formatDate(entry.item.paymentDate)} · {getPaymentLeadTimeLabel(entry.item.paymentDate, getShootingEndDate(project))}
                                    </span>
                                  )}
                                  <span className={cn(
