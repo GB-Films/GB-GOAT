@@ -299,12 +299,13 @@ export default function Dashboard() {
 
   return (
     <div className="max-w-full mx-auto space-y-5">
-      <header className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+      <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between border-b border-slate-200 pb-6">
         <div>
-          <div className="text-[10px] text-slate-400 uppercase tracking-widest font-bold mb-1">Global / Operacion audiovisual</div>
+          <div className="text-[10px] text-slate-400 uppercase tracking-widest font-bold mb-1">GB GOAT / Inicio</div>
           <h1 className="text-2xl font-light text-slate-900 leading-none">
-            Dashboard: <span className="font-bold text-black">Estado de Producciones</span>
+            Dashboard: <span className="font-bold text-black">Estado de producciones</span>
           </h1>
+          <p className="text-xs text-slate-500 mt-2 max-w-2xl">Vista general de producciones, fechas próximas y alertas operativas.</p>
         </div>
         <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
           {profile?.role === 'admin' ? 'Vista administracion' : 'Vista colaborador'}

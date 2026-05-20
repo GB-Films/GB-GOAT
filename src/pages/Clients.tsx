@@ -167,12 +167,13 @@ export default function Clients() {
 
   return (
     <div className="max-w-6xl mx-auto space-y-8">
-      <header className="flex items-end justify-between border-b border-slate-200 pb-8">
+      <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between border-b border-slate-200 pb-6">
         <div>
-          <div className="text-xs text-slate-400 uppercase tracking-widest font-bold mb-1">CineManage / Comercial</div>
-          <h1 className="text-3xl font-light text-slate-900">Clientes: <span className="font-bold text-black">Cartera de Empresas</span></h1>
+          <div className="text-[10px] text-slate-400 uppercase tracking-widest font-bold mb-1">GB GOAT / Comercial</div>
+          <h1 className="text-2xl font-light text-slate-900 leading-none">Clientes: <span className="font-bold text-black">Cartera de empresas</span></h1>
+          <p className="text-xs text-slate-500 mt-2 max-w-2xl">Base comercial de clientes, datos fiscales y contactos de referencia.</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <button 
             onClick={downloadTemplate}
             className="px-4 py-2 bg-white border border-slate-200 text-slate-600 text-[10px] font-bold uppercase tracking-widest hover:bg-slate-50 transition-all flex items-center gap-2 rounded"

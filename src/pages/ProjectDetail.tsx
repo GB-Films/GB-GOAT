@@ -379,7 +379,7 @@ export default function ProjectDetail() {
   const [showExportModal, setShowExportModal] = useState(false);
   const [locationDraft, setLocationDraft] = useState('');
   const [isSavingLocation, setIsSavingLocation] = useState(false);
-  const [expandedKeyPerson, setExpandedKeyPerson] = useState<string | null>(null);
+  const [showKeyPeopleData, setShowKeyPeopleData] = useState(false);
   const [financeAreaFilter, setFinanceAreaFilter] = useState('all');
   const [financeStatusFilter, setFinanceStatusFilter] = useState<'all' | 'pendiente' | 'parcial' | 'pagado'>('all');
   const [financeInvoiceFilter, setFinanceInvoiceFilter] = useState<'all' | 'with' | 'without'>('all');
@@ -2569,8 +2569,6 @@ export default function ProjectDetail() {
                   Proyectos
                 </Link>
                 <span className="text-slate-300">/</span>
-                <span>Rodaje</span>
-                <span className="text-slate-300">/</span>
                 <span className="text-blue-700 font-black uppercase">{project.name}</span>
               </div>
 
@@ -2720,6 +2718,13 @@ export default function ProjectDetail() {
                     <h3 className="font-black text-lg tracking-[-0.02em] text-slate-950">Dirección & Producción</h3>
                     <p className="text-xs font-medium text-slate-500 mt-0.5">Responsables clave del proyecto</p>
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowKeyPeopleData((current) => !current)}
+                    className="px-3 py-2 bg-white border border-slate-200 rounded text-[10px] font-black uppercase tracking-widest text-slate-600 hover:border-black hover:text-black transition-all"
+                  >
+                    {showKeyPeopleData ? 'Ocultar datos' : 'Ver datos'}
+                  </button>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-slate-200">
                   {projectKeyPeople.map(({ id: roleId, label, provider }) => (
@@ -2739,24 +2744,18 @@ export default function ProjectDetail() {
                         )}
                         {provider ? (
                           <div>
-                            <button
-                              type="button"
-                              onClick={() => setExpandedKeyPerson(expandedKeyPerson === roleId ? null : roleId)}
-                              className="w-full text-left"
-                            >
-                              <div className="flex items-center gap-3">
-                                <div className="w-12 h-12 rounded-full bg-slate-950 text-white flex items-center justify-center text-sm font-black uppercase shadow-lg shadow-slate-900/20">
-                                  {providerDisplayName(provider)[0] || 'P'}
-                                </div>
-                                <div className="min-w-0">
-                                  <div className="text-sm font-black text-slate-950 truncate">{providerDisplayName(provider)}</div>
-                                  <div className="text-[10px] font-black text-blue-700 uppercase tracking-widest">
-                                    {expandedKeyPerson === roleId ? 'Ocultar datos' : 'Ver datos'}
-                                  </div>
+                            <div className="flex items-center gap-3">
+                              <div className="w-12 h-12 rounded-full bg-slate-950 text-white flex items-center justify-center text-sm font-black uppercase shadow-lg shadow-slate-900/20">
+                                {providerDisplayName(provider)[0] || 'P'}
+                              </div>
+                              <div className="min-w-0">
+                                <div className="text-sm font-black text-slate-950 truncate">{providerDisplayName(provider)}</div>
+                                <div className="text-[10px] font-black text-blue-700 uppercase tracking-widest">
+                                  {showKeyPeopleData ? 'Datos visibles' : 'Datos ocultos'}
                                 </div>
                               </div>
-                            </button>
-                            {expandedKeyPerson === roleId && (
+                            </div>
+                            {showKeyPeopleData && (
                               <div className="mt-4 text-xs text-slate-500 space-y-2 border-t border-slate-100 pt-4">
                                 <div><span className="font-bold text-slate-700">Email:</span> {provider.email || provider.adminEmail || '-'}</div>
                                 <div><span className="font-bold text-slate-700">Tel:</span> {provider.phone || '-'}</div>

@@ -145,9 +145,12 @@ export default function Team() {
 
   return (
     <div className="max-w-6xl mx-auto">
-      <header className="mb-10">
-        <h1 className="text-3xl font-bold tracking-tight text-slate-900">Equipo</h1>
-        <p className="text-slate-500 mt-1">Gestiona los colaboradores y sus permisos de acceso</p>
+      <header className="mb-8 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between border-b border-slate-200 pb-6">
+        <div>
+          <div className="text-[10px] text-slate-400 uppercase tracking-widest font-bold mb-1">GB GOAT / Accesos</div>
+          <h1 className="text-2xl font-light text-slate-900 leading-none">Equipo: <span className="font-bold text-black">Usuarios y permisos</span></h1>
+          <p className="text-xs text-slate-500 mt-2 max-w-2xl">Invitaciones, roles globales y usuarios habilitados para trabajar en la app.</p>
+        </div>
       </header>
 
       {isAdmin && (

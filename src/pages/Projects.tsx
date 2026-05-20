@@ -99,10 +99,11 @@ export default function Projects() {
 
   return (
     <div className="max-w-6xl mx-auto space-y-8">
-      <header className="flex items-end justify-between border-b border-slate-200 pb-4">
+      <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between border-b border-slate-200 pb-6">
         <div>
           <div className="text-[10px] text-slate-400 uppercase tracking-widest font-bold mb-1">GB GOAT / Catálogo</div>
-          <h1 className="text-2xl font-light text-slate-900">Producciones: <span className="font-bold text-black">Histórico y Activas</span></h1>
+          <h1 className="text-2xl font-light text-slate-900 leading-none">Producciones: <span className="font-bold text-black">Histórico y activas</span></h1>
+          <p className="text-xs text-slate-500 mt-2 max-w-2xl">Listado de proyectos, estados y accesos de trabajo.</p>
         </div>
         {isAppAdmin && (
           <button 

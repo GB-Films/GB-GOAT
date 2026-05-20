@@ -483,10 +483,11 @@ export default function Providers() {
 
   return (
     <div className="max-w-7xl mx-auto space-y-8">
-      <header className="flex flex-col lg:flex-row lg:items-end justify-between border-b border-slate-200 pb-8 gap-4">
+      <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between border-b border-slate-200 pb-6">
         <div>
-          <div className="text-xs text-slate-400 uppercase tracking-widest font-bold mb-1">CineManage / Recursos</div>
-          <h1 className="text-3xl font-light text-slate-900">Proveedores: <span className="font-bold text-black">Base de Contactos</span></h1>
+          <div className="text-[10px] text-slate-400 uppercase tracking-widest font-bold mb-1">GB GOAT / Recursos</div>
+          <h1 className="text-2xl font-light text-slate-900 leading-none">Proveedores: <span className="font-bold text-black">Base de contactos</span></h1>
+          <p className="text-xs text-slate-500 mt-2 max-w-2xl">Alta, búsqueda y administración de proveedores de la productora.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           {canEditProviders && (
