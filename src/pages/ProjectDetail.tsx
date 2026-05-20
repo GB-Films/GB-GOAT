@@ -2598,7 +2598,7 @@ export default function ProjectDetail() {
     }
   };
 
-  const mapsSearchUrl = buildGoogleMapsLink(locationDraft || project.location || '');
+  const mapsSearchUrl = buildGoogleMapsLink(locationDraft || project?.location || '');
 
   if (loading) return <div className="p-8 text-center text-slate-500 font-mono text-xs uppercase tracking-widest">Analizando proyecto...</div>;
   if (!project) return <div className="p-8 text-center text-slate-900 font-bold uppercase tracking-widest">Proyecto no encontrado</div>;
