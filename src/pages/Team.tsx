@@ -32,26 +32,32 @@ export default function Team() {
       try {
         const querySnapshot = await getDocs(collection(db, 'users'));
         const userItems = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
-        const productionLeadSnapshot = await getDocs(query(
-          collectionGroup(db, 'collaborators'),
-          where('role', '==', 'jefe_produccion')
-        ));
-        const productionLeadEmails = new Set(
-          productionLeadSnapshot.docs
-            .map((item) => normalizeEmail(item.data().email || item.id))
-            .filter(Boolean)
-        );
-        const syncedUsers = userItems.map((item) => {
-          const shouldPromote = productionLeadEmails.has(normalizeEmail(item.email))
-            && !['admin', 'jefe_produccion'].includes(item.role);
-          return shouldPromote ? { ...item, role: 'jefe_produccion' } : item;
-        });
+        setUsers(userItems);
 
-        setUsers(syncedUsers);
+        try {
+          const productionLeadSnapshot = await getDocs(query(
+            collectionGroup(db, 'collaborators'),
+            where('role', '==', 'jefe_produccion')
+          ));
+          const productionLeadEmails = new Set(
+            productionLeadSnapshot.docs
+              .map((item) => normalizeEmail(item.data().email || item.id))
+              .filter(Boolean)
+          );
+          const syncedUsers = userItems.map((item) => {
+            const shouldPromote = productionLeadEmails.has(normalizeEmail(item.email))
+              && !['admin', 'jefe_produccion'].includes(item.role);
+            return shouldPromote ? { ...item, role: 'jefe_produccion' } : item;
+          });
 
-        await Promise.all(syncedUsers
-          .filter((item, index) => item.role !== userItems[index].role)
-          .map((item) => updateDoc(doc(db, 'users', item.id), { role: 'jefe_produccion' })));
+          setUsers(syncedUsers);
+
+          await Promise.all(syncedUsers
+            .filter((item, index) => item.role !== userItems[index].role)
+            .map((item) => updateDoc(doc(db, 'users', item.id), { role: 'jefe_produccion' })));
+        } catch (syncError) {
+          console.warn('No se pudo sincronizar jefes de produccion globales:', syncError);
+        }
       } catch (error) {
         console.error("Error fetching users:", error);
       } finally {
