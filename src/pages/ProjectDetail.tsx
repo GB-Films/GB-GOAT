@@ -2353,6 +2353,20 @@ export default function ProjectDetail() {
     event.currentTarget.reset();
   };
 
+  const ensureGlobalProductionLeadRole = async (targetUser: any) => {
+    const userId = targetUser?.uid || targetUser?.id;
+    if (!userId || ['admin', 'jefe_produccion'].includes(targetUser?.role)) return;
+
+    try {
+      await updateDoc(doc(db, 'users', userId), { role: 'jefe_produccion' });
+      setAvailableUsers((current) => current.map((item) => (
+        (item.uid || item.id) === userId ? { ...item, role: 'jefe_produccion' } : item
+      )));
+    } catch (error) {
+      console.warn('No se pudo sincronizar el rol global de jefe de produccion:', error);
+    }
+  };
+
   const addCollaborator = async (selectedUser: any) => {
     if (!id || !selectedUser?.email || !canManageProjectRoles) return;
 
@@ -2382,6 +2396,9 @@ export default function ProjectDetail() {
         collaboratorEmails: newEmails,
         updatedAt: serverTimestamp(),
       });
+      if (newCollaboratorRole === 'jefe_produccion') {
+        await ensureGlobalProductionLeadRole(selectedUser);
+      }
 
       setCollaborators([...collaborators, { ...newCol, createdAt: new Date(), updatedAt: new Date() }]);
       setProject({ ...project, collaboratorEmails: newEmails });
@@ -2411,6 +2428,9 @@ export default function ProjectDetail() {
 
     try {
       await updateDoc(doc(db, 'projects', id, 'collaborators', normalizeEmail(col.email)), updates);
+      if (role === 'jefe_produccion') {
+        await ensureGlobalProductionLeadRole(col);
+      }
       setCollaborators(collaborators.map(c => normalizeEmail(c.email) === normalizeEmail(col.email) ? { ...c, ...updates, updatedAt: new Date() } : c));
     } catch (error) {
       console.error('Error updating collaborator role:', error);

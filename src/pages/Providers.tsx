@@ -2,12 +2,11 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   collection,
   query,
+  getDoc,
   getDocs,
   addDoc,
   serverTimestamp,
   orderBy,
-  updateDoc,
-  deleteDoc,
   doc,
   setDoc,
   writeBatch,
@@ -86,6 +85,8 @@ export default function Providers() {
   const [generatingInvite, setGeneratingInvite] = useState(false);
   const { profile } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
+  const canEditProviders = profile?.role === 'admin';
+  const canCreateProviders = canEditProviders || profile?.role === 'jefe_produccion';
 
   const filteredProviders = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
@@ -135,7 +136,7 @@ export default function Providers() {
         const querySnapshot = await getDocs(q);
         const items = querySnapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
         setProviders(items);
-        if (profile?.role === 'admin') void syncProviderIdentifiers(items);
+        if (canEditProviders) void syncProviderIdentifiers(items);
       } catch (error: any) {
         console.error('Error fetching providers:', error);
         if (error.message?.includes('insufficient permissions')) {
@@ -146,7 +147,7 @@ export default function Providers() {
       }
     };
     fetchProviders();
-  }, [profile]);
+  }, [profile, canEditProviders]);
 
   const downloadTemplate = () => {
     const templateData = [
@@ -193,7 +194,21 @@ export default function Providers() {
     }, { merge: true })));
   };
 
+  const validateProviderIdentifiersAvailable = async (providerData: any) => {
+    const identifiers = buildProviderIdentifiers(providerData);
+    for (const identifier of identifiers) {
+      const snap = await getDoc(doc(db, 'providerIdentifiers', identifier.id));
+      if (snap.exists()) {
+        return identifier.type === 'dni'
+          ? 'Ya existe una persona registrada con este DNI.'
+          : 'Ya existe un proveedor registrado con este CUIT/CUIL.';
+      }
+    }
+    return '';
+  };
+
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (!canEditProviders) return;
     const file = event.target.files?.[0];
     if (!file) return;
 
@@ -280,6 +295,7 @@ export default function Providers() {
   };
 
   const handleGenerateProviderInvite = async () => {
+    if (!canCreateProviders) return;
     setGeneratingInvite(true);
     setGeneratedInviteLink('');
     setCopiedInviteLink(false);
@@ -320,6 +336,7 @@ export default function Providers() {
 
   const handleCreateProvider = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (!canCreateProviders) return;
     const formData = new FormData(e.currentTarget);
     const type = String(formData.get('type') || 'persona') as 'persona' | 'empresa';
     const category = String(formData.get('category') || '');
@@ -367,6 +384,12 @@ export default function Providers() {
         };
 
     try {
+      const duplicateMessage = await validateProviderIdentifiersAvailable(data);
+      if (duplicateMessage) {
+        alert(duplicateMessage);
+        return;
+      }
+
       const docRef = await addDoc(collection(db, 'providers'), data);
       await createProviderIdentifierDocs(docRef.id, data);
       setProviders([{ id: docRef.id, ...data, createdAt: new Date() }, ...providers]);
@@ -378,6 +401,7 @@ export default function Providers() {
 
   const handleUpdateProvider = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (!canEditProviders) return;
     if (!editingProvider) return;
 
     const formData = new FormData(e.currentTarget);
@@ -442,6 +466,7 @@ export default function Providers() {
   };
 
   const handleDeleteProvider = async (provider: any) => {
+    if (!canEditProviders) return;
     if (!confirm('¿Estás seguro de que deseas eliminar este proveedor?')) return;
     try {
       const batch = writeBatch(db);
@@ -464,19 +489,27 @@ export default function Providers() {
           <h1 className="text-3xl font-light text-slate-900">Proveedores: <span className="font-bold text-black">Base de Contactos</span></h1>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button onClick={downloadTemplate} className="px-4 py-2 bg-white border border-slate-200 text-[10px] font-bold uppercase tracking-widest rounded hover:bg-slate-50 transition-colors flex items-center gap-2">
-            <Download className="w-3 h-3" /> Plantilla
-          </button>
-          <label className="px-4 py-2 bg-white border border-slate-200 text-[10px] font-bold uppercase tracking-widest rounded hover:bg-slate-50 transition-colors flex items-center gap-2 cursor-pointer">
-            <Upload className="w-3 h-3" /> Importar
-            <input type="file" accept=".xlsx,.xls,.csv" onChange={handleFileUpload} className="hidden" />
-          </label>
-          <button onClick={handleGenerateProviderInvite} disabled={generatingInvite} className="px-4 py-2 bg-slate-900 text-white text-[10px] font-bold uppercase tracking-widest rounded hover:bg-black transition-colors flex items-center gap-2 disabled:bg-slate-300">
-            <Link2 className="w-3 h-3" /> {generatingInvite ? 'Generando...' : 'Generar Link Alta'}
-          </button>
-          <button onClick={() => setShowNewModal(true)} className="px-4 py-2 bg-black text-white text-[10px] font-bold uppercase tracking-widest rounded hover:bg-slate-800 transition-colors flex items-center gap-2">
-            <Plus className="w-3 h-3" /> Nuevo Manual
-          </button>
+          {canEditProviders && (
+            <>
+              <button onClick={downloadTemplate} className="px-4 py-2 bg-white border border-slate-200 text-[10px] font-bold uppercase tracking-widest rounded hover:bg-slate-50 transition-colors flex items-center gap-2">
+                <Download className="w-3 h-3" /> Plantilla
+              </button>
+              <label className="px-4 py-2 bg-white border border-slate-200 text-[10px] font-bold uppercase tracking-widest rounded hover:bg-slate-50 transition-colors flex items-center gap-2 cursor-pointer">
+                <Upload className="w-3 h-3" /> Importar
+                <input type="file" accept=".xlsx,.xls,.csv" onChange={handleFileUpload} className="hidden" />
+              </label>
+            </>
+          )}
+          {canCreateProviders && (
+            <>
+              <button onClick={handleGenerateProviderInvite} disabled={generatingInvite} className="px-4 py-2 bg-slate-900 text-white text-[10px] font-bold uppercase tracking-widest rounded hover:bg-black transition-colors flex items-center gap-2 disabled:bg-slate-300">
+                <Link2 className="w-3 h-3" /> {generatingInvite ? 'Generando...' : 'Generar Link Alta'}
+              </button>
+              <button onClick={() => setShowNewModal(true)} className="px-4 py-2 bg-black text-white text-[10px] font-bold uppercase tracking-widest rounded hover:bg-slate-800 transition-colors flex items-center gap-2">
+                <Plus className="w-3 h-3" /> Nuevo Manual
+              </button>
+            </>
+          )}
         </div>
       </header>
 
@@ -528,7 +561,9 @@ export default function Providers() {
                 <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Email / Teléfono</th>
                 <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Domicilio</th>
                 <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Restricción</th>
-                <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Acciones</th>
+                {canEditProviders && (
+                  <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Acciones</th>
+                )}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -550,16 +585,18 @@ export default function Providers() {
                     </td>
                     <td className="px-5 py-4 text-xs text-slate-500 max-w-[220px] truncate">{provider.address || '-'}</td>
                     <td className="px-5 py-4 text-xs text-slate-500">{provider.dietaryRestriction || '-'}</td>
-                    <td className="px-5 py-4 text-right">
-                      <div className="flex justify-end gap-2">
-                        <button onClick={() => setEditingProvider(provider)} className="p-1 text-slate-300 hover:text-black transition-colors" title="Editar proveedor">
-                          <Pencil className="w-3.5 h-3.5" />
-                        </button>
-                        <button onClick={() => handleDeleteProvider(provider)} className="p-1 text-slate-300 hover:text-red-500 transition-colors" title="Eliminar proveedor">
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </td>
+                    {canEditProviders && (
+                      <td className="px-5 py-4 text-right">
+                        <div className="flex justify-end gap-2">
+                          <button onClick={() => setEditingProvider(provider)} className="p-1 text-slate-300 hover:text-black transition-colors" title="Editar proveedor">
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                          <button onClick={() => handleDeleteProvider(provider)} className="p-1 text-slate-300 hover:text-red-500 transition-colors" title="Eliminar proveedor">
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 );
               })}

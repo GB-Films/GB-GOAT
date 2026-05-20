@@ -15,18 +15,28 @@ import { useAuth } from '../context/AuthContext';
 const menuItems = [
   { icon: LayoutDashboard, label: 'Dashboard', path: '/', adminOnly: false },
   { icon: Clapperboard, label: 'Proyectos', path: '/proyectos', adminOnly: false },
-  { icon: Truck, label: 'Proveedores', path: '/proveedores', adminOnly: true },
+  { icon: Truck, label: 'Proveedores', path: '/proveedores', adminOnly: true, productionLead: true },
   { icon: Users, label: 'Clientes', path: '/clientes', adminOnly: true },
   { icon: Users, label: 'Equipo', path: '/equipo', adminOnly: true },
   { icon: BarChart3, label: 'Reportes', path: '/reportes', adminOnly: true },
   { icon: Settings, label: 'Configuración', path: '/configuracion', adminOnly: true },
 ];
 
+const roleLabels: Record<string, string> = {
+  admin: 'Administrador',
+  jefe_produccion: 'Jefe de Producción',
+  colaborador: 'Colaborador',
+};
+
 export default function Sidebar() {
   const { profile } = useAuth();
   const logoSrc = `${(import.meta as any).env.BASE_URL}gb-films-logo.png`;
 
-  const filteredMenuItems = menuItems.filter(item => profile?.role === 'admin' || !item.adminOnly);
+  const filteredMenuItems = menuItems.filter(item => (
+    profile?.role === 'admin'
+    || !item.adminOnly
+    || (item.productionLead && profile?.role === 'jefe_produccion')
+  ));
 
   return (
     <aside className="w-52 bg-[#020817] text-white border-r border-white/10 flex flex-col h-screen sticky top-0 shadow-2xl shadow-slate-950/30 overflow-hidden">
@@ -74,7 +84,7 @@ export default function Sidebar() {
           />
           <div className="overflow-hidden">
             <p className="text-[10px] font-bold text-white truncate uppercase tracking-tight">{profile?.displayName || 'GB FILMS'}</p>
-            <p className="text-[10px] text-slate-400 truncate capitalize tracking-tighter">{profile?.role || 'colaborador'}</p>
+            <p className="text-[10px] text-slate-400 truncate tracking-tighter">{roleLabels[profile?.role] || 'Colaborador'}</p>
           </div>
         </div>
         <button 

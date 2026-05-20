@@ -22,6 +22,15 @@ function AdminRoute({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
+function ProvidersRoute({ children }: { children: ReactNode }) {
+  const { profile, loading } = useAuth();
+
+  if (loading) return null;
+  if (!['admin', 'jefe_produccion'].includes(profile?.role)) return <Navigate to="/proyectos" replace />;
+
+  return <>{children}</>;
+}
+
 export default function App() {
   return (
     <AuthProvider>
@@ -35,7 +44,7 @@ export default function App() {
             <Route path="/proyectos" element={<Projects />} />
             <Route path="/proyectos/:id" element={<ProjectDetail />} />
             
-            <Route path="/proveedores" element={<AdminRoute><Providers /></AdminRoute>} />
+            <Route path="/proveedores" element={<ProvidersRoute><Providers /></ProvidersRoute>} />
             <Route path="/clientes" element={<AdminRoute><Clients /></AdminRoute>} />
             <Route path="/equipo" element={<AdminRoute><Team /></AdminRoute>} />
             <Route path="/reportes" element={<AdminRoute><Reports /></AdminRoute>} />

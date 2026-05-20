@@ -104,6 +104,16 @@ service cloud.firestore {
         );
     }
 
+    function isAppProductionLead() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'jefe_produccion';
+    }
+
+    function canCreateGlobalProvider() {
+      return isAppAdmin() || isAppProductionLead();
+    }
+
     function canUpdatePaymentFields(projectId, area) {
       return canWriteArea(projectId, area)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['paymentHistory', 'paid', 'updatedAt']);
@@ -179,6 +189,14 @@ service cloud.firestore {
         )
       );
       allow update: if isAppOwner()
+        || (
+          isAppAdmin()
+          && resource.data.email != 'info@granbertafilms.com'
+          && request.resource.data.email == resource.data.email
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role'])
+          && resource.data.role in ['colaborador', 'jefe_produccion']
+          && request.resource.data.role in ['colaborador', 'jefe_produccion']
+        )
         || (
           isSignedIn()
           && request.auth.uid == userId
@@ -268,14 +286,14 @@ service cloud.firestore {
 
     match /providers/{providerId} {
       allow read: if isSignedIn();
-      allow create: if isAppAdmin() || publicProviderCreateIsValid();
+      allow create: if canCreateGlobalProvider() || publicProviderCreateIsValid();
       allow update, delete: if isAppAdmin();
     }
 
     match /providerInvites/{token} {
       allow get: if true;
-      allow list: if isAppAdmin();
-      allow create: if isAppAdmin()
+      allow list: if canCreateGlobalProvider();
+      allow create: if canCreateGlobalProvider()
         && request.resource.data.status == 'pending'
         && request.resource.data.used == false;
       allow update: if isAppAdmin()
@@ -295,7 +313,7 @@ service cloud.firestore {
     match /providerIdentifiers/{identifierId} {
       allow get: if true;
       allow list: if isAppAdmin();
-      allow create: if isAppAdmin()
+      allow create: if canCreateGlobalProvider()
         || (
           request.auth == null
           && request.resource.data.inviteToken is string

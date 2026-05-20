@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { collection, getDocs, doc, updateDoc } from 'firebase/firestore';
+import { collection, collectionGroup, getDocs, doc, query, updateDoc, where } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { Users, Mail, Shield, ShieldCheck, MoreVertical, Lock } from 'lucide-react';
 import { useAuth, APP_OWNER_EMAIL } from '../context/AuthContext';
@@ -9,13 +9,33 @@ const normalizeEmail = (email?: string | null) => (email || '').trim().toLowerCa
 export default function Team() {
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const { profile, isOwner } = useAuth();
+  const { profile, isOwner, isAdmin } = useAuth();
 
   useEffect(() => {
     const fetchUsers = async () => {
       try {
         const querySnapshot = await getDocs(collection(db, 'users'));
-        setUsers(querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        const userItems = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+        const productionLeadSnapshot = await getDocs(query(
+          collectionGroup(db, 'collaborators'),
+          where('role', '==', 'jefe_produccion')
+        ));
+        const productionLeadEmails = new Set(
+          productionLeadSnapshot.docs
+            .map((item) => normalizeEmail(item.data().email || item.id))
+            .filter(Boolean)
+        );
+        const syncedUsers = userItems.map((item) => {
+          const shouldPromote = productionLeadEmails.has(normalizeEmail(item.email))
+            && !['admin', 'jefe_produccion'].includes(item.role);
+          return shouldPromote ? { ...item, role: 'jefe_produccion' } : item;
+        });
+
+        setUsers(syncedUsers);
+
+        await Promise.all(syncedUsers
+          .filter((item, index) => item.role !== userItems[index].role)
+          .map((item) => updateDoc(doc(db, 'users', item.id), { role: 'jefe_produccion' })));
       } catch (error) {
         console.error("Error fetching users:", error);
       } finally {
@@ -26,13 +46,23 @@ export default function Team() {
   }, []);
 
   const handleRoleChange = async (targetUser: any, newRole: string) => {
-    if (!isOwner) {
-      alert('Solo info@granbertafilms.com puede cambiar roles globales de usuarios.');
+    if (!isAdmin) {
+      alert('Solo administradores pueden cambiar roles globales de usuarios.');
       return;
     }
 
     if (normalizeEmail(targetUser.email) === APP_OWNER_EMAIL) {
       alert('El rol del dueño no se puede modificar.');
+      return;
+    }
+
+    if (newRole === 'admin' && !isOwner) {
+      alert('Solo info@granbertafilms.com puede asignar rol global de administrador.');
+      return;
+    }
+
+    if (targetUser.role === 'admin' && !isOwner) {
+      alert('Solo info@granbertafilms.com puede modificar usuarios administradores.');
       return;
     }
 
@@ -73,7 +103,7 @@ export default function Team() {
               ) : users.map((user) => {
                 const userEmail = normalizeEmail(user.email);
                 const isProtectedOwner = userEmail === APP_OWNER_EMAIL;
-                const canEditRole = isOwner && !isProtectedOwner;
+                const canEditRole = isAdmin && !isProtectedOwner;
                 const role = user.role || 'colaborador';
 
                 return (
@@ -95,6 +125,8 @@ export default function Team() {
                       <div className="flex items-center gap-1.5">
                         {role === 'admin' ? (
                           <ShieldCheck className="w-3.5 h-3.5 text-blue-600" />
+                        ) : role === 'jefe_produccion' ? (
+                          <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
                         ) : (
                           <Shield className="w-3.5 h-3.5 text-slate-400" />
                         )}
@@ -103,9 +135,10 @@ export default function Team() {
                           onChange={(e) => handleRoleChange(user, e.target.value)}
                           disabled={!canEditRole}
                           className="text-xs font-bold bg-transparent border-none focus:ring-0 p-0 cursor-pointer capitalize text-slate-700 disabled:cursor-not-allowed disabled:text-slate-400"
-                          title={canEditRole ? 'Cambiar rol global' : 'Solo el dueño puede modificar roles globales'}
+                          title={canEditRole ? 'Cambiar rol global' : 'Solo administradores pueden modificar roles globales'}
                         >
-                          <option value="admin">Administrador</option>
+                          <option value="admin" disabled={!isOwner}>Administrador</option>
+                          <option value="jefe_produccion">Jefe de Producción</option>
                           <option value="colaborador">Colaborador</option>
                         </select>
                         {!canEditRole && (
@@ -139,11 +172,11 @@ export default function Team() {
         <div>
           <h4 className="text-sm font-bold text-blue-900">Invitar Colaboradores</h4>
           <p className="text-xs text-blue-700 mt-1 leading-relaxed">
-            Los nuevos usuarios quedan como colaboradores y no ven proyectos hasta que sean incorporados a una producción. Solo info@granbertafilms.com puede subir o bajar roles globales de administrador.
+            Los nuevos usuarios quedan como colaboradores y no ven proyectos hasta que sean incorporados a una producción. Los Jefes de Producción globales pueden cargar proveedores y generar links de alta; solo info@granbertafilms.com puede subir o bajar roles globales de administrador.
           </p>
           {profile?.email && !isOwner && (
             <p className="text-[10px] text-blue-500 mt-2 font-bold uppercase tracking-widest">
-              Tu cuenta puede administrar proyectos, pero no modificar roles globales de admin.
+              Tu cuenta puede asignar Jefes de Producción globales, pero no modificar roles globales de admin.
             </p>
           )}
         </div>
