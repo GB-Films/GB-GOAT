@@ -98,7 +98,7 @@ export default function Projects() {
   };
 
   return (
-    <div className="max-w-6xl mx-auto space-y-8">
+    <div className="max-w-full mx-auto space-y-6">
       <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between border-b border-slate-200 pb-6">
         <div>
           <div className="text-[10px] text-slate-400 uppercase tracking-widest font-bold mb-1">GB GOAT / Catálogo</div>

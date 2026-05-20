@@ -2568,8 +2568,6 @@ export default function ProjectDetail() {
                   <ChevronLeft className="w-4 h-4" />
                   Proyectos
                 </Link>
-                <span className="text-slate-300">/</span>
-                <span className="text-blue-700 font-black uppercase">{project.name}</span>
               </div>
 
               <div className="flex items-center gap-3">

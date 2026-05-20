@@ -144,7 +144,7 @@ export default function Team() {
   };
 
   return (
-    <div className="max-w-6xl mx-auto">
+    <div className="max-w-full mx-auto space-y-6">
       <header className="mb-8 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between border-b border-slate-200 pb-6">
         <div>
           <div className="text-[10px] text-slate-400 uppercase tracking-widest font-bold mb-1">GB GOAT / Accesos</div>
@@ -154,7 +154,7 @@ export default function Team() {
       </header>
 
       {isAdmin && (
-        <div className="mb-8 bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
           <div className="flex flex-col lg:flex-row lg:items-end gap-4">
             <form onSubmit={createUserInvite} className="flex-1">
               <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">
@@ -206,7 +206,7 @@ export default function Team() {
         </div>
       )}
 
-      <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left">
             <thead>
@@ -289,7 +289,7 @@ export default function Team() {
         </div>
       </div>
 
-      <div className="mt-8 p-6 bg-blue-50/50 rounded-2xl border border-blue-100 flex items-start gap-4">
+      <div className="p-6 bg-blue-50/50 rounded-xl border border-blue-100 flex items-start gap-4">
         <div className="p-2 bg-blue-100 rounded-lg">
           <Users className="w-5 h-5 text-blue-600" />
         </div>
