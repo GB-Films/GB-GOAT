@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { collection, doc, serverTimestamp, updateDoc, writeBatch } from 'firebase/firestore';
-import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
+import { deleteObject, getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { Calendar, DollarSign, ExternalLink, History, Paperclip, Plus, Trash2, Wallet } from 'lucide-react';
 import { motion } from 'motion/react';
 import { db, storage } from '../../lib/firebase';
@@ -16,7 +16,17 @@ const formatDate = (dateString: string | any) => {
   return date.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
 };
 
-const toDateInputValue = (date = new Date()) => {
+const parsePaymentDate = (dateValue: any): Date => {
+  if (!dateValue) return new Date();
+  if (typeof dateValue === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateValue.trim())) return new Date(`${dateValue.trim()}T12:00:00`);
+  if (dateValue.seconds) return new Date(dateValue.seconds * 1000);
+  const date = new Date(dateValue);
+  return Number.isNaN(date.getTime()) ? new Date() : date;
+};
+
+const toDateInputValue = (dateValue: any = new Date()) => {
+  if (typeof dateValue === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateValue.trim())) return dateValue.trim();
+  const date = parsePaymentDate(dateValue);
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
@@ -70,6 +80,7 @@ interface PaymentModalProps {
   cashOwnerName?: string;
   paymentType: PaymentCollection;
   isDeletingPayment: number | null;
+  canEditExistingPayments?: boolean;
   onClose: () => void;
   onPaymentStateChange: (
     itemId: string,
@@ -79,6 +90,7 @@ interface PaymentModalProps {
   ) => void;
   onDeletePayment: (paymentIndex: number) => Promise<void>;
   onCashMovementCreated?: (movement: any) => void;
+  onCashMovementUpdated?: (movementId: string, updates: any) => void;
 }
 
 export function PaymentModal({
@@ -92,22 +104,30 @@ export function PaymentModal({
   cashOwnerName,
   paymentType,
   isDeletingPayment,
+  canEditExistingPayments = false,
   onClose,
   onPaymentStateChange,
   onDeletePayment,
   onCashMovementCreated,
+  onCashMovementUpdated,
 }: PaymentModalProps) {
   const amountRef = useRef<HTMLInputElement>(null);
   const [selectedReceipt, setSelectedReceipt] = useState<File | null>(null);
   const [receiptPreviewUrl, setReceiptPreviewUrl] = useState('');
   const [isReceiptDragOver, setIsReceiptDragOver] = useState(false);
   const [paymentDateInput, setPaymentDateInput] = useState(() => toDateInputValue());
+  const [editingPaymentIndex, setEditingPaymentIndex] = useState<number | null>(null);
+  const [editPaymentDateInput, setEditPaymentDateInput] = useState(() => toDateInputValue());
+  const [editReceipt, setEditReceipt] = useState<File | null>(null);
 
   useEffect(() => {
     setSelectedReceipt(null);
     setReceiptPreviewUrl('');
     setIsReceiptDragOver(false);
     setPaymentDateInput(toDateInputValue());
+    setEditingPaymentIndex(null);
+    setEditPaymentDateInput(toDateInputValue());
+    setEditReceipt(null);
   }, [isOpen, item?.id]);
 
   useEffect(() => {
@@ -132,11 +152,130 @@ export function PaymentModal({
     setSelectedReceipt(file);
   };
 
+  const attachEditReceipt = (file?: File | null) => {
+    if (!file) return;
+    const error = validateReceiptFile(file);
+    if (error) {
+      alert(error);
+      return;
+    }
+
+    setEditReceipt(file);
+  };
+
   if (!isOpen || !item) return null;
 
   const paymentHistory = item.paymentHistory || [];
   const totalPaid = paymentHistory.reduce((acc: number, p: any) => acc + p.amount, 0);
   const balance = (Number(item.total) || 0) - totalPaid;
+  const collectionName: PaymentCollection = item.__paymentCollection || paymentType;
+
+  const updateExistingPayment = async (event: FormEvent<HTMLFormElement>, paymentIndex: number) => {
+    event.preventDefault();
+    if (!projectId || !canEditExistingPayments) return;
+
+    const currentPayment = paymentHistory[paymentIndex] as Payment | undefined;
+    if (!currentPayment) return;
+
+    const formData = new FormData(event.currentTarget);
+    const nextAmount = Number(formData.get('editAmount'));
+    const nextDate = formData.get('editPaymentDate') as string;
+    const nextDetail = String(formData.get('editDetail') || '');
+
+    if (!nextAmount || nextAmount <= 0) {
+      alert('IngresÃ¡ un monto vÃ¡lido.');
+      return;
+    }
+
+    let nextReceipt = currentPayment.receipt || null;
+
+    try {
+      if (editReceipt) {
+        const fileName = buildReceiptFileName(currentPayment.id || Math.random().toString(36).slice(2), editReceipt);
+        const path = `projects/${projectId}/${collectionName}/${item.id}/comprobantes/${fileName}`;
+        const storageRef = ref(storage, path);
+
+        await uploadBytes(storageRef, editReceipt, {
+          contentType: editReceipt.type,
+          customMetadata: {
+            projectId,
+            collectionName,
+            itemId: item.id,
+            paymentId: currentPayment.id || '',
+            originalFileName: editReceipt.name,
+          },
+        });
+
+        const url = await getDownloadURL(storageRef);
+        nextReceipt = {
+          fileName,
+          originalFileName: editReceipt.name,
+          url,
+          path,
+          contentType: editReceipt.type,
+          size: editReceipt.size,
+          uploadedAt: new Date(),
+          uploadedBy: '',
+        };
+
+        if (currentPayment.receipt?.path && currentPayment.receipt.path !== path) {
+          deleteObject(ref(storage, currentPayment.receipt.path)).catch(() => {});
+        }
+      }
+
+      const updatedPayment: Payment = {
+        ...currentPayment,
+        amount: nextAmount,
+        detail: nextDetail,
+        date: nextDate ? new Date(`${nextDate}T12:00:00`) : parsePaymentDate(currentPayment.date),
+        type: nextAmount >= (Number(item.total) || 0) - 0.01 ? 'total' : 'partial',
+        receipt: nextReceipt,
+      };
+
+      const updatedHistory = paymentHistory.map((payment: Payment, index: number) => (
+        index === paymentIndex ? updatedPayment : payment
+      ));
+      const nextTotalPaid = updatedHistory.reduce((acc: number, payment: Payment) => acc + (Number(payment.amount) || 0), 0);
+      const itemTotal = Number(item.total) || 0;
+      const isFullyPaid = nextTotalPaid >= (itemTotal - 0.01);
+      const itemRef = doc(db, 'projects', projectId, collectionName, item.id);
+
+      if (currentPayment.cashMovementId) {
+        const movementUpdates = {
+          amount: nextAmount,
+          date: updatedPayment.date,
+          notes: nextDetail,
+          updatedAt: new Date(),
+        };
+        const batch = writeBatch(db);
+        batch.update(itemRef, {
+          paymentHistory: updatedHistory,
+          paid: isFullyPaid,
+          updatedAt: serverTimestamp(),
+        });
+        batch.update(doc(db, 'projects', projectId, 'cashMovements', currentPayment.cashMovementId), {
+          ...movementUpdates,
+          updatedAt: serverTimestamp(),
+        });
+        await batch.commit();
+        onCashMovementUpdated?.(currentPayment.cashMovementId, movementUpdates);
+      } else {
+        await updateDoc(itemRef, {
+          paymentHistory: updatedHistory,
+          paid: isFullyPaid,
+          updatedAt: serverTimestamp(),
+        });
+      }
+
+      onPaymentStateChange(item.id, collectionName, updatedHistory, isFullyPaid);
+      setEditingPaymentIndex(null);
+      setEditReceipt(null);
+    } catch (error: any) {
+      console.error('Error editing payment:', error);
+      handleFirestoreError(error, 'update', `projects/${projectId}/${collectionName}/${item.id}`);
+      alert('No se pudo actualizar el pago.');
+    }
+  };
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[300] flex items-center justify-center p-4">
@@ -449,49 +588,118 @@ export function PaymentModal({
               </h3>
               <div className="space-y-3 max-h-40 overflow-y-auto pr-2 custom-scrollbar">
                 {(paymentHistory as Payment[]).map((payment, idx) => (
-                  <div key={payment.id || idx} className="flex justify-between items-center p-3 bg-slate-50 rounded-lg border border-slate-100">
-                    <div className="flex-1">
-                      <div className="text-xs font-bold text-slate-900">${payment.amount.toLocaleString()}</div>
-                      <div className="text-[9px] text-slate-400 uppercase font-medium">{payment.detail || 'Sin detalle'}</div>
-                      {payment.receipt?.url && (
-                        <a
-                          href={payment.receipt.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="mt-2 inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-widest text-blue-600 hover:underline"
-                        >
-                          <ExternalLink className="w-2.5 h-2.5" />
-                          Ver comprobante
-                        </a>
-                      )}
-                    </div>
-                    <div className="text-right flex flex-col items-end gap-1">
-                       <div className="text-[9px] text-slate-400 font-bold uppercase flex items-center gap-1 justify-end">
-                         <Calendar className="w-2.5 h-2.5" />
-                         {formatDate(payment.date)}
-                       </div>
-                       <button 
-                         type="button"
-                         disabled={isDeletingPayment === idx}
-                         onClick={async (e) => {
-                           e.preventDefault();
-                           e.stopPropagation();
-                           await onDeletePayment(idx);
-                         }}
-                         className={cn(
-                           "mt-2 text-[10px] font-bold uppercase px-3 py-1.5 rounded-lg transition-all flex items-center justify-center border shadow-sm active:scale-95 w-full",
-                           isDeletingPayment === idx 
-                             ? "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed" 
-                             : "bg-white text-rose-600 border-rose-200 hover:bg-rose-600 hover:text-white"
-                         )}
-                       >
-                         {isDeletingPayment === idx ? (
-                           "Borrando..."
-                         ) : (
-                           <><Trash2 className="w-3 h-3 mr-1" /> Eliminar Pago</>
-                         )}
-                       </button>
-                    </div>
+                  <div key={payment.id || idx} className="p-3 bg-slate-50 rounded-lg border border-slate-100">
+                    {editingPaymentIndex === idx ? (
+                      <form onSubmit={(event) => updateExistingPayment(event, idx)} className="space-y-3">
+                        <div className="grid grid-cols-2 gap-2">
+                          <label className="relative block px-3 py-2 bg-white border border-slate-100 rounded text-xs font-bold text-slate-800 text-center cursor-pointer">
+                            {formatDate(editPaymentDateInput)}
+                            <input
+                              name="editPaymentDate"
+                              type="date"
+                              value={editPaymentDateInput}
+                              onChange={(event) => setEditPaymentDateInput(event.target.value)}
+                              className="absolute inset-0 h-full w-full opacity-0 cursor-pointer"
+                            />
+                          </label>
+                          <input
+                            name="editAmount"
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            defaultValue={payment.amount}
+                            className="px-3 py-2 bg-white border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black"
+                          />
+                        </div>
+                        <input
+                          name="editDetail"
+                          defaultValue={payment.detail || ''}
+                          placeholder="Detalle"
+                          className="w-full px-3 py-2 bg-white border border-slate-100 rounded text-xs focus:outline-none focus:border-black"
+                        />
+                        <label className="flex items-center justify-between gap-2 px-3 py-2 bg-white border border-dashed border-slate-200 rounded text-[10px] font-bold uppercase tracking-widest text-slate-400 cursor-pointer hover:text-slate-900 hover:border-slate-900">
+                          <span>{editReceipt ? editReceipt.name : payment.receipt?.url ? 'Reemplazar comprobante' : 'Agregar comprobante'}</span>
+                          <Paperclip className="w-3.5 h-3.5" />
+                          <input
+                            type="file"
+                            accept="application/pdf,image/jpeg,image/png,image/webp,.pdf,.jpg,.jpeg,.png,.webp"
+                            className="hidden"
+                            onChange={(event) => attachEditReceipt(event.target.files?.[0])}
+                          />
+                        </label>
+                        <div className="flex gap-2">
+                          <button type="submit" className="flex-1 px-3 py-2 bg-slate-900 text-white rounded text-[10px] font-black uppercase tracking-widest">Guardar</button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingPaymentIndex(null);
+                              setEditReceipt(null);
+                            }}
+                            className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded text-[10px] font-black uppercase tracking-widest text-slate-500"
+                          >
+                            Cancelar
+                          </button>
+                        </div>
+                      </form>
+                    ) : (
+                      <div className="flex justify-between items-center">
+                        <div className="flex-1">
+                          <div className="text-xs font-bold text-slate-900">${payment.amount.toLocaleString()}</div>
+                          <div className="text-[9px] text-slate-400 uppercase font-medium">{payment.detail || 'Sin detalle'}</div>
+                          {payment.receipt?.url && (
+                            <a
+                              href={payment.receipt.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="mt-2 inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-widest text-blue-600 hover:underline"
+                            >
+                              <ExternalLink className="w-2.5 h-2.5" />
+                              Ver comprobante
+                            </a>
+                          )}
+                        </div>
+                        <div className="text-right flex flex-col items-end gap-1">
+                          <div className="text-[9px] text-slate-400 font-bold uppercase flex items-center gap-1 justify-end">
+                            <Calendar className="w-2.5 h-2.5" />
+                            {formatDate(payment.date)}
+                          </div>
+                          {canEditExistingPayments && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingPaymentIndex(idx);
+                                setEditPaymentDateInput(toDateInputValue(payment.date));
+                                setEditReceipt(null);
+                              }}
+                              className="mt-2 text-[10px] font-bold uppercase px-3 py-1.5 rounded-lg bg-white text-slate-600 border border-slate-200 hover:border-black hover:text-black"
+                            >
+                              Editar
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={isDeletingPayment === idx}
+                            onClick={async (e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              await onDeletePayment(idx);
+                            }}
+                            className={cn(
+                              "mt-2 text-[10px] font-bold uppercase px-3 py-1.5 rounded-lg transition-all flex items-center justify-center border shadow-sm active:scale-95 w-full",
+                              isDeletingPayment === idx
+                                ? "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed"
+                                : "bg-white text-rose-600 border-rose-200 hover:bg-rose-600 hover:text-white"
+                            )}
+                          >
+                            {isDeletingPayment === idx ? (
+                              "Borrando..."
+                            ) : (
+                              <><Trash2 className="w-3 h-3 mr-1" /> Eliminar Pago</>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

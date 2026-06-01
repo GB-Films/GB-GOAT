@@ -39,7 +39,7 @@ import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import * as XLSX from 'xlsx';
 import Papa from 'papaparse';
 import { cn } from '../lib/utils';
-import { buildPaymentBuckets, formatDateKey, formatPeriodLabel, getOverdueLines, getTodayLines, getUnscheduledLines, sumDebt, type PaymentScheduleLine, type PaymentScheduleView } from '../lib/paymentSchedule';
+import { buildPaymentCalendarDays, formatDateKey, formatPeriodLabel, getOverdueLines, getTodayLines, getUnscheduledLines, sumDebt, type PaymentScheduleLine } from '../lib/paymentSchedule';
 import { BudgetRowCell } from './project-detail/BudgetRowCell';
 import { PaymentModal } from './project-detail/PaymentModal';
 import type { AreaExpense, BudgetItem, CashMovement, Collaborator, Payment, PaymentCollection } from './project-detail/types';
@@ -470,7 +470,6 @@ export default function ProjectDetail() {
   const [financeStatusFilter, setFinanceStatusFilter] = useState<'all' | 'pendiente' | 'parcial' | 'pagado'>('all');
   const [financeInvoiceFilter, setFinanceInvoiceFilter] = useState<'all' | 'with' | 'without'>('all');
   const [financeSearch, setFinanceSearch] = useState('');
-  const [paymentScheduleView, setPaymentScheduleView] = useState<PaymentScheduleView>('week');
   const [paymentScheduleAnchor, setPaymentScheduleAnchor] = useState(() => formatDateKey(new Date()));
   const [selectedPaymentBucketKey, setSelectedPaymentBucketKey] = useState<string | null>(null);
   const [documentFamilyFilter, setDocumentFamilyFilter] = useState<'todos' | 'finanzas' | 'contratos' | 'seguros' | 'locaciones'>('todos');
@@ -862,8 +861,8 @@ export default function ProjectDetail() {
     const message = `Este gasto supera el presupuesto asignado para "${area}" por $${overBy.toLocaleString()}.`;
 
     if (!isProjectAdmin) {
-      alert(`${message}\n\nPedí autorización a un administrador del proyecto para ampliar el presupuesto.`);
-      return false;
+      alert(`${message}\n\nSe guardara igual y el area quedara marcada como excedida.`);
+      return true;
     }
 
     return confirm(`${message}\n\nComo administrador, ¿querés guardarlo igual?`);
@@ -2054,19 +2053,22 @@ export default function ProjectDetail() {
     .sort((a, b) => a.providerName.localeCompare(b.providerName, 'es'))
   ), [project?.id, project?.name, providerSaldos]);
 
-  const paymentScheduleBuckets = React.useMemo(() => (
-    buildPaymentBuckets(paymentScheduleLines, paymentScheduleAnchor, paymentScheduleView)
-  ), [paymentScheduleAnchor, paymentScheduleLines, paymentScheduleView]);
+  const paymentScheduleCalendarDays = React.useMemo(() => (
+    buildPaymentCalendarDays(paymentScheduleLines, paymentScheduleAnchor)
+  ), [paymentScheduleAnchor, paymentScheduleLines]);
 
   const selectedPaymentBucket = React.useMemo(() => {
-    if (paymentScheduleBuckets.length === 0) return null;
-    return paymentScheduleBuckets.find((bucket) => bucket.key === selectedPaymentBucketKey)
-      || paymentScheduleBuckets.find((bucket) => bucket.isToday)
-      || paymentScheduleBuckets[0];
-  }, [paymentScheduleBuckets, selectedPaymentBucketKey]);
+    if (paymentScheduleCalendarDays.length === 0) return null;
+    return paymentScheduleCalendarDays.find((bucket) => bucket.key === selectedPaymentBucketKey)
+      || paymentScheduleCalendarDays.find((bucket) => bucket.isToday)
+      || paymentScheduleCalendarDays.find((bucket) => bucket.isCurrentMonth)
+      || paymentScheduleCalendarDays[0];
+  }, [paymentScheduleCalendarDays, selectedPaymentBucketKey]);
 
   const paymentScheduleStats = React.useMemo(() => {
-    const periodLines = paymentScheduleBuckets.flatMap((bucket) => bucket.lines);
+    const periodLines = paymentScheduleCalendarDays
+      .filter((bucket) => bucket.isCurrentMonth)
+      .flatMap((bucket) => bucket.lines);
     const todayLines = getTodayLines(paymentScheduleLines);
     const overdueLines = getOverdueLines(paymentScheduleLines);
     const unscheduledLines = getUnscheduledLines(paymentScheduleLines);
@@ -2081,7 +2083,7 @@ export default function ProjectDetail() {
       unscheduledLines,
       unscheduledDebt: sumDebt(unscheduledLines),
     };
-  }, [paymentScheduleBuckets, paymentScheduleLines]);
+  }, [paymentScheduleCalendarDays, paymentScheduleLines]);
 
   const projectDocuments = React.useMemo(() => {
     const docs: Array<{
@@ -4455,39 +4457,46 @@ export default function ProjectDetail() {
                   <div>
                     <h3 className="text-sm font-black text-slate-900">Flujo de Pagos</h3>
                     <p className="text-[10px] uppercase font-bold tracking-widest text-slate-400">
-                      Proyección por fecha de pago · {formatPeriodLabel(paymentScheduleAnchor, paymentScheduleView)}
+                      Proyección por fecha de pago · {formatPeriodLabel(paymentScheduleAnchor, 'month')}
                     </p>
                   </div>
                 </div>
 
                 <div className="flex flex-col sm:flex-row gap-2">
-                  <div className="flex p-1 bg-slate-100 rounded-lg">
-                    {(['week', 'month'] as PaymentScheduleView[]).map((view) => (
-                      <button
-                        key={view}
-                        type="button"
-                        onClick={() => {
-                          setPaymentScheduleView(view);
-                          setSelectedPaymentBucketKey(null);
-                        }}
-                        className={cn(
-                          "px-3 py-1.5 rounded-md text-[10px] font-black uppercase tracking-widest transition-all",
-                          paymentScheduleView === view ? "bg-white text-black shadow-sm" : "text-slate-400 hover:text-slate-700"
-                        )}
-                      >
-                        {view === 'week' ? 'Semana' : 'Mes'}
-                      </button>
-                    ))}
-                  </div>
-                  <input
-                    type="date"
-                    value={paymentScheduleAnchor}
-                    onChange={(event) => {
-                      setPaymentScheduleAnchor(event.target.value);
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const anchor = parseProjectDate(paymentScheduleAnchor) || new Date();
+                      setPaymentScheduleAnchor(formatDateKey(new Date(anchor.getFullYear(), anchor.getMonth() - 1, 1)));
                       setSelectedPaymentBucketKey(null);
                     }}
-                    className="px-3 py-2 bg-slate-50 border border-slate-100 rounded-lg text-xs font-bold focus:outline-none focus:border-black"
-                  />
+                    className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-[10px] font-black uppercase tracking-widest hover:border-black"
+                  >
+                    Mes anterior
+                  </button>
+                  <label className="relative px-3 py-2 bg-slate-50 border border-slate-100 rounded-lg text-xs font-bold text-slate-900 text-center cursor-pointer min-w-[150px]">
+                    {formatPeriodLabel(paymentScheduleAnchor, 'month')}
+                    <input
+                      type="month"
+                      value={paymentScheduleAnchor.slice(0, 7)}
+                      onChange={(event) => {
+                        setPaymentScheduleAnchor(`${event.target.value}-01`);
+                        setSelectedPaymentBucketKey(null);
+                      }}
+                      className="absolute inset-0 h-full w-full opacity-0 cursor-pointer"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const anchor = parseProjectDate(paymentScheduleAnchor) || new Date();
+                      setPaymentScheduleAnchor(formatDateKey(new Date(anchor.getFullYear(), anchor.getMonth() + 1, 1)));
+                      setSelectedPaymentBucketKey(null);
+                    }}
+                    className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-[10px] font-black uppercase tracking-widest hover:border-black"
+                  >
+                    Mes siguiente
+                  </button>
                 </div>
               </div>
 
@@ -4496,7 +4505,7 @@ export default function ProjectDetail() {
                   <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                     {[
                       { label: 'A pagar hoy', value: paymentScheduleStats.todayDebt, count: paymentScheduleStats.todayLines.length, tone: 'text-slate-900' },
-                      { label: paymentScheduleView === 'week' ? 'A pagar semana' : 'A pagar mes', value: paymentScheduleStats.periodDebt, count: paymentScheduleStats.periodLines.length, tone: 'text-blue-700' },
+                      { label: 'A pagar mes', value: paymentScheduleStats.periodDebt, count: paymentScheduleStats.periodLines.length, tone: 'text-blue-700' },
                       { label: 'Vencidos', value: paymentScheduleStats.overdueDebt, count: paymentScheduleStats.overdueLines.length, tone: 'text-rose-600' },
                       { label: 'Sin fecha', value: paymentScheduleStats.unscheduledDebt, count: paymentScheduleStats.unscheduledLines.length, tone: 'text-amber-600' },
                     ].map((item) => (
@@ -4508,42 +4517,62 @@ export default function ProjectDetail() {
                     ))}
                   </div>
 
-                  <div className="h-56 rounded-xl border border-slate-100 bg-gradient-to-b from-slate-50 to-white p-4 flex items-end gap-2 overflow-x-auto">
-                    {paymentScheduleBuckets.map((bucket) => {
-                      const maxTotal = Math.max(...paymentScheduleBuckets.map((item) => item.total), 1);
-                      const isSelected = selectedPaymentBucket?.key === bucket.key;
-                      const height = bucket.total > 0 ? Math.max(12, (bucket.total / maxTotal) * 150) : 6;
-                      return (
-                        <button
-                          key={bucket.key}
-                          type="button"
-                          onClick={() => setSelectedPaymentBucketKey(bucket.key)}
-                          className="min-w-[74px] flex-1 h-full flex flex-col justify-end items-center gap-2 group"
-                          title={`${bucket.label}: $${bucket.total.toLocaleString()}`}
-                        >
-                          <div className="text-[9px] font-black text-slate-500 font-mono">${bucket.total.toLocaleString()}</div>
-                          <div
+                  <div className="rounded-xl border border-slate-100 bg-white overflow-hidden">
+                    <div className="grid grid-cols-7 bg-slate-50 border-b border-slate-100">
+                      {['Lun', 'Mar', 'Mie', 'Jue', 'Vie', 'Sab', 'Dom'].map((day) => (
+                        <div key={day} className="px-2 py-2 text-center text-[9px] font-black uppercase tracking-widest text-slate-400">{day}</div>
+                      ))}
+                    </div>
+                    <div className="grid grid-cols-7">
+                      {paymentScheduleCalendarDays.map((day) => {
+                        const isSelected = selectedPaymentBucket?.key === day.key;
+                        const hasPayments = day.count > 0;
+                        const isHeavy = day.total >= paymentScheduleStats.periodDebt / 4 && paymentScheduleStats.periodDebt > 0;
+                        return (
+                          <button
+                            key={day.key}
+                            type="button"
+                            onClick={() => setSelectedPaymentBucketKey(day.key)}
                             className={cn(
-                              "w-full rounded-t-xl transition-all border",
-                              isSelected ? "bg-slate-900 border-slate-900" : bucket.isToday ? "bg-blue-600 border-blue-600" : "bg-slate-300 border-slate-300 group-hover:bg-slate-500 group-hover:border-slate-500"
+                              "min-h-[86px] border-r border-b border-slate-100 p-2 text-left transition-all hover:bg-slate-50",
+                              !day.isCurrentMonth && "bg-slate-50/60 text-slate-300",
+                              isSelected && "ring-2 ring-inset ring-slate-900 bg-white",
+                              day.isToday && "bg-blue-50",
+                              hasPayments && !isSelected && (isHeavy ? "bg-rose-50 hover:bg-rose-100" : "bg-amber-50 hover:bg-amber-100")
                             )}
-                            style={{ height }}
-                          />
-                          <div className="text-center">
-                            <div className={cn("text-[9px] font-black uppercase tracking-widest", isSelected ? "text-slate-900" : "text-slate-400")}>{bucket.shortLabel}</div>
-                            <div className="text-[8px] text-slate-300 font-bold uppercase tracking-widest">{bucket.count} pagos</div>
-                          </div>
-                        </button>
-                      );
-                    })}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span className={cn(
+                                "inline-flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-black",
+                                day.isToday ? "bg-blue-600 text-white" : "text-slate-700"
+                              )}>
+                                {day.dayNumber}
+                              </span>
+                              {hasPayments && <span className="text-[9px] font-black text-rose-600">{day.count}</span>}
+                            </div>
+                            {hasPayments && (
+                              <div className="mt-3">
+                                <div className="text-[10px] font-black font-mono text-slate-900">${day.total.toLocaleString()}</div>
+                                <div className="mt-1 h-1.5 rounded-full bg-white/80 overflow-hidden">
+                                  <div
+                                    className={cn("h-full rounded-full", isHeavy ? "bg-rose-500" : "bg-amber-500")}
+                                    style={{ width: `${Math.min(100, Math.max(12, (day.total / Math.max(paymentScheduleStats.periodDebt, 1)) * 100))}%` }}
+                                  />
+                                </div>
+                              </div>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
 
                 <aside className="p-4 bg-slate-50/50">
                   <div className="flex items-start justify-between gap-3 mb-3">
                     <div>
-                      <h4 className="text-xs font-black text-slate-900">{selectedPaymentBucket?.label || 'Sin selección'}</h4>
-                      <p className="text-[9px] uppercase font-bold tracking-widest text-slate-400">Proveedores a pagar en el rango</p>
+                      <h4 className="text-xs font-black text-slate-900">{selectedPaymentBucket ? formatDate(selectedPaymentBucket.date) : 'Sin seleccion'}</h4>
+                      <p className="text-[9px] uppercase font-bold tracking-widest text-slate-400">Proveedores a pagar en el dia</p>
                     </div>
                     <div className="text-right">
                       <div className="text-sm font-black font-mono text-slate-900">${(selectedPaymentBucket?.total || 0).toLocaleString()}</div>
@@ -5551,10 +5580,14 @@ export default function ProjectDetail() {
           cashOwnerName={currentUserName}
           paymentType={paymentType}
           isDeletingPayment={isDeletingPayment}
+          canEditExistingPayments={isProjectAdmin}
           onClose={() => setPaymentModalOpen(false)}
           onPaymentStateChange={updatePaymentState}
           onDeletePayment={deletePaymentFromSelectedItem}
           onCashMovementCreated={(movement) => setCashMovements((current) => [movement as CashMovement, ...current])}
+          onCashMovementUpdated={(movementId, updates) => setCashMovements((current) => current.map((movement) => (
+            movement.id === movementId ? { ...movement, ...updates } : movement
+          )))}
         />
         {showDocumentUploadModal && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[260] flex items-center justify-center p-4">

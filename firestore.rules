@@ -336,7 +336,7 @@ service cloud.firestore {
       match /cashMovements/{movementId} {
         allow read: if hasProjectAccess(projectId);
         allow create: if canCreateCashMovement(projectId);
-        allow update: if false;
+        allow update: if isProjectAdmin(projectId);
         allow delete: if canDeleteCashMovement(projectId);
       }
     }

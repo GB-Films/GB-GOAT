@@ -26,6 +26,17 @@ export interface PaymentScheduleBucket {
   isToday: boolean;
 }
 
+export interface PaymentCalendarDay {
+  key: string;
+  date: Date;
+  dayNumber: number;
+  isCurrentMonth: boolean;
+  isToday: boolean;
+  total: number;
+  count: number;
+  lines: PaymentScheduleLine[];
+}
+
 export const startOfLocalDay = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
 
 export const addDays = (date: Date, days: number) => {
@@ -172,6 +183,32 @@ export const buildPaymentBuckets = (
       count: bucketLines.length,
       lines: bucketLines.sort((a, b) => a.providerName.localeCompare(b.providerName, 'es')),
       isToday: today.getTime() >= range.start.getTime() && today.getTime() <= range.end.getTime(),
+    };
+  });
+};
+
+export const buildPaymentCalendarDays = (
+  lines: PaymentScheduleLine[],
+  anchorValue: any,
+): PaymentCalendarDay[] => {
+  const anchor = parseScheduleDate(anchorValue) || startOfLocalDay(new Date());
+  const today = startOfLocalDay(new Date());
+  const monthStart = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
+  const calendarStart = startOfWeek(monthStart);
+
+  return Array.from({ length: 42 }, (_, index) => {
+    const date = addDays(calendarStart, index);
+    const dayLines = getLinesInRange(lines, date, date);
+
+    return {
+      key: formatDateKey(date),
+      date,
+      dayNumber: date.getDate(),
+      isCurrentMonth: date.getMonth() === anchor.getMonth(),
+      isToday: date.getTime() === today.getTime(),
+      total: sumDebt(dayLines),
+      count: dayLines.length,
+      lines: dayLines.sort((a, b) => a.providerName.localeCompare(b.providerName, 'es')),
     };
   });
 };
