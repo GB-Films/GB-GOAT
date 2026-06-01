@@ -10,7 +10,9 @@ import type { Payment, PaymentCollection } from './types';
 
 const formatDate = (dateString: string | any) => {
   if (!dateString) return 'Sin fecha';
-  const date = dateString.seconds ? new Date(dateString.seconds * 1000) : new Date(dateString);
+  const date = typeof dateString === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateString.trim())
+    ? new Date(`${dateString.trim()}T12:00:00`)
+    : dateString.seconds ? new Date(dateString.seconds * 1000) : new Date(dateString);
   return date.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
 };
 

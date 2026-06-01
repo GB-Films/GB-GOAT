@@ -69,6 +69,10 @@ const formatCompactCurrency = (value: number) => {
 const parseProjectDate = (value: any) => {
   if (!value) return null;
   if (typeof value?.toDate === 'function') return value.toDate();
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value.trim())) {
+    const date = new Date(`${value.trim()}T12:00:00`);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date;
 };
@@ -76,7 +80,7 @@ const parseProjectDate = (value: any) => {
 const formatProjectDate = (value: any) => {
   const date = parseProjectDate(value);
   if (!date) return 'Sin fecha';
-  return date.toLocaleDateString('es-AR', { day: '2-digit', month: 'short' });
+  return date.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
 };
 
 const getDaysUntil = (value: any) => {

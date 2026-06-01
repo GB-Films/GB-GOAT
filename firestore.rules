@@ -107,6 +107,16 @@ service cloud.firestore {
         ]);
     }
 
+    function canUpdateAreaExpenseSubcategories(projectId) {
+      return hasCollaboratorDoc(projectId)
+        && collaboratorDoc(projectId).canEditBudgetAreas == true
+        && 'areas' in collaboratorDoc(projectId).allowedTabs
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'areaExpenseSubcategories',
+          'updatedAt'
+        ]);
+    }
+
     function canWriteProjectDocument(projectId) {
       return isProjectAdmin(projectId)
         || (
@@ -268,7 +278,9 @@ service cloud.firestore {
       );
       allow get: if hasProjectAccess(projectId);
       allow create: if isAppAdmin() && request.resource.data.createdBy == request.auth.uid;
-      allow update: if isProjectAdmin(projectId) || canUpdateProjectOperations(projectId);
+      allow update: if isProjectAdmin(projectId)
+        || canUpdateProjectOperations(projectId)
+        || canUpdateAreaExpenseSubcategories(projectId);
       allow delete: if isAppAdmin();
 
       match /collaborators/{email} {

@@ -41,7 +41,7 @@ import { cn } from '../lib/utils';
 import { buildPaymentBuckets, formatDateKey, formatPeriodLabel, getOverdueLines, getTodayLines, getUnscheduledLines, sumDebt, type PaymentScheduleLine, type PaymentScheduleView } from '../lib/paymentSchedule';
 import { BudgetRowCell } from './project-detail/BudgetRowCell';
 import { PaymentModal } from './project-detail/PaymentModal';
-import type { BudgetItem, CashMovement, Collaborator, Payment, PaymentCollection } from './project-detail/types';
+import type { AreaExpense, BudgetItem, CashMovement, Collaborator, Payment, PaymentCollection } from './project-detail/types';
 import { formatIdentifier, inferLegacyIdentifiers, providerDisplayName } from '../lib/providerConstants';
 
 const tabs = [
@@ -73,6 +73,19 @@ const DOCUMENT_FAMILIES = [
 ] as const;
 
 const MANUAL_DOCUMENT_FAMILIES = DOCUMENT_FAMILIES.filter((family) => family.id !== 'todos' && family.id !== 'finanzas');
+
+const DEFAULT_AREA_EXPENSE_SUBCATEGORY = 'Sin subcategoria';
+
+type AreaExpenseSortKey = 'updated' | 'provider' | 'paymentDate' | 'amountDesc' | 'amountAsc' | 'created';
+
+const AREA_EXPENSE_SORT_OPTIONS: Array<{ id: AreaExpenseSortKey; label: string }> = [
+  { id: 'updated', label: 'Ultimos cambios' },
+  { id: 'provider', label: 'Proveedor A-Z' },
+  { id: 'paymentDate', label: 'Fecha de pago' },
+  { id: 'amountDesc', label: 'Monto mayor' },
+  { id: 'amountAsc', label: 'Monto menor' },
+  { id: 'created', label: 'Carga reciente' },
+];
 
 const DOCUMENT_SUBTYPES: Record<string, string[]> = {
   contratos: ['Contrato proveedor', 'Contrato talento / crew', 'Prestacion de servicios', 'Cesion de derechos', 'Release', 'Otro'],
@@ -164,7 +177,8 @@ const getDefaultCollaboratorPermissions = (role: Collaborator['role'], categorie
 
 const formatDate = (dateString: string | any) => {
   if (!dateString) return 'Sin fecha';
-  const date = dateString.seconds ? new Date(dateString.seconds * 1000) : new Date(dateString);
+  const date = parseProjectDate(dateString);
+  if (!date) return 'Fecha invalida';
   return date.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
 };
 
@@ -207,6 +221,42 @@ const parseProjectDate = (dateValue: any): Date | null => {
   }
   const date = new Date(dateValue);
   return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const getDateTimestamp = (dateValue: any) => {
+  const date = parseProjectDate(dateValue);
+  return date ? date.getTime() : 0;
+};
+
+const normalizeAreaExpenseSubcategory = (value: any) => {
+  const normalized = String(value || '').trim();
+  return normalized || DEFAULT_AREA_EXPENSE_SUBCATEGORY;
+};
+
+const sortAreaExpenses = (expenses: AreaExpense[], sortKey: AreaExpenseSortKey) => {
+  return [...expenses].sort((a, b) => {
+    if (sortKey === 'provider') {
+      const providerDiff = String(a.providerName || '').localeCompare(String(b.providerName || ''), 'es', { sensitivity: 'base' });
+      if (providerDiff !== 0) return providerDiff;
+      return String(a.description || '').localeCompare(String(b.description || ''), 'es', { sensitivity: 'base' });
+    }
+
+    if (sortKey === 'paymentDate') {
+      const aDate = getDateTimestamp(a.paymentDate) || Number.MAX_SAFE_INTEGER;
+      const bDate = getDateTimestamp(b.paymentDate) || Number.MAX_SAFE_INTEGER;
+      if (aDate !== bDate) return aDate - bDate;
+      return String(a.providerName || '').localeCompare(String(b.providerName || ''), 'es', { sensitivity: 'base' });
+    }
+
+    if (sortKey === 'amountDesc') return (Number(b.total) || 0) - (Number(a.total) || 0);
+    if (sortKey === 'amountAsc') return (Number(a.total) || 0) - (Number(b.total) || 0);
+
+    if (sortKey === 'created') {
+      return getDateTimestamp(b.createdAt) - getDateTimestamp(a.createdAt);
+    }
+
+    return getDateTimestamp(b.updatedAt || b.createdAt) - getDateTimestamp(a.updatedAt || a.createdAt);
+  });
 };
 
 const toDateInputValue = (dateValue: any) => {
@@ -303,8 +353,8 @@ const isPostProductionArea = (area: unknown) => {
 
 const formatExportDate = (dateValue: any) => {
   if (!dateValue) return '';
-  const date = dateValue.seconds ? new Date(dateValue.seconds * 1000) : new Date(dateValue);
-  if (Number.isNaN(date.getTime())) return String(dateValue);
+  const date = parseProjectDate(dateValue);
+  if (!date) return String(dateValue);
   return date.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
 };
 
@@ -341,7 +391,7 @@ const providerExportRow = (provider: any, extra: Record<string, any> = {}) => {
     DNI: formatIdentifier(provider.dni || inferred.dniNormalized) || '',
     CUIT: formatIdentifier(provider.cuit || inferred.cuitNormalized) || '',
     Domicilio: provider.address || '',
-    'Fecha Nacimiento': provider.birthDate || '',
+    'Fecha Nacimiento': provider.birthDate ? formatDate(provider.birthDate) : '',
     Email: provider.email || provider.adminEmail || '',
     Telefono: provider.phone || '',
     Categoria: category,
@@ -367,13 +417,15 @@ export default function ProjectDetail() {
   
   // Data for specific tabs
   const [budgetItems, setBudgetItems] = useState<BudgetItem[]>([]);
-  const [areaExpenses, setAreaExpenses] = useState<any[]>([]);
+  const [areaExpenses, setAreaExpenses] = useState<AreaExpense[]>([]);
   const [manualProjectDocuments, setManualProjectDocuments] = useState<any[]>([]);
   const [providers, setProviders] = useState<any[]>([]);
   const [clients, setClients] = useState<any[]>([]);
   const [categories, setCategories] = useState<string[]>(BUDGET_AREAS);
   const [activeAreas, setActiveAreas] = useState<string[]>([]);
   const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>({});
+  const [collapsedAreaSubcategories, setCollapsedAreaSubcategories] = useState<Record<string, boolean>>({});
+  const [areaExpenseSort, setAreaExpenseSort] = useState<AreaExpenseSortKey>('updated');
   const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
   const [cashMovements, setCashMovements] = useState<CashMovement[]>([]);
   const [cashRecipientEmail, setCashRecipientEmail] = useState('');
@@ -522,7 +574,7 @@ export default function ProjectDetail() {
         // Fetch All Area Expenses
         const eq = query(collection(db, 'projects', id, 'areaExpenses'));
         const eSnap = await getDocs(eq);
-        setAreaExpenses(eSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+        setAreaExpenses(eSnap.docs.map(d => ({ id: d.id, ...d.data() } as AreaExpense)));
 
         const dq = query(collection(db, 'projects', id, 'projectDocuments'));
         const dSnap = await getDocs(dq);
@@ -826,6 +878,7 @@ export default function ProjectDetail() {
     const newItem = {
       projectId: id,
       area: area,
+      subcategory: DEFAULT_AREA_EXPENSE_SUBCATEGORY,
       providerId: '',
       providerName: 'Nuevo Gasto',
       description: 'Descripción del gasto...',
@@ -862,6 +915,71 @@ export default function ProjectDetail() {
     } catch (e) {
       console.error("Error updating area expense:", e);
     }
+  };
+
+  const getStoredAreaSubcategories = (area: string) => {
+    const stored = project?.areaExpenseSubcategories;
+    const list = stored && typeof stored === 'object' ? stored[area] : [];
+    return Array.isArray(list) ? list.map(normalizeAreaExpenseSubcategory) : [];
+  };
+
+  const saveAreaSubcategories = async (area: string, subcategories: string[]) => {
+    if (!id || !canEditArea(area)) return;
+    const normalized = Array.from(new Set(
+      subcategories
+        .map(normalizeAreaExpenseSubcategory)
+        .filter(Boolean)
+    ));
+    const nextMap = {
+      ...(project?.areaExpenseSubcategories || {}),
+      [area]: normalized,
+    };
+
+    await updateDoc(doc(db, 'projects', id), {
+      areaExpenseSubcategories: nextMap,
+      updatedAt: serverTimestamp(),
+    });
+    setProject((current: any) => current ? { ...current, areaExpenseSubcategories: nextMap } : current);
+  };
+
+  const createAreaExpenseSubcategory = async (area: string) => {
+    if (!canEditArea(area)) return;
+    const rawName = window.prompt(`Nueva subcategoria para ${area}`);
+    const name = normalizeAreaExpenseSubcategory(rawName);
+    if (!rawName || name === DEFAULT_AREA_EXPENSE_SUBCATEGORY) return;
+
+    const existing = getStoredAreaSubcategories(area);
+    if (existing.some((item) => item.toLowerCase() === name.toLowerCase())) {
+      alert('Esa subcategoria ya existe en esta area.');
+      return;
+    }
+
+    try {
+      await saveAreaSubcategories(area, [...existing, name]);
+    } catch (error) {
+      console.error('Error creating area expense subcategory:', error);
+      alert('No se pudo crear la subcategoria.');
+    }
+  };
+
+  const moveAreaExpense = async (expense: AreaExpense, nextArea: string, nextSubcategory: string) => {
+    if (!expense?.id) return;
+    const targetArea = nextArea || expense.area;
+    const targetSubcategory = normalizeAreaExpenseSubcategory(nextSubcategory);
+    const updates: Partial<AreaExpense> = {};
+
+    if (targetArea !== expense.area) {
+      updates.area = targetArea;
+      const targetSubcategories = getStoredAreaSubcategories(targetArea);
+      updates.subcategory = targetSubcategories.some((item) => item.toLowerCase() === targetSubcategory.toLowerCase())
+        ? targetSubcategory
+        : DEFAULT_AREA_EXPENSE_SUBCATEGORY;
+    } else if (targetSubcategory !== normalizeAreaExpenseSubcategory(expense.subcategory)) {
+      updates.subcategory = targetSubcategory;
+    }
+
+    if (Object.keys(updates).length === 0) return;
+    await updateAreaExpense(expense.id, updates);
   };
 
   const updateScheduledPaymentDate = async (item: any, collectionName: PaymentCollection, paymentDate: string) => {
@@ -1490,6 +1608,26 @@ export default function ProjectDetail() {
 
   const visibleCategoryKey = visibleCategories.join('|');
   const selectedVisibleAreas = selectedAreaTabs.filter((area) => visibleCategories.includes(area));
+  const areaExpenseSubcategoriesByArea = React.useMemo(() => {
+    const map: Record<string, string[]> = {};
+    const stored = project?.areaExpenseSubcategories && typeof project.areaExpenseSubcategories === 'object'
+      ? project.areaExpenseSubcategories
+      : {};
+
+    visibleCategories.forEach((area) => {
+      const storedList = Array.isArray(stored[area]) ? stored[area] : [];
+      const expenseList = areaExpenses
+        .filter((expense) => expense.area === area)
+        .map((expense) => normalizeAreaExpenseSubcategory(expense.subcategory));
+      map[area] = Array.from(new Set([
+        DEFAULT_AREA_EXPENSE_SUBCATEGORY,
+        ...storedList.map(normalizeAreaExpenseSubcategory),
+        ...expenseList,
+      ]));
+    });
+
+    return map;
+  }, [areaExpenses, project?.areaExpenseSubcategories, visibleCategoryKey]);
 
   useEffect(() => {
     setSelectedAreaTabs((current) => {
@@ -1506,14 +1644,28 @@ export default function ProjectDetail() {
         .reduce((acc, item) => acc + (Number(item.total) || 0), 0);
       const expenses = areaExpenses
         .filter((item) => item.area === area)
-        .sort((a, b) => (b.updatedAt?.seconds || 0) - (a.updatedAt?.seconds || 0));
+        .sort((a, b) => getDateTimestamp(b.updatedAt || b.createdAt) - getDateTimestamp(a.updatedAt || a.createdAt));
       const spent = expenses.reduce((acc, item) => acc + (Number(item.total) || 0), 0);
       const balance = assigned - spent;
       const usedPercent = assigned > 0 ? Math.min(100, (spent / assigned) * 100) : 0;
+      const subcategoryGroups = (areaExpenseSubcategoriesByArea[area] || [DEFAULT_AREA_EXPENSE_SUBCATEGORY])
+        .map((subcategory) => {
+          const groupExpenses = sortAreaExpenses(
+            expenses.filter((expense) => normalizeAreaExpenseSubcategory(expense.subcategory) === subcategory),
+            areaExpenseSort
+          );
 
-      return { area, assigned, expenses, spent, balance, usedPercent };
+          return {
+            subcategory,
+            expenses: groupExpenses,
+            subtotal: groupExpenses.reduce((acc, item) => acc + (Number(item.total) || 0), 0),
+          };
+        })
+        .filter((group) => group.expenses.length > 0 || group.subcategory !== DEFAULT_AREA_EXPENSE_SUBCATEGORY);
+
+      return { area, assigned, expenses, subcategoryGroups, spent, balance, usedPercent };
     })
-  ), [areaExpenses, budgetItems, visibleCategoryKey]);
+  ), [areaExpenseSort, areaExpenseSubcategoriesByArea, areaExpenses, budgetItems, visibleCategoryKey]);
 
   const selectedAreaDashboardRows = areaDashboardRows.filter((row) => selectedVisibleAreas.includes(row.area));
   const areaDashboardTotals = selectedAreaDashboardRows.reduce((acc, row) => ({
@@ -2102,7 +2254,7 @@ export default function ProjectDetail() {
       Cantidad: item.quantity || 0,
       'P Unitario': item.unitPrice || 0,
       Total: item.total || 0,
-      'Fecha Pago': item.paymentDate || '',
+      'Fecha Pago': item.paymentDate ? formatDate(item.paymentDate) : '',
       'Rodaje a Pago': getPaymentLeadTimeLabel(item.paymentDate, getShootingEndDate(project)),
       Pagado: item.paid ? 'Si' : 'No',
       Orden: item.order || 0,
@@ -2120,13 +2272,14 @@ export default function ProjectDetail() {
       const paid = (item.paymentHistory || []).reduce((acc: number, payment: any) => acc + (Number(payment.amount) || 0), 0);
       return {
         Area: item.area || '',
+        Subcategoria: normalizeAreaExpenseSubcategory(item.subcategory),
         Proveedor: item.providerName || '',
         Descripcion: item.description || '',
         Unidad: item.unit || '',
         Cantidad: item.quantity || 0,
         'P Unitario': item.unitPrice || 0,
         Total: item.total || 0,
-        'Fecha Pago': item.paymentDate || '',
+        'Fecha Pago': item.paymentDate ? formatDate(item.paymentDate) : '',
         'Rodaje a Pago': getPaymentLeadTimeLabel(item.paymentDate, getShootingEndDate(project)),
         Pagado: paid,
         Deuda: (Number(item.total) || 0) - paid,
@@ -3316,7 +3469,8 @@ export default function ProjectDetail() {
             </header>
 
             {/* Multi-select buttons for Active Areas */}
-            <div className="flex items-center gap-2 p-1 bg-slate-100 rounded-lg overflow-x-auto scrollbar-hide">
+            <div className="flex flex-col lg:flex-row gap-2">
+            <div className="flex-1 flex items-center gap-2 p-1 bg-slate-100 rounded-lg overflow-x-auto scrollbar-hide">
               {visibleCategories.length > 0 && (
                 <>
                   <button
@@ -3359,6 +3513,19 @@ export default function ProjectDetail() {
                   No hay áreas activas para gestión
                 </div>
               )}
+            </div>
+            <div className="shrink-0 flex items-center gap-2 px-3 py-1 bg-white border border-slate-200 rounded-lg">
+              <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">Orden</span>
+              <select
+                value={areaExpenseSort}
+                onChange={(event) => setAreaExpenseSort(event.target.value as AreaExpenseSortKey)}
+                className="bg-transparent text-[10px] font-bold text-slate-700 focus:outline-none"
+              >
+                {AREA_EXPENSE_SORT_OPTIONS.map((option) => (
+                  <option key={option.id} value={option.id}>{option.label}</option>
+                ))}
+              </select>
+            </div>
             </div>
 
             {selectedAreaDashboardRows.length > 0 && (
@@ -3435,6 +3602,14 @@ export default function ProjectDetail() {
                         SUBTOTAL: ${areaRow.spent.toLocaleString()}
                       </div>
                       <button
+                        onClick={() => createAreaExpenseSubcategory(areaRow.area)}
+                        disabled={!canEditArea(areaRow.area)}
+                        className="px-2 py-1.5 text-[9px] font-black uppercase tracking-widest text-slate-800 bg-white border border-slate-200 rounded hover:bg-slate-100 transition-colors disabled:bg-slate-300 disabled:cursor-not-allowed"
+                        title="Crear subcategoria"
+                      >
+                        Subcategoria
+                      </button>
+                      <button
                         onClick={() => addAreaExpense(areaRow.area)}
                         disabled={!canEditArea(areaRow.area)}
                         className="p-1.5 text-slate-800 bg-white border border-slate-200 rounded hover:bg-slate-100 transition-colors disabled:bg-slate-300 disabled:cursor-not-allowed"
@@ -3485,7 +3660,39 @@ export default function ProjectDetail() {
                     </div>
 
                     <div className="divide-y divide-slate-100">
-                      {areaRow.expenses.map((item) => (
+                      {areaRow.subcategoryGroups.map((subcategoryGroup) => {
+                        const subcategoryKey = `${areaRow.area}__${subcategoryGroup.subcategory}`;
+                        const isSubcategoryCollapsed = collapsedAreaSubcategories[subcategoryKey];
+
+                        return (
+                          <div key={subcategoryKey} className="bg-white">
+                            <div className="flex items-center justify-between gap-3 px-6 py-2 bg-slate-50/70 border-b border-slate-100">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <button
+                                  type="button"
+                                  onClick={() => setCollapsedAreaSubcategories((current) => ({
+                                    ...current,
+                                    [subcategoryKey]: !current[subcategoryKey],
+                                  }))}
+                                  className="p-1 text-slate-400 hover:text-slate-900 transition-colors"
+                                  title={isSubcategoryCollapsed ? 'Expandir subcategoria' : 'Colapsar subcategoria'}
+                                >
+                                  {isSubcategoryCollapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                                </button>
+                                <div className="text-[10px] font-black uppercase tracking-widest text-slate-700 truncate">
+                                  {subcategoryGroup.subcategory}
+                                </div>
+                                <span className="text-[9px] font-bold text-slate-400">
+                                  {subcategoryGroup.expenses.length} gastos
+                                </span>
+                              </div>
+                              <div className="text-[10px] font-black font-mono text-slate-700">
+                                ${subcategoryGroup.subtotal.toLocaleString()}
+                              </div>
+                            </div>
+                            {!isSubcategoryCollapsed && (
+                              <div className="divide-y divide-slate-100">
+                      {subcategoryGroup.expenses.map((item) => (
                           <div
                             key={item.id}
                             onDragEnter={(event) => {
@@ -3527,6 +3734,30 @@ export default function ProjectDetail() {
                                 type="provider"
                                 disabled={!canEditArea(item.area)}
                               />
+                              <div className="mt-2 grid grid-cols-2 gap-1">
+                                <select
+                                  value={item.area}
+                                  disabled={!canEditArea(item.area)}
+                                  onChange={(event) => moveAreaExpense(item, event.target.value, normalizeAreaExpenseSubcategory(item.subcategory))}
+                                  className="w-full px-1.5 py-1 bg-slate-50 border border-slate-100 rounded text-[9px] font-bold text-slate-500 focus:outline-none focus:border-black disabled:cursor-not-allowed"
+                                  title="Mover a otra area"
+                                >
+                                  {Array.from(new Set([item.area, ...visibleCategories.filter((area) => canEditArea(area))])).filter(Boolean).map((area) => (
+                                    <option key={area} value={area}>{area}</option>
+                                  ))}
+                                </select>
+                                <select
+                                  value={normalizeAreaExpenseSubcategory(item.subcategory)}
+                                  disabled={!canEditArea(item.area)}
+                                  onChange={(event) => moveAreaExpense(item, item.area, event.target.value)}
+                                  className="w-full px-1.5 py-1 bg-slate-50 border border-slate-100 rounded text-[9px] font-bold text-slate-500 focus:outline-none focus:border-black disabled:cursor-not-allowed"
+                                  title="Mover a subcategoria"
+                                >
+                                  {(areaExpenseSubcategoriesByArea[item.area] || [DEFAULT_AREA_EXPENSE_SUBCATEGORY]).map((subcategory) => (
+                                    <option key={subcategory} value={subcategory}>{subcategory}</option>
+                                  ))}
+                                </select>
+                              </div>
                             </div>
                             <div className="col-span-2">
                               <BudgetRowCell 
@@ -3634,6 +3865,11 @@ export default function ProjectDetail() {
                             </div>
                           </div>
                         ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
                       {areaRow.expenses.length === 0 && (
                         <div className="p-12 text-center text-slate-300 font-bold uppercase tracking-widest text-[10px] italic">
                           Sin gastos registrados en esta área
@@ -4595,7 +4831,7 @@ export default function ProjectDetail() {
                       <td className="px-5 py-4 text-xs font-bold text-slate-700">{docItem.providerName}</td>
                       <td className="px-5 py-4 text-xs text-slate-500">{docItem.area}</td>
                       <td className="px-5 py-4 text-right text-xs font-bold text-slate-700">{docItem.amount > 0 ? `$${docItem.amount.toLocaleString()}` : '-'}</td>
-                      <td className="px-5 py-4 text-xs text-slate-500">{docItem.paymentDate ? `${docItem.source} / ${docItem.paymentDate}` : docItem.source}</td>
+                      <td className="px-5 py-4 text-xs text-slate-500">{docItem.paymentDate ? `${docItem.source} / ${formatDate(docItem.paymentDate)}` : docItem.source}</td>
                       <td className="px-5 py-4 text-right">
                         <a
                           href={docItem.url}

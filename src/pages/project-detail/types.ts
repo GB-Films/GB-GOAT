@@ -39,6 +39,13 @@ export interface BudgetItem {
   updatedAt?: any;
 }
 
+export interface AreaExpense extends Omit<BudgetItem, 'order'> {
+  subcategory?: string;
+  order?: number;
+  invoice?: any;
+  invoiceStatus?: string | null;
+}
+
 export type PaymentCollection = 'budgetItems' | 'areaExpenses';
 
 export interface CashMovement {
