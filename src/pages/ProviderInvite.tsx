@@ -32,6 +32,12 @@ const emptyForm = {
 const inputClass = 'w-full px-4 py-3 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-black transition-all disabled:bg-slate-50 disabled:text-slate-400';
 const labelClass = 'block text-[10px] font-bold uppercase text-slate-500 mb-2 tracking-widest';
 
+const formatDate = (dateValue: string) => {
+  if (!dateValue) return 'dd/mm/aaaa';
+  const [year, month, day] = dateValue.split('-');
+  return year && month && day ? `${day}/${month}/${year}` : dateValue;
+};
+
 function RequiredMark() {
   return <span className="text-red-500 ml-1">*</span>;
 }
@@ -361,7 +367,15 @@ export default function ProviderInvite() {
                     {duplicates.cuit && <p className="text-xs text-red-500 mt-2 font-bold">Ya existe un proveedor registrado con este CUIT/CUIL.</p>}
                   </Field>
                   <Field label="Fecha de nacimiento">
-                    <input type="date" value={form.birthDate} onChange={(e) => updateField('birthDate', e.target.value)} className={inputClass} />
+                    <label className={`${inputClass} relative block text-center font-bold text-slate-800 cursor-pointer`}>
+                      {formatDate(form.birthDate)}
+                      <input
+                        type="date"
+                        value={form.birthDate}
+                        onChange={(e) => updateField('birthDate', e.target.value)}
+                        className="absolute inset-0 h-full w-full opacity-0 cursor-pointer"
+                      />
+                    </label>
                   </Field>
                   <Field label="Restricción alimentaria">
                     <input value={form.dietaryRestriction} onChange={(e) => updateField('dietaryRestriction', e.target.value)} className={inputClass} placeholder="Ej: celiaquía, vegetariano/a, ninguna..." />

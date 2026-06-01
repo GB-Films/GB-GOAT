@@ -647,7 +647,7 @@ function ProviderManualModal({ onClose, onSubmit }: { onClose: () => void; onSub
               <Field label="Apellido" required><input name="lastName" required className={inputClass} /></Field>
               <Field label="DNI" required><input name="dni" required className={inputClass} /></Field>
               <Field label="CUIT / CUIL" required><input name="cuit" required className={inputClass} /></Field>
-              <Field label="Fecha Nacimiento"><input name="birthDate" type="date" className={inputClass} /></Field>
+              <Field label="Fecha Nacimiento"><DateInputField name="birthDate" /></Field>
               <Field label="Restricción alimentaria"><input name="dietaryRestriction" className={inputClass} /></Field>
             </div>
           ) : (
@@ -679,6 +679,23 @@ function ProviderManualModal({ onClose, onSubmit }: { onClose: () => void; onSub
         </form>
       </motion.div>
     </div>
+  );
+}
+
+function DateInputField({ name, defaultValue = '' }: { name: string; defaultValue?: string }) {
+  const [value, setValue] = useState(defaultValue);
+
+  return (
+    <label className={`${inputClass} relative block text-center font-bold text-slate-800 cursor-pointer`}>
+      {value ? formatDate(value) : 'dd/mm/aaaa'}
+      <input
+        name={name}
+        type="date"
+        value={value}
+        onChange={(event) => setValue(event.target.value)}
+        className="absolute inset-0 h-full w-full opacity-0 cursor-pointer"
+      />
+    </label>
   );
 }
 
@@ -716,7 +733,7 @@ function ProviderEditModal({ provider, onClose, onSubmit }: { provider: any; onC
             {category === 'Otra' && <Field label="Comentario Otra"><input name="categoryOther" defaultValue={provider.categoryOther} className={inputClass} /></Field>}
           </div>
           <div className="grid grid-cols-2 gap-4">
-            <Field label="Fecha Nacimiento"><input name="birthDate" defaultValue={provider.birthDate} type="date" className={inputClass} /></Field>
+            <Field label="Fecha Nacimiento"><DateInputField name="birthDate" defaultValue={provider.birthDate || ''} /></Field>
             <Field label="Restricción alimentaria"><input name="dietaryRestriction" defaultValue={provider.dietaryRestriction} className={inputClass} /></Field>
           </div>
           <Field label="Domicilio"><input name="address" defaultValue={provider.address} className={inputClass} /></Field>

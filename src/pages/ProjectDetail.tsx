@@ -23,6 +23,7 @@ import {
   Shield,
   UserPlus,
   Mail,
+  Search,
   Upload,
   Download,
   LayoutGrid,
@@ -75,6 +76,7 @@ const DOCUMENT_FAMILIES = [
 const MANUAL_DOCUMENT_FAMILIES = DOCUMENT_FAMILIES.filter((family) => family.id !== 'todos' && family.id !== 'finanzas');
 
 const DEFAULT_AREA_EXPENSE_SUBCATEGORY = 'Sin subcategoria';
+const AREA_EXPENSE_DRAG_TYPE = 'application/gb-goat-area-expense';
 
 type AreaExpenseSortKey = 'updated' | 'provider' | 'paymentDate' | 'amountDesc' | 'amountAsc' | 'created';
 
@@ -231,6 +233,12 @@ const getDateTimestamp = (dateValue: any) => {
 const normalizeAreaExpenseSubcategory = (value: any) => {
   const normalized = String(value || '').trim();
   return normalized || DEFAULT_AREA_EXPENSE_SUBCATEGORY;
+};
+
+const hasAreaExpenseSubcategory = (value: any) => normalizeAreaExpenseSubcategory(value) !== DEFAULT_AREA_EXPENSE_SUBCATEGORY;
+const cleanAreaExpenseSubcategory = (value: any) => {
+  const normalized = normalizeAreaExpenseSubcategory(value);
+  return normalized === DEFAULT_AREA_EXPENSE_SUBCATEGORY ? '' : normalized;
 };
 
 const sortAreaExpenses = (expenses: AreaExpense[], sortKey: AreaExpenseSortKey) => {
@@ -426,6 +434,9 @@ export default function ProjectDetail() {
   const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>({});
   const [collapsedAreaSubcategories, setCollapsedAreaSubcategories] = useState<Record<string, boolean>>({});
   const [areaExpenseSort, setAreaExpenseSort] = useState<AreaExpenseSortKey>('updated');
+  const [areaExpenseSearch, setAreaExpenseSearch] = useState('');
+  const [draggedAreaExpenseId, setDraggedAreaExpenseId] = useState<string | null>(null);
+  const [dragOverAreaTarget, setDragOverAreaTarget] = useState<string | null>(null);
   const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
   const [cashMovements, setCashMovements] = useState<CashMovement[]>([]);
   const [cashRecipientEmail, setCashRecipientEmail] = useState('');
@@ -469,8 +480,6 @@ export default function ProjectDetail() {
   const [showDocumentUploadModal, setShowDocumentUploadModal] = useState(false);
   const [isUploadingProjectDocument, setIsUploadingProjectDocument] = useState(false);
   const areaSelectorRef = useRef<HTMLDivElement>(null);
-  const shootingStartDateInputRef = useRef<HTMLInputElement>(null);
-  const shootingEndDateInputRef = useRef<HTMLInputElement>(null);
   const isGlobalAdmin = profile?.role === 'admin';
   
   useEffect(() => {
@@ -878,7 +887,7 @@ export default function ProjectDetail() {
     const newItem = {
       projectId: id,
       area: area,
-      subcategory: DEFAULT_AREA_EXPENSE_SUBCATEGORY,
+      subcategory: '',
       providerId: '',
       providerName: 'Nuevo Gasto',
       description: 'Descripción del gasto...',
@@ -927,7 +936,7 @@ export default function ProjectDetail() {
     if (!id || !canEditArea(area)) return;
     const normalized = Array.from(new Set(
       subcategories
-        .map(normalizeAreaExpenseSubcategory)
+        .map(cleanAreaExpenseSubcategory)
         .filter(Boolean)
     ));
     const nextMap = {
@@ -945,8 +954,8 @@ export default function ProjectDetail() {
   const createAreaExpenseSubcategory = async (area: string) => {
     if (!canEditArea(area)) return;
     const rawName = window.prompt(`Nueva subcategoria para ${area}`);
-    const name = normalizeAreaExpenseSubcategory(rawName);
-    if (!rawName || name === DEFAULT_AREA_EXPENSE_SUBCATEGORY) return;
+    const name = cleanAreaExpenseSubcategory(rawName);
+    if (!rawName || !name) return;
 
     const existing = getStoredAreaSubcategories(area);
     if (existing.some((item) => item.toLowerCase() === name.toLowerCase())) {
@@ -965,7 +974,7 @@ export default function ProjectDetail() {
   const moveAreaExpense = async (expense: AreaExpense, nextArea: string, nextSubcategory: string) => {
     if (!expense?.id) return;
     const targetArea = nextArea || expense.area;
-    const targetSubcategory = normalizeAreaExpenseSubcategory(nextSubcategory);
+    const targetSubcategory = cleanAreaExpenseSubcategory(nextSubcategory);
     const updates: Partial<AreaExpense> = {};
 
     if (targetArea !== expense.area) {
@@ -973,14 +982,37 @@ export default function ProjectDetail() {
       const targetSubcategories = getStoredAreaSubcategories(targetArea);
       updates.subcategory = targetSubcategories.some((item) => item.toLowerCase() === targetSubcategory.toLowerCase())
         ? targetSubcategory
-        : DEFAULT_AREA_EXPENSE_SUBCATEGORY;
-    } else if (targetSubcategory !== normalizeAreaExpenseSubcategory(expense.subcategory)) {
+        : '';
+    } else if (targetSubcategory !== cleanAreaExpenseSubcategory(expense.subcategory)) {
       updates.subcategory = targetSubcategory;
     }
 
     if (Object.keys(updates).length === 0) return;
     await updateAreaExpense(expense.id, updates);
   };
+
+  const startAreaExpenseDrag = (event: React.DragEvent<HTMLDivElement>, expense: AreaExpense) => {
+    if (!canEditArea(expense.area)) return;
+    setDraggedAreaExpenseId(expense.id);
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData(AREA_EXPENSE_DRAG_TYPE, expense.id);
+    event.dataTransfer.setData('text/plain', expense.id);
+  };
+
+  const finishAreaExpenseDrop = async (area: string, subcategory = '') => {
+    const expenseId = draggedAreaExpenseId;
+    setDraggedAreaExpenseId(null);
+    setDragOverAreaTarget(null);
+    if (!expenseId) return;
+
+    const expense = areaExpenses.find((item) => item.id === expenseId);
+    if (!expense || !canEditArea(expense.area) || !canEditArea(area)) return;
+    await moveAreaExpense(expense, area, subcategory);
+  };
+
+  const isAreaExpenseDrag = (event: React.DragEvent<HTMLElement>) => (
+    draggedAreaExpenseId || Array.from(event.dataTransfer.types).includes(AREA_EXPENSE_DRAG_TYPE)
+  );
 
   const updateScheduledPaymentDate = async (item: any, collectionName: PaymentCollection, paymentDate: string) => {
     if (!item?.id) return;
@@ -998,16 +1030,19 @@ export default function ProjectDetail() {
 
   const renderPaymentScheduleCell = (item: any, collectionName: PaymentCollection, disabled: boolean) => (
     <div className="space-y-1">
+      <div className={cn(
+        "relative w-full px-2 py-1.5 bg-slate-50 border border-slate-100 rounded text-[10px] font-bold text-center transition-all",
+        disabled ? "cursor-not-allowed text-slate-400 bg-slate-100" : "cursor-pointer text-slate-700 hover:border-black"
+      )}>
+        {item.paymentDate ? formatDate(item.paymentDate) : 'Definir fecha'}
       <input
         type="date"
         defaultValue={toDateInputValue(item.paymentDate)}
         disabled={disabled}
-        onBlur={(event) => updateScheduledPaymentDate(item, collectionName, event.target.value)}
-        className={cn(
-          "w-full px-2 py-1.5 bg-slate-50 border border-slate-100 rounded text-[10px] font-bold focus:outline-none focus:border-black transition-all",
-          disabled && "cursor-not-allowed text-slate-400 bg-slate-100"
-        )}
+        onChange={(event) => updateScheduledPaymentDate(item, collectionName, event.target.value)}
+        className="absolute inset-0 h-full w-full opacity-0 cursor-pointer disabled:cursor-not-allowed"
       />
+      </div>
     </div>
   );
 
@@ -1620,10 +1655,9 @@ export default function ProjectDetail() {
         .filter((expense) => expense.area === area)
         .map((expense) => normalizeAreaExpenseSubcategory(expense.subcategory));
       map[area] = Array.from(new Set([
-        DEFAULT_AREA_EXPENSE_SUBCATEGORY,
         ...storedList.map(normalizeAreaExpenseSubcategory),
         ...expenseList,
-      ]));
+      ])).filter(hasAreaExpenseSubcategory);
     });
 
     return map;
@@ -1639,16 +1673,35 @@ export default function ProjectDetail() {
 
   const areaDashboardRows = React.useMemo(() => (
     visibleCategories.map((area) => {
+      const searchTerm = normalizeText(areaExpenseSearch);
+      const matchesAreaExpenseSearch = (item: AreaExpense) => {
+        if (!searchTerm) return true;
+        return normalizeText([
+          item.providerName,
+          item.description,
+          item.area,
+          item.subcategory,
+          item.unit,
+          item.total,
+          formatDate(item.paymentDate),
+        ].filter(Boolean).join(' ')).includes(searchTerm);
+      };
       const assigned = budgetItems
         .filter((item) => item.area === area)
         .reduce((acc, item) => acc + (Number(item.total) || 0), 0);
-      const expenses = areaExpenses
+      const allExpenses = areaExpenses
         .filter((item) => item.area === area)
         .sort((a, b) => getDateTimestamp(b.updatedAt || b.createdAt) - getDateTimestamp(a.updatedAt || a.createdAt));
+      const expenses = allExpenses.filter(matchesAreaExpenseSearch);
       const spent = expenses.reduce((acc, item) => acc + (Number(item.total) || 0), 0);
       const balance = assigned - spent;
       const usedPercent = assigned > 0 ? Math.min(100, (spent / assigned) * 100) : 0;
-      const subcategoryGroups = (areaExpenseSubcategoriesByArea[area] || [DEFAULT_AREA_EXPENSE_SUBCATEGORY])
+      const knownSubcategories = areaExpenseSubcategoriesByArea[area] || [];
+      const unassignedExpenses = sortAreaExpenses(
+        expenses.filter((expense) => !hasAreaExpenseSubcategory(expense.subcategory)),
+        areaExpenseSort
+      );
+      const namedSubcategoryGroups = knownSubcategories
         .map((subcategory) => {
           const groupExpenses = sortAreaExpenses(
             expenses.filter((expense) => normalizeAreaExpenseSubcategory(expense.subcategory) === subcategory),
@@ -1661,11 +1714,21 @@ export default function ProjectDetail() {
             subtotal: groupExpenses.reduce((acc, item) => acc + (Number(item.total) || 0), 0),
           };
         })
-        .filter((group) => group.expenses.length > 0 || group.subcategory !== DEFAULT_AREA_EXPENSE_SUBCATEGORY);
+        .filter((group) => group.expenses.length > 0 || !searchTerm);
+      const subcategoryGroups = [
+        ...(unassignedExpenses.length > 0
+          ? [{
+              subcategory: '',
+              expenses: unassignedExpenses,
+              subtotal: unassignedExpenses.reduce((acc, item) => acc + (Number(item.total) || 0), 0),
+            }]
+          : []),
+        ...namedSubcategoryGroups,
+      ];
 
-      return { area, assigned, expenses, subcategoryGroups, spent, balance, usedPercent };
+      return { area, assigned, expenses, subcategoryGroups, spent, balance, usedPercent, hasSubcategories: knownSubcategories.length > 0 };
     })
-  ), [areaExpenseSort, areaExpenseSubcategoriesByArea, areaExpenses, budgetItems, visibleCategoryKey]);
+  ), [areaExpenseSearch, areaExpenseSort, areaExpenseSubcategoriesByArea, areaExpenses, budgetItems, visibleCategoryKey]);
 
   const selectedAreaDashboardRows = areaDashboardRows.filter((row) => selectedVisibleAreas.includes(row.area));
   const areaDashboardTotals = selectedAreaDashboardRows.reduce((acc, row) => ({
@@ -2272,7 +2335,7 @@ export default function ProjectDetail() {
       const paid = (item.paymentHistory || []).reduce((acc: number, payment: any) => acc + (Number(payment.amount) || 0), 0);
       return {
         Area: item.area || '',
-        Subcategoria: normalizeAreaExpenseSubcategory(item.subcategory),
+        Subcategoria: cleanAreaExpenseSubcategory(item.subcategory),
         Proveedor: item.providerName || '',
         Descripcion: item.description || '',
         Unidad: item.unit || '',
@@ -2751,6 +2814,42 @@ export default function ProjectDetail() {
     }
   };
 
+  const renderShootingRangeControls = () => (
+    <div className="inline-flex h-8 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 shadow-sm hover:border-blue-200 hover:shadow-md transition-all">
+      <Calendar className="w-3.5 h-3.5 text-slate-500" />
+      <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">Rodaje</span>
+      <label className="relative min-w-[76px] text-center text-[11px] font-bold text-slate-900 cursor-pointer">
+        {getShootingStartDate(project) ? formatDate(getShootingStartDate(project)) : 'Inicio'}
+        <input
+          type="date"
+          value={toDateInputValue(getShootingStartDate(project))}
+          onChange={(e) => {
+            const newStart = e.target.value;
+            const currentEnd = toDateInputValue(project.shootingEndDate);
+            updateShootingRange({
+              shootingStartDate: newStart,
+              shootingEndDate: currentEnd && currentEnd < newStart ? newStart : currentEnd,
+            });
+          }}
+          className="absolute inset-0 h-full w-full opacity-0 cursor-pointer"
+          title="Inicio de rodaje"
+        />
+      </label>
+      <span className="text-slate-300">a</span>
+      <label className="relative min-w-[76px] text-center text-[11px] font-bold text-slate-900 cursor-pointer">
+        {getShootingEndDate(project) ? formatDate(getShootingEndDate(project)) : 'Fin'}
+        <input
+          type="date"
+          min={toDateInputValue(getShootingStartDate(project))}
+          value={toDateInputValue(project.shootingEndDate)}
+          onChange={(e) => updateShootingRange({ shootingEndDate: e.target.value })}
+          className="absolute inset-0 h-full w-full opacity-0 cursor-pointer"
+          title="Fin de rodaje"
+        />
+      </label>
+    </div>
+  );
+
   const mapsSearchUrl = buildGoogleMapsLink(locationDraft || project?.location || '');
 
   if (loading) return <div className="p-8 text-center text-slate-500 font-mono text-xs uppercase tracking-widest">Analizando proyecto...</div>;
@@ -2796,38 +2895,7 @@ export default function ProjectDetail() {
                           <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 opacity-60" />
                         </div>
 
-                        <label
-                          className="inline-flex h-8 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 shadow-sm hover:border-blue-200 hover:shadow-md transition-all cursor-pointer"
-                          onClick={() => shootingStartDateInputRef.current?.showPicker?.()}
-                        >
-                          <Calendar className="w-3.5 h-3.5 text-slate-500" />
-                          <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">Rodaje</span>
-                          <input
-                            ref={shootingStartDateInputRef}
-                            type="date"
-                            value={toDateInputValue(getShootingStartDate(project))}
-                            onChange={(e) => {
-                              const newStart = e.target.value;
-                              const currentEnd = toDateInputValue(project.shootingEndDate);
-                              updateShootingRange({
-                                shootingStartDate: newStart,
-                                shootingEndDate: currentEnd && currentEnd < newStart ? newStart : currentEnd,
-                              });
-                            }}
-                            className="w-[118px] bg-transparent text-[11px] font-bold text-slate-900 outline-none"
-                            title="Inicio de rodaje"
-                          />
-                          <span className="text-slate-300">a</span>
-                          <input
-                            ref={shootingEndDateInputRef}
-                            type="date"
-                            min={toDateInputValue(getShootingStartDate(project))}
-                            value={toDateInputValue(project.shootingEndDate)}
-                            onChange={(e) => updateShootingRange({ shootingEndDate: e.target.value })}
-                            className="w-[118px] bg-transparent text-[11px] font-bold text-slate-900 outline-none"
-                            title="Fin de rodaje"
-                          />
-                        </label>
+                        {renderShootingRangeControls()}
 
                         <label className="inline-flex h-8 min-w-[260px] max-w-[430px] flex-1 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 shadow-sm hover:border-blue-200 hover:shadow-md transition-all">
                           <MapPin className="w-3.5 h-3.5 flex-none text-slate-500" />
@@ -2864,33 +2932,7 @@ export default function ProjectDetail() {
                         </span>
                         {canEditProjectOperations ? (
                           <>
-                            <div className="inline-flex h-8 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 shadow-sm hover:border-blue-200 hover:shadow-md transition-all">
-                              <Calendar className="w-3.5 h-3.5 text-slate-500" />
-                              <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">Rodaje</span>
-                              <input
-                                type="date"
-                                value={toDateInputValue(getShootingStartDate(project))}
-                                onChange={(e) => {
-                                  const newStart = e.target.value;
-                                  const currentEnd = toDateInputValue(project.shootingEndDate);
-                                  updateShootingRange({
-                                    shootingStartDate: newStart,
-                                    shootingEndDate: currentEnd && currentEnd < newStart ? newStart : currentEnd,
-                                  });
-                                }}
-                                className="w-[118px] bg-transparent text-[11px] font-bold text-slate-900 outline-none"
-                                title="Inicio de rodaje"
-                              />
-                              <span className="text-slate-300">a</span>
-                              <input
-                                type="date"
-                                min={toDateInputValue(getShootingStartDate(project))}
-                                value={toDateInputValue(project.shootingEndDate)}
-                                onChange={(e) => updateShootingRange({ shootingEndDate: e.target.value })}
-                                className="w-[118px] bg-transparent text-[11px] font-bold text-slate-900 outline-none"
-                                title="Fin de rodaje"
-                              />
-                            </div>
+                            {renderShootingRangeControls()}
                             <label className="inline-flex h-8 min-w-[260px] max-w-[430px] flex-1 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 shadow-sm hover:border-blue-200 hover:shadow-md transition-all">
                               <MapPin className="w-3.5 h-3.5 flex-none text-slate-500" />
                               <input
@@ -3514,17 +3556,28 @@ export default function ProjectDetail() {
                 </div>
               )}
             </div>
-            <div className="shrink-0 flex items-center gap-2 px-3 py-1 bg-white border border-slate-200 rounded-lg">
-              <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">Orden</span>
-              <select
-                value={areaExpenseSort}
-                onChange={(event) => setAreaExpenseSort(event.target.value as AreaExpenseSortKey)}
-                className="bg-transparent text-[10px] font-bold text-slate-700 focus:outline-none"
-              >
-                {AREA_EXPENSE_SORT_OPTIONS.map((option) => (
-                  <option key={option.id} value={option.id}>{option.label}</option>
-                ))}
-              </select>
+            <div className="shrink-0 flex flex-col sm:flex-row sm:items-center gap-2">
+              <div className="flex items-center gap-2 px-3 py-1 bg-white border border-slate-200 rounded-lg">
+                <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">Orden</span>
+                <select
+                  value={areaExpenseSort}
+                  onChange={(event) => setAreaExpenseSort(event.target.value as AreaExpenseSortKey)}
+                  className="bg-transparent text-[10px] font-bold text-slate-700 focus:outline-none"
+                >
+                  {AREA_EXPENSE_SORT_OPTIONS.map((option) => (
+                    <option key={option.id} value={option.id}>{option.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex items-center gap-2 px-3 py-1 bg-white border border-slate-200 rounded-lg min-w-[220px]">
+                <Search className="w-3.5 h-3.5 text-slate-400" />
+                <input
+                  value={areaExpenseSearch}
+                  onChange={(event) => setAreaExpenseSearch(event.target.value)}
+                  placeholder="Buscar gasto..."
+                  className="w-full bg-transparent text-[10px] font-bold text-slate-700 placeholder:text-slate-300 focus:outline-none"
+                />
+              </div>
             </div>
             </div>
 
@@ -3571,7 +3624,27 @@ export default function ProjectDetail() {
 
                 <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
                 {selectedAreaDashboardRows.map((areaRow) => (
-                <div key={areaRow.area} className="border-b border-slate-100 last:border-0">
+                <div
+                  key={areaRow.area}
+                  onDragOver={(event) => {
+                    if (!isAreaExpenseDrag(event) || !canEditArea(areaRow.area)) return;
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = 'move';
+                    setDragOverAreaTarget(`area:${areaRow.area}`);
+                  }}
+                  onDragLeave={(event) => {
+                    if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragOverAreaTarget(null);
+                  }}
+                  onDrop={(event) => {
+                    if (!isAreaExpenseDrag(event)) return;
+                    event.preventDefault();
+                    finishAreaExpenseDrop(areaRow.area);
+                  }}
+                  className={cn(
+                    "border-b border-slate-100 last:border-0 transition-colors",
+                    dragOverAreaTarget === `area:${areaRow.area}` && "bg-emerald-50/50"
+                  )}
+                >
                   <div className="bg-slate-900 text-white px-4 py-3 flex justify-between items-center border-l-4 border-emerald-400 shadow-sm">
                     <div className="flex items-center gap-3">
                        <button
@@ -3665,7 +3738,30 @@ export default function ProjectDetail() {
                         const isSubcategoryCollapsed = collapsedAreaSubcategories[subcategoryKey];
 
                         return (
-                          <div key={subcategoryKey} className="bg-white">
+                          <div
+                            key={subcategoryKey}
+                            onDragOver={(event) => {
+                              if (!isAreaExpenseDrag(event) || !canEditArea(areaRow.area)) return;
+                              event.preventDefault();
+                              event.stopPropagation();
+                              event.dataTransfer.dropEffect = 'move';
+                              setDragOverAreaTarget(`subcategory:${subcategoryKey}`);
+                            }}
+                            onDragLeave={(event) => {
+                              if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragOverAreaTarget(null);
+                            }}
+                            onDrop={(event) => {
+                              if (!isAreaExpenseDrag(event)) return;
+                              event.preventDefault();
+                              event.stopPropagation();
+                              finishAreaExpenseDrop(areaRow.area, subcategoryGroup.subcategory);
+                            }}
+                            className={cn(
+                              "bg-white transition-colors",
+                              dragOverAreaTarget === `subcategory:${subcategoryKey}` && "bg-emerald-50"
+                            )}
+                          >
+                            {subcategoryGroup.subcategory && (
                             <div className="flex items-center justify-between gap-3 px-6 py-2 bg-slate-50/70 border-b border-slate-100">
                               <div className="flex items-center gap-2 min-w-0">
                                 <button
@@ -3690,16 +3786,25 @@ export default function ProjectDetail() {
                                 ${subcategoryGroup.subtotal.toLocaleString()}
                               </div>
                             </div>
-                            {!isSubcategoryCollapsed && (
+                            )}
+                            {(!subcategoryGroup.subcategory || !isSubcategoryCollapsed) && (
                               <div className="divide-y divide-slate-100">
                       {subcategoryGroup.expenses.map((item) => (
                           <div
                             key={item.id}
+                            draggable={canEditArea(item.area)}
+                            onDragStart={(event) => startAreaExpenseDrag(event, item)}
+                            onDragEnd={() => {
+                              setDraggedAreaExpenseId(null);
+                              setDragOverAreaTarget(null);
+                            }}
                             onDragEnter={(event) => {
+                              if (isAreaExpenseDrag(event)) return;
                               event.preventDefault();
                               if (canUploadAreaFiles(item.area)) setDragOverExpenseId(item.id);
                             }}
                             onDragOver={(event) => {
+                              if (isAreaExpenseDrag(event)) return;
                               event.preventDefault();
                               event.dataTransfer.dropEffect = canUploadAreaFiles(item.area) ? 'copy' : 'none';
                               if (canUploadAreaFiles(item.area)) setDragOverExpenseId(item.id);
@@ -3709,11 +3814,16 @@ export default function ProjectDetail() {
                                 setDragOverExpenseId(null);
                               }
                             }}
-                            onDrop={(event) => canUploadAreaFiles(item.area) && handleInvoiceDrop(event, item)}
+                            onDrop={(event) => {
+                              if (isAreaExpenseDrag(event)) return;
+                              canUploadAreaFiles(item.area) && handleInvoiceDrop(event, item);
+                            }}
                             className={cn(
                               "relative grid grid-cols-12 px-6 py-3 items-center gap-2 transition-colors group",
                               dragOverExpenseId === item.id
                                 ? "bg-emerald-50 ring-2 ring-inset ring-emerald-400"
+                                : draggedAreaExpenseId === item.id
+                                  ? "bg-slate-100 opacity-70"
                                 : "hover:bg-slate-50"
                             )}
                           >
@@ -3726,37 +3836,20 @@ export default function ProjectDetail() {
                               </div>
                             )}
                             <div className="col-span-2">
-                              <BudgetRowCell 
-                                item={item} 
-                                providers={providers} 
-                                onUpdate={updateAreaExpense} 
-                                onDelete={deleteAreaExpense} 
-                                type="provider"
-                                disabled={!canEditArea(item.area)}
-                              />
-                              <div className="mt-2 grid grid-cols-2 gap-1">
-                                <select
-                                  value={item.area}
+                              <div className="flex items-start gap-2">
+                                {canEditArea(item.area) && (
+                                  <div className="pt-1 text-slate-300 group-hover:text-slate-500 cursor-grab active:cursor-grabbing" title="Arrastrar gasto">
+                                    <GripVertical className="w-3.5 h-3.5" />
+                                  </div>
+                                )}
+                                <BudgetRowCell
+                                  item={item}
+                                  providers={providers}
+                                  onUpdate={updateAreaExpense}
+                                  onDelete={deleteAreaExpense}
+                                  type="provider"
                                   disabled={!canEditArea(item.area)}
-                                  onChange={(event) => moveAreaExpense(item, event.target.value, normalizeAreaExpenseSubcategory(item.subcategory))}
-                                  className="w-full px-1.5 py-1 bg-slate-50 border border-slate-100 rounded text-[9px] font-bold text-slate-500 focus:outline-none focus:border-black disabled:cursor-not-allowed"
-                                  title="Mover a otra area"
-                                >
-                                  {Array.from(new Set([item.area, ...visibleCategories.filter((area) => canEditArea(area))])).filter(Boolean).map((area) => (
-                                    <option key={area} value={area}>{area}</option>
-                                  ))}
-                                </select>
-                                <select
-                                  value={normalizeAreaExpenseSubcategory(item.subcategory)}
-                                  disabled={!canEditArea(item.area)}
-                                  onChange={(event) => moveAreaExpense(item, item.area, event.target.value)}
-                                  className="w-full px-1.5 py-1 bg-slate-50 border border-slate-100 rounded text-[9px] font-bold text-slate-500 focus:outline-none focus:border-black disabled:cursor-not-allowed"
-                                  title="Mover a subcategoria"
-                                >
-                                  {(areaExpenseSubcategoriesByArea[item.area] || [DEFAULT_AREA_EXPENSE_SUBCATEGORY]).map((subcategory) => (
-                                    <option key={subcategory} value={subcategory}>{subcategory}</option>
-                                  ))}
-                                </select>
+                                />
                               </div>
                             </div>
                             <div className="col-span-2">

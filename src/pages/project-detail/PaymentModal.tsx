@@ -16,6 +16,13 @@ const formatDate = (dateString: string | any) => {
   return date.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
 };
 
+const toDateInputValue = (date = new Date()) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 const sanitizeFileName = (fileName: string) => {
   return fileName
     .normalize('NFD')
@@ -94,11 +101,13 @@ export function PaymentModal({
   const [selectedReceipt, setSelectedReceipt] = useState<File | null>(null);
   const [receiptPreviewUrl, setReceiptPreviewUrl] = useState('');
   const [isReceiptDragOver, setIsReceiptDragOver] = useState(false);
+  const [paymentDateInput, setPaymentDateInput] = useState(() => toDateInputValue());
 
   useEffect(() => {
     setSelectedReceipt(null);
     setReceiptPreviewUrl('');
     setIsReceiptDragOver(false);
+    setPaymentDateInput(toDateInputValue());
   }, [isOpen, item?.id]);
 
   useEffect(() => {
@@ -305,6 +314,7 @@ export function PaymentModal({
                 
                 (e.target as HTMLFormElement).reset();
                 setSelectedReceipt(null);
+                setPaymentDateInput(toDateInputValue());
               } catch (err: any) {
                 console.error("Error updating payment:", err);
                 handleFirestoreError(err, 'update', `projects/${projectId}/${collectionName}/${currentItemId}`);
@@ -313,7 +323,16 @@ export function PaymentModal({
               <div className="grid grid-cols-2 gap-4">
                 <div className="flex-1">
                   <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Fecha del Pago</label>
-                  <input name="paymentDate" type="date" defaultValue={new Date().toISOString().split('T')[0]} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all" />
+                  <label className="relative block w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm font-bold text-slate-800 text-center hover:border-black transition-all cursor-pointer">
+                    {formatDate(paymentDateInput)}
+                    <input
+                      name="paymentDate"
+                      type="date"
+                      value={paymentDateInput}
+                      onChange={(event) => setPaymentDateInput(event.target.value)}
+                      className="absolute inset-0 h-full w-full opacity-0 cursor-pointer"
+                    />
+                  </label>
                 </div>
                 <div className="flex-1">
                    <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest text-emerald-600">Saldo Pendiente</label>
