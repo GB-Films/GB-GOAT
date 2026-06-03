@@ -62,7 +62,8 @@ const RESULT_INCIDENCES = [
   { id: 'imprevistos', label: 'Imprevistos' },
   { id: 'impuestos', label: 'Impuestos' },
   { id: 'financiacion', label: 'Financiacion' },
-  { id: 'administracion', label: 'Administracion' },
+  { id: 'administracion', label: 'Indirectos' },
+  { id: 'margen', label: 'Margen' },
 ];
 
 const DOCUMENT_FAMILIES = [
@@ -472,6 +473,7 @@ export default function ProjectDetail() {
   const [financeSearch, setFinanceSearch] = useState('');
   const [paymentScheduleAnchor, setPaymentScheduleAnchor] = useState(() => formatDateKey(new Date()));
   const [selectedPaymentBucketKey, setSelectedPaymentBucketKey] = useState<string | null>(null);
+  const [expandedPaymentLineId, setExpandedPaymentLineId] = useState<string | null>(null);
   const [documentFamilyFilter, setDocumentFamilyFilter] = useState<'todos' | 'finanzas' | 'contratos' | 'seguros' | 'locaciones'>('todos');
   const [documentTypeFilter, setDocumentTypeFilter] = useState<'all' | 'factura' | 'comprobante'>('all');
   const [documentAreaFilter, setDocumentAreaFilter] = useState('all');
@@ -2040,6 +2042,7 @@ export default function ProjectDetail() {
           projectName: project?.name || 'Proyecto actual',
           area: saldo.area,
           providerName: saldo.name,
+          cbu: saldo.cbu,
           description: entry.description || 'Movimiento',
           total: Number(entry.total) || 0,
           paid: Number(entry.paid) || 0,
@@ -2360,10 +2363,6 @@ export default function ProjectDetail() {
     }
   };
 
-  const resultIndirectExpenses = React.useMemo(() => (
-    Array.isArray(project?.resultIndirectExpenses) ? project.resultIndirectExpenses : []
-  ), [project?.resultIndirectExpenses]);
-
   const resultIncidences = React.useMemo(() => (
     project?.resultIncidences && typeof project.resultIncidences === 'object'
       ? project.resultIncidences
@@ -2397,7 +2396,6 @@ export default function ProjectDetail() {
   const productionCategoryTotals = resultCategoryTotals.filter((item) => !isExecutiveArea(item.area) && !isPostProductionArea(item.area));
   const productionTotal = productionCategoryTotals.reduce((acc, item) => acc + item.total, 0);
   const directCostTotal = productionTotal + executiveTotal + postProductionTotal;
-  const indirectTotal = resultIndirectExpenses.reduce((acc: number, item: any) => acc + (Number(item.total) || 0), 0);
   const saleValue = Number(project?.budgetTotal) || 0;
   const incidenceRows = RESULT_INCIDENCES.map((incidence) => {
     const percent = Number(resultIncidences[incidence.id]) || 0;
@@ -2408,49 +2406,9 @@ export default function ProjectDetail() {
     };
   });
   const incidenceTotal = incidenceRows.reduce((acc, item) => acc + item.amount, 0);
-  const totalCost = directCostTotal + indirectTotal + incidenceTotal;
+  const totalCost = directCostTotal + incidenceTotal;
   const margin = saleValue - totalCost;
   const marginPercent = saleValue > 0 ? (margin / saleValue) * 100 : 0;
-
-  const persistResultIndirectExpenses = async (nextItems: any[]) => {
-    if (!id || !isProjectAdmin) return;
-    await updateDoc(doc(db, 'projects', id), {
-      resultIndirectExpenses: nextItems,
-      updatedAt: serverTimestamp(),
-    });
-    setProject({ ...project, resultIndirectExpenses: nextItems });
-  };
-
-  const addResultIndirectExpense = async () => {
-    if (!isProjectAdmin) return;
-    const nextItems = [
-      ...resultIndirectExpenses,
-      {
-        id: Math.random().toString(36).slice(2, 11),
-        providerId: '',
-        providerName: '',
-        description: '',
-        unit: 'Unidad',
-        quantity: 1,
-        unitPrice: 0,
-        total: 0,
-      },
-    ];
-    await persistResultIndirectExpenses(nextItems);
-  };
-
-  const updateResultIndirectExpense = async (itemId: string, updates: any) => {
-    const nextItems = resultIndirectExpenses.map((item: any) => (
-      item.id === itemId ? { ...item, ...updates } : item
-    ));
-    await persistResultIndirectExpenses(nextItems);
-  };
-
-  const deleteResultIndirectExpense = async (itemId: string) => {
-    if (!confirm('¿Eliminar este gasto indirecto?')) return;
-    const nextItems = resultIndirectExpenses.filter((item: any) => item.id !== itemId);
-    await persistResultIndirectExpenses(nextItems);
-  };
 
   const updateResultIncidence = async (incidenceId: string, value: number) => {
     if (!id || !isProjectAdmin) return;
@@ -4229,7 +4187,7 @@ export default function ProjectDetail() {
               </div>
             </header>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
               <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Valor de Venta</div>
                 <div className="text-lg font-bold text-slate-900">${saleValue.toLocaleString()}</div>
@@ -4251,11 +4209,6 @@ export default function ProjectDetail() {
                 <div className="text-[9px] text-slate-400 mt-2">Separado de Produccion</div>
               </div>
               <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
-                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Indirectos</div>
-                <div className="text-lg font-bold text-slate-900">${indirectTotal.toLocaleString()}</div>
-                <div className="text-[9px] text-slate-400 mt-2">{resultIndirectExpenses.length} registros</div>
-              </div>
-              <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Incidencias</div>
                 <div className="text-lg font-bold text-slate-900">${incidenceTotal.toLocaleString()}</div>
                 <div className="text-[9px] text-slate-400 mt-2">Sobre valor de venta</div>
@@ -4263,7 +4216,7 @@ export default function ProjectDetail() {
               <div className="bg-slate-900 p-5 rounded-xl border border-slate-900 shadow-sm text-white">
                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Costo Total</div>
                 <div className="text-xl font-bold font-mono">${totalCost.toLocaleString()}</div>
-                <div className="text-[9px] text-slate-400 mt-2">Directos + indirectos + incidencias</div>
+                <div className="text-[9px] text-slate-400 mt-2">Directos + incidencias</div>
               </div>
             </div>
 
@@ -4296,65 +4249,7 @@ export default function ProjectDetail() {
                 </div>
               </section>
 
-              <section className="lg:col-span-7 space-y-4">
-                <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-                  <div className="px-5 py-4 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between gap-3">
-                    <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500">Gastos Indirectos</h3>
-                    <button
-                      onClick={addResultIndirectExpense}
-                      className="px-3 py-2 bg-black text-white rounded text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 transition-all flex items-center gap-2"
-                    >
-                      <Plus className="w-3 h-3" />
-                      Agregar
-                    </button>
-                  </div>
-                  <div className="min-w-[780px]">
-                    <div className="grid grid-cols-12 bg-slate-50 border-b border-slate-100 px-5 py-3">
-                      <div className="col-span-3 text-[10px] font-bold uppercase tracking-widest text-slate-400">Proveedor</div>
-                      <div className="col-span-3 text-[10px] font-bold uppercase tracking-widest text-slate-400">Concepto</div>
-                      <div className="col-span-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">P. Unitario</div>
-                      <div className="col-span-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Cant.</div>
-                      <div className="col-span-2 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Total</div>
-                      <div className="col-span-1"></div>
-                    </div>
-                    <div className="divide-y divide-slate-100">
-                      {resultIndirectExpenses.map((item: any) => (
-                        <div key={item.id} className="grid grid-cols-12 px-5 py-3 items-center hover:bg-slate-50 transition-colors">
-                          <div className="col-span-3">
-                            <BudgetRowCell item={item} providers={providers} onUpdate={updateResultIndirectExpense} type="provider" />
-                          </div>
-                          <div className="col-span-3">
-                            <BudgetRowCell item={item} onUpdate={updateResultIndirectExpense} type="description" />
-                          </div>
-                          <div className="col-span-2">
-                            <BudgetRowCell item={item} onUpdate={updateResultIndirectExpense} type="price" />
-                          </div>
-                          <div className="col-span-1 text-center">
-                            <BudgetRowCell item={item} onUpdate={updateResultIndirectExpense} type="quantity" />
-                          </div>
-                          <div className="col-span-2 text-right text-xs font-bold text-slate-900">
-                            ${(Number(item.total) || 0).toLocaleString()}
-                          </div>
-                          <div className="col-span-1 text-right">
-                            <button
-                              onClick={() => deleteResultIndirectExpense(item.id)}
-                              className="p-1 text-slate-300 hover:text-red-500 transition-colors"
-                              title="Eliminar gasto indirecto"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                      {resultIndirectExpenses.length === 0 && (
-                        <div className="p-6 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
-                          Sin gastos indirectos cargados
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
+              <section className="lg:col-span-7">
                 <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
                   <div className="px-5 py-4 border-b border-slate-100 bg-slate-50/50">
                     <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500">Incidencias sobre valor de venta</h3>
@@ -4387,13 +4282,12 @@ export default function ProjectDetail() {
             </div>
 
             <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 divide-y lg:divide-y-0 lg:divide-x divide-slate-100">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 divide-y lg:divide-y-0 lg:divide-x divide-slate-100">
                 {[
                   { label: 'Valor de venta', value: saleValue, tone: 'text-slate-900' },
                   { label: 'Produccion', value: -productionTotal, tone: 'text-rose-600' },
                   { label: 'Ejecutiva', value: -executiveTotal, tone: 'text-rose-600' },
                   { label: 'Post Produccion', value: -postProductionTotal, tone: 'text-rose-600' },
-                  { label: 'Indirectos', value: -indirectTotal, tone: 'text-rose-600' },
                   { label: 'Incidencias', value: -incidenceTotal, tone: 'text-rose-600' },
                   { label: 'Margen', value: margin, tone: margin >= 0 ? 'text-emerald-600' : 'text-rose-600' },
                 ].map((item) => (
@@ -4469,6 +4363,7 @@ export default function ProjectDetail() {
                       const anchor = parseProjectDate(paymentScheduleAnchor) || new Date();
                       setPaymentScheduleAnchor(formatDateKey(new Date(anchor.getFullYear(), anchor.getMonth() - 1, 1)));
                       setSelectedPaymentBucketKey(null);
+                      setExpandedPaymentLineId(null);
                     }}
                     className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-[10px] font-black uppercase tracking-widest hover:border-black"
                   >
@@ -4482,6 +4377,7 @@ export default function ProjectDetail() {
                       onChange={(event) => {
                         setPaymentScheduleAnchor(`${event.target.value}-01`);
                         setSelectedPaymentBucketKey(null);
+                        setExpandedPaymentLineId(null);
                       }}
                       className="absolute inset-0 h-full w-full opacity-0 cursor-pointer"
                     />
@@ -4492,6 +4388,7 @@ export default function ProjectDetail() {
                       const anchor = parseProjectDate(paymentScheduleAnchor) || new Date();
                       setPaymentScheduleAnchor(formatDateKey(new Date(anchor.getFullYear(), anchor.getMonth() + 1, 1)));
                       setSelectedPaymentBucketKey(null);
+                      setExpandedPaymentLineId(null);
                     }}
                     className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-[10px] font-black uppercase tracking-widest hover:border-black"
                   >
@@ -4500,7 +4397,7 @@ export default function ProjectDetail() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-0">
+              <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-0 lg:items-stretch">
                 <div className="p-4 border-b lg:border-b-0 lg:border-r border-slate-100 space-y-4">
                   <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                     {[
@@ -4532,7 +4429,10 @@ export default function ProjectDetail() {
                           <button
                             key={day.key}
                             type="button"
-                            onClick={() => setSelectedPaymentBucketKey(day.key)}
+                            onClick={() => {
+                              setSelectedPaymentBucketKey(day.key);
+                              setExpandedPaymentLineId(null);
+                            }}
                             className={cn(
                               "min-h-[86px] border-r border-b border-slate-100 p-2 text-left transition-all hover:bg-slate-50",
                               !day.isCurrentMonth && "bg-slate-50/60 text-slate-300",
@@ -4568,7 +4468,7 @@ export default function ProjectDetail() {
                   </div>
                 </div>
 
-                <aside className="p-4 bg-slate-50/50">
+                <aside className="p-4 bg-slate-50/50 flex min-h-[520px] flex-col">
                   <div className="flex items-start justify-between gap-3 mb-3">
                     <div>
                       <h4 className="text-xs font-black text-slate-900">{selectedPaymentBucket ? formatDate(selectedPaymentBucket.date) : 'Sin seleccion'}</h4>
@@ -4580,9 +4480,26 @@ export default function ProjectDetail() {
                     </div>
                   </div>
 
-                  <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
-                    {(selectedPaymentBucket?.lines || []).map((line) => (
-                      <div key={line.id} className="rounded-lg border border-slate-100 bg-white p-3">
+                  <div className="space-y-2 flex-1 min-h-0 overflow-y-auto pr-1">
+                    {(selectedPaymentBucket?.lines || []).map((line) => {
+                      const isExpanded = expandedPaymentLineId === line.id;
+                      return (
+                      <div
+                        key={line.id}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => setExpandedPaymentLineId(isExpanded ? null : line.id)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
+                            setExpandedPaymentLineId(isExpanded ? null : line.id);
+                          }
+                        }}
+                        className={cn(
+                          "w-full cursor-pointer rounded-lg border bg-white p-3 text-left transition-all",
+                          isExpanded ? "border-slate-900 shadow-sm" : "border-slate-100 hover:border-slate-300"
+                        )}
+                      >
                         <div className="flex justify-between gap-3">
                           <div className="min-w-0">
                             <div className="text-xs font-black text-slate-900 truncate">{line.providerName}</div>
@@ -4591,8 +4508,35 @@ export default function ProjectDetail() {
                           </div>
                           <div className="text-right text-xs font-black font-mono text-rose-600 whitespace-nowrap">${line.debt.toLocaleString()}</div>
                         </div>
+                        {isExpanded && (
+                          <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50 p-2">
+                            <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">CBU / Alias</div>
+                            <div className="mt-1 flex items-center justify-between gap-2">
+                              <span className="min-w-0 truncate font-mono text-[10px] font-bold text-slate-700">
+                                {line.cbu || 'No especificado'}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  if (line.cbu) void navigator.clipboard?.writeText(line.cbu);
+                                }}
+                                disabled={!line.cbu}
+                                className={cn(
+                                  "shrink-0 rounded border px-2 py-1 text-[9px] font-black uppercase tracking-widest",
+                                  line.cbu
+                                    ? "border-slate-200 bg-white text-slate-700 hover:border-black"
+                                    : "border-slate-100 bg-white text-slate-300 cursor-not-allowed"
+                                )}
+                              >
+                                Copiar
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
-                    ))}
+                    );
+                    })}
                     {selectedPaymentBucket && selectedPaymentBucket.lines.length === 0 && (
                       <div className="rounded-lg border border-dashed border-slate-200 bg-white p-6 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
                         Sin pagos programados

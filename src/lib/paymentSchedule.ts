@@ -6,6 +6,7 @@ export interface PaymentScheduleLine {
   projectName?: string;
   area: string;
   providerName: string;
+  cbu?: string;
   description: string;
   total: number;
   paid: number;

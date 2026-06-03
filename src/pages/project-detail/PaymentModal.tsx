@@ -283,9 +283,9 @@ export function PaymentModal({
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.95 }}
-        className="bg-white rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden"
+        className="bg-white rounded-2xl w-full max-w-xl max-h-[92vh] shadow-2xl overflow-hidden flex flex-col"
       >
-        <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/30">
+        <div className="px-5 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/30">
           <h2 className="text-xs font-bold uppercase tracking-widest text-slate-900 flex items-center gap-2">
             <Wallet className="w-4 h-4 text-emerald-600" />
             Gestión de Pagos
@@ -295,8 +295,8 @@ export function PaymentModal({
           </button>
         </div>
 
-        <div className="p-8 space-y-6">
-          <div className="flex justify-between items-start">
+        <div className="p-5 space-y-4 overflow-y-auto">
+          <div className="flex justify-between items-start gap-4">
             <div>
               <h3 className="text-sm font-bold text-slate-900">{item.description}</h3>
               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">
@@ -309,16 +309,16 @@ export function PaymentModal({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
               <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Pagado</div>
-              <div className="text-xl font-black text-emerald-600">
+              <div className="text-lg font-black text-emerald-600">
                 ${totalPaid.toLocaleString()}
               </div>
             </div>
-            <div className="bg-slate-900 p-4 rounded-xl">
+            <div className="bg-slate-900 p-3 rounded-xl">
               <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Saldo</div>
-              <div className="text-xl font-black text-white">
+              <div className="text-lg font-black text-white">
                 ${balance.toLocaleString()}
               </div>
             </div>
@@ -458,23 +458,20 @@ export function PaymentModal({
                 console.error("Error updating payment:", err);
                 handleFirestoreError(err, 'update', `projects/${projectId}/${collectionName}/${currentItemId}`);
               }
-            }} className="space-y-4 pt-4 border-t border-slate-100">
-              <div className="grid grid-cols-2 gap-4">
+            }} className="space-y-3 pt-3 border-t border-slate-100">
+              <div className="grid grid-cols-2 gap-3">
                 <div className="flex-1">
-                  <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Fecha del Pago</label>
-                  <label className="relative block w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm font-bold text-slate-800 text-center hover:border-black transition-all cursor-pointer">
-                    {formatDate(paymentDateInput)}
-                    <input
-                      name="paymentDate"
-                      type="date"
-                      value={paymentDateInput}
-                      onChange={(event) => setPaymentDateInput(event.target.value)}
-                      className="absolute inset-0 h-full w-full opacity-0 cursor-pointer"
-                    />
-                  </label>
+                  <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1.5 tracking-widest">Fecha del Pago</label>
+                  <input
+                    name="paymentDate"
+                    type="date"
+                    value={paymentDateInput}
+                    onChange={(event) => setPaymentDateInput(event.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs font-bold text-slate-800 focus:outline-none focus:border-black"
+                  />
                 </div>
                 <div className="flex-1">
-                   <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest text-emerald-600">Saldo Pendiente</label>
+                   <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1.5 tracking-widest text-emerald-600">Saldo Pendiente</label>
                    <button 
                      type="button"
                      onClick={() => {
@@ -483,14 +480,14 @@ export function PaymentModal({
                          amountRef.current.value = remaining.toFixed(2);
                        }
                      }}
-                     className="w-full px-4 py-3 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded text-[10px] font-bold uppercase tracking-widest hover:bg-emerald-100 transition-all flex items-center justify-center gap-2 shadow-sm"
+                     className="w-full px-3 py-2 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded text-[10px] font-bold uppercase tracking-widest hover:bg-emerald-100 transition-all flex items-center justify-center gap-2 shadow-sm"
                    >
                      Cargar Saldo Total
                    </button>
                 </div>
               </div>
               <div>
-                <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Monto a Registrar</label>
+                <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1.5 tracking-widest">Monto a Registrar</label>
                 <div className="relative">
                   <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold">$</div>
                   <input 
@@ -500,16 +497,16 @@ export function PaymentModal({
                     step="0.01" 
                     required
                     placeholder="0.00" 
-                    className="w-full pl-8 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-xl text-lg font-black text-slate-900 focus:outline-none focus:border-black focus:ring-4 focus:ring-slate-100 transition-all" 
+                    className="w-full pl-8 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-base font-black text-slate-900 focus:outline-none focus:border-black focus:ring-4 focus:ring-slate-100 transition-all" 
                   />
                 </div>
               </div>
               <div>
-                <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Detalle / Referencia</label>
-                <input name="detail" placeholder="Ej: Transferencia Banco X, Pago en efectivo..." className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all" />
+                <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1.5 tracking-widest">Detalle / Referencia</label>
+                <input name="detail" placeholder="Ej: Transferencia Banco X, Pago en efectivo..." className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs focus:outline-none focus:border-black transition-all" />
               </div>
               {canUseCashBox && (
-                <label className="flex items-center justify-between gap-4 p-4 bg-amber-50 border border-amber-100 rounded-xl cursor-pointer">
+                <label className="flex items-center justify-between gap-4 p-3 bg-amber-50 border border-amber-100 rounded-xl cursor-pointer">
                   <div>
                     <div className="text-[10px] font-bold uppercase tracking-widest text-amber-700">Usar caja en efectivo</div>
                     <div className="text-xs text-amber-700/70 mt-1">Saldo disponible: ${cashBoxBalance.toLocaleString()}</div>
@@ -518,7 +515,7 @@ export function PaymentModal({
                 </label>
               )}
               <div>
-                <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Comprobante de Pago</label>
+                <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1.5 tracking-widest">Comprobante de Pago</label>
                 <label
                   onDragEnter={(event) => {
                     event.preventDefault();
@@ -540,14 +537,14 @@ export function PaymentModal({
                     attachReceipt(event.dataTransfer.files.item(0));
                   }}
                   className={cn(
-                    "w-full px-4 py-4 bg-slate-50 border border-dashed rounded text-[10px] font-bold uppercase tracking-widest transition-all flex flex-col items-center justify-center gap-2 cursor-pointer",
+                    "w-full px-3 py-3 bg-slate-50 border border-dashed rounded text-[10px] font-bold uppercase tracking-widest transition-all flex flex-col items-center justify-center gap-2 cursor-pointer",
                     isReceiptDragOver
                       ? "border-emerald-500 bg-emerald-50 text-emerald-700"
                       : "border-slate-200 text-slate-400 hover:text-slate-900 hover:border-slate-900"
                   )}
                 >
                   {receiptPreviewUrl ? (
-                    <img src={receiptPreviewUrl} alt="Previsualizacion del comprobante" className="h-20 max-w-full rounded border border-slate-200 object-contain bg-white" />
+                    <img src={receiptPreviewUrl} alt="Previsualizacion del comprobante" className="h-16 max-w-full rounded border border-slate-200 object-contain bg-white" />
                   ) : (
                     <Paperclip className="w-5 h-5" />
                   )}
@@ -575,33 +572,30 @@ export function PaymentModal({
                   </button>
                 )}
               </div>
-              <button type="submit" className="w-full py-4 bg-emerald-600 text-white rounded-xl text-[10px] font-bold tracking-widest uppercase hover:bg-emerald-700 transition-colors flex items-center justify-center gap-2">
+              <button type="submit" className="w-full py-3 bg-emerald-600 text-white rounded-xl text-[10px] font-bold tracking-widest uppercase hover:bg-emerald-700 transition-colors flex items-center justify-center gap-2">
                  <DollarSign className="w-4 h-4" /> Registrar Pago
               </button>
             </form>
           )}
 
           {canManagePayments && paymentHistory.length > 0 && (
-            <div className="pt-6 border-t border-slate-100">
-              <h3 className="text-[10px] font-bold uppercase text-slate-400 mb-4 tracking-widest flex items-center gap-2">
+            <div className="pt-4 border-t border-slate-100">
+              <h3 className="text-[10px] font-bold uppercase text-slate-400 mb-3 tracking-widest flex items-center gap-2">
                  <History className="w-3 h-3" /> Historial de Pagos
               </h3>
-              <div className="space-y-3 max-h-40 overflow-y-auto pr-2 custom-scrollbar">
+              <div className="space-y-2 max-h-48 overflow-y-auto pr-2 custom-scrollbar">
                 {(paymentHistory as Payment[]).map((payment, idx) => (
                   <div key={payment.id || idx} className="p-3 bg-slate-50 rounded-lg border border-slate-100">
                     {editingPaymentIndex === idx ? (
                       <form onSubmit={(event) => updateExistingPayment(event, idx)} className="space-y-3">
                         <div className="grid grid-cols-2 gap-2">
-                          <label className="relative block px-3 py-2 bg-white border border-slate-100 rounded text-xs font-bold text-slate-800 text-center cursor-pointer">
-                            {formatDate(editPaymentDateInput)}
-                            <input
-                              name="editPaymentDate"
-                              type="date"
-                              value={editPaymentDateInput}
-                              onChange={(event) => setEditPaymentDateInput(event.target.value)}
-                              className="absolute inset-0 h-full w-full opacity-0 cursor-pointer"
-                            />
-                          </label>
+                          <input
+                            name="editPaymentDate"
+                            type="date"
+                            value={editPaymentDateInput}
+                            onChange={(event) => setEditPaymentDateInput(event.target.value)}
+                            className="px-3 py-2 bg-white border border-slate-100 rounded text-xs font-bold text-slate-800 focus:outline-none focus:border-black"
+                          />
                           <input
                             name="editAmount"
                             type="number"

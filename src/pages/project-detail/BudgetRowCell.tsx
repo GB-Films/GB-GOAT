@@ -17,6 +17,8 @@ interface BudgetRowCellProps {
 export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment, disabledPayment, disabled }: BudgetRowCellProps) {
   const [isEditingProvider, setIsEditingProvider] = useState(false);
   const [providerSearch, setProviderSearch] = useState('');
+  const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0 });
+  const providerCellRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   
   useEffect(() => {
@@ -29,6 +31,30 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
       document.addEventListener("mousedown", handleClickOutside);
     }
     return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [isEditingProvider]);
+
+  useEffect(() => {
+    if (!isEditingProvider || !providerCellRef.current) return;
+
+    const updateDropdownPosition = () => {
+      const rect = providerCellRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const dropdownWidth = 256;
+      const left = Math.min(Math.max(12, rect.left), window.innerWidth - dropdownWidth - 12);
+      const opensUp = rect.bottom + 320 > window.innerHeight && rect.top > 320;
+      setDropdownPosition({
+        left,
+        top: opensUp ? Math.max(12, rect.top - 292) : rect.bottom + 8,
+      });
+    };
+
+    updateDropdownPosition();
+    window.addEventListener('resize', updateDropdownPosition);
+    window.addEventListener('scroll', updateDropdownPosition, true);
+    return () => {
+      window.removeEventListener('resize', updateDropdownPosition);
+      window.removeEventListener('scroll', updateDropdownPosition, true);
+    };
   }, [isEditingProvider]);
 
   const isInvalidProvider = item.providerName && !item.providerId && providers?.length;
@@ -46,7 +72,7 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
 
   if (type === 'provider') {
     return (
-      <div className="relative group/provider">
+      <div ref={providerCellRef} className="relative group/provider">
         {item.providerId || item.providerName ? (
           <div className="flex items-center gap-2">
             <div className={cn(
@@ -86,7 +112,8 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
         {isEditingProvider && !disabled && (
            <div 
              ref={dropdownRef}
-             className="absolute top-0 left-0 w-64 bg-white border border-slate-200 shadow-2xl rounded-lg z-[100] p-3 mt-8"
+             style={{ top: dropdownPosition.top, left: dropdownPosition.left }}
+             className="fixed w-64 bg-white border border-slate-200 shadow-2xl rounded-lg z-[400] p-3"
            >
               <div className="relative mb-3">
                 <input 
