@@ -674,7 +674,11 @@ export default function ProjectDetail() {
   };
 
   const deleteBudgetItem = async (itemId: string) => {
-    if (!id || !canEditMainBudget || !confirm('¿Eliminar esta partida?')) return;
+    const currentItem = budgetItems.find((item) => item.id === itemId);
+    const itemLabel = currentItem?.description || currentItem?.providerName || 'esta partida';
+    const itemTotal = Number(currentItem?.total) || 0;
+    if (!id || !canEditMainBudget || !currentItem) return;
+    if (!confirm(`¿Eliminar "${itemLabel}" del Presupuesto Principal?\n\nTotal: $${itemTotal.toLocaleString()}\nEsta acción no se puede deshacer.`)) return;
     try {
       await deleteDoc(doc(db, 'projects', id, 'budgetItems', itemId));
       setBudgetItems(items => items.filter(i => i.id !== itemId));
@@ -1058,7 +1062,10 @@ export default function ProjectDetail() {
 
   const deleteAreaExpense = async (expenseId: string) => {
     const currentExpense = areaExpenses.find(e => e.id === expenseId);
-    if (!id || !currentExpense || !canEditArea(currentExpense.area) || !confirm('¿Eliminar este gasto?')) return;
+    const itemLabel = currentExpense?.description || currentExpense?.providerName || 'este gasto';
+    const itemTotal = Number(currentExpense?.total) || 0;
+    if (!id || !currentExpense || !canEditArea(currentExpense.area)) return;
+    if (!confirm(`¿Eliminar "${itemLabel}" de Gestión por Áreas?\n\nÁrea: ${currentExpense.area || 'Sin área'}\nTotal: $${itemTotal.toLocaleString()}\nEsta acción no se puede deshacer.`)) return;
     try {
       await deleteDoc(doc(db, 'projects', id, 'areaExpenses', expenseId));
       setAreaExpenses(areaExpenses.filter(e => e.id !== expenseId));
@@ -3316,7 +3323,7 @@ export default function ProjectDetail() {
                                                     ref={provided.innerRef}
                                                     {...provided.draggableProps}
                                                     className={cn(
-                                                      "grid grid-cols-12 px-4 py-2 items-center border-b border-slate-50 last:border-0 hover:bg-slate-50 transition-colors",
+                                                      "group grid grid-cols-12 px-4 py-2 items-center border-b border-slate-50 last:border-0 hover:bg-slate-50 transition-colors",
                                                       snapshot.isDragging && "bg-slate-50 shadow-xl border-y border-slate-200 rounded-lg relative z-50"
                                                     )}
                                                   >
@@ -3381,9 +3388,12 @@ export default function ProjectDetail() {
                                                         <div className="col-span-1 text-right">
                                                           {canEditMainBudget && (
                                                           <button 
+                                                            type="button"
                                                             onClick={() => deleteBudgetItem(item.id)}
-                                                            className="p-1 text-slate-200 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all font-bold text-[10px] uppercase underline"
+                                                            className="inline-flex items-center gap-1 rounded border border-red-100 bg-red-50 px-2 py-1 text-[9px] font-black uppercase tracking-widest text-red-600 transition-all hover:bg-red-600 hover:text-white"
+                                                            title="Eliminar partida"
                                                           >
+                                                            <Trash2 className="w-3 h-3" />
                                                             Eliminar
                                                           </button>
                                                           )}
@@ -3909,8 +3919,10 @@ export default function ProjectDetail() {
                                />
                                {canEditArea(item.area) && (
                                  <button 
+                                   type="button"
                                    onClick={() => deleteAreaExpense(item.id)}
-                                   className="p-1 text-slate-200 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
+                                   className="p-1.5 rounded border border-red-100 bg-red-50 text-red-600 hover:bg-red-600 hover:text-white transition-all"
+                                   title="Eliminar gasto"
                                  >
                                    <Trash2 className="w-3.5 h-3.5" />
                                  </button>
