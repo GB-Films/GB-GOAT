@@ -6,6 +6,7 @@ import { motion } from 'motion/react';
 import { db, storage } from '../../lib/firebase';
 import { handleFirestoreError } from '../../lib/firestoreUtils';
 import { cn } from '../../lib/utils';
+import { validateMaxUploadSize } from '../../lib/uploadLimits';
 import type { Payment, PaymentCollection } from './types';
 
 const formatDate = (dateString: string | any) => {
@@ -56,11 +57,7 @@ const validateReceiptFile = (file: File) => {
     return 'El comprobante debe ser PDF, JPG, PNG o WEBP.';
   }
 
-  if (file.size > 15 * 1024 * 1024) {
-    return 'El comprobante es muy pesado. El maximo permitido es 15 MB.';
-  }
-
-  return '';
+  return validateMaxUploadSize(file, 'comprobante');
 };
 
 const formatFileSize = (size: number) => {

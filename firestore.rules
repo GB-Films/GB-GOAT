@@ -188,6 +188,36 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/providerInvites/$(token)).data.status == 'pending';
     }
 
+    function invoiceUploadInviteIsPending(token, projectId, expenseId) {
+      return request.auth == null
+        && token is string
+        && exists(/databases/$(database)/documents/invoiceUploadInvites/$(token))
+        && get(/databases/$(database)/documents/invoiceUploadInvites/$(token)).data.used == false
+        && get(/databases/$(database)/documents/invoiceUploadInvites/$(token)).data.status == 'pending'
+        && get(/databases/$(database)/documents/invoiceUploadInvites/$(token)).data.projectId == projectId
+        && get(/databases/$(database)/documents/invoiceUploadInvites/$(token)).data.expenseId == expenseId;
+    }
+
+    function canPublicUploadAreaInvoice(projectId, expenseId) {
+      return request.auth == null
+        && (
+          !resource.data.keys().hasAny(['invoice'])
+          || resource.data.invoice == null
+        )
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['invoice', 'invoiceStatus', 'publicInvoiceUpload', 'updatedAt'])
+        && request.resource.data.invoiceStatus == 'pendiente'
+        && request.resource.data.invoice.fileName is string
+        && request.resource.data.invoice.originalFileName is string
+        && request.resource.data.invoice.url is string
+        && request.resource.data.invoice.path is string
+        && request.resource.data.invoice.contentType == 'application/pdf'
+        && request.resource.data.invoice.size is number
+        && request.resource.data.invoice.size <= 2 * 1024 * 1024
+        && request.resource.data.invoice.uploadedBy == 'provider_public_link'
+        && request.resource.data.publicInvoiceUpload.token is string
+        && invoiceUploadInviteIsPending(request.resource.data.publicInvoiceUpload.token, projectId, expenseId);
+    }
+
     function publicProviderCreateIsValid() {
       return request.auth == null
         && request.resource.data.source == 'provider_invite'
@@ -302,8 +332,11 @@ service cloud.firestore {
       match /areaExpenses/{expenseId} {
         allow read: if hasProjectAccess(projectId);
         allow create: if canWriteArea(projectId, request.resource.data.area);
-        allow update: if canWriteArea(projectId, resource.data.area)
-          && canWriteArea(projectId, request.resource.data.area);
+        allow update: if (
+            canWriteArea(projectId, resource.data.area)
+            && canWriteArea(projectId, request.resource.data.area)
+          )
+          || canPublicUploadAreaInvoice(projectId, expenseId);
         allow delete: if canWriteArea(projectId, resource.data.area);
       }
 
@@ -385,6 +418,30 @@ service cloud.firestore {
           && request.resource.data.value is string
         );
       allow update, delete: if isAppAdmin();
+    }
+
+    match /invoiceUploadInvites/{token} {
+      allow get: if true;
+      allow list: if canCreateGlobalProvider();
+      allow create: if isSignedIn()
+        && request.resource.data.status == 'pending'
+        && request.resource.data.used == false
+        && request.resource.data.projectId is string
+        && request.resource.data.expenseId is string
+        && request.resource.data.area is string
+        && canWriteArea(request.resource.data.projectId, request.resource.data.area);
+      allow update: if isAppAdmin()
+        || (
+          request.auth == null
+          && resource.data.used == false
+          && resource.data.status == 'pending'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'status', 'usedAt', 'invoiceFileName', 'invoicePath', 'invoiceUrl', 'originalFileName'])
+          && request.resource.data.used == true
+          && request.resource.data.status == 'used'
+          && request.resource.data.invoicePath is string
+          && request.resource.data.invoiceUrl is string
+        );
+      allow delete: if isAppAdmin();
     }
   }
 }

@@ -9,6 +9,7 @@ import ProjectDetail from './pages/ProjectDetail';
 import Team from './pages/Team';
 import Providers from './pages/Providers';
 import ProviderInvite from './pages/ProviderInvite';
+import InvoiceUploadInvite from './pages/InvoiceUploadInvite';
 import Clients from './pages/Clients';
 import Reports from './pages/Reports';
 import PlaceholderPage from './pages/PlaceholderPage';
@@ -38,6 +39,7 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/alta-proveedor/:token" element={<ProviderInvite />} />
+          <Route path="/carga-factura/:token" element={<InvoiceUploadInvite />} />
           
           <Route element={<Layout />}>
             <Route path="/" element={<Dashboard />} />

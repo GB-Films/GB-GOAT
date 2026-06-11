@@ -39,6 +39,7 @@ import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import * as XLSX from 'xlsx';
 import Papa from 'papaparse';
 import { cn } from '../lib/utils';
+import { validateMaxUploadSize } from '../lib/uploadLimits';
 import { buildPaymentCalendarDays, formatDateKey, formatPeriodLabel, getOverdueLines, getTodayLines, getUnscheduledLines, sumDebt, type PaymentScheduleLine } from '../lib/paymentSchedule';
 import { BudgetRowCell } from './project-detail/BudgetRowCell';
 import { PaymentModal } from './project-detail/PaymentModal';
@@ -345,16 +346,24 @@ const buildOtherReceiptFileName = (expense: any, file: File, receiptId: string) 
   return `comprobante-${receiptId}-${baseName}.${extension}`;
 };
 
+const generateInvoiceUploadToken = () => {
+  const bytes = new Uint8Array(20);
+  window.crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+};
+
+const getPublicInvoiceUploadLink = (token: string) => {
+  const baseUrl = ((import.meta as ImportMeta & { env?: { BASE_URL?: string } }).env?.BASE_URL || '/');
+  return `${window.location.origin}${baseUrl}#/carga-factura/${token}`;
+};
+
 const validateProjectDocumentFile = (file?: File | null) => {
   if (!file) return 'Selecciona un archivo para subir.';
   const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
   if (!allowedTypes.includes(file.type)) {
     return 'El documento debe ser PDF, JPG, PNG o WEBP.';
   }
-  if (file.size > 15 * 1024 * 1024) {
-    return 'El documento es muy pesado. El maximo permitido es 15 MB.';
-  }
-  return '';
+  return validateMaxUploadSize(file, 'documento');
 };
 
 const normalizeEmail = (email?: string | null) => (email || '').trim().toLowerCase();
@@ -620,6 +629,7 @@ export default function ProjectDetail() {
   const [paymentType, setPaymentType] = useState<PaymentCollection>('areaExpenses');
   const [isDeletingPayment, setIsDeletingPayment] = useState<number | null>(null);
   const [uploadingInvoices, setUploadingInvoices] = useState<Record<string, boolean>>({});
+  const [generatingInvoiceLinks, setGeneratingInvoiceLinks] = useState<Record<string, boolean>>({});
   const [dragOverExpenseId, setDragOverExpenseId] = useState<string | null>(null);
   const [isDeletingProject, setIsDeletingProject] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
@@ -1247,8 +1257,9 @@ export default function ProjectDetail() {
       return;
     }
 
-    if (file.size > 15 * 1024 * 1024) {
-      alert('El PDF es muy pesado. El máximo permitido es 15 MB.');
+    const sizeError = validateMaxUploadSize(file, 'PDF');
+    if (sizeError) {
+      alert(sizeError);
       return;
     }
 
@@ -1332,6 +1343,48 @@ export default function ProjectDetail() {
       handleFirestoreError(error, 'update', `projects/${id}/areaExpenses/${expense.id}`);
     } finally {
       setUploadingInvoices(prev => ({ ...prev, [expense.id]: false }));
+    }
+  };
+
+  const createInvoiceUploadLink = async (expense: any) => {
+    if (!id || !canUploadAreaFiles(expense.area)) return;
+    if (!expense.providerId || !expense.providerName) {
+      alert('Asigná un proveedor a la fila antes de generar el link de factura.');
+      return;
+    }
+    if (expense.invoice?.url) {
+      alert('Esta fila ya tiene una factura cargada. Si necesitás otra, eliminá la actual primero.');
+      return;
+    }
+
+    setGeneratingInvoiceLinks(prev => ({ ...prev, [expense.id]: true }));
+    try {
+      const token = generateInvoiceUploadToken();
+      const link = getPublicInvoiceUploadLink(token);
+      await setDoc(doc(db, 'invoiceUploadInvites', token), {
+        token,
+        projectId: id,
+        projectName: project?.name || '',
+        expenseId: expense.id,
+        area: expense.area || '',
+        providerId: expense.providerId || '',
+        providerName: expense.providerName || '',
+        description: expense.description || '',
+        status: 'pending',
+        used: false,
+        createdBy: user?.uid || '',
+        createdByEmail: currentUserEmail,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+
+      await navigator.clipboard?.writeText(link);
+      alert(`Link para cargar factura copiado al portapapeles:\n\n${link}`);
+    } catch (error) {
+      console.error('Error creating invoice upload link:', error);
+      alert('No se pudo generar el link para cargar factura.');
+    } finally {
+      setGeneratingInvoiceLinks(prev => ({ ...prev, [expense.id]: false }));
     }
   };
 
@@ -4156,28 +4209,39 @@ export default function ProjectDetail() {
                                   </>
                                 ) : (
                                   canUploadAreaFiles(item.area) ? (
-                                    <label
-                                      className={cn(
-                                        "w-7 h-7 rounded border transition-all flex items-center justify-center cursor-pointer",
-                                        uploadingInvoices[item.id]
-                                          ? "bg-slate-100 border-slate-200 text-slate-300 cursor-wait"
-                                          : "bg-white border-slate-200 text-slate-400 hover:text-black hover:border-black"
-                                      )}
-                                      title="Adjuntar factura PDF"
-                                    >
-                                      <Paperclip className="w-3.5 h-3.5" />
-                                      <input
-                                        type="file"
-                                        accept="application/pdf,.pdf"
-                                        className="hidden"
-                                        disabled={!!uploadingInvoices[item.id]}
-                                        onChange={(event) => {
-                                          const file = event.target.files?.[0];
-                                          uploadInvoiceForExpense(item, file);
-                                          event.target.value = '';
-                                        }}
-                                      />
-                                    </label>
+                                    <>
+                                      <label
+                                        className={cn(
+                                          "w-7 h-7 rounded border transition-all flex items-center justify-center cursor-pointer",
+                                          uploadingInvoices[item.id]
+                                            ? "bg-slate-100 border-slate-200 text-slate-300 cursor-wait"
+                                            : "bg-white border-slate-200 text-slate-400 hover:text-black hover:border-black"
+                                        )}
+                                        title="Adjuntar factura PDF"
+                                      >
+                                        <Paperclip className="w-3.5 h-3.5" />
+                                        <input
+                                          type="file"
+                                          accept="application/pdf,.pdf"
+                                          className="hidden"
+                                          disabled={!!uploadingInvoices[item.id]}
+                                          onChange={(event) => {
+                                            const file = event.target.files?.[0];
+                                            uploadInvoiceForExpense(item, file);
+                                            event.target.value = '';
+                                          }}
+                                        />
+                                      </label>
+                                      <button
+                                        type="button"
+                                        disabled={!!generatingInvoiceLinks[item.id]}
+                                        onClick={() => createInvoiceUploadLink(item)}
+                                        className="w-7 h-7 rounded border border-blue-100 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white transition-all flex items-center justify-center disabled:bg-slate-100 disabled:text-slate-300"
+                                        title="Copiar link para que el proveedor cargue su factura"
+                                      >
+                                        <LinkIcon className="w-3.5 h-3.5" />
+                                      </button>
+                                    </>
                                   ) : (
                                     <span className="text-[9px] font-bold uppercase tracking-widest text-slate-300">Sin PDF</span>
                                   )
