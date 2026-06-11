@@ -395,6 +395,155 @@ const downloadXlsx = (rows: Record<string, any>[], sheetName: string, fileName: 
   XLSX.writeFile(workbook, fileName);
 };
 
+function PaymentDatePicker({
+  value,
+  disabled,
+  shootingDate,
+  onChange,
+}: {
+  value?: any;
+  disabled?: boolean;
+  shootingDate?: any;
+  onChange: (value: string) => void;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [position, setPosition] = useState({ top: 0, left: 0 });
+  const [anchorDate, setAnchorDate] = useState(() => parseProjectDate(value) || parseProjectDate(shootingDate) || new Date());
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const selectedKey = toDateInputValue(value);
+  const todayKey = formatDateKey(new Date());
+  const shootingKey = toDateInputValue(shootingDate);
+  const monthStart = new Date(anchorDate.getFullYear(), anchorDate.getMonth(), 1);
+  const firstDayOffset = (monthStart.getDay() + 6) % 7;
+  const gridStart = new Date(monthStart);
+  gridStart.setDate(monthStart.getDate() - firstDayOffset);
+  const days = Array.from({ length: 42 }, (_, index) => {
+    const date = new Date(gridStart);
+    date.setDate(gridStart.getDate() + index);
+    return date;
+  });
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        popoverRef.current
+        && !popoverRef.current.contains(event.target as Node)
+        && buttonRef.current
+        && !buttonRef.current.contains(event.target as Node)
+      ) {
+        setIsOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || !buttonRef.current) return;
+    const rect = buttonRef.current.getBoundingClientRect();
+    const popoverWidth = 292;
+    setPosition({
+      top: rect.bottom + 8,
+      left: Math.min(Math.max(12, rect.left), window.innerWidth - popoverWidth - 12),
+    });
+  }, [isOpen]);
+
+  const moveMonth = (offset: number) => {
+    setAnchorDate((current) => new Date(current.getFullYear(), current.getMonth() + offset, 1));
+  };
+
+  return (
+    <div className="space-y-1">
+      <button
+        ref={buttonRef}
+        type="button"
+        disabled={disabled}
+        onClick={() => {
+          if (disabled) return;
+          setAnchorDate(parseProjectDate(value) || parseProjectDate(shootingDate) || new Date());
+          setIsOpen((current) => !current);
+        }}
+        className={cn(
+          "w-full px-2 py-1.5 border rounded text-[10px] font-bold text-center transition-all",
+          disabled ? "cursor-not-allowed text-slate-400 bg-slate-100 border-slate-100" : "cursor-pointer text-slate-700 bg-slate-50 border-slate-100 hover:border-black",
+          selectedKey && "text-slate-800"
+        )}
+      >
+        {selectedKey ? formatDate(selectedKey) : 'Definir fecha'}
+      </button>
+
+      {isOpen && !disabled && (
+        <div
+          ref={popoverRef}
+          style={{ top: position.top, left: position.left }}
+          className="fixed z-[500] w-[292px] rounded-xl border border-slate-200 bg-white p-3 shadow-2xl"
+        >
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <button type="button" onClick={() => moveMonth(-1)} className="px-2 py-1 rounded border border-slate-100 text-[10px] font-black text-slate-500 hover:border-black">Ant.</button>
+            <div className="text-[11px] font-black uppercase tracking-widest text-slate-800">
+              {anchorDate.toLocaleDateString('es-AR', { month: 'long', year: 'numeric' })}
+            </div>
+            <button type="button" onClick={() => moveMonth(1)} className="px-2 py-1 rounded border border-slate-100 text-[10px] font-black text-slate-500 hover:border-black">Sig.</button>
+          </div>
+          <div className="grid grid-cols-7 gap-1 text-center">
+            {['L', 'M', 'M', 'J', 'V', 'S', 'D'].map((day, index) => (
+              <div key={`${day}-${index}`} className="py-1 text-[9px] font-black uppercase tracking-widest text-slate-300">{day}</div>
+            ))}
+            {days.map((date) => {
+              const key = formatDateKey(date);
+              const isCurrentMonth = date.getMonth() === anchorDate.getMonth();
+              const isSelected = key === selectedKey;
+              const isToday = key === todayKey;
+              const isShooting = key === shootingKey;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => {
+                    onChange(key);
+                    setIsOpen(false);
+                  }}
+                  className={cn(
+                    "relative h-8 rounded border text-[10px] font-black transition-all",
+                    isCurrentMonth ? "bg-white text-slate-700 border-slate-100 hover:border-black" : "bg-slate-50 text-slate-300 border-slate-50",
+                    isSelected && "bg-slate-900 text-white border-slate-900",
+                    isToday && !isSelected && "border-blue-300 text-blue-700 bg-blue-50",
+                    isShooting && !isSelected && "border-emerald-300 text-emerald-700 bg-emerald-50"
+                  )}
+                  title={[isToday ? 'Hoy' : '', isShooting ? 'Rodaje' : ''].filter(Boolean).join(' / ') || undefined}
+                >
+                  {date.getDate()}
+                  {(isToday || isShooting) && (
+                    <span className={cn(
+                      "absolute bottom-0.5 left-1/2 h-1 w-1 -translate-x-1/2 rounded-full",
+                      isSelected ? "bg-white" : isToday ? "bg-blue-500" : "bg-emerald-500"
+                    )} />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          <div className="mt-3 flex items-center justify-between gap-2 border-t border-slate-100 pt-3">
+            <div className="flex flex-wrap gap-2 text-[9px] font-bold uppercase tracking-widest text-slate-400">
+              <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-blue-500" />Hoy</span>
+              {shootingKey && <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-500" />Rodaje</span>}
+            </div>
+            {selectedKey && (
+              <button type="button" onClick={() => { onChange(''); setIsOpen(false); }} className="text-[9px] font-black uppercase tracking-widest text-slate-400 hover:text-red-500">
+                Limpiar
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const providerExportRow = (provider: any, extra: Record<string, any> = {}) => {
   const inferred = inferLegacyIdentifiers(provider);
   const category = provider.category === 'Otra'
@@ -1054,21 +1203,12 @@ export default function ProjectDetail() {
   };
 
   const renderPaymentScheduleCell = (item: any, collectionName: PaymentCollection, disabled: boolean) => (
-    <div className="space-y-1">
-      <div className={cn(
-        "relative w-full px-2 py-1.5 bg-slate-50 border border-slate-100 rounded text-[10px] font-bold text-center transition-all",
-        disabled ? "cursor-not-allowed text-slate-400 bg-slate-100" : "cursor-pointer text-slate-700 hover:border-black"
-      )}>
-        {item.paymentDate ? formatDate(item.paymentDate) : 'Definir fecha'}
-      <input
-        type="date"
-        defaultValue={toDateInputValue(item.paymentDate)}
-        disabled={disabled}
-        onChange={(event) => updateScheduledPaymentDate(item, collectionName, event.target.value)}
-        className="absolute inset-0 h-full w-full opacity-0 cursor-pointer disabled:cursor-not-allowed"
-      />
-      </div>
-    </div>
+    <PaymentDatePicker
+      value={item.paymentDate}
+      disabled={disabled}
+      shootingDate={getShootingEndDate(project)}
+      onChange={(nextDate) => updateScheduledPaymentDate(item, collectionName, nextDate)}
+    />
   );
 
   const renderPaymentLeadTimeCell = (item: any) => (
@@ -3976,7 +4116,7 @@ export default function ProjectDetail() {
                                   onUpdate={updateAreaExpense}
                                   onDelete={deleteAreaExpense}
                                   type="provider"
-                                  canCopyProviderInfo={isProjectAdmin || isProductionLead}
+                                  canCopyProviderInfo
                                   disabled={!canEditArea(item.area)}
                                 />
                               </div>

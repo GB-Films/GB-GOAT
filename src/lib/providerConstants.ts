@@ -10,6 +10,7 @@ export const PRODUCTION_AREA_CATEGORIES = [
   'Vestuario',
   'Maquillaje y Peinado',
   'Casting',
+  'Actor/Actriz',
   'Locaciones',
   'Transporte',
   'Catering',

@@ -42,17 +42,18 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
   }, [isEditingProvider, showProviderInfo]);
 
   useEffect(() => {
-    if (!isEditingProvider || !providerCellRef.current) return;
+    if ((!isEditingProvider && !showProviderInfo) || !providerCellRef.current) return;
 
     const updateDropdownPosition = () => {
       const rect = providerCellRef.current?.getBoundingClientRect();
       if (!rect) return;
       const dropdownWidth = 256;
       const left = Math.min(Math.max(12, rect.left), window.innerWidth - dropdownWidth - 12);
-      const opensUp = rect.bottom + 320 > window.innerHeight && rect.top > 320;
+      const dropdownHeight = isEditingProvider ? 320 : 180;
+      const opensUp = rect.bottom + dropdownHeight > window.innerHeight && rect.top > dropdownHeight;
       setDropdownPosition({
         left,
-        top: opensUp ? Math.max(12, rect.top - 292) : rect.bottom + 8,
+        top: opensUp ? Math.max(12, rect.top - dropdownHeight + 28) : rect.bottom + 8,
       });
     };
 
@@ -63,7 +64,7 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
       window.removeEventListener('resize', updateDropdownPosition);
       window.removeEventListener('scroll', updateDropdownPosition, true);
     };
-  }, [isEditingProvider]);
+  }, [isEditingProvider, showProviderInfo]);
 
   const isInvalidProvider = item.providerName && !item.providerId && providers?.length;
   const provider = providers?.find((candidate) => (
@@ -104,7 +105,11 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
             <button
               type="button"
               disabled={!canShowProviderInfo}
-              onClick={() => canShowProviderInfo && setShowProviderInfo((value) => !value)}
+              onClick={() => {
+                if (!canShowProviderInfo) return;
+                setIsEditingProvider(false);
+                setShowProviderInfo((value) => !value);
+              }}
               className={cn(
                 "min-w-0 font-bold uppercase truncate text-[10px] text-left",
                 canShowProviderInfo && "hover:underline decoration-dotted cursor-pointer",
@@ -141,24 +146,29 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
         )}
 
         {showProviderInfo && canShowProviderInfo && (
-          <div ref={dropdownRef} className="absolute left-0 top-full mt-2 w-64 bg-white border border-slate-200 shadow-2xl rounded-lg z-[420] p-3">
+          <div
+            ref={dropdownRef}
+            style={{ top: dropdownPosition.top, left: dropdownPosition.left }}
+            className="fixed w-64 bg-white border border-slate-200 shadow-2xl rounded-lg z-[420] p-3"
+          >
             <div className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Datos del proveedor</div>
             {[
-              { label: 'CUIT', value: providerCuit },
-              { label: 'CBU / Alias', value: providerCbu },
+              { label: 'Copiar CUIT', value: providerCuit },
+              { label: 'Copiar CBU', value: providerCbu },
             ].filter((entry) => entry.value).map((entry) => (
               <div key={entry.label} className="flex items-center justify-between gap-2 py-1.5 border-t border-slate-50 first:border-0">
                 <div className="min-w-0">
-                  <div className="text-[8px] font-black uppercase tracking-widest text-slate-300">{entry.label}</div>
+                  <div className="text-[8px] font-black uppercase tracking-widest text-slate-300">{entry.label.replace('Copiar ', '')}</div>
                   <div className="truncate font-mono text-[10px] font-bold text-slate-700">{entry.value}</div>
                 </div>
                 <button
                   type="button"
                   onClick={() => copyProviderValue(entry.value)}
-                  className="shrink-0 p-1.5 rounded border border-slate-100 text-slate-400 hover:text-black hover:border-black"
-                  title={`Copiar ${entry.label}`}
+                  className="shrink-0 inline-flex items-center gap-1 rounded border border-slate-100 px-2 py-1.5 text-[9px] font-black uppercase tracking-widest text-slate-500 hover:text-black hover:border-black"
+                  title={entry.label}
                 >
                   <Copy className="w-3 h-3" />
+                  Copiar
                 </button>
               </div>
             ))}

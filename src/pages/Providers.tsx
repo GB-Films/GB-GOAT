@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   collection,
   query,
@@ -398,8 +398,10 @@ export default function Providers() {
       await createProviderIdentifierDocs(docRef.id, data);
       setProviders([{ id: docRef.id, ...data, createdAt: new Date() }, ...providers]);
       setShowNewModal(false);
+      alert('Proveedor cargado con exito.');
     } catch (error) {
       console.error('Error adding provider:', error);
+      alert('No se pudo cargar el proveedor.');
     }
   };
 
@@ -927,20 +929,145 @@ function ProviderManualModal({ onClose, onSubmit }: { onClose: () => void; onSub
   );
 }
 
+const toDateKey = (date: Date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const parseDateKey = (value?: string) => {
+  if (!value) return null;
+  const date = new Date(`${value}T12:00:00`);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
 function DateInputField({ name, defaultValue = '' }: { name: string; defaultValue?: string }) {
   const [value, setValue] = useState(defaultValue);
+  const [isOpen, setIsOpen] = useState(false);
+  const [position, setPosition] = useState({ top: 0, left: 0 });
+  const [anchorDate, setAnchorDate] = useState(() => parseDateKey(defaultValue) || new Date(1990, 0, 1));
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const todayKey = toDateKey(new Date());
+  const monthStart = new Date(anchorDate.getFullYear(), anchorDate.getMonth(), 1);
+  const firstDayOffset = (monthStart.getDay() + 6) % 7;
+  const gridStart = new Date(monthStart);
+  gridStart.setDate(monthStart.getDate() - firstDayOffset);
+  const days = Array.from({ length: 42 }, (_, index) => {
+    const date = new Date(gridStart);
+    date.setDate(gridStart.getDate() + index);
+    return date;
+  });
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        popoverRef.current
+        && !popoverRef.current.contains(event.target as Node)
+        && buttonRef.current
+        && !buttonRef.current.contains(event.target as Node)
+      ) {
+        setIsOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || !buttonRef.current) return;
+    const rect = buttonRef.current.getBoundingClientRect();
+    const popoverWidth = 292;
+    setPosition({
+      top: rect.bottom + 8,
+      left: Math.min(Math.max(12, rect.left), window.innerWidth - popoverWidth - 12),
+    });
+  }, [isOpen]);
+
+  const moveMonth = (offset: number) => {
+    setAnchorDate((current) => new Date(current.getFullYear(), current.getMonth() + offset, 1));
+  };
 
   return (
-    <label className={`${inputClass} relative block text-center font-bold text-slate-800 cursor-pointer`}>
-      {value ? formatDate(value) : 'dd/mm/aaaa'}
-      <input
-        name={name}
-        type="date"
-        value={value}
-        onChange={(event) => setValue(event.target.value)}
-        className="absolute inset-0 h-full w-full opacity-0 cursor-pointer"
-      />
-    </label>
+    <div>
+      <input type="hidden" name={name} value={value} />
+      <button
+        ref={buttonRef}
+        type="button"
+        onClick={() => {
+          setAnchorDate(parseDateKey(value) || new Date(1990, 0, 1));
+          setIsOpen((current) => !current);
+        }}
+        className={`${inputClass} text-center font-bold text-slate-800`}
+      >
+        {value ? formatDate(value) : 'dd/mm/aaaa'}
+      </button>
+      {isOpen && (
+        <div
+          ref={popoverRef}
+          style={{ top: position.top, left: position.left }}
+          className="fixed z-[500] w-[292px] rounded-xl border border-slate-200 bg-white p-3 shadow-2xl"
+        >
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <button type="button" onClick={() => moveMonth(-1)} className="px-2 py-1 rounded border border-slate-100 text-[10px] font-black text-slate-500 hover:border-black">Ant.</button>
+            <div className="text-[11px] font-black uppercase tracking-widest text-slate-800">
+              {anchorDate.toLocaleDateString('es-AR', { month: 'long', year: 'numeric' })}
+            </div>
+            <button type="button" onClick={() => moveMonth(1)} className="px-2 py-1 rounded border border-slate-100 text-[10px] font-black text-slate-500 hover:border-black">Sig.</button>
+          </div>
+          <div className="grid grid-cols-7 gap-1 text-center">
+            {['L', 'M', 'M', 'J', 'V', 'S', 'D'].map((day, index) => (
+              <div key={`${day}-${index}`} className="py-1 text-[9px] font-black uppercase tracking-widest text-slate-300">{day}</div>
+            ))}
+            {days.map((date) => {
+              const key = toDateKey(date);
+              const isCurrentMonth = date.getMonth() === anchorDate.getMonth();
+              const isSelected = key === value;
+              const isToday = key === todayKey;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => {
+                    setValue(key);
+                    setIsOpen(false);
+                  }}
+                  className={`relative h-8 rounded border text-[10px] font-black transition-all ${
+                    isSelected
+                      ? 'bg-slate-900 text-white border-slate-900'
+                      : isToday
+                        ? 'border-blue-300 text-blue-700 bg-blue-50'
+                        : isCurrentMonth
+                          ? 'bg-white text-slate-700 border-slate-100 hover:border-black'
+                          : 'bg-slate-50 text-slate-300 border-slate-50'
+                  }`}
+                  title={isToday ? 'Hoy' : undefined}
+                >
+                  {date.getDate()}
+                  {isToday && (
+                    <span className={`absolute bottom-0.5 left-1/2 h-1 w-1 -translate-x-1/2 rounded-full ${isSelected ? 'bg-white' : 'bg-blue-500'}`} />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          <div className="mt-3 flex items-center justify-between gap-2 border-t border-slate-100 pt-3">
+            <span className="inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-widest text-slate-400">
+              <span className="h-2 w-2 rounded-full bg-blue-500" />Hoy
+            </span>
+            {value && (
+              <button type="button" onClick={() => { setValue(''); setIsOpen(false); }} className="text-[9px] font-black uppercase tracking-widest text-slate-400 hover:text-red-500">
+                Limpiar
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
