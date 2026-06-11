@@ -335,6 +335,16 @@ const buildInvoiceFileName = (expense: any) => {
   return `factura-${baseName}-${shortId}.pdf`;
 };
 
+const buildOtherReceiptFileName = (expense: any, file: File, receiptId: string) => {
+  const baseName = sanitizeFileName(
+    file.name.replace(/\.[^.]+$/, '') || expense.providerName || expense.description || 'comprobante'
+  )
+    .replace(/\.[^.]+$/, '')
+    .slice(0, 70) || 'comprobante';
+  const extension = file.name.includes('.') ? file.name.split('.').pop() : 'pdf';
+  return `comprobante-${receiptId}-${baseName}.${extension}`;
+};
+
 const validateProjectDocumentFile = (file?: File | null) => {
   if (!file) return 'Selecciona un archivo para subir.';
   const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
@@ -1022,14 +1032,24 @@ export default function ProjectDetail() {
   const updateScheduledPaymentDate = async (item: any, collectionName: PaymentCollection, paymentDate: string) => {
     if (!item?.id) return;
     if (collectionName === 'budgetItems' && activeAreas.includes(item.area)) return;
+    if (!canEditPaymentDateForItem(item, collectionName)) return;
 
     const currentDate = toDateInputValue(item.paymentDate);
     if (currentDate === paymentDate) return;
 
-    if (collectionName === 'budgetItems') {
-      await updateBudgetItem(item.id, { paymentDate });
-    } else {
-      await updateAreaExpense(item.id, { paymentDate });
+    try {
+      await updateDoc(doc(db, 'projects', id!, collectionName, item.id), {
+        paymentDate,
+        updatedAt: serverTimestamp(),
+      });
+
+      if (collectionName === 'budgetItems') {
+        setBudgetItems(items => items.map(current => current.id === item.id ? { ...current, paymentDate } : current));
+      } else {
+        setAreaExpenses(items => items.map(current => current.id === item.id ? { ...current, paymentDate } : current));
+      }
+    } catch (error) {
+      console.error('Error updating payment date:', error);
     }
   };
 
@@ -1076,6 +1096,11 @@ export default function ProjectDetail() {
 
   const uploadInvoiceForExpense = async (expense: any, file?: File | null) => {
     if (!id || !file || !canUploadAreaFiles(expense.area)) return;
+
+    if (expense.invoice?.url) {
+      alert('Para cambiar la factura, primero elimina la factura actual y luego carga otra.');
+      return;
+    }
 
     if (file.type !== 'application/pdf') {
       alert('Por ahora sólo se pueden adjuntar facturas en PDF.');
@@ -1124,10 +1149,6 @@ export default function ProjectDetail() {
         updatedAt: serverTimestamp(),
       });
 
-      if (expense.invoice?.path && expense.invoice.path !== path) {
-        deleteObject(ref(storage, expense.invoice.path)).catch(() => {});
-      }
-
       setAreaExpenses(areaExpenses.map(item => item.id === expense.id
         ? {
             ...item,
@@ -1171,6 +1192,102 @@ export default function ProjectDetail() {
       handleFirestoreError(error, 'update', `projects/${id}/areaExpenses/${expense.id}`);
     } finally {
       setUploadingInvoices(prev => ({ ...prev, [expense.id]: false }));
+    }
+  };
+
+  const uploadOtherReceiptForExpense = async (expense: any, file?: File | null) => {
+    if (!id || !file || !canUploadAreaFiles(expense.area)) return;
+
+    const fileError = validateProjectDocumentFile(file);
+    if (fileError) {
+      alert(fileError);
+      return;
+    }
+
+    setUploadingInvoices(prev => ({ ...prev, [`other-${expense.id}`]: true }));
+
+    try {
+      const receiptId = Math.random().toString(36).slice(2, 11);
+      const fileName = buildOtherReceiptFileName(expense, file, receiptId);
+      const path = `projects/${id}/areaExpenses/${expense.id}/otros-comprobantes/${fileName}`;
+      const storageRef = ref(storage, path);
+      const uploadedByRole = currentProjectRole;
+
+      await uploadBytes(storageRef, file, {
+        contentType: file.type,
+        customMetadata: {
+          projectId: id,
+          expenseId: expense.id,
+          area: expense.area || '',
+          originalFileName: file.name,
+          uploadedBy: user?.email || user?.uid || 'unknown',
+          uploadedByRole,
+        },
+      });
+
+      const url = await getDownloadURL(storageRef);
+      const receipt = {
+        id: receiptId,
+        fileName,
+        originalFileName: file.name,
+        url,
+        path,
+        contentType: file.type,
+        size: file.size,
+        uploadedAt: serverTimestamp(),
+        uploadedBy: user?.email || user?.uid || '',
+        uploadedByEmail: currentUserEmail,
+        uploadedByName: currentUserName,
+        uploadedByRole,
+      };
+      const currentReceipts = Array.isArray(expense.otherReceipts) ? expense.otherReceipts : [];
+      const nextReceipts = [...currentReceipts, receipt];
+
+      await updateDoc(doc(db, 'projects', id, 'areaExpenses', expense.id), {
+        otherReceipts: nextReceipts,
+        updatedAt: serverTimestamp(),
+      });
+
+      setAreaExpenses(areaExpenses.map(item => item.id === expense.id
+        ? { ...item, otherReceipts: nextReceipts.map((entry) => entry.id === receiptId ? { ...entry, uploadedAt: new Date() } : entry) }
+        : item
+      ));
+    } catch (error: any) {
+      console.error('Error uploading other receipt:', error);
+      handleFirestoreError(error, 'update', `projects/${id}/areaExpenses/${expense.id}`);
+      alert('No se pudo subir el comprobante.');
+    } finally {
+      setUploadingInvoices(prev => ({ ...prev, [`other-${expense.id}`]: false }));
+    }
+  };
+
+  const removeOtherReceiptFromExpense = async (expense: any, receipt: any) => {
+    if (!id || !receipt || !canDeleteOtherReceipt(receipt)) return;
+    if (!confirm('Â¿Quitar este comprobante de la rendiciÃ³n?')) return;
+
+    setUploadingInvoices(prev => ({ ...prev, [`other-${expense.id}`]: true }));
+
+    try {
+      const currentReceipts = Array.isArray(expense.otherReceipts) ? expense.otherReceipts : [];
+      const nextReceipts = currentReceipts.filter((item: any) => item.id !== receipt.id);
+      await updateDoc(doc(db, 'projects', id, 'areaExpenses', expense.id), {
+        otherReceipts: nextReceipts,
+        updatedAt: serverTimestamp(),
+      });
+
+      if (receipt.path) {
+        await deleteObject(ref(storage, receipt.path)).catch(() => {});
+      }
+
+      setAreaExpenses(areaExpenses.map(item => item.id === expense.id
+        ? { ...item, otherReceipts: nextReceipts }
+        : item
+      ));
+    } catch (error: any) {
+      console.error('Error removing other receipt:', error);
+      handleFirestoreError(error, 'update', `projects/${id}/areaExpenses/${expense.id}`);
+    } finally {
+      setUploadingInvoices(prev => ({ ...prev, [`other-${expense.id}`]: false }));
     }
   };
 
@@ -1253,6 +1370,10 @@ export default function ProjectDetail() {
     setDragOverExpenseId(null);
 
     if (uploadingInvoices[expense.id]) return;
+    if (expense.invoice?.url) {
+      alert('Para cambiar la factura, primero elimina la factura actual y luego carga otra.');
+      return;
+    }
 
     const files: File[] = [];
     for (let index = 0; index < event.dataTransfer.files.length; index += 1) {
@@ -1757,6 +1878,7 @@ export default function ProjectDetail() {
   const roleOptionsForCurrentUser = isProjectAdmin ? PROJECT_ADMIN_ROLE_OPTIONS : PRODUCTION_LEAD_ROLE_OPTIONS;
   const currentUserEmail = normalizeEmail(user?.email);
   const currentUserName = profile?.displayName || user?.displayName || currentUserEmail;
+  const currentProjectRole = isProjectAdmin ? 'admin' : userPermissions?.role || profile?.role || 'colaborador';
   const canEditMainBudget = isProjectAdmin;
   const canEditArea = (area?: string | null) => {
     if (!area) return false;
@@ -1767,12 +1889,25 @@ export default function ProjectDetail() {
       && safeArray(userPermissions.allowedTabs).includes('areas')
     );
   };
+  const canEditPaymentDateForItem = (item?: any | null, collectionName?: PaymentCollection) => {
+    if (!item || !collectionName) return false;
+    if (collectionName === 'budgetItems' && activeAreas.includes(item.area)) return false;
+    return isProjectAdmin || canEditArea(item.area);
+  };
   const canManagePaymentForItem = (item?: any | null, collectionName?: PaymentCollection) => {
     if (!item || !collectionName) return false;
     if (isProjectAdmin) return true;
     return canEditArea(item.area);
   };
   const canUploadAreaFiles = (area?: string | null) => canEditArea(area);
+  const canDeleteOtherReceipt = (receipt?: any | null) => {
+    if (!receipt) return false;
+    if (isProjectAdmin) return true;
+    const uploaderEmail = normalizeEmail(receipt.uploadedByEmail || receipt.uploadedBy);
+    if (uploaderEmail && uploaderEmail === currentUserEmail) return true;
+    if (userPermissions?.role === 'jefe_produccion') return receipt.uploadedByRole === 'jefe_area';
+    return false;
+  };
   const collaboratorEmails = collaborators.map((col) => normalizeEmail(col.email));
   const visiblePermissionCollaborators = isProjectAdmin
     ? collaborators
@@ -1908,6 +2043,7 @@ export default function ProjectDetail() {
         total: number;
         paid: number;
         invoice?: any;
+        otherReceipts?: any[];
       }>;
     }>();
 
@@ -1966,6 +2102,7 @@ export default function ProjectDetail() {
         total: Number(item.total) || 0,
         paid: itemPaid,
         invoice: item.invoice,
+        otherReceipts: Array.isArray(item.otherReceipts) ? item.otherReceipts : [],
       });
     });
 
@@ -2033,7 +2170,9 @@ export default function ProjectDetail() {
       debt: acc.debt + saldo.debt,
       invoices: acc.invoices + saldo.entries.filter((entry) => entry.invoice?.url).length,
       receipts: acc.receipts + saldo.entries.reduce((count, entry) => (
-        count + safeArray(entry.item?.paymentHistory).filter((payment: any) => payment.receipt?.url).length
+        count
+        + safeArray(entry.item?.paymentHistory).filter((payment: any) => payment.receipt?.url).length
+        + (Array.isArray(entry.otherReceipts) ? entry.otherReceipts.filter((receipt: any) => receipt?.url).length : 0)
       ), 0),
     }), { budgeted: 0, spent: 0, paid: 0, debt: 0, invoices: 0, receipts: 0 })
   ), [filteredProviderSaldos]);
@@ -2145,6 +2284,24 @@ export default function ProjectDetail() {
               source: 'Pago registrado',
               uploadedAt: payment.receipt.uploadedAt,
               paymentDate: payment.date,
+            });
+          });
+
+          (Array.isArray(entry.otherReceipts) ? entry.otherReceipts : []).forEach((receipt: any, index: number) => {
+            if (!receipt?.url) return;
+            docs.push({
+              id: `other-receipt-${entry.collectionName}-${entry.id}-${receipt.id || index}`,
+              family: 'finanzas',
+              type: 'comprobante',
+              area: saldo.area,
+              providerName: saldo.name,
+              description: entry.description,
+              fileName: receipt.originalFileName || receipt.fileName || 'Comprobante',
+              url: receipt.url,
+              amount: entry.total,
+              source: 'Rendicion / otros comprobantes',
+              uploadedAt: receipt.uploadedAt,
+              paymentDate: entry.item?.paymentDate,
             });
           });
         });
@@ -3339,6 +3496,7 @@ export default function ProjectDetail() {
                                                             onUpdate={updateBudgetItem} 
                                                             onDelete={deleteBudgetItem} 
                                                             type="provider"
+                                                            canCopyProviderInfo={isProjectAdmin || isProductionLead}
                                                             disabled={!canEditMainBudget}
                                                           />
                                                         </div>
@@ -3370,7 +3528,7 @@ export default function ProjectDetail() {
                                                           ${item.total?.toLocaleString()}
                                                         </div>
                                                         <div className="col-span-1">
-                                                          {renderPaymentScheduleCell(item, 'budgetItems', !canEditMainBudget || activeAreas.includes(item.area))}
+                                                          {renderPaymentScheduleCell(item, 'budgetItems', !canEditPaymentDateForItem(item, 'budgetItems'))}
                                                         </div>
                                                         <div className="col-span-1">
                                                           {renderPaymentLeadTimeCell(item)}
@@ -3390,11 +3548,10 @@ export default function ProjectDetail() {
                                                           <button 
                                                             type="button"
                                                             onClick={() => deleteBudgetItem(item.id)}
-                                                            className="inline-flex items-center gap-1 rounded border border-red-100 bg-red-50 px-2 py-1 text-[9px] font-black uppercase tracking-widest text-red-600 transition-all hover:bg-red-600 hover:text-white"
+                                                            className="inline-flex h-7 w-7 items-center justify-center rounded border border-red-100 bg-red-50 text-red-600 transition-all hover:bg-red-600 hover:text-white"
                                                             title="Eliminar partida"
                                                           >
                                                             <Trash2 className="w-3 h-3" />
-                                                            Eliminar
                                                           </button>
                                                           )}
                                                         </div>
@@ -3689,17 +3846,18 @@ export default function ProjectDetail() {
                     </div>
                   </div>
                   
-                  <div className="min-w-[1200px]">
-                    <div className="grid grid-cols-12 bg-slate-50 border-b border-slate-200 px-6 py-3 gap-2">
-                      <div className="col-span-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">Proveedor / Concepto</div>
-                      <div className="col-span-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">Descripción Detallada</div>
-                      <div className="col-span-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Factura</div>
-                      <div className="col-span-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">P. Unitario</div>
-                      <div className="col-span-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Cant.</div>
-                      <div className="col-span-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Total</div>
-                      <div className="col-span-2 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Fecha Pago</div>
-                      <div className="col-span-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Rodaje → Pago</div>
-                      <div className="col-span-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Pagado</div>
+                  <div className="min-w-[1360px]">
+                    <div className="grid grid-cols-[minmax(160px,1.45fr)_minmax(180px,1.6fr)_78px_150px_100px_76px_92px_96px_104px_78px] bg-slate-50 border-b border-slate-200 px-6 py-3 gap-2">
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Proveedor / Concepto</div>
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Descripcion Detallada</div>
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Factura</div>
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Otros comprobantes</div>
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">P. Unitario</div>
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Cant.</div>
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Total</div>
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Fecha Pago</div>
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Rodaje a Pago</div>
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Pagado</div>
                     </div>
 
                     <div className="divide-y divide-slate-100">
@@ -3789,7 +3947,7 @@ export default function ProjectDetail() {
                               canUploadAreaFiles(item.area) && handleInvoiceDrop(event, item);
                             }}
                             className={cn(
-                              "relative grid grid-cols-12 px-6 py-3 items-center gap-2 transition-colors group",
+                              "relative grid grid-cols-[minmax(160px,1.45fr)_minmax(180px,1.6fr)_78px_150px_100px_76px_92px_96px_104px_78px] px-6 py-3 items-center gap-2 transition-colors group",
                               dragOverExpenseId === item.id
                                 ? "bg-emerald-50 ring-2 ring-inset ring-emerald-400"
                                 : draggedAreaExpenseId === item.id
@@ -3805,7 +3963,7 @@ export default function ProjectDetail() {
                                 </div>
                               </div>
                             )}
-                            <div className="col-span-2">
+                            <div>
                               <div className="flex items-start gap-2">
                                 {canEditArea(item.area) && (
                                   <div className="pt-1 text-slate-300 group-hover:text-slate-500 cursor-grab active:cursor-grabbing" title="Arrastrar gasto">
@@ -3818,11 +3976,12 @@ export default function ProjectDetail() {
                                   onUpdate={updateAreaExpense}
                                   onDelete={deleteAreaExpense}
                                   type="provider"
+                                  canCopyProviderInfo={isProjectAdmin || isProductionLead}
                                   disabled={!canEditArea(item.area)}
                                 />
                               </div>
                             </div>
-                            <div className="col-span-2">
+                            <div>
                               <BudgetRowCell 
                                 item={item} 
                                 onUpdate={updateAreaExpense} 
@@ -3830,7 +3989,7 @@ export default function ProjectDetail() {
                                 disabled={!canEditArea(item.area)}
                               />
                             </div>
-                            <div className="col-span-1 flex justify-center">
+                            <div className="flex justify-center">
                               <div className="flex items-center justify-center gap-1">
                                 {item.invoice?.url ? (
                                   <>
@@ -3856,35 +4015,88 @@ export default function ProjectDetail() {
                                     )}
                                   </>
                                 ) : (
-                                  <span className="text-[9px] font-bold uppercase tracking-widest text-slate-300">Sin PDF</span>
-                                )}
-                                {canUploadAreaFiles(item.area) && (
-                                <label
-                                  className={cn(
-                                    "w-7 h-7 rounded border transition-all flex items-center justify-center cursor-pointer",
-                                    uploadingInvoices[item.id]
-                                      ? "bg-slate-100 border-slate-200 text-slate-300 cursor-wait"
-                                      : "bg-white border-slate-200 text-slate-400 hover:text-black hover:border-black"
-                                  )}
-                                  title={item.invoice?.url ? 'Reemplazar factura PDF' : 'Adjuntar factura PDF'}
-                                >
-                                  <Paperclip className="w-3.5 h-3.5" />
-                                  <input
-                                    type="file"
-                                    accept="application/pdf,.pdf"
-                                    className="hidden"
-                                    disabled={!!uploadingInvoices[item.id]}
-                                    onChange={(event) => {
-                                      const file = event.target.files?.[0];
-                                      uploadInvoiceForExpense(item, file);
-                                      event.target.value = '';
-                                    }}
-                                  />
-                                </label>
+                                  canUploadAreaFiles(item.area) ? (
+                                    <label
+                                      className={cn(
+                                        "w-7 h-7 rounded border transition-all flex items-center justify-center cursor-pointer",
+                                        uploadingInvoices[item.id]
+                                          ? "bg-slate-100 border-slate-200 text-slate-300 cursor-wait"
+                                          : "bg-white border-slate-200 text-slate-400 hover:text-black hover:border-black"
+                                      )}
+                                      title="Adjuntar factura PDF"
+                                    >
+                                      <Paperclip className="w-3.5 h-3.5" />
+                                      <input
+                                        type="file"
+                                        accept="application/pdf,.pdf"
+                                        className="hidden"
+                                        disabled={!!uploadingInvoices[item.id]}
+                                        onChange={(event) => {
+                                          const file = event.target.files?.[0];
+                                          uploadInvoiceForExpense(item, file);
+                                          event.target.value = '';
+                                        }}
+                                      />
+                                    </label>
+                                  ) : (
+                                    <span className="text-[9px] font-bold uppercase tracking-widest text-slate-300">Sin PDF</span>
+                                  )
                                 )}
                               </div>
                             </div>
-                            <div className="col-span-1">
+                            <div>
+                              <div className="flex flex-wrap items-center justify-center gap-1">
+                                {(Array.isArray(item.otherReceipts) ? item.otherReceipts : []).map((receipt: any) => (
+                                  <div key={receipt.id || receipt.path} className="flex items-center">
+                                    <a
+                                      href={receipt.url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="w-7 h-7 rounded-l border border-blue-100 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white transition-all flex items-center justify-center"
+                                      title={receipt.originalFileName || receipt.fileName || 'Ver comprobante'}
+                                    >
+                                      <Paperclip className="w-3.5 h-3.5" />
+                                    </a>
+                                    {canDeleteOtherReceipt(receipt) && (
+                                      <button
+                                        type="button"
+                                        disabled={!!uploadingInvoices[`other-${item.id}`]}
+                                        onClick={() => removeOtherReceiptFromExpense(item, receipt)}
+                                        className="w-6 h-7 rounded-r border-y border-r border-blue-100 bg-white text-slate-300 hover:text-red-500 hover:border-red-100 transition-all flex items-center justify-center"
+                                        title="Quitar comprobante"
+                                      >
+                                        <X className="w-3 h-3" />
+                                      </button>
+                                    )}
+                                  </div>
+                                ))}
+                                {canUploadAreaFiles(item.area) && (
+                                  <label
+                                    className={cn(
+                                      "w-7 h-7 rounded border transition-all flex items-center justify-center cursor-pointer",
+                                      uploadingInvoices[`other-${item.id}`]
+                                        ? "bg-slate-100 border-slate-200 text-slate-300 cursor-wait"
+                                        : "bg-white border-slate-200 text-slate-400 hover:text-black hover:border-black"
+                                    )}
+                                    title="Adjuntar otro comprobante"
+                                  >
+                                    <Plus className="w-3.5 h-3.5" />
+                                    <input
+                                      type="file"
+                                      accept="application/pdf,image/jpeg,image/png,image/webp,.pdf,.jpg,.jpeg,.png,.webp"
+                                      className="hidden"
+                                      disabled={!!uploadingInvoices[`other-${item.id}`]}
+                                      onChange={(event) => {
+                                        const file = event.target.files?.[0];
+                                        uploadOtherReceiptForExpense(item, file);
+                                        event.target.value = '';
+                                      }}
+                                    />
+                                  </label>
+                                )}
+                              </div>
+                            </div>
+                            <div>
                               <BudgetRowCell 
                                 item={item} 
                                 onUpdate={updateAreaExpense} 
@@ -3892,7 +4104,7 @@ export default function ProjectDetail() {
                                 disabled={!canEditArea(item.area)}
                               />
                             </div>
-                            <div className="col-span-1">
+                            <div>
                               <BudgetRowCell 
                                 item={item} 
                                 onUpdate={updateAreaExpense} 
@@ -3900,16 +4112,16 @@ export default function ProjectDetail() {
                                 disabled={!canEditArea(item.area)}
                               />
                             </div>
-                            <div className="col-span-1 text-right font-bold text-slate-900 text-xs">
+                            <div className="text-right font-bold text-slate-900 text-xs">
                               ${item.total?.toLocaleString()}
                             </div>
-                            <div className="col-span-2">
-                              {renderPaymentScheduleCell(item, 'areaExpenses', !canEditArea(item.area))}
+                            <div>
+                              {renderPaymentScheduleCell(item, 'areaExpenses', !canEditPaymentDateForItem(item, 'areaExpenses'))}
                             </div>
-                            <div className="col-span-1">
+                            <div>
                               {renderPaymentLeadTimeCell(item)}
                             </div>
-                            <div className="col-span-1 flex items-center justify-center gap-2">
+                            <div className="flex items-center justify-center gap-2">
                                <BudgetRowCell 
                                  item={item} 
                                  onUpdate={updateAreaExpense} 
@@ -4662,6 +4874,7 @@ export default function ProjectDetail() {
                            {saldo.entries.map((entry) => {
                              const entryDebt = entry.total - entry.paid;
                              const paymentReceipts = safeArray(entry.item?.paymentHistory).filter((payment: any) => payment.receipt?.url);
+                             const otherReceipts = Array.isArray(entry.otherReceipts) ? entry.otherReceipts.filter((receipt: any) => receipt?.url) : [];
                              return (
                                <div key={`${entry.collectionName}-${entry.id}`} className="flex flex-wrap items-center gap-2 text-[10px]">
                                  <span className="max-w-[170px] truncate text-slate-500" title={entry.description}>
@@ -4701,6 +4914,19 @@ export default function ProjectDetail() {
                                    >
                                      <Paperclip className="w-3 h-3" />
                                      Comp.
+                                   </a>
+                                 ))}
+                                 {otherReceipts.map((receipt: any, index: number) => (
+                                   <a
+                                     key={receipt.id || receipt.path || index}
+                                     href={receipt.url}
+                                     target="_blank"
+                                     rel="noreferrer"
+                                     className="inline-flex items-center gap-1 px-2 py-1 rounded bg-sky-50 text-sky-700 border border-sky-100 font-bold uppercase tracking-widest hover:bg-sky-600 hover:text-white"
+                                     title={receipt.originalFileName || 'Ver comprobante'}
+                                   >
+                                     <Paperclip className="w-3 h-3" />
+                                     Otro comp.
                                    </a>
                                  ))}
                                  {canManagePaymentForItem(entry.item, entry.collectionName) && (

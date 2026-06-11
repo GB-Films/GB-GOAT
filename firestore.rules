@@ -137,7 +137,7 @@ service cloud.firestore {
 
     function canUpdatePaymentFields(projectId, area) {
       return canWriteArea(projectId, area)
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['paymentHistory', 'paid', 'updatedAt']);
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['paymentHistory', 'paid', 'paymentDate', 'updatedAt']);
     }
 
     function cashMovementBaseIsValid() {

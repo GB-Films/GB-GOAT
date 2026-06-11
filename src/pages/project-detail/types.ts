@@ -44,6 +44,20 @@ export interface AreaExpense extends Omit<BudgetItem, 'order'> {
   order?: number;
   invoice?: any;
   invoiceStatus?: string | null;
+  otherReceipts?: Array<{
+    id: string;
+    fileName: string;
+    originalFileName: string;
+    url: string;
+    path: string;
+    contentType: string;
+    size: number;
+    uploadedAt: any;
+    uploadedBy: string;
+    uploadedByEmail?: string;
+    uploadedByName?: string;
+    uploadedByRole?: Collaborator['role'] | 'admin' | 'colaborador' | string;
+  }>;
 }
 
 export type PaymentCollection = 'budgetItems' | 'areaExpenses';

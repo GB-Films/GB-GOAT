@@ -10,11 +10,13 @@ import {
   doc,
   setDoc,
   writeBatch,
+  where,
+  or,
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { handleFirestoreError } from '../lib/firestoreUtils';
 import { useAuth } from '../context/AuthContext';
-import { Plus, Search, Truck, X, Upload, Download, Pencil, Trash2, Link2, Copy, CheckCircle2 } from 'lucide-react';
+import { Plus, Search, Truck, X, Upload, Download, Pencil, Trash2, Link2, Copy, CheckCircle2, FileText, Paperclip } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import * as XLSX from 'xlsx';
 import Papa from 'papaparse';
@@ -80,6 +82,8 @@ export default function Providers() {
   const [loading, setLoading] = useState(true);
   const [showNewModal, setShowNewModal] = useState(false);
   const [editingProvider, setEditingProvider] = useState<any | null>(null);
+  const [providerDetail, setProviderDetail] = useState<any | null>(null);
+  const [loadingProviderDetail, setLoadingProviderDetail] = useState(false);
   const [generatedInviteLink, setGeneratedInviteLink] = useState('');
   const [copiedInviteLink, setCopiedInviteLink] = useState(false);
   const [generatingInvite, setGeneratingInvite] = useState(false);
@@ -481,6 +485,107 @@ export default function Providers() {
     }
   };
 
+  const openProviderDetail = async (provider: any) => {
+    if (!profile?.uid || !profile?.email) return;
+    setLoadingProviderDetail(true);
+    setProviderDetail({ provider, loading: true, projects: [], totals: null, lines: [] });
+
+    try {
+      const projectsRef = collection(db, 'projects');
+      const projectsQuery = profile.role === 'admin'
+        ? query(projectsRef)
+        : query(
+            projectsRef,
+            or(
+              where('createdBy', '==', profile.uid),
+              where('collaboratorEmails', 'array-contains', String(profile.email || '').trim().toLowerCase())
+            )
+          );
+      const projectSnapshot = await getDocs(projectsQuery);
+      const projects = projectSnapshot.docs.map((item) => ({ id: item.id, ...item.data() as any }));
+      const lines: any[] = [];
+
+      await Promise.all(projects.map(async (project) => {
+        const [budgetSnap, areaSnap] = await Promise.all([
+          getDocs(collection(db, 'projects', project.id, 'budgetItems')),
+          getDocs(collection(db, 'projects', project.id, 'areaExpenses')),
+        ]);
+
+        const pushLine = (item: any, source: 'Presupuesto Principal' | 'Gestion por Areas') => {
+          if (item.providerId !== provider.id) return;
+          const paid = Array.isArray(item.paymentHistory)
+            ? item.paymentHistory.reduce((acc: number, payment: any) => acc + (Number(payment.amount) || 0), 0)
+            : 0;
+          const total = Number(item.total) || 0;
+          lines.push({
+            id: `${project.id}-${source}-${item.id}`,
+            projectId: project.id,
+            projectName: project.name || 'Sin nombre',
+            area: item.area || 'Sin area',
+            source,
+            description: item.description || 'Sin descripcion',
+            total,
+            paid,
+            debt: Math.max(0, total - paid),
+            paymentDate: item.paymentDate || '',
+            invoiceUrl: item.invoice?.url || '',
+            invoiceName: item.invoice?.originalFileName || item.invoice?.fileName || '',
+            receipts: [
+              ...(Array.isArray(item.paymentHistory) ? item.paymentHistory.filter((payment: any) => payment.receipt?.url).map((payment: any) => payment.receipt) : []),
+              ...(Array.isArray(item.otherReceipts) ? item.otherReceipts.filter((receipt: any) => receipt?.url) : []),
+            ],
+          });
+        };
+
+        budgetSnap.docs.forEach((item) => pushLine({ id: item.id, ...item.data() }, 'Presupuesto Principal'));
+        areaSnap.docs.forEach((item) => pushLine({ id: item.id, ...item.data() }, 'Gestion por Areas'));
+      }));
+
+      const projectMap = new Map<string, any>();
+      lines.forEach((line) => {
+        if (!projectMap.has(line.projectId)) {
+          projectMap.set(line.projectId, {
+            id: line.projectId,
+            name: line.projectName,
+            total: 0,
+            paid: 0,
+            debt: 0,
+            invoices: 0,
+            receipts: 0,
+          });
+        }
+        const row = projectMap.get(line.projectId);
+        row.total += line.total;
+        row.paid += line.paid;
+        row.debt += line.debt;
+        if (line.invoiceUrl) row.invoices += 1;
+        row.receipts += line.receipts.length;
+      });
+
+      const totals = lines.reduce((acc, line) => ({
+        total: acc.total + line.total,
+        paid: acc.paid + line.paid,
+        debt: acc.debt + line.debt,
+        invoices: acc.invoices + (line.invoiceUrl ? 1 : 0),
+        receipts: acc.receipts + line.receipts.length,
+      }), { total: 0, paid: 0, debt: 0, invoices: 0, receipts: 0 });
+
+      setProviderDetail({
+        provider,
+        loading: false,
+        projects: Array.from(projectMap.values()).sort((a, b) => b.total - a.total),
+        totals,
+        lines: lines.sort((a, b) => a.projectName.localeCompare(b.projectName, 'es')),
+      });
+    } catch (error) {
+      console.error('Error loading provider detail:', error);
+      alert('No se pudo cargar el detalle del proveedor.');
+      setProviderDetail(null);
+    } finally {
+      setLoadingProviderDetail(false);
+    }
+  };
+
   return (
     <div className="max-w-full mx-auto space-y-6">
       <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between border-b border-slate-200 pb-6">
@@ -571,7 +676,11 @@ export default function Providers() {
               {filteredProviders.map((provider) => {
                 const inferred = inferLegacyIdentifiers(provider);
                 return (
-                  <tr key={provider.id} className="hover:bg-slate-50/50 transition-colors group">
+                  <tr
+                    key={provider.id}
+                    onClick={() => openProviderDetail(provider)}
+                    className="hover:bg-slate-50/50 transition-colors group cursor-pointer"
+                  >
                     <td className="px-5 py-4 text-xs font-bold uppercase tracking-widest text-slate-400">{provider.type === 'empresa' ? 'Empresa' : 'Persona'}</td>
                     <td className="px-5 py-4">
                       <div className="text-sm font-bold text-slate-900">{providerDisplayName(provider)}</div>
@@ -589,10 +698,10 @@ export default function Providers() {
                     {canEditProviders && (
                       <td className="px-5 py-4 text-right">
                         <div className="flex justify-end gap-2">
-                          <button onClick={() => setEditingProvider(provider)} className="p-1 text-slate-300 hover:text-black transition-colors" title="Editar proveedor">
+                          <button onClick={(event) => { event.stopPropagation(); setEditingProvider(provider); }} className="p-1 text-slate-300 hover:text-black transition-colors" title="Editar proveedor">
                             <Pencil className="w-3.5 h-3.5" />
                           </button>
-                          <button onClick={() => handleDeleteProvider(provider)} className="p-1 text-slate-300 hover:text-red-500 transition-colors" title="Eliminar proveedor">
+                          <button onClick={(event) => { event.stopPropagation(); handleDeleteProvider(provider); }} className="p-1 text-slate-300 hover:text-red-500 transition-colors" title="Eliminar proveedor">
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </div>
@@ -617,6 +726,142 @@ export default function Providers() {
           <ProviderEditModal provider={editingProvider} onClose={() => setEditingProvider(null)} onSubmit={handleUpdateProvider} />
         )}
       </AnimatePresence>
+
+      <AnimatePresence>
+        {providerDetail && (
+          <ProviderDetailModal
+            detail={providerDetail}
+            loading={loadingProviderDetail}
+            onClose={() => setProviderDetail(null)}
+          />
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function ProviderDetailModal({ detail, loading, onClose }: { detail: any; loading: boolean; onClose: () => void }) {
+  const provider = detail.provider;
+  const inferred = inferLegacyIdentifiers(provider);
+  const cuit = formatIdentifier(provider.cuit || inferred.cuitNormalized) || '-';
+  const cbu = provider.bankAccount_cbu || provider.bankAccount || '-';
+  const totals = detail.totals || { total: 0, paid: 0, debt: 0, invoices: 0, receipts: 0 };
+
+  const copyValue = (value: string) => {
+    if (!value || value === '-') return;
+    void navigator.clipboard?.writeText(value);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} className="absolute inset-0 bg-white/80 backdrop-blur-md" />
+      <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.98 }} className="bg-white rounded-xl w-full max-w-5xl max-h-[90vh] overflow-auto relative z-10 border border-slate-200 shadow-2xl shadow-slate-200/50">
+        <div className="sticky top-0 z-10 bg-white border-b border-slate-100 p-6 flex items-start justify-between gap-4">
+          <div>
+            <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Detalle de proveedor</div>
+            <h2 className="text-xl font-black text-slate-900">{providerDisplayName(provider)}</h2>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {[
+                { label: 'CUIT', value: cuit },
+                { label: 'CBU / Alias', value: cbu },
+              ].map((item) => (
+                <button
+                  key={item.label}
+                  type="button"
+                  onClick={() => copyValue(item.value)}
+                  className="inline-flex items-center gap-2 rounded border border-slate-200 bg-slate-50 px-3 py-2 text-[10px] font-bold text-slate-600 hover:border-black"
+                  title={`Copiar ${item.label}`}
+                >
+                  <span className="uppercase tracking-widest text-slate-400">{item.label}</span>
+                  <span className="font-mono text-slate-900">{item.value}</span>
+                  <Copy className="w-3 h-3" />
+                </button>
+              ))}
+            </div>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-black"><X className="w-4 h-4" /></button>
+        </div>
+
+        <div className="p-6 space-y-5">
+          {loading ? (
+            <div className="py-16 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">Cargando detalle...</div>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                {[
+                  { label: 'Total trabajado', value: `$${totals.total.toLocaleString()}`, tone: 'text-slate-900' },
+                  { label: 'Pagado', value: `$${totals.paid.toLocaleString()}`, tone: 'text-emerald-600' },
+                  { label: 'Deuda', value: `$${totals.debt.toLocaleString()}`, tone: totals.debt > 0 ? 'text-rose-600' : 'text-emerald-600' },
+                  { label: 'Facturas', value: totals.invoices.toLocaleString(), tone: 'text-slate-900' },
+                  { label: 'Comprobantes', value: totals.receipts.toLocaleString(), tone: 'text-slate-900' },
+                ].map((item) => (
+                  <div key={item.label} className="rounded-lg border border-slate-100 bg-slate-50/60 p-4">
+                    <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">{item.label}</div>
+                    <div className={`mt-1 text-lg font-black font-mono ${item.tone}`}>{item.value}</div>
+                  </div>
+                ))}
+              </div>
+
+              <section className="rounded-xl border border-slate-200 overflow-hidden">
+                <div className="bg-slate-50 px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-400">Proyectos donde trabajo</div>
+                {detail.projects.length === 0 ? (
+                  <div className="p-8 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">Sin movimientos visibles</div>
+                ) : (
+                  <div className="divide-y divide-slate-100">
+                    {detail.projects.map((project: any) => (
+                      <a key={project.id} href={`#/proyectos/${project.id}`} className="grid grid-cols-5 gap-3 px-4 py-3 hover:bg-slate-50 transition-colors">
+                        <div className="col-span-2 min-w-0">
+                          <div className="text-xs font-black text-slate-900 truncate">{project.name}</div>
+                          <div className="text-[9px] font-bold uppercase tracking-widest text-slate-300">{project.invoices} facturas / {project.receipts} comprobantes</div>
+                        </div>
+                        <div className="text-right text-xs font-bold text-slate-500">${project.total.toLocaleString()}</div>
+                        <div className="text-right text-xs font-bold text-emerald-600">${project.paid.toLocaleString()}</div>
+                        <div className={`text-right text-xs font-black ${project.debt > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>${project.debt.toLocaleString()}</div>
+                      </a>
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              {detail.lines.length > 0 && (
+                <section className="rounded-xl border border-slate-200 overflow-hidden">
+                  <div className="bg-slate-50 px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-400">Movimientos</div>
+                  <div className="divide-y divide-slate-100">
+                    {detail.lines.map((line: any) => (
+                      <div key={line.id} className="px-4 py-3">
+                        <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                          <div className="min-w-0">
+                            <div className="text-xs font-bold text-slate-900">{line.projectName} / {line.area}</div>
+                            <div className="text-[10px] text-slate-500">{line.description}</div>
+                            <div className="text-[9px] uppercase tracking-widest text-slate-300 font-bold mt-1">{line.source}{line.paymentDate ? ` / pago ${formatDate(line.paymentDate)}` : ''}</div>
+                          </div>
+                          <div className="flex gap-4 text-right font-mono text-xs">
+                            <span className="text-slate-500">${line.total.toLocaleString()}</span>
+                            <span className="text-emerald-600">${line.paid.toLocaleString()}</span>
+                            <span className={line.debt > 0 ? 'text-rose-600 font-black' : 'text-emerald-600 font-black'}>${line.debt.toLocaleString()}</span>
+                          </div>
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {line.invoiceUrl && (
+                            <a href={line.invoiceUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded bg-emerald-50 px-2 py-1 text-[9px] font-black uppercase tracking-widest text-emerald-700 hover:bg-emerald-600 hover:text-white">
+                              <FileText className="w-3 h-3" /> Factura
+                            </a>
+                          )}
+                          {line.receipts.map((receipt: any, index: number) => (
+                            <a key={receipt.id || receipt.path || index} href={receipt.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded bg-blue-50 px-2 py-1 text-[9px] font-black uppercase tracking-widest text-blue-700 hover:bg-blue-600 hover:text-white">
+                              <Paperclip className="w-3 h-3" /> Comprobante
+                            </a>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+            </>
+          )}
+        </div>
+      </motion.div>
     </div>
   );
 }

@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { collection, query, getDocs, addDoc, serverTimestamp, where, or } from 'firebase/firestore';
+import { collection, query, getDocs, addDoc, serverTimestamp, where, or, doc, updateDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { handleFirestoreError } from '../lib/firestoreUtils';
 import { useAuth } from '../context/AuthContext';
 import { cn } from '../lib/utils';
-import { Plus, Search, ExternalLink } from 'lucide-react';
+import { Plus, Search, ExternalLink, Star } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -23,8 +23,54 @@ export default function Projects() {
   const [clients, setClients] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showNewModal, setShowNewModal] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [localPinnedProjectIds, setLocalPinnedProjectIds] = useState<string[]>([]);
   const { profile } = useAuth();
   const isAppAdmin = profile?.role === 'admin';
+  const pinnedProjectIds = localPinnedProjectIds;
+
+  useEffect(() => {
+    setLocalPinnedProjectIds(Array.isArray(profile?.pinnedProjectIds) ? profile.pinnedProjectIds : []);
+  }, [profile?.pinnedProjectIds]);
+
+  const filteredProjects = projects
+    .filter((project) => {
+      const term = searchTerm.trim().toLowerCase();
+      if (!term) return true;
+      return [project.name, project.clientName, project.status, project.description]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+        .includes(term);
+    })
+    .sort((a, b) => {
+      const aPinned = pinnedProjectIds.includes(a.id);
+      const bPinned = pinnedProjectIds.includes(b.id);
+      if (aPinned !== bPinned) return aPinned ? -1 : 1;
+      const aDate = a.createdAt?.seconds || 0;
+      const bDate = b.createdAt?.seconds || 0;
+      return bDate - aDate;
+    });
+
+  const togglePinnedProject = async (projectId: string) => {
+    if (!profile?.uid) return;
+    const nextPinnedProjectIds = pinnedProjectIds.includes(projectId)
+      ? pinnedProjectIds.filter((id: string) => id !== projectId)
+      : [...pinnedProjectIds, projectId];
+
+    setLocalPinnedProjectIds(nextPinnedProjectIds);
+    window.dispatchEvent(new CustomEvent('gb:pinned-projects-updated', { detail: nextPinnedProjectIds }));
+    try {
+      await updateDoc(doc(db, 'users', profile.uid), {
+        pinnedProjectIds: nextPinnedProjectIds,
+        updatedAt: serverTimestamp(),
+      });
+    } catch (error) {
+      setLocalPinnedProjectIds(pinnedProjectIds);
+      console.error('Error updating pinned projects:', error);
+      alert('No se pudo actualizar el pin del proyecto.');
+    }
+  };
 
   useEffect(() => {
     const fetchProjects = async () => {
@@ -122,6 +168,8 @@ export default function Projects() {
           <input 
             type="text" 
             placeholder="Filtrar por nombre o cliente..."
+            value={searchTerm}
+            onChange={(event) => setSearchTerm(event.target.value)}
             className="w-full pl-10 pr-4 py-2 bg-white border border-slate-200 rounded text-sm focus:outline-none focus:border-slate-400 transition-all placeholder:text-slate-300"
           />
         </div>
@@ -133,7 +181,7 @@ export default function Projects() {
             <div key={i} className="h-48 bg-white border border-slate-200 rounded-xl animate-pulse" />
           ))}
         </div>
-      ) : projects.length === 0 ? (
+      ) : filteredProjects.length === 0 ? (
         <div className="text-center py-20 bg-white rounded-xl border border-dashed border-slate-200">
            <Clapperboard className="w-12 h-12 text-slate-100 mx-auto mb-4" />
            <h3 className="text-sm font-bold uppercase tracking-widest text-slate-300">
@@ -147,7 +195,7 @@ export default function Projects() {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {projects.map((project, i) => (
+          {filteredProjects.map((project, i) => (
             <Link key={project.id} to={`/proyectos/${project.id}`}>
               <motion.div
                 initial={{ opacity: 0, y: 10 }}
@@ -162,7 +210,26 @@ export default function Projects() {
                   )}>
                     {project.status}
                   </span>
-                  <ExternalLink className="w-4 h-4 text-slate-200 group-hover:text-slate-900 transition-colors" />
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        void togglePinnedProject(project.id);
+                      }}
+                      className={cn(
+                        "p-1 rounded transition-colors",
+                        pinnedProjectIds.includes(project.id)
+                          ? "text-amber-500 bg-amber-50"
+                          : "text-slate-200 hover:text-amber-500 hover:bg-amber-50"
+                      )}
+                      title={pinnedProjectIds.includes(project.id) ? 'Despinear proyecto' : 'Pinear proyecto'}
+                    >
+                      <Star className={cn("w-4 h-4", pinnedProjectIds.includes(project.id) && "fill-current")} />
+                    </button>
+                    <ExternalLink className="w-4 h-4 text-slate-200 group-hover:text-slate-900 transition-colors" />
+                  </div>
                 </div>
                 
                 <h3 className="text-xl font-bold text-slate-900 leading-tight mb-2">

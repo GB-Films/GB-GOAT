@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Plus } from 'lucide-react';
+import { Copy, Plus } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { providerDisplayName, providerMatchesSearch } from '../../lib/providerConstants';
 
@@ -12,10 +12,12 @@ interface BudgetRowCellProps {
   onManagePayment?: (item: any) => void;
   disabledPayment?: boolean;
   disabled?: boolean;
+  canCopyProviderInfo?: boolean;
 }
 
-export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment, disabledPayment, disabled }: BudgetRowCellProps) {
+export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment, disabledPayment, disabled, canCopyProviderInfo }: BudgetRowCellProps) {
   const [isEditingProvider, setIsEditingProvider] = useState(false);
+  const [showProviderInfo, setShowProviderInfo] = useState(false);
   const [providerSearch, setProviderSearch] = useState('');
   const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0 });
   const providerCellRef = useRef<HTMLDivElement>(null);
@@ -23,15 +25,21 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
   
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+      if (
+        dropdownRef.current
+        && !dropdownRef.current.contains(event.target as Node)
+        && providerCellRef.current
+        && !providerCellRef.current.contains(event.target as Node)
+      ) {
         setIsEditingProvider(false);
+        setShowProviderInfo(false);
       }
     }
-    if (isEditingProvider) {
+    if (isEditingProvider || showProviderInfo) {
       document.addEventListener("mousedown", handleClickOutside);
     }
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [isEditingProvider]);
+  }, [isEditingProvider, showProviderInfo]);
 
   useEffect(() => {
     if (!isEditingProvider || !providerCellRef.current) return;
@@ -58,6 +66,18 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
   }, [isEditingProvider]);
 
   const isInvalidProvider = item.providerName && !item.providerId && providers?.length;
+  const provider = providers?.find((candidate) => (
+    (item.providerId && candidate.id === item.providerId)
+    || providerDisplayName(candidate) === item.providerName
+  ));
+  const providerCuit = provider?.cuit || provider?.cuitNormalized || '';
+  const providerCbu = provider?.bankAccount_cbu || provider?.bankAccount || '';
+  const canShowProviderInfo = Boolean(canCopyProviderInfo && provider && (providerCuit || providerCbu));
+
+  const copyProviderValue = (value: string) => {
+    if (!value) return;
+    void navigator.clipboard?.writeText(value);
+  };
 
   const handleValueUpdate = (field: string, value: any) => {
     if (disabled) return;
@@ -81,15 +101,26 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
             )}>
               {item.providerName?.[0] || '?'}
             </div>
-            <span className={cn(
-              "font-bold uppercase truncate text-[10px]",
-              isInvalidProvider ? "text-red-500 underline decoration-dotted" : "text-slate-900"
-            )}>
+            <button
+              type="button"
+              disabled={!canShowProviderInfo}
+              onClick={() => canShowProviderInfo && setShowProviderInfo((value) => !value)}
+              className={cn(
+                "min-w-0 font-bold uppercase truncate text-[10px] text-left",
+                canShowProviderInfo && "hover:underline decoration-dotted cursor-pointer",
+                isInvalidProvider ? "text-red-500 underline decoration-dotted" : "text-slate-900",
+                !canShowProviderInfo && "cursor-default"
+              )}
+              title={canShowProviderInfo ? "Ver CUIT / CBU" : undefined}
+            >
               {item.providerName || 'Sin Nombre'}
-            </span>
+            </button>
             {!disabled && (
               <button 
-                onClick={() => setIsEditingProvider(true)}
+                onClick={() => {
+                  setShowProviderInfo(false);
+                  setIsEditingProvider(true);
+                }}
                 className="opacity-0 group-hover/provider:opacity-100 p-1 text-slate-300 hover:text-black transition-all"
               >
                 <Plus className="w-2.5 h-2.5" />
@@ -107,6 +138,31 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
               <Plus className="w-3 h-3" /> Asignar Staff
             </button>
           )
+        )}
+
+        {showProviderInfo && canShowProviderInfo && (
+          <div ref={dropdownRef} className="absolute left-0 top-full mt-2 w-64 bg-white border border-slate-200 shadow-2xl rounded-lg z-[420] p-3">
+            <div className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Datos del proveedor</div>
+            {[
+              { label: 'CUIT', value: providerCuit },
+              { label: 'CBU / Alias', value: providerCbu },
+            ].filter((entry) => entry.value).map((entry) => (
+              <div key={entry.label} className="flex items-center justify-between gap-2 py-1.5 border-t border-slate-50 first:border-0">
+                <div className="min-w-0">
+                  <div className="text-[8px] font-black uppercase tracking-widest text-slate-300">{entry.label}</div>
+                  <div className="truncate font-mono text-[10px] font-bold text-slate-700">{entry.value}</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => copyProviderValue(entry.value)}
+                  className="shrink-0 p-1.5 rounded border border-slate-100 text-slate-400 hover:text-black hover:border-black"
+                  title={`Copiar ${entry.label}`}
+                >
+                  <Copy className="w-3 h-3" />
+                </button>
+              </div>
+            ))}
+          </div>
         )}
         
         {isEditingProvider && !disabled && (

@@ -118,6 +118,19 @@ service firebase.storage {
       allow delete: if canWritePaymentReceipt(projectId, collectionName, itemId);
     }
 
+    match /projects/{projectId}/areaExpenses/{expenseId}/otros-comprobantes/{fileName} {
+      allow read: if hasProjectAccess(projectId);
+      allow create, update: if canWritePaymentReceipt(projectId, 'areaExpenses', expenseId)
+        && request.resource.size <= 15 * 1024 * 1024
+        && (
+          request.resource.contentType == 'application/pdf'
+          || request.resource.contentType == 'image/jpeg'
+          || request.resource.contentType == 'image/png'
+          || request.resource.contentType == 'image/webp'
+        );
+      allow delete: if canWritePaymentReceipt(projectId, 'areaExpenses', expenseId);
+    }
+
     match /projects/{projectId}/documents/{documentId}/{fileName} {
       allow read: if hasProjectAccess(projectId);
       allow create, update: if canWriteProjectDocument(projectId)
