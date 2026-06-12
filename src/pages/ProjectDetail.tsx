@@ -1402,7 +1402,7 @@ export default function ProjectDetail() {
     try {
       const receiptId = Math.random().toString(36).slice(2, 11);
       const fileName = buildOtherReceiptFileName(expense, file, receiptId);
-      const path = `projects/${id}/areaExpenses/${expense.id}/otros-comprobantes/${fileName}`;
+      const path = `projects/${id}/areaExpenses/${expense.id}/comprobantes/${fileName}`;
       const storageRef = ref(storage, path);
       const uploadedByRole = currentProjectRole;
 
@@ -1447,7 +1447,6 @@ export default function ProjectDetail() {
       ));
     } catch (error: any) {
       console.error('Error uploading other receipt:', error);
-      handleFirestoreError(error, 'update', `projects/${id}/areaExpenses/${expense.id}`);
       alert('No se pudo subir el comprobante.');
     } finally {
       setUploadingInvoices(prev => ({ ...prev, [`other-${expense.id}`]: false }));
@@ -2219,6 +2218,23 @@ export default function ProjectDetail() {
   const providerSaldosByArea = React.useMemo(() => {
     const allowedCategories = isProjectAdmin ? categories : safeArray(userPermissions?.allowedCategories);
     const canSeeArea = (area?: string) => isProjectAdmin || allowedCategories.includes(area || '');
+    const providerById = new Map(providers.map((provider) => [provider.id, provider]));
+    const providersByName = new Map<string, any[]>();
+
+    providers.forEach((provider) => {
+      const key = normalizeText(providerDisplayName(provider));
+      if (!key) return;
+      providersByName.set(key, [...(providersByName.get(key) || []), provider]);
+    });
+
+    const resolveProvider = (providerId: string, providerName?: string) => {
+      const provider = providerById.get(providerId);
+      if (provider) return provider;
+
+      const matches = providersByName.get(normalizeText(providerName));
+      return matches?.length === 1 ? matches[0] : null;
+    };
+
     const saldosMap = new Map<string, { 
       id: string, 
       area: string,
@@ -2241,13 +2257,14 @@ export default function ProjectDetail() {
     }>();
 
     const ensureSaldo = (area: string, providerId: string, providerName?: string) => {
-      const provider = providers.find(p => p.id === providerId);
-      const key = `${area}__${providerId}`;
+      const provider = resolveProvider(providerId, providerName);
+      const canonicalProviderId = provider?.id || providerId;
+      const key = `${area}__${canonicalProviderId}`;
       if (!saldosMap.has(key)) {
         saldosMap.set(key, {
           id: key,
           area,
-          name: providerName || (provider ? `${provider.name} ${provider.lastName}` : 'Desconocido'),
+          name: providerName || (provider ? providerDisplayName(provider) : 'Desconocido'),
           cbu: provider?.bankAccount_cbu || 'No especificado',
           budgeted: 0,
           spent: 0,
@@ -4040,16 +4057,16 @@ export default function ProjectDetail() {
                   </div>
                   
                   <div className="min-w-[1360px]">
-                    <div className="grid grid-cols-[minmax(160px,1.45fr)_minmax(180px,1.6fr)_78px_150px_100px_76px_92px_96px_104px_78px] bg-slate-50 border-b border-slate-200 px-6 py-3 gap-2">
+                    <div className="grid grid-cols-[minmax(160px,1.45fr)_minmax(180px,1.6fr)_78px_100px_76px_92px_96px_104px_150px_78px] bg-slate-50 border-b border-slate-200 px-6 py-3 gap-2">
                       <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Proveedor / Concepto</div>
                       <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Descripcion Detallada</div>
                       <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Factura</div>
-                      <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Otros comprobantes</div>
                       <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">P. Unitario</div>
                       <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Cant.</div>
                       <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Total</div>
                       <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Fecha Pago</div>
                       <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Rodaje a Pago</div>
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Otros comprobantes</div>
                       <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Pagado</div>
                     </div>
 
@@ -4140,7 +4157,7 @@ export default function ProjectDetail() {
                               canUploadAreaFiles(item.area) && handleInvoiceDrop(event, item);
                             }}
                             className={cn(
-                              "relative grid grid-cols-[minmax(160px,1.45fr)_minmax(180px,1.6fr)_78px_150px_100px_76px_92px_96px_104px_78px] px-6 py-3 items-center gap-2 transition-colors group",
+                              "relative grid grid-cols-[minmax(160px,1.45fr)_minmax(180px,1.6fr)_78px_100px_76px_92px_96px_104px_150px_78px] px-6 py-3 items-center gap-2 transition-colors group",
                               dragOverExpenseId === item.id
                                 ? "bg-emerald-50 ring-2 ring-inset ring-emerald-400"
                                 : draggedAreaExpenseId === item.id
@@ -4249,6 +4266,31 @@ export default function ProjectDetail() {
                               </div>
                             </div>
                             <div>
+                              <BudgetRowCell 
+                                item={item} 
+                                onUpdate={updateAreaExpense} 
+                                type="price"
+                                disabled={!canEditArea(item.area)}
+                              />
+                            </div>
+                            <div>
+                              <BudgetRowCell 
+                                item={item} 
+                                onUpdate={updateAreaExpense} 
+                                type="quantity"
+                                disabled={!canEditArea(item.area)}
+                              />
+                            </div>
+                            <div className="text-right font-bold text-slate-900 text-xs">
+                              ${item.total?.toLocaleString()}
+                            </div>
+                            <div>
+                              {renderPaymentScheduleCell(item, 'areaExpenses', !canEditPaymentDateForItem(item, 'areaExpenses'))}
+                            </div>
+                            <div>
+                              {renderPaymentLeadTimeCell(item)}
+                            </div>
+                            <div>
                               <div className="flex flex-wrap items-center justify-center gap-1">
                                 {(Array.isArray(item.otherReceipts) ? item.otherReceipts : []).map((receipt: any) => (
                                   <div key={receipt.id || receipt.path} className="flex items-center">
@@ -4299,31 +4341,6 @@ export default function ProjectDetail() {
                                   </label>
                                 )}
                               </div>
-                            </div>
-                            <div>
-                              <BudgetRowCell 
-                                item={item} 
-                                onUpdate={updateAreaExpense} 
-                                type="price"
-                                disabled={!canEditArea(item.area)}
-                              />
-                            </div>
-                            <div>
-                              <BudgetRowCell 
-                                item={item} 
-                                onUpdate={updateAreaExpense} 
-                                type="quantity"
-                                disabled={!canEditArea(item.area)}
-                              />
-                            </div>
-                            <div className="text-right font-bold text-slate-900 text-xs">
-                              ${item.total?.toLocaleString()}
-                            </div>
-                            <div>
-                              {renderPaymentScheduleCell(item, 'areaExpenses', !canEditPaymentDateForItem(item, 'areaExpenses'))}
-                            </div>
-                            <div>
-                              {renderPaymentLeadTimeCell(item)}
                             </div>
                             <div className="flex items-center justify-center gap-2">
                                <BudgetRowCell 

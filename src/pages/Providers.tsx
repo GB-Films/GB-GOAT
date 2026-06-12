@@ -4,7 +4,7 @@ import {
   query,
   getDoc,
   getDocs,
-  addDoc,
+  runTransaction,
   serverTimestamp,
   orderBy,
   doc,
@@ -87,6 +87,7 @@ export default function Providers() {
   const [generatedInviteLink, setGeneratedInviteLink] = useState('');
   const [copiedInviteLink, setCopiedInviteLink] = useState(false);
   const [generatingInvite, setGeneratingInvite] = useState(false);
+  const [savingProvider, setSavingProvider] = useState(false);
   const { profile } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
   const canEditProviders = profile?.role === 'admin';
@@ -105,11 +106,24 @@ export default function Providers() {
     try {
       let batch = writeBatch(db);
       let operationCount = 0;
+      const activeProviderIds = new Set(items.map((provider) => provider.id));
 
       for (const provider of providersWithIdentifiers) {
         const identifiers = buildProviderIdentifiers(provider);
         for (const identifier of identifiers) {
-          batch.set(doc(db, 'providerIdentifiers', identifier.id), {
+          const identifierRef = doc(db, 'providerIdentifiers', identifier.id);
+          const existingIdentifier = await getDoc(identifierRef);
+          const existingProviderId = existingIdentifier.exists() ? existingIdentifier.data().providerId : '';
+
+          if (existingProviderId && existingProviderId !== provider.id && activeProviderIds.has(existingProviderId)) {
+            console.warn(`Duplicate provider identifier skipped: ${identifier.id}`, {
+              existingProviderId,
+              skippedProviderId: provider.id,
+            });
+            continue;
+          }
+
+          batch.set(identifierRef, {
             providerId: provider.id,
             providerType: provider.type || 'legacy',
             identifierType: identifier.type,
@@ -187,22 +201,43 @@ export default function Providers() {
     XLSX.writeFile(workbook, 'plantilla_proveedores_gb_goat.xlsx');
   };
 
-  const createProviderIdentifierDocs = async (providerId: string, providerData: any) => {
-    const identifiers = buildProviderIdentifiers({ id: providerId, ...providerData });
-    await Promise.all(identifiers.map((identifier) => setDoc(doc(db, 'providerIdentifiers', identifier.id), {
-      providerId,
-      providerType: providerData.type || 'manual',
-      identifierType: identifier.type,
-      value: identifier.value,
-      createdAt: serverTimestamp(),
-    }, { merge: true })));
+  const createProviderWithUniqueIdentifiers = async (providerData: any) => {
+    const providerRef = doc(collection(db, 'providers'));
+    const identifiers = buildProviderIdentifiers({ id: providerRef.id, ...providerData });
+
+    await runTransaction(db, async (transaction) => {
+      const identifierRefs = identifiers.map((identifier) => ({
+        identifier,
+        ref: doc(db, 'providerIdentifiers', identifier.id),
+      }));
+
+      for (const item of identifierRefs) {
+        const snap = await transaction.get(item.ref);
+        if (snap.exists()) {
+          throw new Error(item.identifier.type === 'dni' ? 'DNI_EXISTS' : 'CUIT_EXISTS');
+        }
+      }
+
+      transaction.set(providerRef, providerData);
+      for (const item of identifierRefs) {
+        transaction.set(item.ref, {
+          providerId: providerRef.id,
+          providerType: providerData.type || 'manual',
+          identifierType: item.identifier.type,
+          value: item.identifier.value,
+          createdAt: serverTimestamp(),
+        });
+      }
+    });
+
+    return providerRef.id;
   };
 
-  const validateProviderIdentifiersAvailable = async (providerData: any) => {
+  const validateProviderIdentifiersAvailable = async (providerData: any, currentProviderId = '') => {
     const identifiers = buildProviderIdentifiers(providerData);
     for (const identifier of identifiers) {
       const snap = await getDoc(doc(db, 'providerIdentifiers', identifier.id));
-      if (snap.exists()) {
+      if (snap.exists() && snap.data().providerId !== currentProviderId) {
         return identifier.type === 'dni'
           ? 'Ya existe una persona registrada con este DNI.'
           : 'Ya existe un proveedor registrado con este CUIT/CUIL.';
@@ -281,9 +316,8 @@ export default function Providers() {
                 updatedAt: serverTimestamp(),
               };
 
-          const docRef = await addDoc(collection(db, 'providers'), providerData);
-          await createProviderIdentifierDocs(docRef.id, providerData);
-          newProviders.push({ id: docRef.id, ...providerData, createdAt: new Date() });
+          const providerId = await createProviderWithUniqueIdentifiers(providerData);
+          newProviders.push({ id: providerId, ...providerData, createdAt: new Date() });
         }
 
         setProviders([...newProviders, ...providers]);
@@ -341,6 +375,7 @@ export default function Providers() {
   const handleCreateProvider = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!canCreateProviders) return;
+    if (savingProvider) return;
     const formData = new FormData(e.currentTarget);
     const type = String(formData.get('type') || 'persona') as 'persona' | 'empresa';
     const category = String(formData.get('category') || '');
@@ -388,20 +423,26 @@ export default function Providers() {
         };
 
     try {
+      setSavingProvider(true);
       const duplicateMessage = await validateProviderIdentifiersAvailable(data);
       if (duplicateMessage) {
         alert(duplicateMessage);
         return;
       }
 
-      const docRef = await addDoc(collection(db, 'providers'), data);
-      await createProviderIdentifierDocs(docRef.id, data);
-      setProviders([{ id: docRef.id, ...data, createdAt: new Date() }, ...providers]);
+      const providerId = await createProviderWithUniqueIdentifiers(data);
+      setProviders([{ id: providerId, ...data, createdAt: new Date() }, ...providers]);
       setShowNewModal(false);
       alert('Proveedor cargado con exito.');
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error adding provider:', error);
-      alert('No se pudo cargar el proveedor.');
+      alert(error?.message === 'DNI_EXISTS'
+        ? 'Ya existe una persona registrada con este DNI.'
+        : error?.message === 'CUIT_EXISTS'
+          ? 'Ya existe un proveedor registrado con este CUIT/CUIL.'
+          : 'No se pudo cargar el proveedor.');
+    } finally {
+      setSavingProvider(false);
     }
   };
 
@@ -409,6 +450,7 @@ export default function Providers() {
     e.preventDefault();
     if (!canEditProviders) return;
     if (!editingProvider) return;
+    if (savingProvider) return;
 
     const formData = new FormData(e.currentTarget);
     const providerType = editingProvider?.type === 'empresa' ? 'empresa' : 'persona';
@@ -441,33 +483,63 @@ export default function Providers() {
     };
 
     try {
-      const batch = writeBatch(db);
-      batch.update(doc(db, 'providers', editingProvider.id), data);
-
-      for (const identifier of buildProviderIdentifiers(editingProvider)) {
-        batch.delete(doc(db, 'providerIdentifiers', identifier.id));
+      setSavingProvider(true);
+      const duplicateMessage = await validateProviderIdentifiersAvailable(data, editingProvider.id);
+      if (duplicateMessage) {
+        alert(duplicateMessage);
+        return;
       }
 
-      for (const identifier of buildProviderIdentifiers({ id: editingProvider.id, ...data })) {
-        batch.set(doc(db, 'providerIdentifiers', identifier.id), {
-          providerId: editingProvider.id,
-          providerType,
-          identifierType: identifier.type,
-          value: identifier.value,
-          updatedAt: serverTimestamp(),
-        }, { merge: true });
-      }
+      const providerRef = doc(db, 'providers', editingProvider.id);
+      const oldIdentifiers = buildProviderIdentifiers(editingProvider);
+      const nextIdentifiers = buildProviderIdentifiers({ id: editingProvider.id, ...data });
 
-      await batch.commit();
+      await runTransaction(db, async (transaction) => {
+        const nextIdentifierRefs = nextIdentifiers.map((identifier) => ({
+          identifier,
+          ref: doc(db, 'providerIdentifiers', identifier.id),
+        }));
+
+        for (const item of nextIdentifierRefs) {
+          const snap = await transaction.get(item.ref);
+          if (snap.exists() && snap.data().providerId !== editingProvider.id) {
+            throw new Error(item.identifier.type === 'dni' ? 'DNI_EXISTS' : 'CUIT_EXISTS');
+          }
+        }
+
+        transaction.update(providerRef, data);
+
+        for (const identifier of oldIdentifiers) {
+          if (!nextIdentifiers.some((next) => next.id === identifier.id)) {
+            transaction.delete(doc(db, 'providerIdentifiers', identifier.id));
+          }
+        }
+
+        for (const item of nextIdentifierRefs) {
+          transaction.set(item.ref, {
+            providerId: editingProvider.id,
+            providerType,
+            identifierType: item.identifier.type,
+            value: item.identifier.value,
+            updatedAt: serverTimestamp(),
+          }, { merge: true });
+        }
+      });
       setProviders(providers.map((provider) => provider.id === editingProvider.id ? { ...provider, ...data, updatedAt: new Date() } : provider));
       setEditingProvider(null);
     } catch (error: any) {
       console.error('Error updating provider:', error);
-      if (error.message?.includes('insufficient permissions')) {
+      if (error?.message === 'DNI_EXISTS' || error?.message === 'CUIT_EXISTS') {
+        alert(error.message === 'DNI_EXISTS'
+          ? 'Ya existe una persona registrada con este DNI.'
+          : 'Ya existe un proveedor registrado con este CUIT/CUIL.');
+      } else if (error.message?.includes('insufficient permissions')) {
         handleFirestoreError(error, 'update', `providers/${editingProvider.id}`);
       } else {
         alert('No se pudo actualizar el proveedor.');
       }
+    } finally {
+      setSavingProvider(false);
     }
   };
 
@@ -719,13 +791,13 @@ export default function Providers() {
 
       <AnimatePresence>
         {showNewModal && (
-          <ProviderManualModal onClose={() => setShowNewModal(false)} onSubmit={handleCreateProvider} />
+          <ProviderManualModal saving={savingProvider} onClose={() => setShowNewModal(false)} onSubmit={handleCreateProvider} />
         )}
       </AnimatePresence>
 
       <AnimatePresence>
         {editingProvider && (
-          <ProviderEditModal provider={editingProvider} onClose={() => setEditingProvider(null)} onSubmit={handleUpdateProvider} />
+          <ProviderEditModal saving={savingProvider} provider={editingProvider} onClose={() => setEditingProvider(null)} onSubmit={handleUpdateProvider} />
         )}
       </AnimatePresence>
 
@@ -868,7 +940,7 @@ function ProviderDetailModal({ detail, loading, onClose }: { detail: any; loadin
   );
 }
 
-function ProviderManualModal({ onClose, onSubmit }: { onClose: () => void; onSubmit: (e: React.FormEvent<HTMLFormElement>) => void }) {
+function ProviderManualModal({ saving, onClose, onSubmit }: { saving?: boolean; onClose: () => void; onSubmit: (e: React.FormEvent<HTMLFormElement>) => void }) {
   const [type, setType] = useState<'persona' | 'empresa'>('persona');
   const [category, setCategory] = useState('');
   const categories = type === 'empresa' ? COMPANY_PROVIDER_CATEGORIES : PRODUCTION_AREA_CATEGORIES;
@@ -921,7 +993,9 @@ function ProviderManualModal({ onClose, onSubmit }: { onClose: () => void; onSub
           <Field label="CBU / Alias" required><input name="bankAccount_cbu" required className={`${inputClass} font-mono`} /></Field>
           <div className="flex gap-3 pt-4">
             <button type="button" onClick={onClose} className="flex-1 px-4 py-3 border border-slate-200 rounded text-xs font-bold tracking-widest uppercase hover:bg-slate-50 transition-colors">Cancelar</button>
-            <button type="submit" className="flex-1 px-4 py-3 bg-black text-white rounded text-xs font-bold tracking-widest uppercase hover:bg-slate-800 transition-colors">Guardar</button>
+            <button type="submit" disabled={saving} className="flex-1 px-4 py-3 bg-black text-white rounded text-xs font-bold tracking-widest uppercase hover:bg-slate-800 transition-colors disabled:bg-slate-300 disabled:cursor-not-allowed">
+              {saving ? 'Guardando...' : 'Guardar'}
+            </button>
           </div>
         </form>
       </motion.div>
@@ -1071,7 +1145,7 @@ function DateInputField({ name, defaultValue = '' }: { name: string; defaultValu
   );
 }
 
-function ProviderEditModal({ provider, onClose, onSubmit }: { provider: any; onClose: () => void; onSubmit: (e: React.FormEvent<HTMLFormElement>) => void }) {
+function ProviderEditModal({ saving, provider, onClose, onSubmit }: { saving?: boolean; provider: any; onClose: () => void; onSubmit: (e: React.FormEvent<HTMLFormElement>) => void }) {
   const inferred = inferLegacyIdentifiers(provider);
   const [category, setCategory] = useState(provider.category || '');
 
@@ -1112,7 +1186,9 @@ function ProviderEditModal({ provider, onClose, onSubmit }: { provider: any; onC
           <Field label="CBU / Cuenta Bancaria"><input name="bankAccount_cbu" defaultValue={provider.bankAccount_cbu} className={`${inputClass} font-mono`} /></Field>
           <div className="flex gap-3 pt-4">
             <button type="button" onClick={onClose} className="flex-1 px-4 py-3 border border-slate-200 rounded text-xs font-bold tracking-widest uppercase hover:bg-slate-50 transition-colors">Cancelar</button>
-            <button type="submit" className="flex-1 px-4 py-3 bg-black text-white rounded text-xs font-bold tracking-widest uppercase hover:bg-slate-800 transition-colors">Actualizar</button>
+            <button type="submit" disabled={saving} className="flex-1 px-4 py-3 bg-black text-white rounded text-xs font-bold tracking-widest uppercase hover:bg-slate-800 transition-colors disabled:bg-slate-300 disabled:cursor-not-allowed">
+              {saving ? 'Guardando...' : 'Actualizar'}
+            </button>
           </div>
         </form>
       </motion.div>
