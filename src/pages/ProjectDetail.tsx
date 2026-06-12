@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { doc, getDoc, collection, query, getDocs, addDoc, serverTimestamp, deleteDoc, updateDoc, setDoc, writeBatch } from 'firebase/firestore';
+import { doc, getDoc, collection, query, getDocs, addDoc, serverTimestamp, deleteDoc, updateDoc, setDoc, writeBatch, Timestamp } from 'firebase/firestore';
 import { deleteObject, getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { db, storage } from '../lib/firebase';
 import { handleFirestoreError } from '../lib/firestoreUtils';
@@ -1427,7 +1427,7 @@ export default function ProjectDetail() {
         path,
         contentType: file.type,
         size: file.size,
-        uploadedAt: serverTimestamp(),
+        uploadedAt: Timestamp.now(),
         uploadedBy: user?.email || user?.uid || '',
         uploadedByEmail: currentUserEmail,
         uploadedByName: currentUserName,
