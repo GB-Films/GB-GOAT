@@ -643,6 +643,7 @@ export default function ProjectDetail() {
   const [paymentScheduleAnchor, setPaymentScheduleAnchor] = useState(() => formatDateKey(new Date()));
   const [selectedPaymentBucketKey, setSelectedPaymentBucketKey] = useState<string | null>(null);
   const [expandedPaymentLineId, setExpandedPaymentLineId] = useState<string | null>(null);
+  const [expandedMobileExpenseId, setExpandedMobileExpenseId] = useState<string | null>(null);
   const [copiedPaymentLineId, setCopiedPaymentLineId] = useState<string | null>(null);
   const [documentFamilyFilter, setDocumentFamilyFilter] = useState<'todos' | 'finanzas' | 'contratos' | 'seguros' | 'locaciones'>('todos');
   const [documentTypeFilter, setDocumentTypeFilter] = useState<'all' | 'factura' | 'comprobante'>('all');
@@ -4105,40 +4106,38 @@ export default function ProjectDetail() {
                                       </div>
                                     </div>
                                     <div className="shrink-0 text-right">
-                                      <div className="text-[8px] font-black uppercase tracking-widest text-slate-300">Total</div>
-                                      <div className="font-mono text-[11px] font-black text-slate-900">${item.total?.toLocaleString()}</div>
+                                      <button
+                                        type="button"
+                                        onClick={() => setExpandedMobileExpenseId((current) => current === item.id ? null : item.id)}
+                                        className="rounded border border-slate-100 bg-slate-50 px-1.5 py-0.5 text-right transition-colors hover:border-slate-300"
+                                        title="Ver detalle de precio unitario y cantidad"
+                                      >
+                                        <span className="flex items-center justify-end gap-1 text-[8px] font-black uppercase tracking-widest text-slate-300">
+                                          Total
+                                          {expandedMobileExpenseId === item.id ? <ChevronDown className="h-2.5 w-2.5" /> : <ChevronRight className="h-2.5 w-2.5" />}
+                                        </span>
+                                        <span className="block font-mono text-[11px] font-black text-slate-900">${item.total?.toLocaleString()}</span>
+                                      </button>
                                     </div>
                                   </div>
 
-                                  <div className="mt-1.5 grid grid-cols-[1fr_56px] gap-1.5">
-                                    <div className="rounded border border-slate-100 bg-slate-50 px-1.5 py-0.5">
-                                      <div className="text-[8px] font-black uppercase tracking-widest text-slate-300">Unitario</div>
-                                      <BudgetRowCell
-                                        item={item}
-                                        onUpdate={updateAreaExpense}
-                                        type="price"
-                                        disabled={!canEditArea(item.area)}
-                                      />
+                                  {expandedMobileExpenseId === item.id && (
+                                    <div className="mt-1 grid grid-cols-2 gap-1 rounded border border-slate-100 bg-slate-50 px-1.5 py-1">
+                                      <div className="min-w-0">
+                                        <div className="text-[7px] font-black uppercase tracking-widest text-slate-300">P. unitario</div>
+                                        <div className="truncate font-mono text-[10px] font-black text-slate-800">${Number(item.unitPrice || 0).toLocaleString()}</div>
+                                      </div>
+                                      <div className="min-w-0 text-right">
+                                        <div className="text-[7px] font-black uppercase tracking-widest text-slate-300">Cant.</div>
+                                        <div className="truncate font-mono text-[10px] font-black text-slate-800">{Number(item.quantity || 0).toLocaleString()}</div>
+                                      </div>
                                     </div>
-                                    <div className="rounded border border-slate-100 bg-slate-50 px-1 py-0.5">
-                                      <div className="text-[8px] font-black uppercase tracking-widest text-slate-300">Cant.</div>
-                                      <BudgetRowCell
-                                        item={item}
-                                        onUpdate={updateAreaExpense}
-                                        type="quantity"
-                                        disabled={!canEditArea(item.area)}
-                                      />
-                                    </div>
-                                  </div>
-
-                                  <div className="mt-1.5">
-                                    <div className="rounded border border-slate-100 bg-slate-50 px-1.5 py-0.5">
-                                      <div className="text-[8px] font-black uppercase tracking-widest text-slate-300">Fecha pago</div>
-                                      {renderPaymentScheduleCell(item, 'areaExpenses', !canEditPaymentDateForItem(item, 'areaExpenses'))}
-                                    </div>
-                                  </div>
+                                  )}
 
                                   <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                                    <div className="w-[78px] rounded border border-slate-100 bg-slate-50 px-1 py-0.5 [&_button]:h-7 [&_button]:px-1 [&_button]:py-0 [&_button]:text-[8px]">
+                                      {renderPaymentScheduleCell(item, 'areaExpenses', !canEditPaymentDateForItem(item, 'areaExpenses'))}
+                                    </div>
                                     {item.invoice?.url ? (
                                       <>
                                         <a
@@ -4155,10 +4154,10 @@ export default function ProjectDetail() {
                                             type="button"
                                             disabled={!!uploadingInvoices[item.id]}
                                             onClick={() => removeInvoiceFromExpense(item)}
-                                            className="inline-flex h-7 items-center gap-1 rounded border border-red-100 bg-red-50 px-1.5 text-[8px] font-black uppercase tracking-widest text-red-600 disabled:opacity-40"
+                                            className="inline-flex h-7 w-7 items-center justify-center rounded border border-red-100 bg-red-50 text-red-600 disabled:opacity-40"
+                                            title="Quitar factura"
                                           >
                                             <X className="h-3 w-3" />
-                                            Quitar
                                           </button>
                                         )}
                                       </>
