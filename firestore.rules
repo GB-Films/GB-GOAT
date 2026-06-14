@@ -131,8 +131,18 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'jefe_produccion';
     }
 
+    function isAppAdminAssistant() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'ayudante_admin';
+    }
+
     function canCreateGlobalProvider() {
-      return isAppAdmin() || isAppProductionLead();
+      return isAppAdmin() || isAppProductionLead() || isAppAdminAssistant();
+    }
+
+    function canEditGlobalProvider() {
+      return isAppAdmin() || isAppAdminAssistant();
     }
 
     function canUpdatePaymentFields(projectId, area) {
@@ -259,8 +269,8 @@ service cloud.firestore {
           && resource.data.email != 'info@granbertafilms.com'
           && request.resource.data.email == resource.data.email
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role'])
-          && resource.data.role in ['colaborador', 'jefe_produccion']
-          && request.resource.data.role in ['colaborador', 'jefe_produccion']
+          && resource.data.role in ['colaborador', 'jefe_produccion', 'ayudante_admin']
+          && request.resource.data.role in ['colaborador', 'jefe_produccion', 'ayudante_admin']
         )
         || (
           isSignedIn()
@@ -382,7 +392,8 @@ service cloud.firestore {
     match /providers/{providerId} {
       allow read: if isSignedIn();
       allow create: if canCreateGlobalProvider() || publicProviderCreateIsValid();
-      allow update, delete: if isAppAdmin();
+      allow update: if canEditGlobalProvider();
+      allow delete: if isAppAdmin();
     }
 
     match /providerInvites/{token} {
@@ -417,7 +428,7 @@ service cloud.firestore {
           && request.resource.data.identifierType in ['dni', 'cuit']
           && request.resource.data.value is string
         );
-      allow update, delete: if isAppAdmin();
+      allow update, delete: if canEditGlobalProvider();
     }
 
     match /invoiceUploadInvites/{token} {

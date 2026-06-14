@@ -14,6 +14,7 @@ import { collection, getDocs, or, query, where } from 'firebase/firestore';
 import { cn } from '../lib/utils';
 import { auth, db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
+import { PROVIDER_ACCESS_ROLES } from '../lib/roles';
 
 const menuItems = [
   { icon: LayoutDashboard, label: 'Dashboard', path: '/', adminOnly: false },
@@ -27,6 +28,7 @@ const menuItems = [
 
 const roleLabels: Record<string, string> = {
   admin: 'Administrador',
+  ayudante_admin: 'Ayudante Admin',
   jefe_produccion: 'Jefe de Producción',
   colaborador: 'Colaborador',
 };
@@ -42,7 +44,7 @@ export default function Sidebar() {
   const filteredMenuItems = menuItems.filter(item => (
     profile?.role === 'admin'
     || !item.adminOnly
-    || (item.productionLead && profile?.role === 'jefe_produccion')
+    || (item.productionLead && PROVIDER_ACCESS_ROLES.includes(profile?.role))
   ));
 
   useEffect(() => {

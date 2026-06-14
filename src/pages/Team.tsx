@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import type { FormEvent } from 'react';
 import { collection, collectionGroup, getDocs, doc, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { Users, Mail, Shield, ShieldCheck, MoreVertical, Lock, Link2, Copy, CheckCircle2 } from 'lucide-react';
+import { Users, Mail, Shield, ShieldCheck, MoreVertical, Lock, Link2, Copy, CheckCircle2, Search } from 'lucide-react';
 import { useAuth, APP_OWNER_EMAIL } from '../context/AuthContext';
+import { roleSearchText } from '../lib/roles';
 
 const normalizeEmail = (email?: string | null) => (email || '').trim().toLowerCase();
 
@@ -25,7 +26,23 @@ export default function Team() {
   const [generatedInviteLink, setGeneratedInviteLink] = useState('');
   const [copiedInviteLink, setCopiedInviteLink] = useState(false);
   const [generatingInvite, setGeneratingInvite] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
   const { profile, isOwner, isAdmin } = useAuth();
+
+  const filteredUsers = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    if (!term) return users;
+
+    return users.filter((user) => {
+      const role = user.role || 'colaborador';
+      return [
+        user.displayName,
+        user.email,
+        user.id,
+        roleSearchText(role),
+      ].filter(Boolean).join(' ').toLowerCase().includes(term);
+    });
+  }, [users, searchTerm]);
 
   useEffect(() => {
     const fetchUsers = async () => {
@@ -46,7 +63,7 @@ export default function Team() {
           );
           const syncedUsers = userItems.map((item) => {
             const shouldPromote = productionLeadEmails.has(normalizeEmail(item.email))
-              && !['admin', 'jefe_produccion'].includes(item.role);
+              && !['admin', 'jefe_produccion', 'ayudante_admin'].includes(item.role);
             return shouldPromote ? { ...item, role: 'jefe_produccion' } : item;
           });
 
@@ -207,6 +224,18 @@ export default function Team() {
       )}
 
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        <div className="border-b border-slate-100 p-4">
+          <div className="relative max-w-xl">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-300" />
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              placeholder="Buscar por nombre, email, rol o ID..."
+              className="w-full rounded-lg border border-slate-200 bg-slate-50 py-3 pl-10 pr-4 text-sm transition-all placeholder:text-slate-300 focus:border-slate-400 focus:outline-none"
+            />
+          </div>
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left">
             <thead>
@@ -224,7 +253,13 @@ export default function Team() {
                     <td colSpan={4} className="px-6 py-8 h-16 bg-slate-50/20" />
                   </tr>
                 ))
-              ) : users.map((user) => {
+              ) : filteredUsers.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="px-6 py-12 text-center text-xs font-bold uppercase tracking-widest text-slate-300">
+                    No hay usuarios que coincidan con la busqueda
+                  </td>
+                </tr>
+              ) : filteredUsers.map((user) => {
                 const userEmail = normalizeEmail(user.email);
                 const isProtectedOwner = userEmail === APP_OWNER_EMAIL;
                 const canEditRole = isAdmin && !isProtectedOwner;
@@ -249,6 +284,8 @@ export default function Team() {
                       <div className="flex items-center gap-1.5">
                         {role === 'admin' ? (
                           <ShieldCheck className="w-3.5 h-3.5 text-blue-600" />
+                        ) : role === 'ayudante_admin' ? (
+                          <ShieldCheck className="w-3.5 h-3.5 text-amber-600" />
                         ) : role === 'jefe_produccion' ? (
                           <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
                         ) : (
@@ -262,6 +299,7 @@ export default function Team() {
                           title={canEditRole ? 'Cambiar rol global' : 'Solo administradores pueden modificar roles globales'}
                         >
                           <option value="admin" disabled={!isOwner}>Administrador</option>
+                          <option value="ayudante_admin">Ayudante Admin</option>
                           <option value="jefe_produccion">Jefe de Producción</option>
                           <option value="colaborador">Colaborador</option>
                         </select>

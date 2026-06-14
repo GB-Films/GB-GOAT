@@ -13,6 +13,7 @@ import InvoiceUploadInvite from './pages/InvoiceUploadInvite';
 import Clients from './pages/Clients';
 import Reports from './pages/Reports';
 import PlaceholderPage from './pages/PlaceholderPage';
+import { PROVIDER_ACCESS_ROLES } from './lib/roles';
 
 function AdminRoute({ children }: { children: ReactNode }) {
   const { profile, loading } = useAuth();
@@ -27,7 +28,7 @@ function ProvidersRoute({ children }: { children: ReactNode }) {
   const { profile, loading } = useAuth();
 
   if (loading) return null;
-  if (!['admin', 'jefe_produccion'].includes(profile?.role)) return <Navigate to="/proyectos" replace />;
+  if (!PROVIDER_ACCESS_ROLES.includes(profile?.role)) return <Navigate to="/proyectos" replace />;
 
   return <>{children}</>;
 }

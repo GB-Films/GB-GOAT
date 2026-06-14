@@ -29,6 +29,7 @@ import {
   providerSearchText,
   inferLegacyIdentifiers,
 } from '../lib/providerConstants';
+import { PROVIDER_CREATE_ROLES, PROVIDER_UPDATE_ROLES } from '../lib/roles';
 
 const inputClass = 'w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all';
 const labelClass = 'block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest';
@@ -90,8 +91,10 @@ export default function Providers() {
   const [savingProvider, setSavingProvider] = useState(false);
   const { profile } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
-  const canEditProviders = profile?.role === 'admin';
-  const canCreateProviders = canEditProviders || profile?.role === 'jefe_produccion';
+  const canImportProviders = profile?.role === 'admin';
+  const canDeleteProviders = profile?.role === 'admin';
+  const canEditProviders = PROVIDER_UPDATE_ROLES.includes(profile?.role);
+  const canCreateProviders = PROVIDER_CREATE_ROLES.includes(profile?.role);
 
   const filteredProviders = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
@@ -247,7 +250,7 @@ export default function Providers() {
   };
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (!canEditProviders) return;
+    if (!canImportProviders) return;
     const file = event.target.files?.[0];
     if (!file) return;
 
@@ -544,7 +547,7 @@ export default function Providers() {
   };
 
   const handleDeleteProvider = async (provider: any) => {
-    if (!canEditProviders) return;
+    if (!canDeleteProviders) return;
     if (!confirm('¿Estás seguro de que deseas eliminar este proveedor?')) return;
     try {
       const batch = writeBatch(db);
@@ -669,7 +672,7 @@ export default function Providers() {
           <p className="text-xs text-slate-500 mt-2 max-w-2xl">Alta, búsqueda y administración de proveedores de la productora.</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {canEditProviders && (
+          {canImportProviders && (
             <>
               <button onClick={downloadTemplate} className="px-4 py-2 bg-white border border-slate-200 text-[10px] font-bold uppercase tracking-widest rounded hover:bg-slate-50 transition-colors flex items-center gap-2">
                 <Download className="w-3 h-3" /> Plantilla
@@ -741,7 +744,7 @@ export default function Providers() {
                 <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Email / Teléfono</th>
                 <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Domicilio</th>
                 <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Restricción</th>
-                {canEditProviders && (
+                {(canEditProviders || canDeleteProviders) && (
                   <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Acciones</th>
                 )}
               </tr>
@@ -769,15 +772,19 @@ export default function Providers() {
                     </td>
                     <td className="px-5 py-4 text-xs text-slate-500 max-w-[220px] truncate">{provider.address || '-'}</td>
                     <td className="px-5 py-4 text-xs text-slate-500">{provider.dietaryRestriction || '-'}</td>
-                    {canEditProviders && (
+                    {(canEditProviders || canDeleteProviders) && (
                       <td className="px-5 py-4 text-right">
                         <div className="flex justify-end gap-2">
-                          <button onClick={(event) => { event.stopPropagation(); setEditingProvider(provider); }} className="p-1 text-slate-300 hover:text-black transition-colors" title="Editar proveedor">
-                            <Pencil className="w-3.5 h-3.5" />
-                          </button>
-                          <button onClick={(event) => { event.stopPropagation(); handleDeleteProvider(provider); }} className="p-1 text-slate-300 hover:text-red-500 transition-colors" title="Eliminar proveedor">
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                          {canEditProviders && (
+                            <button onClick={(event) => { event.stopPropagation(); setEditingProvider(provider); }} className="p-1 text-slate-300 hover:text-black transition-colors" title="Editar proveedor">
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          {canDeleteProviders && (
+                            <button onClick={(event) => { event.stopPropagation(); handleDeleteProvider(provider); }} className="p-1 text-slate-300 hover:text-red-500 transition-colors" title="Eliminar proveedor">
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                         </div>
                       </td>
                     )}
