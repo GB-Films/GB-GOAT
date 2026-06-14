@@ -4,7 +4,7 @@ import { motion } from 'motion/react';
 import { collection, getDocs, query, orderBy, where, or, updateDoc, doc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { handleFirestoreError } from '../lib/firestoreUtils';
-import { Link } from 'react-router-dom';
+import { Link, Navigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
 import { useAuth } from '../context/AuthContext';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
@@ -182,11 +182,19 @@ const buildProjectFinance = (project: any, budgetItems: any[], areaExpenses: any
 
 export default function Dashboard() {
   const { profile } = useAuth();
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 1024);
   const [projects, setProjects] = useState<ProjectFinance[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!profile?.uid || !profile?.email) return;
+    const updateIsMobile = () => setIsMobile(window.innerWidth < 1024);
+    updateIsMobile();
+    window.addEventListener('resize', updateIsMobile);
+    return () => window.removeEventListener('resize', updateIsMobile);
+  }, []);
+
+  useEffect(() => {
+    if (isMobile || !profile?.uid || !profile?.email) return;
 
     const fetchDashboardData = async () => {
       setLoading(true);
@@ -231,7 +239,7 @@ export default function Dashboard() {
     };
 
     fetchDashboardData();
-  }, [profile]);
+  }, [profile, isMobile]);
 
   const dashboardStats = useMemo(() => {
     const active = projects.filter((project) => project.status !== 'Aprobado').length;
@@ -301,15 +309,14 @@ export default function Dashboard() {
     return projects.filter((project) => project.status === status);
   };
 
+  if (isMobile) return <Navigate to="/proyectos" replace />;
+
   return (
     <div className="max-w-full mx-auto space-y-5">
       <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between border-b border-slate-200 pb-6">
         <div>
           <div className="text-[10px] text-slate-400 uppercase tracking-widest font-bold mb-1">GB GOAT / Inicio</div>
-          <h1 className="text-2xl font-light text-slate-900 leading-none">
-            Dashboard: <span className="font-bold text-black">Estado de producciones</span>
-          </h1>
-          <p className="text-xs text-slate-500 mt-2 max-w-2xl">Vista general de producciones, fechas próximas y alertas operativas.</p>
+          <h1 className="text-2xl font-bold text-black leading-none">Estado de producciones</h1>
         </div>
         <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
           {profile?.role === 'admin' ? 'Vista administracion' : 'Vista colaborador'}

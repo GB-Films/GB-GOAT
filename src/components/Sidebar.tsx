@@ -179,7 +179,7 @@ export default function Sidebar() {
       </div>
     </aside>
     <nav className="fixed inset-x-0 bottom-0 z-[500] flex items-center gap-1 overflow-x-auto border-t border-slate-200 bg-white/95 px-2 py-1.5 shadow-[0_-10px_30px_rgba(15,23,42,0.12)] backdrop-blur lg:hidden">
-      {filteredMenuItems.map((item) => (
+      {filteredMenuItems.filter((item) => item.path !== '/').map((item) => (
         <NavLink
           key={item.path}
           to={item.path}

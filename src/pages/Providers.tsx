@@ -668,8 +668,7 @@ export default function Providers() {
       <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between border-b border-slate-200 pb-6">
         <div>
           <div className="text-[10px] text-slate-400 uppercase tracking-widest font-bold mb-1">GB GOAT / Recursos</div>
-          <h1 className="text-2xl font-light text-slate-900 leading-none">Proveedores: <span className="font-bold text-black">Base de contactos</span></h1>
-          <p className="text-xs text-slate-500 mt-2 max-w-2xl">Alta, búsqueda y administración de proveedores de la productora.</p>
+          <h1 className="text-2xl font-bold text-black leading-none">Base de contactos</h1>
         </div>
         <div className="flex flex-wrap gap-2">
           {canImportProviders && (

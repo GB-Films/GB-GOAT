@@ -48,7 +48,7 @@ import { formatIdentifier, inferLegacyIdentifiers, providerDisplayName } from '.
 
 const tabs = [
   { id: 'resumen', label: 'Resumen', icon: Info },
-  { id: 'presupuesto', label: 'Presupuesto Principal', icon: DollarSign },
+  { id: 'presupuesto', label: 'Presu Ppal', icon: DollarSign },
   { id: 'areas', label: 'Áreas', icon: LayoutGrid },
   { id: 'cajas', label: 'Cajas', icon: Wallet },
   { id: 'saldos', label: 'Finanzas', icon: Wallet },
@@ -3338,28 +3338,6 @@ export default function ProjectDetail() {
               </button>
             </div>
           </div>
-          <div className="mt-2 grid grid-cols-3 gap-1.5 lg:hidden">
-            {[
-              { id: 'areas', label: 'Cargar', icon: Plus },
-              { id: 'saldos', label: 'Finanzas', icon: Wallet },
-              { id: 'documentos', label: 'Docs', icon: FileText },
-            ].filter((item) => visibleTabs.some((tab) => tab.id === item.id)).map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => setActiveTab(item.id)}
-                className={cn(
-                  "flex items-center justify-center gap-1 rounded-lg border px-2 py-2 text-[9px] font-black uppercase tracking-widest transition-all",
-                  activeTab === item.id
-                    ? "border-slate-900 bg-slate-900 text-white"
-                    : "border-slate-200 bg-slate-50 text-slate-600"
-                )}
-              >
-                <item.icon className="h-3.5 w-3.5" />
-                {item.label}
-              </button>
-            ))}
-          </div>
         </header>
 
         <nav className="flex gap-1 px-2 py-1.5 text-[9px] font-bold border-t border-slate-200 bg-slate-100/90 overflow-x-auto scrollbar-hide shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] sm:gap-1.5 sm:px-4 sm:py-2 sm:text-xs">
@@ -4006,8 +3984,8 @@ export default function ProjectDetail() {
                     dragOverAreaTarget === `area:${areaRow.area}` && "bg-emerald-50/50"
                   )}
                 >
-                  <div className="bg-slate-900 text-white px-4 py-3 flex justify-between items-center border-l-4 border-emerald-400 shadow-sm">
-                    <div className="flex items-center gap-3">
+                  <div className="bg-slate-900 text-white px-2 py-2 sm:px-4 sm:py-3 flex justify-between items-center gap-2 border-l-4 border-emerald-400 shadow-sm">
+                    <div className="flex min-w-0 items-center gap-1.5 sm:gap-3">
                        <button
                          type="button"
                          onClick={() => toggleCategory(areaRow.area)}
@@ -4016,32 +3994,29 @@ export default function ProjectDetail() {
                        >
                          {collapsedCategories[areaRow.area] ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                        </button>
-                       <h3 className="text-[12px] font-black uppercase tracking-[0.18em] text-white flex items-center gap-2">
-                         <LayoutGrid className="w-3 h-3" />
-                         {areaRow.area}
-                       </h3>
-                       <span className="text-[10px] text-slate-300 font-bold">({areaRow.expenses.length} ítems)</span>
-                       {isProjectAdmin && (
-                         <button 
-                           onClick={() => removeActiveArea(areaRow.area)}
-                           className="text-[9px] text-slate-400 hover:text-red-300 font-bold uppercase tracking-widest transition-colors"
-                           title="Desactivar gestión de esta área"
-                         >
-                           Desactivar Gestión
-                         </button>
-                       )}
+                      <h3 className="min-w-0 text-[10px] sm:text-[12px] font-black uppercase tracking-widest sm:tracking-[0.18em] text-white flex items-center gap-1.5 sm:gap-2">
+                        <LayoutGrid className="w-3 h-3 shrink-0" />
+                        <span className="truncate">{areaRow.area}</span>
+                      </h3>
+                      {isProjectAdmin && (
+                        <button 
+                          onClick={() => removeActiveArea(areaRow.area)}
+                          className="hidden sm:inline text-[9px] text-slate-400 hover:text-red-300 font-bold uppercase tracking-widest transition-colors"
+                          title="Desactivar gestión de esta área"
+                        >
+                          Desactivar Gestión
+                        </button>
+                      )}
                     </div>
-                     <div className="flex items-center gap-4">
-                      <div className="text-[10px] font-black tracking-widest text-emerald-300">
-                        SUBTOTAL: ${areaRow.spent.toLocaleString()}
-                      </div>
+                     <div className="flex shrink-0 items-center gap-1 sm:gap-4">
                       <button
                         onClick={() => createAreaExpenseSubcategory(areaRow.area)}
                         disabled={!canEditArea(areaRow.area)}
-                        className="px-2 py-1.5 text-[9px] font-black uppercase tracking-widest text-slate-800 bg-white border border-slate-200 rounded hover:bg-slate-100 transition-colors disabled:bg-slate-300 disabled:cursor-not-allowed"
+                        className="px-1.5 py-1.5 text-[8px] sm:px-2 sm:text-[9px] font-black uppercase tracking-widest text-slate-800 bg-white border border-slate-200 rounded hover:bg-slate-100 transition-colors disabled:bg-slate-300 disabled:cursor-not-allowed"
                         title="Crear subcategoria"
                       >
-                        Subcategoria
+                        <span className="sm:hidden">Subcat.</span>
+                        <span className="hidden sm:inline">Subcategoria</span>
                       </button>
                       <button
                         onClick={() => addAreaExpense(areaRow.area)}
@@ -4055,22 +4030,22 @@ export default function ProjectDetail() {
                   </div>
                   {!collapsedCategories[areaRow.area] && (
                   <>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 px-6 py-4 border-b border-slate-100 bg-white">
+                  <div className="grid grid-cols-3 gap-1.5 px-2 py-2 sm:gap-3 sm:px-6 sm:py-4 border-b border-slate-100 bg-white">
                     <div>
-                      <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400">Asignado</div>
-                      <div className="text-sm font-black text-slate-900">${areaRow.assigned.toLocaleString()}</div>
+                      <div className="text-[7px] sm:text-[9px] font-bold uppercase tracking-widest text-slate-400">Asignado</div>
+                      <div className="truncate text-[10px] sm:text-sm font-black text-slate-900">${areaRow.assigned.toLocaleString()}</div>
                     </div>
                     <div>
-                      <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400">Gastado</div>
-                      <div className="text-sm font-black text-emerald-600">${areaRow.spent.toLocaleString()}</div>
+                      <div className="text-[7px] sm:text-[9px] font-bold uppercase tracking-widest text-slate-400">Gastado</div>
+                      <div className="truncate text-[10px] sm:text-sm font-black text-emerald-600">${areaRow.spent.toLocaleString()}</div>
                     </div>
                     <div>
-                      <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400">Saldo</div>
-                          <div className={cn("text-sm font-black", areaRow.balance >= 0 ? "text-slate-900" : "text-red-600")}>${areaRow.balance.toLocaleString()}</div>
+                      <div className="flex items-center justify-between gap-1 sm:gap-3">
+                        <div className="min-w-0">
+                          <div className="text-[7px] sm:text-[9px] font-bold uppercase tracking-widest text-slate-400">Saldo</div>
+                          <div className={cn("truncate text-[10px] sm:text-sm font-black", areaRow.balance >= 0 ? "text-slate-900" : "text-red-600")}>${areaRow.balance.toLocaleString()}</div>
                         </div>
-                        <div className="w-28 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                        <div className="hidden sm:block w-28 h-1.5 bg-slate-100 rounded-full overflow-hidden">
                           <div
                             className={cn("h-full rounded-full", areaRow.balance < 0 ? "bg-red-500" : areaRow.usedPercent >= 85 ? "bg-yellow-400" : "bg-emerald-500")}
                             style={{ width: `${areaRow.usedPercent}%` }}
@@ -4106,10 +4081,10 @@ export default function ProjectDetail() {
                           )}
 
                           {(!subcategoryGroup.subcategory || !isSubcategoryCollapsed) && (
-                            <div className="space-y-2 p-2">
+                            <div className="space-y-1.5 p-1.5">
                               {subcategoryGroup.expenses.map((item) => (
-                                <div key={`mobile-${item.id}`} className="rounded-lg border border-slate-200 bg-white p-2 shadow-sm">
-                                  <div className="flex items-start justify-between gap-2">
+                                <div key={`mobile-${item.id}`} className="rounded-lg border border-slate-200 bg-white p-1.5 shadow-sm">
+                                  <div className="flex items-start justify-between gap-1.5">
                                     <div className="min-w-0 flex-1">
                                       <BudgetRowCell
                                         item={item}
@@ -4120,7 +4095,7 @@ export default function ProjectDetail() {
                                         canCopyProviderInfo
                                         disabled={!canEditArea(item.area)}
                                       />
-                                      <div className="mt-1">
+                                      <div className="mt-0.5">
                                         <BudgetRowCell
                                           item={item}
                                           onUpdate={updateAreaExpense}
@@ -4131,12 +4106,12 @@ export default function ProjectDetail() {
                                     </div>
                                     <div className="shrink-0 text-right">
                                       <div className="text-[8px] font-black uppercase tracking-widest text-slate-300">Total</div>
-                                      <div className="font-mono text-xs font-black text-slate-900">${item.total?.toLocaleString()}</div>
+                                      <div className="font-mono text-[11px] font-black text-slate-900">${item.total?.toLocaleString()}</div>
                                     </div>
                                   </div>
 
-                                  <div className="mt-2 grid grid-cols-2 gap-2">
-                                    <div className="rounded border border-slate-100 bg-slate-50 px-2 py-1">
+                                  <div className="mt-1.5 grid grid-cols-[1fr_56px] gap-1.5">
+                                    <div className="rounded border border-slate-100 bg-slate-50 px-1.5 py-0.5">
                                       <div className="text-[8px] font-black uppercase tracking-widest text-slate-300">Unitario</div>
                                       <BudgetRowCell
                                         item={item}
@@ -4145,7 +4120,7 @@ export default function ProjectDetail() {
                                         disabled={!canEditArea(item.area)}
                                       />
                                     </div>
-                                    <div className="rounded border border-slate-100 bg-slate-50 px-2 py-1">
+                                    <div className="rounded border border-slate-100 bg-slate-50 px-1 py-0.5">
                                       <div className="text-[8px] font-black uppercase tracking-widest text-slate-300">Cant.</div>
                                       <BudgetRowCell
                                         item={item}
@@ -4156,24 +4131,21 @@ export default function ProjectDetail() {
                                     </div>
                                   </div>
 
-                                  <div className="mt-2 grid grid-cols-[1fr_auto] items-center gap-2">
-                                    <div className="rounded border border-slate-100 bg-slate-50 px-2 py-1">
+                                  <div className="mt-1.5">
+                                    <div className="rounded border border-slate-100 bg-slate-50 px-1.5 py-0.5">
                                       <div className="text-[8px] font-black uppercase tracking-widest text-slate-300">Fecha pago</div>
                                       {renderPaymentScheduleCell(item, 'areaExpenses', !canEditPaymentDateForItem(item, 'areaExpenses'))}
                                     </div>
-                                    <div className="text-right text-[9px] font-bold uppercase tracking-widest text-slate-400">
-                                      {renderPaymentLeadTimeCell(item)}
-                                    </div>
                                   </div>
 
-                                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                                  <div className="mt-1.5 flex flex-wrap items-center gap-1">
                                     {item.invoice?.url ? (
                                       <>
                                         <a
                                           href={item.invoice.url}
                                           target="_blank"
                                           rel="noreferrer"
-                                          className="inline-flex h-8 items-center gap-1 rounded border border-emerald-100 bg-emerald-50 px-2 text-[9px] font-black uppercase tracking-widest text-emerald-700"
+                                          className="inline-flex h-7 items-center gap-1 rounded border border-emerald-100 bg-emerald-50 px-1.5 text-[8px] font-black uppercase tracking-widest text-emerald-700"
                                         >
                                           <FileText className="h-3 w-3" />
                                           Factura
@@ -4183,7 +4155,7 @@ export default function ProjectDetail() {
                                             type="button"
                                             disabled={!!uploadingInvoices[item.id]}
                                             onClick={() => removeInvoiceFromExpense(item)}
-                                            className="inline-flex h-8 items-center gap-1 rounded border border-red-100 bg-red-50 px-2 text-[9px] font-black uppercase tracking-widest text-red-600 disabled:opacity-40"
+                                            className="inline-flex h-7 items-center gap-1 rounded border border-red-100 bg-red-50 px-1.5 text-[8px] font-black uppercase tracking-widest text-red-600 disabled:opacity-40"
                                           >
                                             <X className="h-3 w-3" />
                                             Quitar
@@ -4193,7 +4165,7 @@ export default function ProjectDetail() {
                                     ) : (
                                       canUploadAreaFiles(item.area) ? (
                                         <>
-                                          <label className="inline-flex h-8 items-center gap-1 rounded border border-slate-200 bg-white px-2 text-[9px] font-black uppercase tracking-widest text-slate-700">
+                                          <label className="inline-flex h-7 items-center gap-1 rounded border border-slate-200 bg-white px-1.5 text-[8px] font-black uppercase tracking-widest text-slate-700">
                                             <Paperclip className="h-3 w-3" />
                                             Factura
                                             <input
@@ -4212,19 +4184,19 @@ export default function ProjectDetail() {
                                             type="button"
                                             disabled={!!generatingInvoiceLinks[item.id]}
                                             onClick={() => createInvoiceUploadLink(item)}
-                                            className="inline-flex h-8 items-center gap-1 rounded border border-blue-100 bg-blue-50 px-2 text-[9px] font-black uppercase tracking-widest text-blue-700 disabled:opacity-40"
+                                            className="inline-flex h-7 items-center gap-1 rounded border border-blue-100 bg-blue-50 px-1.5 text-[8px] font-black uppercase tracking-widest text-blue-700 disabled:opacity-40"
                                           >
                                             <LinkIcon className="h-3 w-3" />
                                             Link
                                           </button>
                                         </>
                                       ) : (
-                                        <span className="inline-flex h-8 items-center rounded border border-slate-100 bg-slate-50 px-2 text-[9px] font-black uppercase tracking-widest text-slate-300">Sin factura</span>
+                                        <span className="inline-flex h-7 items-center rounded border border-slate-100 bg-slate-50 px-1.5 text-[8px] font-black uppercase tracking-widest text-slate-300">Sin factura</span>
                                       )
                                     )}
 
                                     {canUploadAreaFiles(item.area) && (
-                                      <label className="inline-flex h-8 items-center gap-1 rounded border border-slate-200 bg-white px-2 text-[9px] font-black uppercase tracking-widest text-slate-600">
+                                      <label className="inline-flex h-7 items-center gap-1 rounded border border-slate-200 bg-white px-1.5 text-[8px] font-black uppercase tracking-widest text-slate-600">
                                         <Plus className="h-3 w-3" />
                                         Comp.
                                         <input
@@ -4242,7 +4214,7 @@ export default function ProjectDetail() {
                                     )}
 
                                     {(Array.isArray(item.otherReceipts) ? item.otherReceipts : []).length > 0 && (
-                                      <span className="inline-flex h-8 items-center rounded border border-sky-100 bg-sky-50 px-2 text-[9px] font-black uppercase tracking-widest text-sky-700">
+                                      <span className="inline-flex h-7 items-center rounded border border-sky-100 bg-sky-50 px-1.5 text-[8px] font-black uppercase tracking-widest text-sky-700">
                                         {(Array.isArray(item.otherReceipts) ? item.otherReceipts : []).length} comp.
                                       </span>
                                     )}
@@ -4251,7 +4223,7 @@ export default function ProjectDetail() {
                                       type="button"
                                       disabled={!canEditArea(item.area)}
                                       onClick={() => openPaymentModal(item, 'areaExpenses')}
-                                      className="ml-auto inline-flex h-8 items-center gap-1 rounded border border-slate-900 bg-slate-900 px-2 text-[9px] font-black uppercase tracking-widest text-white disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-300"
+                                      className="ml-auto inline-flex h-7 items-center gap-1 rounded border border-slate-900 bg-slate-900 px-1.5 text-[8px] font-black uppercase tracking-widest text-white disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-300"
                                     >
                                       <Wallet className="h-3 w-3" />
                                       Pago
@@ -4260,7 +4232,7 @@ export default function ProjectDetail() {
                                       <button
                                         type="button"
                                         onClick={() => deleteAreaExpense(item.id)}
-                                        className="inline-flex h-8 w-8 items-center justify-center rounded border border-red-100 bg-red-50 text-red-600"
+                                        className="inline-flex h-7 w-7 items-center justify-center rounded border border-red-100 bg-red-50 text-red-600"
                                         title="Eliminar gasto"
                                       >
                                         <Trash2 className="h-3.5 w-3.5" />

@@ -144,12 +144,11 @@ export default function Projects() {
   };
 
   return (
-    <div className="max-w-full mx-auto space-y-6">
-      <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between border-b border-slate-200 pb-6">
+    <div className="max-w-full mx-auto space-y-3 sm:space-y-6">
+      <header className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between border-b border-slate-200 pb-4 sm:gap-4 sm:pb-6">
         <div>
           <div className="text-[10px] text-slate-400 uppercase tracking-widest font-bold mb-1">GB GOAT / Catálogo</div>
-          <h1 className="text-2xl font-light text-slate-900 leading-none">Producciones: <span className="font-bold text-black">Histórico y activas</span></h1>
-          <p className="text-xs text-slate-500 mt-2 max-w-2xl">Listado de proyectos, estados y accesos de trabajo.</p>
+          <h1 className="text-xl font-bold text-black leading-none sm:text-2xl">Histórico y activas</h1>
         </div>
         {isAppAdmin && (
           <button 
@@ -176,7 +175,7 @@ export default function Projects() {
       </div>
 
       {loading ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-6">
           {[1, 2, 3].map(i => (
             <div key={i} className="h-48 bg-white border border-slate-200 rounded-xl animate-pulse" />
           ))}
@@ -194,18 +193,18 @@ export default function Projects() {
            )}
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredProjects.map((project, i) => (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-6">
+          {filteredProjects.map((project) => (
             <Link key={project.id} to={`/proyectos/${project.id}`}>
               <motion.div
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.05 }}
-                className="group bg-white p-6 rounded-xl border border-slate-200 hover:border-slate-900 transition-all shadow-sm shadow-slate-200/50 cursor-pointer h-full"
+                transition={{ delay: 0 }}
+                className="group bg-white p-3 sm:p-6 rounded-lg sm:rounded-xl border border-slate-200 hover:border-slate-900 transition-all shadow-sm shadow-slate-200/50 cursor-pointer h-full"
               >
-                <div className="flex justify-between items-start mb-6">
+                <div className="flex justify-between items-start mb-2 sm:mb-6">
                   <span className={cn(
-                    "text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded",
+                    "text-[8px] sm:text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded",
                     statusColors[project.status] || 'bg-slate-50 text-slate-400'
                   )}>
                     {project.status}
@@ -228,25 +227,25 @@ export default function Projects() {
                     >
                       <Star className={cn("w-4 h-4", pinnedProjectIds.includes(project.id) && "fill-current")} />
                     </button>
-                    <ExternalLink className="w-4 h-4 text-slate-200 group-hover:text-slate-900 transition-colors" />
+                    <ExternalLink className="hidden sm:block w-4 h-4 text-slate-200 group-hover:text-slate-900 transition-colors" />
                   </div>
                 </div>
                 
-                <h3 className="text-xl font-bold text-slate-900 leading-tight mb-2">
+                <h3 className="text-sm sm:text-xl font-bold text-slate-900 leading-tight mb-1 sm:mb-2 line-clamp-1 sm:line-clamp-none">
                   {project.name}
                 </h3>
                 
                 {project.clientName && (
-                  <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4">
+                  <div className="text-[8px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0 sm:mb-4 truncate">
                     Cliente: {project.clientName}
                   </div>
                 )}
                 
-                <p className="text-xs text-slate-400 line-clamp-2 mb-8 font-medium font-sans">
+                <p className="hidden sm:block text-xs text-slate-400 line-clamp-2 mb-8 font-medium font-sans">
                   {project.description || 'Sin descripción detallada disponible.'}
                 </p>
                 
-                <div className="flex items-center justify-between pt-4 border-t border-slate-50">
+                <div className="hidden sm:flex items-center justify-between pt-4 border-t border-slate-50">
                   <div className="text-[10px] font-bold text-slate-300 uppercase tracking-tighter">
                       Creado: {project.createdAt ? new Date(project.createdAt.seconds * 1000).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '-'}
                   </div>
