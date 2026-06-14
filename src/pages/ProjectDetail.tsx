@@ -3191,22 +3191,22 @@ export default function ProjectDetail() {
   if (!project) return <div className="p-8 text-center text-slate-900 font-bold uppercase tracking-widest">Proyecto no encontrado</div>;
 
   return (
-    <div className="max-w-[1600px] mx-auto">
-      <div className="rounded-2xl border border-slate-200 bg-white/95 shadow-[0_16px_45px_rgba(15,23,42,0.12)] ring-1 ring-white backdrop-blur-sm overflow-hidden mb-4">
-        <header className="px-4 md:px-5 py-3 md:py-4">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+    <div className="mx-auto max-w-[1600px] text-[11px] sm:text-xs">
+      <div className="mb-2 overflow-hidden rounded-xl border border-slate-200 bg-white/95 shadow-[0_10px_28px_rgba(15,23,42,0.10)] ring-1 ring-white backdrop-blur-sm sm:mb-4 sm:rounded-2xl sm:shadow-[0_16px_45px_rgba(15,23,42,0.12)]">
+        <header className="px-3 py-2.5 md:px-5 md:py-4">
+          <div className="flex flex-col gap-2.5 lg:flex-row lg:items-start lg:justify-between">
             <div className="min-w-0">
-              <div className="flex items-center gap-2 text-[11px] font-semibold text-slate-500 mb-2">
+              <div className="mb-1.5 flex items-center gap-2 text-[10px] font-semibold text-slate-500 sm:mb-2 sm:text-[11px]">
                 <Link to="/proyectos" className="inline-flex items-center gap-1 hover:text-blue-700 transition-colors">
-                  <ChevronLeft className="w-4 h-4" />
+                  <ChevronLeft className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
                   Proyectos
                 </Link>
               </div>
 
               <div className="flex items-center gap-3">
-                <div>
-                  <h1 className="text-3xl md:text-4xl font-black tracking-[-0.06em] text-slate-950 leading-none">{project.name}</h1>
-                  <div className="flex flex-wrap items-center gap-2 mt-2 text-[11px] font-semibold text-slate-600">
+                <div className="min-w-0">
+                  <h1 className="truncate text-lg font-black text-slate-950 sm:text-3xl md:text-4xl md:tracking-[-0.06em] leading-none">{project.name}</h1>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px] font-semibold text-slate-600 sm:mt-2 sm:gap-2 sm:text-[11px]">
                     {isProjectAdmin ? (
                       <>
                         <div className="relative group">
@@ -3219,7 +3219,7 @@ export default function ProjectDetail() {
                               setProject({ ...project, status: newStatus });
                             }}
                             className={cn(
-                              "h-8 max-w-[180px] appearance-none rounded-full border px-3 pr-8 text-[10px] font-black uppercase tracking-wider outline-none transition-all cursor-pointer shadow-sm hover:shadow-md focus:ring-2 focus:ring-blue-100",
+                              "h-7 max-w-[160px] appearance-none rounded-full border px-2.5 pr-7 text-[9px] font-black uppercase tracking-wider outline-none transition-all cursor-pointer shadow-sm hover:shadow-md focus:ring-2 focus:ring-blue-100 sm:h-8 sm:max-w-[180px] sm:px-3 sm:pr-8 sm:text-[10px]",
                               statusColors[project.status || 'Presupuesto'] || 'bg-emerald-100 text-emerald-700 border-emerald-200'
                             )}
                           >
@@ -3232,7 +3232,7 @@ export default function ProjectDetail() {
 
                         {renderShootingRangeControls()}
 
-                        <label className="inline-flex h-8 min-w-[260px] max-w-[430px] flex-1 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 shadow-sm hover:border-blue-200 hover:shadow-md transition-all">
+                        <label className="inline-flex h-7 w-full min-w-0 max-w-full flex-1 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 shadow-sm transition-all hover:border-blue-200 hover:shadow-md sm:h-8 sm:min-w-[260px] sm:max-w-[430px] sm:px-3">
                           <MapPin className="w-3.5 h-3.5 flex-none text-slate-500" />
                           <input
                             type="url"
@@ -3244,7 +3244,7 @@ export default function ProjectDetail() {
                             onKeyDown={(event) => {
                               if (event.key === 'Enter') event.currentTarget.blur();
                             }}
-                            className="min-w-0 flex-1 bg-transparent text-[11px] font-bold text-slate-900 outline-none placeholder:text-slate-400"
+                            className="min-w-0 flex-1 bg-transparent text-[10px] font-bold text-slate-900 outline-none placeholder:text-slate-400 sm:text-[11px]"
                           />
                           {isSavingLocation && <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">Guardando</span>}
                         </label>
@@ -3254,7 +3254,7 @@ export default function ProjectDetail() {
                             href={mapsSearchUrl}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="inline-flex h-8 items-center gap-1.5 rounded-full border border-blue-100 bg-blue-50 px-3 text-[10px] font-black uppercase tracking-wider text-blue-700 hover:border-blue-200 hover:bg-blue-100 transition-all"
+                            className="inline-flex h-7 items-center gap-1.5 rounded-full border border-blue-100 bg-blue-50 px-2.5 text-[9px] font-black uppercase tracking-wider text-blue-700 transition-all hover:border-blue-200 hover:bg-blue-100 sm:h-8 sm:px-3 sm:text-[10px]"
                           >
                             <LinkIcon className="w-3.5 h-3.5" /> Maps
                           </a>
@@ -3268,7 +3268,7 @@ export default function ProjectDetail() {
                         {canEditProjectOperations ? (
                           <>
                             {renderShootingRangeControls()}
-                            <label className="inline-flex h-8 min-w-[260px] max-w-[430px] flex-1 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 shadow-sm hover:border-blue-200 hover:shadow-md transition-all">
+                            <label className="inline-flex h-7 w-full min-w-0 max-w-full flex-1 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 shadow-sm transition-all hover:border-blue-200 hover:shadow-md sm:h-8 sm:min-w-[260px] sm:max-w-[430px] sm:px-3">
                               <MapPin className="w-3.5 h-3.5 flex-none text-slate-500" />
                               <input
                                 type="url"
@@ -3280,7 +3280,7 @@ export default function ProjectDetail() {
                                 onKeyDown={(event) => {
                                   if (event.key === 'Enter') event.currentTarget.blur();
                                 }}
-                                className="min-w-0 flex-1 bg-transparent text-[11px] font-bold text-slate-900 outline-none placeholder:text-slate-400"
+                                className="min-w-0 flex-1 bg-transparent text-[10px] font-bold text-slate-900 outline-none placeholder:text-slate-400 sm:text-[11px]"
                               />
                               {isSavingLocation && <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">Guardando</span>}
                             </label>
@@ -3289,7 +3289,7 @@ export default function ProjectDetail() {
                                 href={mapsSearchUrl}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="inline-flex h-8 items-center gap-1.5 rounded-full border border-blue-100 bg-blue-50 px-3 text-[10px] font-black uppercase tracking-wider text-blue-700 hover:border-blue-200 hover:bg-blue-100 transition-all"
+                                className="inline-flex h-7 items-center gap-1.5 rounded-full border border-blue-100 bg-blue-50 px-2.5 text-[9px] font-black uppercase tracking-wider text-blue-700 transition-all hover:border-blue-200 hover:bg-blue-100 sm:h-8 sm:px-3 sm:text-[10px]"
                               >
                                 <LinkIcon className="w-3.5 h-3.5" /> Maps
                               </a>
@@ -3315,43 +3315,66 @@ export default function ProjectDetail() {
               </div>
             </div>
 
-            <div className="flex gap-2 lg:pt-0">
+            <div className="flex gap-1.5 lg:gap-2 lg:pt-0">
               {isProjectAdmin && (
                 <button 
                   onClick={() => setShowEditProjectModal(true)}
-                  className="px-3.5 py-2 border border-slate-300 bg-white rounded-lg text-[11px] font-bold hover:bg-slate-50 hover:border-slate-400 transition-all flex items-center gap-2 shadow-md shadow-slate-200/70"
+                  className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-[10px] font-bold shadow-md shadow-slate-200/70 transition-all hover:border-slate-400 hover:bg-slate-50 sm:px-3.5 sm:py-2 sm:text-[11px]"
                 >
-                  <Settings className="w-4 h-4" />
-                  Editar proyecto
+                  <Settings className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                  <span className="hidden sm:inline">Editar proyecto</span>
+                  <span className="sm:hidden">Editar</span>
                 </button>
               )}
               <button
                 onClick={() => setShowExportModal(true)}
                 disabled={!hasExportOptions}
-                className="px-3.5 py-2 border border-slate-950 bg-slate-950 text-white rounded-lg text-[11px] font-bold hover:bg-slate-800 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 shadow-lg shadow-slate-900/20"
+                className="flex items-center gap-1.5 rounded-lg border border-slate-950 bg-slate-950 px-2.5 py-1.5 text-[10px] font-bold text-white shadow-lg shadow-slate-900/20 transition-all hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40 sm:px-3.5 sm:py-2 sm:text-[11px]"
                 title={hasExportOptions ? 'Exportar reportes del proyecto' : 'No tenes reportes disponibles para exportar'}
               >
-                <Download className="w-4 h-4" />
+                <Download className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
                 Exportar
-                <ChevronDown className="w-4 h-4 opacity-70" />
+                <ChevronDown className="hidden h-4 w-4 opacity-70 sm:block" />
               </button>
             </div>
           </div>
+          <div className="mt-2 grid grid-cols-3 gap-1.5 lg:hidden">
+            {[
+              { id: 'areas', label: 'Cargar', icon: Plus },
+              { id: 'saldos', label: 'Finanzas', icon: Wallet },
+              { id: 'documentos', label: 'Docs', icon: FileText },
+            ].filter((item) => visibleTabs.some((tab) => tab.id === item.id)).map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setActiveTab(item.id)}
+                className={cn(
+                  "flex items-center justify-center gap-1 rounded-lg border px-2 py-2 text-[9px] font-black uppercase tracking-widest transition-all",
+                  activeTab === item.id
+                    ? "border-slate-900 bg-slate-900 text-white"
+                    : "border-slate-200 bg-slate-50 text-slate-600"
+                )}
+              >
+                <item.icon className="h-3.5 w-3.5" />
+                {item.label}
+              </button>
+            ))}
+          </div>
         </header>
 
-        <nav className="flex gap-1.5 px-3 md:px-4 py-2 text-xs font-bold border-t border-slate-200 bg-slate-100/90 overflow-x-auto scrollbar-hide shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]">
+        <nav className="flex gap-1 px-2 py-1.5 text-[9px] font-bold border-t border-slate-200 bg-slate-100/90 overflow-x-auto scrollbar-hide shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] sm:gap-1.5 sm:px-4 sm:py-2 sm:text-xs">
           {visibleTabs.map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
               className={cn(
-                "px-3 py-2 rounded-lg transition-all whitespace-nowrap flex items-center gap-1.5 border",
+                "flex items-center gap-1 rounded-lg border px-2 py-1.5 whitespace-nowrap transition-all sm:gap-1.5 sm:px-3 sm:py-2",
                 activeTab === tab.id 
                   ? "bg-white border-blue-200 text-blue-700 shadow-lg shadow-slate-300/50" 
                   : "border-transparent text-slate-600 hover:text-slate-950 hover:bg-white/70"
               )}
             >
-              <tab.icon className="w-4 h-4" />
+              <tab.icon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
               {tab.label}
             </button>
           ))}
@@ -3530,8 +3553,8 @@ export default function ProjectDetail() {
         )}
 
         {activeTab === 'presupuesto' && (
-          <div className="space-y-4 pb-20">
-            <header className="flex justify-between items-center">
+          <div className="space-y-2 pb-20 sm:space-y-4">
+            <header className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <h2 className="text-lg font-bold text-slate-900">Planilla de Presupuesto</h2>
                 <div className="text-[10px] uppercase font-bold text-slate-400 tracking-widest mt-1">
@@ -3577,7 +3600,7 @@ export default function ProjectDetail() {
                 {canEditMainBudget && (
                   <button 
                     onClick={addCategory}
-                    className="px-4 py-2 bg-black text-white text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 transition-all flex items-center gap-2 rounded"
+                    className="flex items-center justify-center gap-2 rounded bg-black px-3 py-2 text-[9px] font-bold uppercase tracking-widest text-white transition-all hover:bg-slate-800 sm:px-4 sm:text-[10px]"
                   >
                     <Plus className="w-3 h-3" />
                     Nueva Categoría
@@ -3803,8 +3826,8 @@ export default function ProjectDetail() {
         )}
 
         {activeTab === 'areas' && (
-          <div className="space-y-4 pb-20">
-            <header className="flex justify-between items-center">
+          <div className="space-y-2 pb-20 sm:space-y-4">
+            <header className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <h2 className="text-lg font-bold text-slate-900">Gestión por Áreas</h2>
                 <div className="text-[10px] uppercase font-bold text-slate-400 tracking-widest mt-1">
@@ -3815,7 +3838,7 @@ export default function ProjectDetail() {
                 <div className="relative" ref={areaSelectorRef}>
                   <button 
                     onClick={() => setIsAreaSelectorOpen(!isAreaSelectorOpen)}
-                    className="px-4 py-2 bg-black text-white text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 transition-all flex items-center gap-2 rounded"
+                    className="flex items-center justify-center gap-2 rounded bg-black px-3 py-2 text-[9px] font-bold uppercase tracking-widest text-white transition-all hover:bg-slate-800 sm:px-4 sm:text-[10px]"
                   >
                     <Plus className="w-3 h-3" />
                     {isAreaSelectorOpen ? 'Cancelar' : 'Activar Nueva Área'}
@@ -3922,7 +3945,7 @@ export default function ProjectDetail() {
             {selectedAreaDashboardRows.length > 0 && (
               <div className="space-y-4">
                 {/* Summary Header */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
                   {(() => {
                     const assigned = areaDashboardTotals.assigned;
                     const spent = areaDashboardTotals.spent;
@@ -4057,7 +4080,203 @@ export default function ProjectDetail() {
                     </div>
                   </div>
                   
-                  <div className="min-w-[1360px]">
+                  <div className="divide-y divide-slate-100 md:hidden">
+                    {areaRow.subcategoryGroups.map((subcategoryGroup) => {
+                      const subcategoryKey = `${areaRow.area}__${subcategoryGroup.subcategory}`;
+                      const isSubcategoryCollapsed = collapsedAreaSubcategories[subcategoryKey];
+
+                      return (
+                        <div key={`mobile-${subcategoryKey}`} className="bg-white">
+                          {subcategoryGroup.subcategory && (
+                            <button
+                              type="button"
+                              onClick={() => setCollapsedAreaSubcategories((current) => ({
+                                ...current,
+                                [subcategoryKey]: !current[subcategoryKey],
+                              }))}
+                              className="flex w-full items-center justify-between gap-2 bg-slate-50 px-3 py-2 text-left"
+                            >
+                              <span className="truncate text-[9px] font-black uppercase tracking-widest text-slate-700">
+                                {subcategoryGroup.subcategory}
+                              </span>
+                              <span className="shrink-0 font-mono text-[10px] font-black text-slate-700">
+                                ${subcategoryGroup.subtotal.toLocaleString()}
+                              </span>
+                            </button>
+                          )}
+
+                          {(!subcategoryGroup.subcategory || !isSubcategoryCollapsed) && (
+                            <div className="space-y-2 p-2">
+                              {subcategoryGroup.expenses.map((item) => (
+                                <div key={`mobile-${item.id}`} className="rounded-lg border border-slate-200 bg-white p-2 shadow-sm">
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="min-w-0 flex-1">
+                                      <BudgetRowCell
+                                        item={item}
+                                        providers={providers}
+                                        onUpdate={updateAreaExpense}
+                                        onDelete={deleteAreaExpense}
+                                        type="provider"
+                                        canCopyProviderInfo
+                                        disabled={!canEditArea(item.area)}
+                                      />
+                                      <div className="mt-1">
+                                        <BudgetRowCell
+                                          item={item}
+                                          onUpdate={updateAreaExpense}
+                                          type="description"
+                                          disabled={!canEditArea(item.area)}
+                                        />
+                                      </div>
+                                    </div>
+                                    <div className="shrink-0 text-right">
+                                      <div className="text-[8px] font-black uppercase tracking-widest text-slate-300">Total</div>
+                                      <div className="font-mono text-xs font-black text-slate-900">${item.total?.toLocaleString()}</div>
+                                    </div>
+                                  </div>
+
+                                  <div className="mt-2 grid grid-cols-2 gap-2">
+                                    <div className="rounded border border-slate-100 bg-slate-50 px-2 py-1">
+                                      <div className="text-[8px] font-black uppercase tracking-widest text-slate-300">Unitario</div>
+                                      <BudgetRowCell
+                                        item={item}
+                                        onUpdate={updateAreaExpense}
+                                        type="price"
+                                        disabled={!canEditArea(item.area)}
+                                      />
+                                    </div>
+                                    <div className="rounded border border-slate-100 bg-slate-50 px-2 py-1">
+                                      <div className="text-[8px] font-black uppercase tracking-widest text-slate-300">Cant.</div>
+                                      <BudgetRowCell
+                                        item={item}
+                                        onUpdate={updateAreaExpense}
+                                        type="quantity"
+                                        disabled={!canEditArea(item.area)}
+                                      />
+                                    </div>
+                                  </div>
+
+                                  <div className="mt-2 grid grid-cols-[1fr_auto] items-center gap-2">
+                                    <div className="rounded border border-slate-100 bg-slate-50 px-2 py-1">
+                                      <div className="text-[8px] font-black uppercase tracking-widest text-slate-300">Fecha pago</div>
+                                      {renderPaymentScheduleCell(item, 'areaExpenses', !canEditPaymentDateForItem(item, 'areaExpenses'))}
+                                    </div>
+                                    <div className="text-right text-[9px] font-bold uppercase tracking-widest text-slate-400">
+                                      {renderPaymentLeadTimeCell(item)}
+                                    </div>
+                                  </div>
+
+                                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                                    {item.invoice?.url ? (
+                                      <>
+                                        <a
+                                          href={item.invoice.url}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="inline-flex h-8 items-center gap-1 rounded border border-emerald-100 bg-emerald-50 px-2 text-[9px] font-black uppercase tracking-widest text-emerald-700"
+                                        >
+                                          <FileText className="h-3 w-3" />
+                                          Factura
+                                        </a>
+                                        {canUploadAreaFiles(item.area) && (
+                                          <button
+                                            type="button"
+                                            disabled={!!uploadingInvoices[item.id]}
+                                            onClick={() => removeInvoiceFromExpense(item)}
+                                            className="inline-flex h-8 items-center gap-1 rounded border border-red-100 bg-red-50 px-2 text-[9px] font-black uppercase tracking-widest text-red-600 disabled:opacity-40"
+                                          >
+                                            <X className="h-3 w-3" />
+                                            Quitar
+                                          </button>
+                                        )}
+                                      </>
+                                    ) : (
+                                      canUploadAreaFiles(item.area) ? (
+                                        <>
+                                          <label className="inline-flex h-8 items-center gap-1 rounded border border-slate-200 bg-white px-2 text-[9px] font-black uppercase tracking-widest text-slate-700">
+                                            <Paperclip className="h-3 w-3" />
+                                            Factura
+                                            <input
+                                              type="file"
+                                              accept="application/pdf,.pdf"
+                                              className="hidden"
+                                              disabled={!!uploadingInvoices[item.id]}
+                                              onChange={(event) => {
+                                                const file = event.target.files?.[0];
+                                                uploadInvoiceForExpense(item, file);
+                                                event.target.value = '';
+                                              }}
+                                            />
+                                          </label>
+                                          <button
+                                            type="button"
+                                            disabled={!!generatingInvoiceLinks[item.id]}
+                                            onClick={() => createInvoiceUploadLink(item)}
+                                            className="inline-flex h-8 items-center gap-1 rounded border border-blue-100 bg-blue-50 px-2 text-[9px] font-black uppercase tracking-widest text-blue-700 disabled:opacity-40"
+                                          >
+                                            <LinkIcon className="h-3 w-3" />
+                                            Link
+                                          </button>
+                                        </>
+                                      ) : (
+                                        <span className="inline-flex h-8 items-center rounded border border-slate-100 bg-slate-50 px-2 text-[9px] font-black uppercase tracking-widest text-slate-300">Sin factura</span>
+                                      )
+                                    )}
+
+                                    {canUploadAreaFiles(item.area) && (
+                                      <label className="inline-flex h-8 items-center gap-1 rounded border border-slate-200 bg-white px-2 text-[9px] font-black uppercase tracking-widest text-slate-600">
+                                        <Plus className="h-3 w-3" />
+                                        Comp.
+                                        <input
+                                          type="file"
+                                          accept="application/pdf,image/jpeg,image/png,image/webp,.pdf,.jpg,.jpeg,.png,.webp"
+                                          className="hidden"
+                                          disabled={!!uploadingInvoices[`other-${item.id}`]}
+                                          onChange={(event) => {
+                                            const file = event.target.files?.[0];
+                                            uploadOtherReceiptForExpense(item, file);
+                                            event.target.value = '';
+                                          }}
+                                        />
+                                      </label>
+                                    )}
+
+                                    {(Array.isArray(item.otherReceipts) ? item.otherReceipts : []).length > 0 && (
+                                      <span className="inline-flex h-8 items-center rounded border border-sky-100 bg-sky-50 px-2 text-[9px] font-black uppercase tracking-widest text-sky-700">
+                                        {(Array.isArray(item.otherReceipts) ? item.otherReceipts : []).length} comp.
+                                      </span>
+                                    )}
+
+                                    <button
+                                      type="button"
+                                      disabled={!canEditArea(item.area)}
+                                      onClick={() => openPaymentModal(item, 'areaExpenses')}
+                                      className="ml-auto inline-flex h-8 items-center gap-1 rounded border border-slate-900 bg-slate-900 px-2 text-[9px] font-black uppercase tracking-widest text-white disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-300"
+                                    >
+                                      <Wallet className="h-3 w-3" />
+                                      Pago
+                                    </button>
+                                    {canEditArea(item.area) && (
+                                      <button
+                                        type="button"
+                                        onClick={() => deleteAreaExpense(item.id)}
+                                        className="inline-flex h-8 w-8 items-center justify-center rounded border border-red-100 bg-red-50 text-red-600"
+                                        title="Eliminar gasto"
+                                      >
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="hidden min-w-[1360px] md:block">
                     <div className="grid grid-cols-[minmax(160px,1.45fr)_minmax(180px,1.6fr)_78px_100px_76px_92px_96px_104px_150px_78px] bg-slate-50 border-b border-slate-200 px-6 py-3 gap-2">
                       <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Proveedor / Concepto</div>
                       <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Descripcion Detallada</div>
@@ -4750,7 +4969,7 @@ export default function ProjectDetail() {
         )}
 
         {activeTab === 'saldos' && (
-          <div className="space-y-4 pb-20">
+          <div className="space-y-2 pb-20 sm:space-y-4">
             <header className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
               <div>
               <h2 className="text-lg font-bold text-slate-900">Finanzas del Proyecto</h2>
@@ -4763,46 +4982,46 @@ export default function ProjectDetail() {
               </div>
             </header>
 
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
-              <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
-                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Total Presupuestado</div>
-                <div className="text-lg font-bold text-slate-900">${financeTotals.budgeted.toLocaleString()}</div>
+            <div className="grid grid-cols-2 gap-1.5 md:grid-cols-5 sm:gap-3">
+              <div className="rounded-lg border border-slate-200 bg-white p-2 shadow-[0_8px_22px_rgba(15,23,42,0.08)] sm:rounded-xl sm:p-4">
+                <div className="mb-0.5 text-[8px] font-bold uppercase tracking-widest text-slate-400 sm:mb-1 sm:text-[10px]">Total Presupuestado</div>
+                <div className="truncate text-xs font-bold text-slate-900 sm:text-lg">${financeTotals.budgeted.toLocaleString()}</div>
               </div>
-              <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
-                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Total Gastado (Facturado)</div>
-                <div className="text-lg font-bold text-slate-900">${financeTotals.spent.toLocaleString()}</div>
+              <div className="rounded-lg border border-slate-200 bg-white p-2 shadow-[0_8px_22px_rgba(15,23,42,0.08)] sm:rounded-xl sm:p-4">
+                <div className="mb-0.5 text-[8px] font-bold uppercase tracking-widest text-slate-400 sm:mb-1 sm:text-[10px]">Total Gastado</div>
+                <div className="truncate text-xs font-bold text-slate-900 sm:text-lg">${financeTotals.spent.toLocaleString()}</div>
               </div>
-              <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
-                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 text-emerald-600">Total Pagado</div>
-                <div className="text-xl font-bold text-emerald-600">${financeTotals.paid.toLocaleString()}</div>
+              <div className="rounded-lg border border-slate-200 bg-white p-2 shadow-[0_8px_22px_rgba(15,23,42,0.08)] sm:rounded-xl sm:p-4">
+                <div className="mb-0.5 text-[8px] font-bold uppercase tracking-widest text-emerald-600 sm:mb-1 sm:text-[10px]">Pagado</div>
+                <div className="truncate text-xs font-bold text-emerald-600 sm:text-xl">${financeTotals.paid.toLocaleString()}</div>
               </div>
-              <div className="bg-slate-900 p-5 rounded-xl border border-slate-900 shadow-sm text-white">
-                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Deuda Pendiente</div>
-                <div className="text-xl font-bold font-mono">${financeTotals.debt.toLocaleString()}</div>
+              <div className="rounded-lg border border-slate-900 bg-slate-900 p-2 text-white shadow-sm sm:rounded-xl sm:p-5">
+                <div className="mb-0.5 text-[8px] font-bold uppercase tracking-widest text-slate-400 sm:mb-1 sm:text-[10px]">Deuda</div>
+                <div className="truncate font-mono text-xs font-bold sm:text-xl">${financeTotals.debt.toLocaleString()}</div>
               </div>
-              <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
-                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Docs</div>
-                <div className="text-lg font-bold text-slate-900">{financeTotals.invoices}/{financeTotals.receipts}</div>
-                <div className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mt-2">Facturas / comprobantes</div>
+              <div className="col-span-2 rounded-lg border border-slate-200 bg-white p-2 shadow-[0_8px_22px_rgba(15,23,42,0.08)] md:col-span-1 sm:rounded-xl sm:p-4">
+                <div className="mb-0.5 text-[8px] font-bold uppercase tracking-widest text-slate-400 sm:mb-1 sm:text-[10px]">Docs</div>
+                <div className="text-xs font-bold text-slate-900 sm:text-lg">{financeTotals.invoices}/{financeTotals.receipts}</div>
+                <div className="mt-1 text-[8px] font-bold uppercase tracking-widest text-slate-400 sm:mt-2 sm:text-[9px]">Facturas / comprobantes</div>
               </div>
             </div>
 
 
             <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-              <div className="p-4 border-b border-slate-100 flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
+              <div className="flex flex-col gap-2 border-b border-slate-100 p-2.5 sm:gap-3 sm:p-4 xl:flex-row xl:items-end xl:justify-between">
                 <div className="flex items-center gap-2">
                   <div className="w-8 h-8 rounded-lg bg-slate-900 text-white flex items-center justify-center">
                     <Calendar className="w-4 h-4" />
                   </div>
                   <div>
-                    <h3 className="text-sm font-black text-slate-900">Flujo de Pagos</h3>
-                    <p className="text-[10px] uppercase font-bold tracking-widest text-slate-400">
+                    <h3 className="text-xs font-black text-slate-900 sm:text-sm">Flujo de Pagos</h3>
+                    <p className="text-[8px] font-bold uppercase tracking-widest text-slate-400 sm:text-[10px]">
                       Proyección por fecha de pago · {formatPeriodLabel(paymentScheduleAnchor, 'month')}
                     </p>
                   </div>
                 </div>
 
-                <div className="flex flex-col sm:flex-row gap-2">
+                <div className="grid grid-cols-3 gap-1.5 sm:flex sm:flex-row sm:gap-2">
                   <button
                     type="button"
                     onClick={() => {
@@ -4811,11 +5030,11 @@ export default function ProjectDetail() {
                       setSelectedPaymentBucketKey(null);
                       setExpandedPaymentLineId(null);
                     }}
-                    className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-[10px] font-black uppercase tracking-widest hover:border-black"
+                    className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[8px] font-black uppercase tracking-widest hover:border-black sm:px-3 sm:py-2 sm:text-[10px]"
                   >
                     Mes anterior
                   </button>
-                  <label className="relative px-3 py-2 bg-slate-50 border border-slate-100 rounded-lg text-xs font-bold text-slate-900 text-center cursor-pointer min-w-[150px]">
+                  <label className="relative cursor-pointer rounded-lg border border-slate-100 bg-slate-50 px-2 py-1.5 text-center text-[8px] font-bold text-slate-900 sm:min-w-[150px] sm:px-3 sm:py-2 sm:text-xs">
                     {formatPeriodLabel(paymentScheduleAnchor, 'month')}
                     <input
                       type="month"
@@ -4836,7 +5055,7 @@ export default function ProjectDetail() {
                       setSelectedPaymentBucketKey(null);
                       setExpandedPaymentLineId(null);
                     }}
-                    className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-[10px] font-black uppercase tracking-widest hover:border-black"
+                    className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[8px] font-black uppercase tracking-widest hover:border-black sm:px-3 sm:py-2 sm:text-[10px]"
                   >
                     Mes siguiente
                   </button>
@@ -4844,18 +5063,18 @@ export default function ProjectDetail() {
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-0 lg:items-stretch">
-                <div className="p-4 border-b lg:border-b-0 lg:border-r border-slate-100 space-y-4">
-                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                <div className="space-y-2 border-b border-slate-100 p-2 lg:border-b-0 lg:border-r sm:space-y-4 sm:p-4">
+                  <div className="grid grid-cols-4 gap-1.5 lg:gap-3">
                     {[
                       { label: 'A pagar hoy', value: paymentScheduleStats.todayDebt, count: paymentScheduleStats.todayLines.length, tone: 'text-slate-900' },
                       { label: 'A pagar mes', value: paymentScheduleStats.periodDebt, count: paymentScheduleStats.periodLines.length, tone: 'text-blue-700' },
                       { label: 'Vencidos', value: paymentScheduleStats.overdueDebt, count: paymentScheduleStats.overdueLines.length, tone: 'text-rose-600' },
                       { label: 'Sin fecha', value: paymentScheduleStats.unscheduledDebt, count: paymentScheduleStats.unscheduledLines.length, tone: 'text-amber-600' },
                     ].map((item) => (
-                      <div key={item.label} className="rounded-lg border border-slate-100 bg-slate-50/50 p-3">
-                        <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">{item.label}</div>
-                        <div className={cn("mt-1 text-lg font-black font-mono", item.tone)}>${item.value.toLocaleString()}</div>
-                        <div className="text-[9px] font-bold uppercase tracking-widest text-slate-300 mt-1">{item.count} pagos</div>
+                      <div key={item.label} className="rounded-lg border border-slate-100 bg-slate-50/50 p-1.5 sm:p-3">
+                        <div className="truncate text-[7px] font-black uppercase tracking-widest text-slate-400 sm:text-[9px]">{item.label}</div>
+                        <div className={cn("mt-0.5 truncate font-mono text-[10px] font-black sm:mt-1 sm:text-lg", item.tone)}>${item.value.toLocaleString()}</div>
+                        <div className="mt-0.5 text-[7px] font-bold uppercase tracking-widest text-slate-300 sm:mt-1 sm:text-[9px]">{item.count}</div>
                       </div>
                     ))}
                   </div>
@@ -4880,7 +5099,7 @@ export default function ProjectDetail() {
                               setExpandedPaymentLineId(null);
                             }}
                             className={cn(
-                              "min-h-[86px] border-r border-b border-slate-100 p-2 text-left transition-all hover:bg-slate-50",
+                              "min-h-[48px] border-r border-b border-slate-100 p-1 text-left transition-all hover:bg-slate-50 sm:min-h-[86px] sm:p-2",
                               !day.isCurrentMonth && "bg-slate-50/60 text-slate-300",
                               isSelected && "ring-2 ring-inset ring-slate-900 bg-white",
                               day.isToday && "bg-blue-50",
@@ -4889,7 +5108,7 @@ export default function ProjectDetail() {
                           >
                             <div className="flex items-center justify-between gap-2">
                               <span className={cn(
-                                "inline-flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-black",
+                                "inline-flex h-5 w-5 items-center justify-center rounded-full text-[9px] font-black sm:h-6 sm:w-6 sm:text-[10px]",
                                 day.isToday ? "bg-blue-600 text-white" : "text-slate-700"
                               )}>
                                 {day.dayNumber}
@@ -4897,8 +5116,8 @@ export default function ProjectDetail() {
                               {hasPayments && <span className="text-[9px] font-black text-rose-600">{day.count}</span>}
                             </div>
                             {hasPayments && (
-                              <div className="mt-3">
-                                <div className="text-[10px] font-black font-mono text-slate-900">${day.total.toLocaleString()}</div>
+                              <div className="mt-1 sm:mt-3">
+                                <div className="truncate text-[8px] font-black font-mono text-slate-900 sm:text-[10px]">${day.total.toLocaleString()}</div>
                                 <div className="mt-1 h-1.5 rounded-full bg-white/80 overflow-hidden">
                                   <div
                                     className={cn("h-full rounded-full", isHeavy ? "bg-rose-500" : "bg-amber-500")}
@@ -5048,7 +5267,97 @@ export default function ProjectDetail() {
               </div>
             </div>
 
-            <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+            <div className="space-y-2 md:hidden">
+              {filteredProviderSaldosByArea.map((group) => (
+                <section key={`mobile-${group.area}`} className="rounded-lg border border-slate-200 bg-white shadow-sm">
+                  <div className="border-b border-slate-100 bg-slate-50 px-3 py-2 text-[9px] font-black uppercase tracking-widest text-slate-500">
+                    {group.area}
+                  </div>
+                  <div className="divide-y divide-slate-100">
+                    {group.rows.map((saldo) => (
+                      <div key={`mobile-${saldo.id}`} className="p-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="truncate text-[11px] font-black uppercase text-slate-900">{saldo.name}</div>
+                            <div className="mt-0.5 text-[9px] font-mono font-bold text-slate-400">
+                              {isProjectAdmin ? saldo.cbu || 'Sin CBU' : 'Cuenta disponible para admins'}
+                            </div>
+                          </div>
+                          <div className="shrink-0 text-right">
+                            <div className="text-[8px] font-black uppercase tracking-widest text-slate-300">Debe</div>
+                            <div className={cn("font-mono text-xs font-black", saldo.debt > 0 ? "text-rose-600" : "text-emerald-600")}>
+                              ${saldo.debt.toLocaleString()}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="mt-2 grid grid-cols-3 gap-1.5">
+                          <div className="rounded bg-slate-50 px-2 py-1">
+                            <div className="text-[7px] font-black uppercase tracking-widest text-slate-300">Gastado</div>
+                            <div className="truncate font-mono text-[10px] font-bold text-slate-700">${saldo.spent.toLocaleString()}</div>
+                          </div>
+                          <div className="rounded bg-emerald-50 px-2 py-1">
+                            <div className="text-[7px] font-black uppercase tracking-widest text-emerald-400">Pagado</div>
+                            <div className="truncate font-mono text-[10px] font-bold text-emerald-700">${saldo.paid.toLocaleString()}</div>
+                          </div>
+                          <div className="rounded bg-slate-50 px-2 py-1">
+                            <div className="text-[7px] font-black uppercase tracking-widest text-slate-300">Items</div>
+                            <div className="font-mono text-[10px] font-bold text-slate-700">{saldo.entries.length}</div>
+                          </div>
+                        </div>
+                        <div className="mt-2 space-y-1">
+                          {saldo.entries.slice(0, 4).map((entry) => {
+                            const entryDebt = entry.total - entry.paid;
+                            return (
+                              <div key={`mobile-${entry.collectionName}-${entry.id}`} className="flex items-center justify-between gap-2 rounded border border-slate-100 bg-slate-50 px-2 py-1.5">
+                                <div className="min-w-0">
+                                  <div className="truncate text-[10px] font-bold text-slate-700">{entry.description || 'Movimiento'}</div>
+                                  {entry.item?.paymentDate && (
+                                    <div className="text-[8px] font-black uppercase tracking-widest text-slate-400">Pago {formatDate(entry.item.paymentDate)}</div>
+                                  )}
+                                </div>
+                                <div className="flex shrink-0 items-center gap-1">
+                                  {entry.invoice?.url && (
+                                    <a href={entry.invoice.url} target="_blank" rel="noreferrer" className="rounded bg-emerald-50 px-1.5 py-1 text-[8px] font-black uppercase tracking-widest text-emerald-700">
+                                      Fact.
+                                    </a>
+                                  )}
+                                  {canManagePaymentForItem(entry.item, entry.collectionName) && (
+                                    <button
+                                      type="button"
+                                      onClick={() => openPaymentModal(entry.item, entry.collectionName)}
+                                      className="rounded border border-slate-900 bg-white px-1.5 py-1 text-[8px] font-black uppercase tracking-widest text-slate-900"
+                                    >
+                                      {entryDebt > 0 ? 'Pagar' : 'OK'}
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                          {saldo.entries.length > 4 && (
+                            <div className="px-2 py-1 text-[8px] font-black uppercase tracking-widest text-slate-300">
+                              +{saldo.entries.length - 4} movimientos mas
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              ))}
+              {providerSaldos.length === 0 && (
+                <div className="rounded-lg border border-dashed border-slate-200 bg-white p-6 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
+                  No hay movimientos financieros
+                </div>
+              )}
+              {providerSaldos.length > 0 && filteredProviderSaldos.length === 0 && (
+                <div className="rounded-lg border border-dashed border-slate-200 bg-white p-6 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
+                  No hay movimientos que coincidan con los filtros
+                </div>
+              )}
+            </div>
+
+            <div className="hidden bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden md:block">
                <table className="w-full text-left">
                  <thead>
                    <tr className="bg-slate-50 border-b border-slate-200">

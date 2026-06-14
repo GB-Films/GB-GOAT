@@ -96,7 +96,8 @@ export default function Sidebar() {
   }, [pinnedProjectIds, profile]);
 
   return (
-    <aside className="w-52 bg-[#020817] text-white border-r border-white/10 flex flex-col h-screen sticky top-0 shadow-2xl shadow-slate-950/30 overflow-hidden">
+    <>
+    <aside className="hidden w-52 bg-[#020817] text-white border-r border-white/10 lg:flex flex-col h-screen sticky top-0 shadow-2xl shadow-slate-950/30 overflow-hidden">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_25%_0%,rgba(59,130,246,0.18),transparent_36%),linear-gradient(180deg,rgba(15,23,42,0.95),#020817)] pointer-events-none" />
       <div className="relative p-4">
         <div className="mb-5 flex justify-center border-b border-white/10 pb-5">
@@ -177,5 +178,27 @@ export default function Sidebar() {
         </button>
       </div>
     </aside>
+    <nav className="fixed inset-x-0 bottom-0 z-[500] flex items-center gap-1 overflow-x-auto border-t border-slate-200 bg-white/95 px-2 py-1.5 shadow-[0_-10px_30px_rgba(15,23,42,0.12)] backdrop-blur lg:hidden">
+      {filteredMenuItems.map((item) => (
+        <NavLink
+          key={item.path}
+          to={item.path}
+          className={({ isActive }) => cn(
+            "flex min-w-[68px] flex-1 flex-col items-center justify-center gap-0.5 rounded-lg px-2 py-1.5 text-[9px] font-black uppercase tracking-tight transition-all",
+            isActive
+              ? "bg-slate-900 text-white shadow-sm"
+              : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+          )}
+        >
+          {({ isActive }) => (
+            <>
+              <item.icon className={cn("h-4 w-4", isActive ? "text-white" : "text-slate-400")} />
+              <span className="max-w-[64px] truncate">{item.label}</span>
+            </>
+          )}
+        </NavLink>
+      ))}
+    </nav>
+    </>
   );
 }
