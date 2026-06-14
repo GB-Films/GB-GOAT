@@ -52,6 +52,14 @@ export const TAX_CONDITIONS = [
 
 export const normalizeDigits = (value: unknown) => String(value || '').replace(/\D/g, '');
 
+export const normalizeProviderText = (value: unknown) => String(value || '')
+  .toLowerCase()
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .replace(/[^a-z0-9]+/g, ' ')
+  .trim()
+  .replace(/\s+/g, ' ');
+
 export const formatPersonName = (value: unknown) => (
   String(value || '')
     .trim()

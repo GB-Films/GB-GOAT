@@ -643,6 +643,7 @@ export default function ProjectDetail() {
   const [paymentScheduleAnchor, setPaymentScheduleAnchor] = useState(() => formatDateKey(new Date()));
   const [selectedPaymentBucketKey, setSelectedPaymentBucketKey] = useState<string | null>(null);
   const [expandedPaymentLineId, setExpandedPaymentLineId] = useState<string | null>(null);
+  const [copiedPaymentLineId, setCopiedPaymentLineId] = useState<string | null>(null);
   const [documentFamilyFilter, setDocumentFamilyFilter] = useState<'todos' | 'finanzas' | 'contratos' | 'seguros' | 'locaciones'>('todos');
   const [documentTypeFilter, setDocumentTypeFilter] = useState<'all' | 'factura' | 'comprobante'>('all');
   const [documentAreaFilter, setDocumentAreaFilter] = useState('all');
@@ -2265,7 +2266,7 @@ export default function ProjectDetail() {
           id: key,
           area,
           name: providerName || (provider ? providerDisplayName(provider) : 'Desconocido'),
-          cbu: provider?.bankAccount_cbu || 'No especificado',
+          cbu: provider?.bankAccount_cbu || provider?.bankAccount || '',
           budgeted: 0,
           spent: 0,
           paid: 0,
@@ -4964,17 +4965,22 @@ export default function ProjectDetail() {
                                 type="button"
                                 onClick={(event) => {
                                   event.stopPropagation();
-                                  if (line.cbu) void navigator.clipboard?.writeText(line.cbu);
+                                  if (!line.cbu) return;
+                                  void navigator.clipboard?.writeText(line.cbu);
+                                  setCopiedPaymentLineId(line.id);
+                                  window.setTimeout(() => setCopiedPaymentLineId(null), 1800);
                                 }}
                                 disabled={!line.cbu}
                                 className={cn(
-                                  "shrink-0 rounded border px-2 py-1 text-[9px] font-black uppercase tracking-widest",
-                                  line.cbu
-                                    ? "border-slate-200 bg-white text-slate-700 hover:border-black"
+                                  "shrink-0 rounded border px-2 py-1 text-[9px] font-black uppercase tracking-widest transition-colors",
+                                  copiedPaymentLineId === line.id
+                                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                    : line.cbu
+                                      ? "border-slate-200 bg-white text-slate-700 hover:border-black"
                                     : "border-slate-100 bg-white text-slate-300 cursor-not-allowed"
                                 )}
                               >
-                                Copiar
+                                {copiedPaymentLineId === line.id ? 'Copiado' : 'Copiar'}
                               </button>
                             </div>
                           </div>

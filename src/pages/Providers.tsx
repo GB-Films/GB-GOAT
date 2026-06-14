@@ -822,16 +822,43 @@ export default function Providers() {
 }
 
 function ProviderDetailModal({ detail, loading, onClose }: { detail: any; loading: boolean; onClose: () => void }) {
+  const [copiedProviderField, setCopiedProviderField] = useState('');
+  const [showFullData, setShowFullData] = useState(false);
   const provider = detail.provider;
   const inferred = inferLegacyIdentifiers(provider);
+  const dni = formatIdentifier(provider.dni || inferred.dniNormalized) || '-';
   const cuit = formatIdentifier(provider.cuit || inferred.cuitNormalized) || '-';
   const cbu = provider.bankAccount_cbu || provider.bankAccount || '-';
+  const category = provider.category === 'Otra'
+    ? `Otra: ${provider.categoryOther || '-'}`
+    : provider.category || '-';
   const totals = detail.totals || { total: 0, paid: 0, debt: 0, invoices: 0, receipts: 0 };
 
-  const copyValue = (value: string) => {
+  const copyValue = async (label: string, value: string) => {
     if (!value || value === '-') return;
-    void navigator.clipboard?.writeText(value);
+    await navigator.clipboard?.writeText(value);
+    setCopiedProviderField(label);
+    window.setTimeout(() => setCopiedProviderField(''), 1800);
   };
+
+  const fullDataItems = [
+    { label: 'Tipo', value: provider.type === 'empresa' ? 'Empresa' : 'Persona' },
+    { label: 'Nombre / razon social', value: providerDisplayName(provider) },
+    { label: 'Nombre', value: provider.name || '-' },
+    { label: 'Apellido', value: provider.lastName || '-' },
+    { label: 'Razon social', value: provider.businessName || '-' },
+    { label: 'DNI', value: dni },
+    { label: 'CUIT / CUIL', value: cuit },
+    { label: 'CBU / Alias', value: cbu },
+    { label: 'Email', value: provider.email || provider.adminEmail || '-' },
+    { label: 'Telefono', value: provider.phone || '-' },
+    { label: 'Domicilio', value: provider.address || '-' },
+    { label: 'Fecha nacimiento', value: provider.birthDate ? formatDate(provider.birthDate) : '-' },
+    { label: 'Categoria', value: category },
+    { label: 'Restriccion alimentaria', value: provider.dietaryRestriction || '-' },
+    { label: 'Origen', value: provider.source === 'provider_invite' ? 'Alta por link' : 'Carga interna' },
+    { label: 'ID proveedor', value: provider.id || '-' },
+  ];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -849,13 +876,21 @@ function ProviderDetailModal({ detail, loading, onClose }: { detail: any; loadin
                 <button
                   key={item.label}
                   type="button"
-                  onClick={() => copyValue(item.value)}
-                  className="inline-flex items-center gap-2 rounded border border-slate-200 bg-slate-50 px-3 py-2 text-[10px] font-bold text-slate-600 hover:border-black"
+                  onClick={() => copyValue(item.label, item.value)}
+                  className={`inline-flex items-center gap-2 rounded border px-3 py-2 text-[10px] font-bold transition-colors ${
+                    copiedProviderField === item.label
+                      ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                      : 'border-slate-200 bg-slate-50 text-slate-600 hover:border-black'
+                  }`}
                   title={`Copiar ${item.label}`}
                 >
                   <span className="uppercase tracking-widest text-slate-400">{item.label}</span>
                   <span className="font-mono text-slate-900">{item.value}</span>
-                  <Copy className="w-3 h-3" />
+                  {copiedProviderField === item.label ? (
+                    <span className="text-[9px] font-black uppercase tracking-widest text-emerald-700">Copiado</span>
+                  ) : (
+                    <Copy className="w-3 h-3" />
+                  )}
                 </button>
               ))}
             </div>
@@ -882,6 +917,42 @@ function ProviderDetailModal({ detail, loading, onClose }: { detail: any; loadin
                   </div>
                 ))}
               </div>
+
+              <section className="rounded-xl border border-slate-200 overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setShowFullData((value) => !value)}
+                  className="flex w-full items-center justify-between bg-slate-50 px-4 py-3 text-left text-[10px] font-black uppercase tracking-widest text-slate-500 hover:bg-slate-100 transition-colors"
+                >
+                  <span>Datos completos del proveedor</span>
+                  <span>{showFullData ? 'Ocultar' : 'Ver todos'}</span>
+                </button>
+                {showFullData && (
+                  <div className="grid grid-cols-1 gap-0 divide-y divide-slate-100 md:grid-cols-2 md:divide-x md:divide-y-0">
+                    {fullDataItems.map((item) => (
+                      <div key={item.label} className="flex min-w-0 items-start justify-between gap-3 border-b border-slate-100 px-4 py-3 md:[&:nth-last-child(-n+2)]:border-b-0">
+                        <div className="min-w-0">
+                          <div className="text-[9px] font-black uppercase tracking-widest text-slate-300">{item.label}</div>
+                          <div className="mt-1 break-words text-xs font-bold text-slate-700">{item.value || '-'}</div>
+                        </div>
+                        {['DNI', 'CUIT / CUIL', 'CBU / Alias'].includes(item.label) && item.value !== '-' && (
+                          <button
+                            type="button"
+                            onClick={() => copyValue(item.label, item.value)}
+                            className={`shrink-0 rounded border px-2 py-1 text-[9px] font-black uppercase tracking-widest transition-colors ${
+                              copiedProviderField === item.label
+                                ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                : 'border-slate-100 text-slate-400 hover:border-black hover:text-black'
+                            }`}
+                          >
+                            {copiedProviderField === item.label ? 'Copiado' : 'Copiar'}
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
 
               <section className="rounded-xl border border-slate-200 overflow-hidden">
                 <div className="bg-slate-50 px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-400">Proyectos donde trabajo</div>

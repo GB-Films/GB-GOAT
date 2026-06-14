@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { Copy, Plus } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { providerDisplayName, providerMatchesSearch } from '../../lib/providerConstants';
+import {
+  formatIdentifier,
+  inferLegacyIdentifiers,
+  normalizeProviderText,
+  providerDisplayName,
+  providerMatchesSearch,
+} from '../../lib/providerConstants';
 
 interface BudgetRowCellProps {
   item: any;
@@ -19,6 +25,7 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
   const [isEditingProvider, setIsEditingProvider] = useState(false);
   const [showProviderInfo, setShowProviderInfo] = useState(false);
   const [providerSearch, setProviderSearch] = useState('');
+  const [copiedProviderField, setCopiedProviderField] = useState('');
   const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0 });
   const providerCellRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -67,17 +74,32 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
   }, [isEditingProvider, showProviderInfo]);
 
   const isInvalidProvider = item.providerName && !item.providerId && providers?.length;
-  const provider = providers?.find((candidate) => (
-    (item.providerId && candidate.id === item.providerId)
-    || providerDisplayName(candidate) === item.providerName
-  ));
-  const providerCuit = provider?.cuit || provider?.cuitNormalized || '';
+  const provider = (() => {
+    if (!providers?.length) return null;
+    if (item.providerId) {
+      const byId = providers.find((candidate) => candidate.id === item.providerId);
+      if (byId) return byId;
+    }
+
+    const providerNameKey = normalizeProviderText(item.providerName);
+    if (!providerNameKey) return null;
+
+    const exactMatches = providers.filter((candidate) => normalizeProviderText(providerDisplayName(candidate)) === providerNameKey);
+    if (exactMatches.length === 1) return exactMatches[0];
+
+    const searchMatches = providers.filter((candidate) => providerMatchesSearch(candidate, item.providerName));
+    return searchMatches.length === 1 ? searchMatches[0] : null;
+  })();
+  const providerIdentifiers = inferLegacyIdentifiers(provider);
+  const providerCuit = formatIdentifier(provider?.cuit || providerIdentifiers.cuitNormalized) || '';
   const providerCbu = provider?.bankAccount_cbu || provider?.bankAccount || '';
   const canShowProviderInfo = Boolean(canCopyProviderInfo && provider && (providerCuit || providerCbu));
 
-  const copyProviderValue = (value: string) => {
+  const copyProviderValue = async (label: string, value: string) => {
     if (!value) return;
-    void navigator.clipboard?.writeText(value);
+    await navigator.clipboard?.writeText(value);
+    setCopiedProviderField(label);
+    window.setTimeout(() => setCopiedProviderField(''), 1800);
   };
 
   const handleValueUpdate = (field: string, value: any) => {
@@ -163,12 +185,17 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
                 </div>
                 <button
                   type="button"
-                  onClick={() => copyProviderValue(entry.value)}
-                  className="shrink-0 inline-flex items-center gap-1 rounded border border-slate-100 px-2 py-1.5 text-[9px] font-black uppercase tracking-widest text-slate-500 hover:text-black hover:border-black"
+                  onClick={() => copyProviderValue(entry.label, entry.value)}
+                  className={cn(
+                    "shrink-0 inline-flex items-center gap-1 rounded border px-2 py-1.5 text-[9px] font-black uppercase tracking-widest transition-colors",
+                    copiedProviderField === entry.label
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                      : "border-slate-100 text-slate-500 hover:text-black hover:border-black"
+                  )}
                   title={entry.label}
                 >
                   <Copy className="w-3 h-3" />
-                  Copiar
+                  {copiedProviderField === entry.label ? 'Copiado' : 'Copiar'}
                 </button>
               </div>
             ))}
