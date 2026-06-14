@@ -2228,8 +2228,8 @@ export default function ProjectDetail() {
       providersByName.set(key, [...(providersByName.get(key) || []), provider]);
     });
 
-    const resolveProvider = (providerId: string, providerName?: string) => {
-      const provider = providerById.get(providerId);
+    const resolveProvider = (providerId?: string, providerName?: string) => {
+      const provider = providerId ? providerById.get(providerId) : null;
       if (provider) return provider;
 
       const matches = providersByName.get(normalizeText(providerName));
@@ -2257,15 +2257,15 @@ export default function ProjectDetail() {
       }>;
     }>();
 
-    const ensureSaldo = (area: string, providerId: string, providerName?: string) => {
+    const ensureSaldo = (area: string, providerId?: string, providerName?: string) => {
       const provider = resolveProvider(providerId, providerName);
-      const canonicalProviderId = provider?.id || providerId;
+      const canonicalProviderId = provider?.id || providerId || normalizeText(providerName) || 'sin_proveedor';
       const key = `${area}__${canonicalProviderId}`;
       if (!saldosMap.has(key)) {
         saldosMap.set(key, {
           id: key,
           area,
-          name: providerName || (provider ? providerDisplayName(provider) : 'Desconocido'),
+          name: providerName || (provider ? providerDisplayName(provider) : 'Sin proveedor'),
           cbu: provider?.bankAccount_cbu || provider?.bankAccount || '',
           budgeted: 0,
           spent: 0,
@@ -2279,7 +2279,7 @@ export default function ProjectDetail() {
     };
 
     budgetItems.forEach(item => {
-      if (!item.providerId || !canSeeArea(item.area)) return;
+      if (!canSeeArea(item.area)) return;
       const s = ensureSaldo(item.area || 'Sin area', item.providerId, item.providerName);
       s.budgeted += item.total || 0;
 
@@ -2299,7 +2299,7 @@ export default function ProjectDetail() {
     });
 
     areaExpenses.forEach(item => {
-      if (!item.providerId || !canSeeArea(item.area)) return;
+      if (!canSeeArea(item.area)) return;
       const s = ensureSaldo(item.area || 'Sin area', item.providerId, item.providerName);
       s.spent += item.total || 0;
       
