@@ -1072,7 +1072,7 @@ export default function ProjectDetail() {
       subcategory: '',
       providerId: '',
       providerName: '',
-      description: 'Nuevo gasto',
+      description: '',
       unit: 'Unidad',
       quantity: 1,
       unitPrice: 0,
