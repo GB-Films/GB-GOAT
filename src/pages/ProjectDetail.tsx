@@ -2178,13 +2178,10 @@ export default function ProjectDetail() {
     .slice(0, 8);
 
   const assignableSubcategoryOptions = React.useMemo(() => {
-    const stored = project?.areaExpenseSubcategories && typeof project.areaExpenseSubcategories === 'object'
-      ? project.areaExpenseSubcategories
-      : {};
     const allowedParentAreas = isProjectAdmin ? categories : safeArray(userPermissions?.allowedCategories);
 
     const options = activeAreas.flatMap((area) => (
-      (Array.isArray(stored[area]) ? stored[area] : [])
+      (areaExpenseSubcategoriesByArea[area] || [])
         .map(cleanAreaExpenseSubcategory)
         .filter(Boolean)
         .map((subcategory) => ({
@@ -2196,7 +2193,7 @@ export default function ProjectDetail() {
     return Array.from(new Map(options.map((item) => [item.key, item])).values())
       .filter((item: any) => allowedParentAreas.includes(item.area))
       .sort((a: any, b: any) => `${a.area} ${a.subcategory}`.localeCompare(`${b.area} ${b.subcategory}`, 'es'));
-  }, [activeAreas, categories, isProjectAdmin, project?.areaExpenseSubcategories, userPermissions]);
+  }, [activeAreas, areaExpenseSubcategoriesByArea, categories, isProjectAdmin, userPermissions]);
 
   const filteredSourceProjects = React.useMemo(() => {
     const term = copyBudgetSearch.trim().toLowerCase();
