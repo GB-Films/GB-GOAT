@@ -590,7 +590,9 @@ export function PaymentModal({
                  <History className="w-3 h-3" /> Historial de Pagos
               </h3>
               <div className="space-y-2 max-h-48 overflow-y-auto pr-2 custom-scrollbar">
-                {(paymentHistory as Payment[]).map((payment, idx) => (
+                {(paymentHistory as Payment[]).map((payment, idx) => {
+                  const paymentAuthor = payment.createdByName || payment.paidByName || payment.createdByEmail || payment.paidByEmail || '';
+                  return (
                   <div key={payment.id || idx} className="p-3 bg-slate-50 rounded-lg border border-slate-100">
                     {editingPaymentIndex === idx ? (
                       <form onSubmit={(event) => updateExistingPayment(event, idx)} className="space-y-3">
@@ -646,6 +648,9 @@ export function PaymentModal({
                         <div className="flex-1">
                           <div className="text-xs font-bold text-slate-900">${payment.amount.toLocaleString()}</div>
                           <div className="text-[9px] text-slate-400 uppercase font-medium">{payment.detail || 'Sin detalle'}</div>
+                          <div className="mt-1 text-[8px] font-black uppercase tracking-widest text-slate-300">
+                            {paymentAuthor ? `Cargado por ${paymentAuthor}` : 'Cargado por usuario no registrado'}
+                          </div>
                           {payment.receipt?.url && (
                             <a
                               href={payment.receipt.url}
@@ -703,7 +708,8 @@ export function PaymentModal({
                       </div>
                     )}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}

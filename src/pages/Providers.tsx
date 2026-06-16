@@ -588,11 +588,23 @@ export default function Providers() {
           getDocs(collection(db, 'projects', project.id, 'areaExpenses')),
         ]);
 
+        const activeAreas = Array.isArray(project.activeAreas) ? project.activeAreas : [];
+
         const pushLine = (item: any, source: 'Presupuesto Principal' | 'Gestion por Areas') => {
           if (item.providerId !== provider.id) return;
+          if (source === 'Presupuesto Principal' && activeAreas.includes(item.area)) return;
           const paid = Array.isArray(item.paymentHistory)
             ? item.paymentHistory.reduce((acc: number, payment: any) => acc + (Number(payment.amount) || 0), 0)
             : 0;
+          const payments = Array.isArray(item.paymentHistory)
+            ? item.paymentHistory.map((payment: any, index: number) => ({
+                id: payment.id || index,
+                amount: Number(payment.amount) || 0,
+                detail: payment.detail || '',
+                date: payment.date || '',
+                loadedBy: payment.createdByName || payment.paidByName || payment.createdByEmail || payment.paidByEmail || '',
+              }))
+            : [];
           const total = Number(item.total) || 0;
           lines.push({
             id: `${project.id}-${source}-${item.id}`,
@@ -605,6 +617,7 @@ export default function Providers() {
             paid,
             debt: Math.max(0, total - paid),
             paymentDate: item.paymentDate || '',
+            payments,
             invoiceUrl: item.invoice?.url || '',
             invoiceName: item.invoice?.originalFileName || item.invoice?.fileName || '',
             receipts: [
@@ -1005,6 +1018,19 @@ function ProviderDetailModal({ detail, loading, onClose }: { detail: any; loadin
                             </a>
                           ))}
                         </div>
+                        {line.payments.length > 0 && (
+                          <div className="mt-2 space-y-1">
+                            {line.payments.map((payment: any) => (
+                              <div key={payment.id} className="text-[9px] font-bold uppercase tracking-widest text-slate-300">
+                                Pago ${payment.amount.toLocaleString()}
+                                {payment.date ? ` / ${formatDate(payment.date)}` : ''}
+                                {' / '}
+                                {payment.loadedBy ? `cargado por ${payment.loadedBy}` : 'cargado por usuario no registrado'}
+                                {payment.detail ? ` / ${payment.detail}` : ''}
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
