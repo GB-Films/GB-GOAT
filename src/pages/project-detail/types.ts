@@ -5,6 +5,9 @@ export interface Payment {
   date: any;
   type: 'partial' | 'total';
   method?: 'caja_efectivo' | 'otro';
+  createdByEmail?: string;
+  createdByName?: string;
+  createdByRole?: string;
   paidByEmail?: string;
   paidByName?: string;
   cashMovementId?: string;

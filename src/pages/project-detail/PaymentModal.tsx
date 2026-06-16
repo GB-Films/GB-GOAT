@@ -78,6 +78,10 @@ interface PaymentModalProps {
   paymentType: PaymentCollection;
   isDeletingPayment: number | null;
   canEditExistingPayments?: boolean;
+  currentUserEmail?: string;
+  currentUserName?: string;
+  currentUserRole?: string;
+  canEditPaymentRecord?: (payment: Payment, paymentIndex: number) => boolean;
   onClose: () => void;
   onPaymentStateChange: (
     itemId: string,
@@ -102,6 +106,10 @@ export function PaymentModal({
   paymentType,
   isDeletingPayment,
   canEditExistingPayments = false,
+  currentUserEmail = '',
+  currentUserName = '',
+  currentUserRole = '',
+  canEditPaymentRecord,
   onClose,
   onPaymentStateChange,
   onDeletePayment,
@@ -169,10 +177,8 @@ export function PaymentModal({
 
   const updateExistingPayment = async (event: FormEvent<HTMLFormElement>, paymentIndex: number) => {
     event.preventDefault();
-    if (!projectId || !canEditExistingPayments) return;
-
     const currentPayment = paymentHistory[paymentIndex] as Payment | undefined;
-    if (!currentPayment) return;
+    if (!projectId || !currentPayment || !canEditExistingPayments || !canEditPaymentRecord?.(currentPayment, paymentIndex)) return;
 
     const formData = new FormData(event.currentTarget);
     const nextAmount = Number(formData.get('editAmount'));
@@ -212,7 +218,7 @@ export function PaymentModal({
           contentType: editReceipt.type,
           size: editReceipt.size,
           uploadedAt: new Date(),
-          uploadedBy: '',
+          uploadedBy: currentUserEmail,
         };
 
         if (currentPayment.receipt?.path && currentPayment.receipt.path !== path) {
@@ -363,6 +369,9 @@ export function PaymentModal({
                 date: customDate ? new Date(customDate + 'T12:00:00') : new Date(),
                 type: isRemainingBalance ? 'total' : 'partial',
                 method: useCashBox ? 'caja_efectivo' : 'otro',
+                createdByEmail: currentUserEmail,
+                createdByName: currentUserName,
+                createdByRole: currentUserRole,
               };
 
               const updatedHistory = [...paymentHistory, newPayment];
@@ -406,7 +415,7 @@ export function PaymentModal({
                     contentType: receiptFile.type,
                     size: receiptFile.size,
                     uploadedAt: new Date(),
-                    uploadedBy: '',
+                    uploadedBy: currentUserEmail,
                   };
                 }
 
@@ -654,7 +663,7 @@ export function PaymentModal({
                             <Calendar className="w-2.5 h-2.5" />
                             {formatDate(payment.date)}
                           </div>
-                          {canEditExistingPayments && (
+                          {canEditExistingPayments && canEditPaymentRecord?.(payment, idx) && (
                             <button
                               type="button"
                               onClick={() => {
@@ -667,27 +676,29 @@ export function PaymentModal({
                               Editar
                             </button>
                           )}
-                          <button
-                            type="button"
-                            disabled={isDeletingPayment === idx}
-                            onClick={async (e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              await onDeletePayment(idx);
-                            }}
-                            className={cn(
-                              "mt-2 text-[10px] font-bold uppercase px-3 py-1.5 rounded-lg transition-all flex items-center justify-center border shadow-sm active:scale-95 w-full",
-                              isDeletingPayment === idx
-                                ? "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed"
-                                : "bg-white text-rose-600 border-rose-200 hover:bg-rose-600 hover:text-white"
-                            )}
-                          >
-                            {isDeletingPayment === idx ? (
-                              "Borrando..."
-                            ) : (
-                              <><Trash2 className="w-3 h-3 mr-1" /> Eliminar Pago</>
-                            )}
-                          </button>
+                          {canEditPaymentRecord?.(payment, idx) && (
+                            <button
+                              type="button"
+                              disabled={isDeletingPayment === idx}
+                              onClick={async (e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                await onDeletePayment(idx);
+                              }}
+                              className={cn(
+                                "mt-2 text-[10px] font-bold uppercase px-3 py-1.5 rounded-lg transition-all flex items-center justify-center border shadow-sm active:scale-95 w-full",
+                                isDeletingPayment === idx
+                                  ? "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed"
+                                  : "bg-white text-rose-600 border-rose-200 hover:bg-rose-600 hover:text-white"
+                              )}
+                            >
+                              {isDeletingPayment === idx ? (
+                                "Borrando..."
+                              ) : (
+                                <><Trash2 className="w-3 h-3 mr-1" /> Eliminar Pago</>
+                              )}
+                            </button>
+                          )}
                         </div>
                       </div>
                     )}

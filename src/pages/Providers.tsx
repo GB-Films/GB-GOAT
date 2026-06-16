@@ -826,7 +826,8 @@ function ProviderDetailModal({ detail, loading, onClose }: { detail: any; loadin
   const provider = detail.provider;
   const inferred = inferLegacyIdentifiers(provider);
   const dni = formatIdentifier(provider.dni || inferred.dniNormalized) || '-';
-  const cuit = formatIdentifier(provider.cuit || inferred.cuitNormalized) || '-';
+  const cuitRaw = normalizeDigits(provider.cuit || inferred.cuitNormalized);
+  const cuit = formatIdentifier(cuitRaw) || '-';
   const cbu = provider.bankAccount_cbu || provider.bankAccount || '-';
   const category = provider.category === 'Otra'
     ? `Otra: ${provider.categoryOther || '-'}`
@@ -875,7 +876,7 @@ function ProviderDetailModal({ detail, loading, onClose }: { detail: any; loadin
                 <button
                   key={item.label}
                   type="button"
-                  onClick={() => copyValue(item.label, item.value)}
+                  onClick={() => copyValue(item.label, item.label === 'CUIT' ? cuitRaw : item.value)}
                   className={`inline-flex items-center gap-2 rounded border px-3 py-2 text-[10px] font-bold transition-colors ${
                     copiedProviderField === item.label
                       ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
@@ -937,7 +938,7 @@ function ProviderDetailModal({ detail, loading, onClose }: { detail: any; loadin
                         {['DNI', 'CUIT / CUIL', 'CBU / Alias'].includes(item.label) && item.value !== '-' && (
                           <button
                             type="button"
-                            onClick={() => copyValue(item.label, item.value)}
+                            onClick={() => copyValue(item.label, item.label === 'CUIT / CUIL' ? cuitRaw : item.value)}
                             className={`shrink-0 rounded border px-2 py-1 text-[9px] font-black uppercase tracking-widest transition-colors ${
                               copiedProviderField === item.label
                                 ? 'border-emerald-200 bg-emerald-50 text-emerald-700'

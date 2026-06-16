@@ -44,7 +44,7 @@ import { buildPaymentCalendarDays, formatDateKey, formatPeriodLabel, getOverdueL
 import { BudgetRowCell } from './project-detail/BudgetRowCell';
 import { PaymentModal } from './project-detail/PaymentModal';
 import type { AreaExpense, BudgetItem, CashMovement, Collaborator, Payment, PaymentCollection } from './project-detail/types';
-import { formatIdentifier, inferLegacyIdentifiers, providerDisplayName } from '../lib/providerConstants';
+import { formatIdentifier, inferLegacyIdentifiers, normalizeDigits, providerDisplayName } from '../lib/providerConstants';
 
 const tabs = [
   { id: 'resumen', label: 'Resumen', icon: Info },
@@ -81,6 +81,12 @@ const DEFAULT_AREA_EXPENSE_SUBCATEGORY = 'Sin subcategoria';
 const AREA_EXPENSE_DRAG_TYPE = 'application/gb-goat-area-expense';
 
 type AreaExpenseSortKey = 'updated' | 'provider' | 'paymentDate' | 'amountDesc' | 'amountAsc' | 'created';
+type ProjectPaymentScheduleLine = PaymentScheduleLine & {
+  collectionName: PaymentCollection;
+  item: any;
+  invoice?: any;
+  providerCuit?: string;
+};
 
 const AREA_EXPENSE_SORT_OPTIONS: Array<{ id: AreaExpenseSortKey; label: string }> = [
   { id: 'updated', label: 'Ultimos cambios' },
@@ -1065,8 +1071,8 @@ export default function ProjectDetail() {
       area: area,
       subcategory: '',
       providerId: '',
-      providerName: 'Nuevo Gasto',
-      description: 'Descripción del gasto...',
+      providerName: '',
+      description: 'Nuevo gasto',
       unit: 'Unidad',
       quantity: 1,
       unitPrice: 0,
@@ -1660,6 +1666,10 @@ export default function ProjectDetail() {
       const paymentToDelete = currentHistory[paymentIndex];
 
       if (!paymentToDelete) throw new Error('Índice de pago no válido.');
+      if (!canEditPaymentRecord(paymentToDelete)) {
+        alert('No tenés permiso para eliminar este pago.');
+        return;
+      }
 
       const updatedHistory = currentHistory.filter((payment: Payment, index: number) => {
         if (paymentToDelete.id) return payment.id !== paymentToDelete.id;
@@ -2091,7 +2101,16 @@ export default function ProjectDetail() {
   const canManagePaymentForItem = (item?: any | null, collectionName?: PaymentCollection) => {
     if (!item || !collectionName) return false;
     if (isProjectAdmin) return true;
-    return canEditArea(item.area);
+    return collectionName === 'areaExpenses' && canEditArea(item.area);
+  };
+  const canEditPaymentRecord = (payment?: Payment | null) => {
+    if (!payment) return false;
+    if (isProjectAdmin) return true;
+    const authorEmail = normalizeEmail(payment.createdByEmail || payment.paidByEmail);
+    const authorRole = String(payment.createdByRole || '').toLowerCase();
+    if (!authorEmail || authorEmail !== currentUserEmail) return false;
+    if (authorRole === 'admin' || authorRole === 'ayudante_admin') return false;
+    return true;
   };
   const canUploadAreaFiles = (area?: string | null) => canEditArea(area);
   const canDeleteOtherReceipt = (receipt?: any | null) => {
@@ -2241,6 +2260,7 @@ export default function ProjectDetail() {
       id: string, 
       area: string,
       name: string, 
+      cuit: string,
       cbu: string, 
       budgeted: number, 
       spent: number, 
@@ -2267,6 +2287,7 @@ export default function ProjectDetail() {
           id: key,
           area,
           name: providerName || (provider ? providerDisplayName(provider) : 'Sin proveedor'),
+          cuit: normalizeDigits(provider?.cuit || provider?.cuitNormalized || ''),
           cbu: provider?.bankAccount_cbu || provider?.bankAccount || '',
           budgeted: 0,
           spent: 0,
@@ -2390,16 +2411,19 @@ export default function ProjectDetail() {
   ), [filteredProviderSaldos]);
 
 
-  const paymentScheduleLines = React.useMemo<PaymentScheduleLine[]>(() => (
+  const paymentScheduleLines = React.useMemo<ProjectPaymentScheduleLine[]>(() => (
     providerSaldos.flatMap((saldo) => (
       saldo.entries.map((entry) => {
         const debt = Math.max(0, Number(entry.total) - Number(entry.paid || 0));
         return {
           id: `${entry.collectionName}-${entry.id}`,
+          collectionName: entry.collectionName,
+          item: entry.item,
           projectId: project?.id,
           projectName: project?.name || 'Proyecto actual',
           area: saldo.area,
           providerName: saldo.name,
+          providerCuit: saldo.cuit,
           cbu: saldo.cbu,
           description: entry.description || 'Movimiento',
           total: Number(entry.total) || 0,
@@ -2407,6 +2431,7 @@ export default function ProjectDetail() {
           debt,
           paymentDate: entry.item?.paymentDate,
           source: entry.collectionName === 'areaExpenses' ? 'Gestion por Areas' : 'Presupuesto Principal',
+          invoice: entry.invoice,
         };
       })
     ))
@@ -2892,6 +2917,48 @@ export default function ProjectDetail() {
     const docRef = await addDoc(collection(db, 'projects', id, 'cashMovements'), payload);
     setCashMovements((current) => [{ id: docRef.id, ...payload, createdAt: new Date(), updatedAt: new Date() } as CashMovement, ...current]);
     event.currentTarget.reset();
+  };
+
+  const editCashDelivery = async (movement: CashMovement) => {
+    if (!id || !isProjectAdmin || movement.type !== 'entrega') return;
+    const amountText = window.prompt('Nuevo monto de la entrega:', String(Number(movement.amount) || 0));
+    if (amountText === null) return;
+    const amount = Number(amountText);
+    if (!amount || amount <= 0) {
+      alert('Ingresá un monto válido.');
+      return;
+    }
+
+    const notesPrompt = window.prompt('Nota de la entrega:', movement.notes || '');
+    const notes = notesPrompt === null ? movement.notes || '' : notesPrompt;
+    const updates = {
+      amount,
+      notes,
+      updatedAt: serverTimestamp(),
+    };
+
+    try {
+      await updateDoc(doc(db, 'projects', id, 'cashMovements', movement.id), updates);
+      setCashMovements((current) => current.map((item) => (
+        item.id === movement.id ? { ...item, amount, notes, updatedAt: new Date() } : item
+      )));
+    } catch (error) {
+      console.error('Error editing cash delivery:', error);
+      alert('No se pudo editar la entrega de caja.');
+    }
+  };
+
+  const deleteCashDelivery = async (movement: CashMovement) => {
+    if (!id || !isProjectAdmin || movement.type !== 'entrega') return;
+    if (!window.confirm('¿Eliminar definitivamente esta entrega de caja?')) return;
+
+    try {
+      await deleteDoc(doc(db, 'projects', id, 'cashMovements', movement.id));
+      setCashMovements((current) => current.filter((item) => item.id !== movement.id));
+    } catch (error) {
+      console.error('Error deleting cash delivery:', error);
+      alert('No se pudo eliminar la entrega de caja.');
+    }
   };
 
   const createCashTransfer = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -4707,8 +4774,28 @@ export default function ProjectDetail() {
                               {movement.description || movement.notes || movement.area || 'Movimiento de caja'} · {formatDate(movement.date || movement.createdAt)}
                             </div>
                           </div>
-                          <div className={cn("text-xs font-black font-mono", signedAmount >= 0 ? "text-emerald-600" : "text-rose-600")}>
-                            {signedAmount >= 0 ? '+' : '-'}${Math.abs(signedAmount).toLocaleString()}
+                          <div className="shrink-0 text-right">
+                            <div className={cn("text-xs font-black font-mono", signedAmount >= 0 ? "text-emerald-600" : "text-rose-600")}>
+                              {signedAmount >= 0 ? '+' : '-'}${Math.abs(signedAmount).toLocaleString()}
+                            </div>
+                            {isProjectAdmin && movement.type === 'entrega' && (
+                              <div className="mt-2 flex justify-end gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => editCashDelivery(movement)}
+                                  className="rounded border border-slate-200 px-2 py-1 text-[8px] font-black uppercase tracking-widest text-slate-500 hover:border-black hover:text-black"
+                                >
+                                  Editar
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => deleteCashDelivery(movement)}
+                                  className="rounded border border-rose-100 px-2 py-1 text-[8px] font-black uppercase tracking-widest text-rose-600 hover:bg-rose-600 hover:text-white"
+                                >
+                                  Borrar
+                                </button>
+                              </div>
+                            )}
                           </div>
                         </div>
                       );
@@ -5118,7 +5205,9 @@ export default function ProjectDetail() {
 
                   <div className="space-y-2 flex-1 min-h-0 overflow-y-auto pr-1">
                     {(selectedPaymentBucket?.lines || []).map((line) => {
+                      const projectLine = line as ProjectPaymentScheduleLine;
                       const isExpanded = expandedPaymentLineId === line.id;
+                      const canPayLine = canManagePaymentForItem(projectLine.item, projectLine.collectionName);
                       return (
                       <div
                         key={line.id}
@@ -5145,33 +5234,67 @@ export default function ProjectDetail() {
                           <div className="text-right text-xs font-black font-mono text-rose-600 whitespace-nowrap">${line.debt.toLocaleString()}</div>
                         </div>
                         {isExpanded && (
-                          <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50 p-2">
-                            <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">CBU / Alias</div>
-                            <div className="mt-1 flex items-center justify-between gap-2">
-                              <span className="min-w-0 truncate font-mono text-[10px] font-bold text-slate-700">
-                                {line.cbu || 'No especificado'}
-                              </span>
-                              <button
-                                type="button"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  if (!line.cbu) return;
-                                  void navigator.clipboard?.writeText(line.cbu);
-                                  setCopiedPaymentLineId(line.id);
-                                  window.setTimeout(() => setCopiedPaymentLineId(null), 1800);
-                                }}
-                                disabled={!line.cbu}
-                                className={cn(
-                                  "shrink-0 rounded border px-2 py-1 text-[9px] font-black uppercase tracking-widest transition-colors",
-                                  copiedPaymentLineId === line.id
-                                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                                    : line.cbu
-                                      ? "border-slate-200 bg-white text-slate-700 hover:border-black"
-                                    : "border-slate-100 bg-white text-slate-300 cursor-not-allowed"
-                                )}
-                              >
-                                {copiedPaymentLineId === line.id ? 'Copiado' : 'Copiar'}
-                              </button>
+                          <div className="mt-3 space-y-2 rounded-lg border border-slate-100 bg-slate-50 p-2">
+                            {[
+                              { label: 'CUIT', value: projectLine.providerCuit || '' },
+                              { label: 'CBU / Alias', value: line.cbu || '' },
+                            ].map((copyItem) => (
+                              <div key={copyItem.label}>
+                                <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">{copyItem.label}</div>
+                                <div className="mt-1 flex items-center justify-between gap-2">
+                                  <span className="min-w-0 truncate font-mono text-[10px] font-bold text-slate-700">
+                                    {copyItem.label === 'CUIT' && copyItem.value ? formatIdentifier(copyItem.value) : copyItem.value || 'No especificado'}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      if (!copyItem.value) return;
+                                      void navigator.clipboard?.writeText(copyItem.value);
+                                      setCopiedPaymentLineId(`${line.id}-${copyItem.label}`);
+                                      window.setTimeout(() => setCopiedPaymentLineId(null), 1800);
+                                    }}
+                                    disabled={!copyItem.value}
+                                    className={cn(
+                                      "shrink-0 rounded border px-2 py-1 text-[9px] font-black uppercase tracking-widest transition-colors",
+                                      copiedPaymentLineId === `${line.id}-${copyItem.label}`
+                                        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                        : copyItem.value
+                                          ? "border-slate-200 bg-white text-slate-700 hover:border-black"
+                                        : "border-slate-100 bg-white text-slate-300 cursor-not-allowed"
+                                    )}
+                                  >
+                                    {copiedPaymentLineId === `${line.id}-${copyItem.label}` ? 'Copiado' : 'Copiar'}
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                            <div className="flex flex-wrap gap-2 pt-1">
+                              {projectLine.invoice?.url && (
+                                <a
+                                  href={projectLine.invoice.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  onClick={(event) => event.stopPropagation()}
+                                  className="inline-flex items-center gap-1 rounded border border-emerald-100 bg-emerald-50 px-2 py-1.5 text-[9px] font-black uppercase tracking-widest text-emerald-700 hover:bg-emerald-600 hover:text-white"
+                                >
+                                  <FileText className="w-3 h-3" />
+                                  Factura
+                                </a>
+                              )}
+                              {canPayLine && (
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    openPaymentModal(projectLine.item, projectLine.collectionName);
+                                  }}
+                                  className="inline-flex items-center gap-1 rounded border border-slate-900 bg-white px-2 py-1.5 text-[9px] font-black uppercase tracking-widest text-slate-900 hover:bg-slate-900 hover:text-white"
+                                >
+                                  <DollarSign className="w-3 h-3" />
+                                  Cargar pago
+                                </button>
+                              )}
                             </div>
                           </div>
                         )}
@@ -5253,6 +5376,19 @@ export default function ProjectDetail() {
                             <div className="mt-0.5 text-[9px] font-mono font-bold text-slate-400">
                               {isProjectAdmin ? saldo.cbu || 'Sin CBU' : 'Cuenta disponible para admins'}
                             </div>
+                            {saldo.cuit && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  void navigator.clipboard?.writeText(saldo.cuit);
+                                  setCopiedPaymentLineId(`saldo-cuit-${saldo.id}`);
+                                  window.setTimeout(() => setCopiedPaymentLineId(null), 1800);
+                                }}
+                                className="mt-1 rounded border border-slate-100 bg-slate-50 px-1.5 py-1 text-[8px] font-black uppercase tracking-widest text-slate-500"
+                              >
+                                {copiedPaymentLineId === `saldo-cuit-${saldo.id}` ? 'CUIT copiado' : `CUIT ${formatIdentifier(saldo.cuit)}`}
+                              </button>
+                            )}
                           </div>
                           <div className="shrink-0 text-right">
                             <div className="text-[8px] font-black uppercase tracking-widest text-slate-300">Debe</div>
@@ -5355,8 +5491,23 @@ export default function ProjectDetail() {
                              <div className="text-xs font-bold text-slate-900 uppercase">{saldo.name}</div>
                            </td>
                            <td className="px-6 py-4">
-                             <div className="text-[10px] font-mono text-slate-500 bg-slate-50 px-2 py-1 rounded inline-block border border-slate-100">
-                               {isProjectAdmin ? saldo.cbu : 'Disponible para admins'}
+                             <div className="space-y-1">
+                               <div className="text-[10px] font-mono text-slate-500 bg-slate-50 px-2 py-1 rounded inline-block border border-slate-100">
+                                 {isProjectAdmin ? saldo.cbu : 'Disponible para admins'}
+                               </div>
+                               {saldo.cuit && (
+                                 <button
+                                   type="button"
+                                   onClick={() => {
+                                     void navigator.clipboard?.writeText(saldo.cuit);
+                                     setCopiedPaymentLineId(`saldo-cuit-${saldo.id}`);
+                                     window.setTimeout(() => setCopiedPaymentLineId(null), 1800);
+                                   }}
+                                   className="block rounded border border-slate-100 bg-white px-2 py-1 text-[9px] font-black uppercase tracking-widest text-slate-500 hover:border-black hover:text-black"
+                                 >
+                                   {copiedPaymentLineId === `saldo-cuit-${saldo.id}` ? 'CUIT copiado' : `CUIT ${formatIdentifier(saldo.cuit)}`}
+                                 </button>
+                               )}
                              </div>
                            </td>
                            <td className="px-6 py-4 text-right text-xs font-medium text-slate-400">
@@ -6269,7 +6420,11 @@ export default function ProjectDetail() {
           cashOwnerName={currentUserName}
           paymentType={paymentType}
           isDeletingPayment={isDeletingPayment}
-          canEditExistingPayments={isProjectAdmin}
+          canEditExistingPayments={isProjectAdmin || isProductionLead}
+          currentUserEmail={currentUserEmail}
+          currentUserName={currentUserName}
+          currentUserRole={currentProjectRole}
+          canEditPaymentRecord={(payment) => canEditPaymentRecord(payment)}
           onClose={() => setPaymentModalOpen(false)}
           onPaymentStateChange={updatePaymentState}
           onDeletePayment={deletePaymentFromSelectedItem}

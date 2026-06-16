@@ -4,6 +4,7 @@ import { cn } from '../../lib/utils';
 import {
   formatIdentifier,
   inferLegacyIdentifiers,
+  normalizeDigits,
   normalizeProviderText,
   providerDisplayName,
   providerMatchesSearch,
@@ -91,7 +92,8 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
     return searchMatches.length === 1 ? searchMatches[0] : null;
   })();
   const providerIdentifiers = inferLegacyIdentifiers(provider);
-  const providerCuit = formatIdentifier(provider?.cuit || providerIdentifiers.cuitNormalized) || '';
+  const providerCuitRaw = normalizeDigits(provider?.cuit || providerIdentifiers.cuitNormalized);
+  const providerCuit = formatIdentifier(providerCuitRaw) || '';
   const providerCbu = provider?.bankAccount_cbu || provider?.bankAccount || '';
   const canShowProviderInfo = Boolean(canCopyProviderInfo && provider && (providerCuit || providerCbu));
 
@@ -160,7 +162,7 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
           ) : (
             <button 
               onClick={() => setIsEditingProvider(true)}
-              className="text-slate-300 hover:text-black font-bold uppercase text-[9px] tracking-widest flex items-center gap-1"
+              className="text-red-500 hover:text-red-700 font-bold uppercase text-[9px] tracking-widest flex items-center gap-1"
             >
               <Plus className="w-3 h-3" /> Asignar Staff
             </button>
@@ -175,7 +177,7 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
           >
             <div className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Datos del proveedor</div>
             {[
-              { label: 'Copiar CUIT', value: providerCuit },
+              { label: 'Copiar CUIT', value: providerCuit, copyValue: providerCuitRaw || providerCuit },
               { label: 'Copiar CBU', value: providerCbu },
             ].filter((entry) => entry.value).map((entry) => (
               <div key={entry.label} className="flex items-center justify-between gap-2 py-1.5 border-t border-slate-50 first:border-0">
@@ -185,7 +187,7 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
                 </div>
                 <button
                   type="button"
-                  onClick={() => copyProviderValue(entry.label, entry.value)}
+                  onClick={() => copyProviderValue(entry.label, entry.copyValue || entry.value)}
                   className={cn(
                     "shrink-0 inline-flex items-center gap-1 rounded border px-2 py-1.5 text-[9px] font-black uppercase tracking-widest transition-colors",
                     copiedProviderField === entry.label

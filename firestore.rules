@@ -191,6 +191,22 @@ service cloud.firestore {
         );
     }
 
+    function canUpdateCashMovement(projectId) {
+      return isProjectAdmin(projectId)
+        || (
+          resource.data.type == 'pago'
+          && request.resource.data.type == resource.data.type
+          && resource.data.fromUserEmail == userEmail()
+          && request.resource.data.fromUserEmail == resource.data.fromUserEmail
+          && request.resource.data.collectionName == resource.data.collectionName
+          && request.resource.data.itemId == resource.data.itemId
+          && request.resource.data.paymentId == resource.data.paymentId
+          && request.resource.data.area == resource.data.area
+          && canWriteArea(projectId, resource.data.area)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['amount', 'date', 'notes', 'updatedAt'])
+        );
+    }
+
     function inviteIsPending(token) {
       return token is string
         && exists(/databases/$(database)/documents/providerInvites/$(token))
@@ -379,7 +395,7 @@ service cloud.firestore {
       match /cashMovements/{movementId} {
         allow read: if hasProjectAccess(projectId);
         allow create: if canCreateCashMovement(projectId);
-        allow update: if isProjectAdmin(projectId);
+        allow update: if canUpdateCashMovement(projectId);
         allow delete: if canDeleteCashMovement(projectId);
       }
     }
