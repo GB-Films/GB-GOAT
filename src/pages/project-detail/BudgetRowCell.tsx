@@ -146,25 +146,29 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
             </button>
             {!disabled && (
               <button 
+                type="button"
                 onClick={() => {
                   setShowProviderInfo(false);
                   setIsEditingProvider(true);
                 }}
-                className="opacity-0 group-hover/provider:opacity-100 p-1 text-slate-300 hover:text-black transition-all"
+                className="shrink-0 rounded border border-red-100 bg-red-50 p-1 text-red-600 hover:border-red-200 hover:bg-red-100 hover:text-red-700 transition-all"
+                title="Modificar proveedor"
               >
-                <Plus className="w-2.5 h-2.5" />
+                <Plus className="w-3 h-3" />
               </button>
             )}
           </div>
         ) : (
           disabled ? (
-            <span className="text-slate-300 font-bold uppercase text-[9px] tracking-widest">Sin staff</span>
+            <span className="text-slate-300 font-bold uppercase text-[9px] tracking-widest">Sin proveedor</span>
           ) : (
             <button 
+              type="button"
               onClick={() => setIsEditingProvider(true)}
               className="text-red-500 hover:text-red-700 font-bold uppercase text-[9px] tracking-widest flex items-center gap-1"
+              title="Asignar proveedor"
             >
-              <Plus className="w-3 h-3" /> Asignar Staff
+              <Plus className="w-3 h-3" /> Asignar Proveedor
             </button>
           )
         )}

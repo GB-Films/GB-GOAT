@@ -592,6 +592,8 @@ export function PaymentModal({
               <div className="space-y-2 max-h-48 overflow-y-auto pr-2 custom-scrollbar">
                 {(paymentHistory as Payment[]).map((payment, idx) => {
                   const paymentAuthor = payment.createdByName || payment.paidByName || payment.createdByEmail || payment.paidByEmail || '';
+                  const cashOwner = payment.paidByName || payment.paidByEmail || payment.createdByName || payment.createdByEmail || '';
+                  const wasPaidWithCashBox = payment.method === 'caja_efectivo';
                   return (
                   <div key={payment.id || idx} className="p-3 bg-slate-50 rounded-lg border border-slate-100">
                     {editingPaymentIndex === idx ? (
@@ -651,6 +653,14 @@ export function PaymentModal({
                           <div className="mt-1 text-[8px] font-black uppercase tracking-widest text-slate-300">
                             {paymentAuthor ? `Cargado por ${paymentAuthor}` : 'Cargado por usuario no registrado'}
                           </div>
+                          {wasPaidWithCashBox && (
+                            <div className="mt-2 inline-flex max-w-full items-center gap-1 rounded border border-amber-200 bg-amber-50 px-2 py-1 text-[8px] font-black uppercase tracking-widest text-amber-700">
+                              <Wallet className="h-3 w-3 shrink-0" />
+                              <span className="truncate">
+                                Caja de {cashOwner || 'responsable sin identificar'}
+                              </span>
+                            </div>
+                          )}
                           {payment.receipt?.url && (
                             <a
                               href={payment.receipt.url}
