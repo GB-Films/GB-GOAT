@@ -75,6 +75,7 @@ export interface CashMovement {
   toUserEmail?: string;
   toUserName?: string;
   area?: string;
+  subcategory?: string;
   collectionName?: PaymentCollection;
   itemId?: string;
   paymentId?: string;
@@ -94,6 +95,7 @@ export interface Collaborator {
   role: 'admin' | 'jefe_produccion' | 'jefe_area';
   allowedTabs: string[];
   allowedCategories: string[];
+  allowedSubcategories?: string[];
   canEditBudgetAreas?: boolean;
   canViewBudgetTotals?: boolean;
   createdAt?: any;

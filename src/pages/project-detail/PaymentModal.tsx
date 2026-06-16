@@ -428,6 +428,7 @@ export function PaymentModal({
                     fromUserEmail: cashOwnerEmail || '',
                     fromUserName: cashOwnerName || '',
                     area: item.area || '',
+                    subcategory: item.subcategory || '',
                     collectionName,
                     itemId: currentItemId,
                     paymentId,

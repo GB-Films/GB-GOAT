@@ -248,6 +248,8 @@ const cleanAreaExpenseSubcategory = (value: any) => {
   const normalized = normalizeAreaExpenseSubcategory(value);
   return normalized === DEFAULT_AREA_EXPENSE_SUBCATEGORY ? '' : normalized;
 };
+const areaSubcategoryKey = (area: any, subcategory: any) => `${String(area || '').trim()}||${cleanAreaExpenseSubcategory(subcategory)}`;
+const areaFromSubcategoryKey = (key: string) => key.split('||')[0] || '';
 
 const sortAreaExpenses = (expenses: AreaExpense[], sortKey: AreaExpenseSortKey) => {
   return [...expenses].sort((a, b) => {
@@ -692,6 +694,7 @@ export default function ProjectDetail() {
               role,
               allowedTabs: normalizeAllowedTabs(rawPerms.allowedTabs, role),
               allowedCategories: safeArray(rawPerms.allowedCategories),
+              allowedSubcategories: safeArray(rawPerms.allowedSubcategories),
               canEditBudgetAreas: rawPerms.canEditBudgetAreas ?? true,
               canViewBudgetTotals: rawPerms.canViewBudgetTotals ?? role === 'admin',
             };
@@ -744,6 +747,7 @@ export default function ProjectDetail() {
               role,
               allowedTabs: normalizeAllowedTabs(data.allowedTabs, role),
               allowedCategories: safeArray(data.allowedCategories),
+              allowedSubcategories: safeArray(data.allowedSubcategories),
               canEditBudgetAreas: data.canEditBudgetAreas ?? true,
               canViewBudgetTotals: data.canViewBudgetTotals ?? role === 'admin',
             } as Collaborator;
@@ -1051,8 +1055,9 @@ export default function ProjectDetail() {
     return confirm(`${message}\n\nComo administrador, ¿querés guardarlo igual?`);
   };
 
-  const addAreaExpense = async (area: string) => {
-    if (!id || !canEditArea(area)) return;
+  const addAreaExpense = async (area: string, subcategory = '') => {
+    const cleanSubcategory = cleanAreaExpenseSubcategory(subcategory);
+    if (!id || !canEditAreaSubcategory(area, cleanSubcategory)) return;
     const assigned = getAreaBudget(area);
     const spent = getAreaSpent(area);
 
@@ -1069,7 +1074,7 @@ export default function ProjectDetail() {
     const newItem = {
       projectId: id,
       area: area,
-      subcategory: '',
+      subcategory: cleanSubcategory,
       providerId: '',
       providerName: '',
       description: '',
@@ -1095,7 +1100,8 @@ export default function ProjectDetail() {
       if (!currentExpense) return;
 
       const nextArea = updates.area || currentExpense.area;
-      if (!canEditArea(currentExpense.area) || !canEditArea(nextArea)) return;
+      const nextSubcategory = updates.subcategory !== undefined ? updates.subcategory : currentExpense.subcategory;
+      if (!canEditAreaExpense(currentExpense) || !canEditAreaSubcategory(nextArea, nextSubcategory)) return;
       const nextTotal = updates.total !== undefined ? Number(updates.total) : Number(currentExpense.total) || 0;
 
       if (!canSaveAreaExpense(nextArea, nextTotal, expenseId)) return;
@@ -1174,7 +1180,7 @@ export default function ProjectDetail() {
   };
 
   const startAreaExpenseDrag = (event: React.DragEvent<HTMLDivElement>, expense: AreaExpense) => {
-    if (!canEditArea(expense.area)) return;
+    if (!canEditAreaExpense(expense)) return;
     setDraggedAreaExpenseId(expense.id);
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData(AREA_EXPENSE_DRAG_TYPE, expense.id);
@@ -1188,7 +1194,7 @@ export default function ProjectDetail() {
     if (!expenseId) return;
 
     const expense = areaExpenses.find((item) => item.id === expenseId);
-    if (!expense || !canEditArea(expense.area) || !canEditArea(area)) return;
+    if (!expense || !canEditAreaExpense(expense) || !canEditAreaSubcategory(area, subcategory)) return;
     await moveAreaExpense(expense, area, subcategory);
   };
 
@@ -1242,7 +1248,7 @@ export default function ProjectDetail() {
     const currentExpense = areaExpenses.find(e => e.id === expenseId);
     const itemLabel = currentExpense?.description || currentExpense?.providerName || 'este gasto';
     const itemTotal = Number(currentExpense?.total) || 0;
-    if (!id || !currentExpense || !canEditArea(currentExpense.area)) return;
+    if (!id || !currentExpense || !canEditAreaExpense(currentExpense)) return;
     if (!confirm(`¿Eliminar "${itemLabel}" de Gestión por Áreas?\n\nÁrea: ${currentExpense.area || 'Sin área'}\nTotal: $${itemTotal.toLocaleString()}\nEsta acción no se puede deshacer.`)) return;
     try {
       await deleteDoc(doc(db, 'projects', id, 'areaExpenses', expenseId));
@@ -1253,7 +1259,7 @@ export default function ProjectDetail() {
   };
 
   const uploadInvoiceForExpense = async (expense: any, file?: File | null) => {
-    if (!id || !file || !canUploadAreaFiles(expense.area)) return;
+    if (!id || !file || !canUploadAreaFiles(expense.area, expense.subcategory)) return;
 
     if (expense.invoice?.url) {
       alert('Para cambiar la factura, primero elimina la factura actual y luego carga otra.');
@@ -1326,7 +1332,7 @@ export default function ProjectDetail() {
   };
 
   const removeInvoiceFromExpense = async (expense: any) => {
-    if (!id || !expense.invoice || !canUploadAreaFiles(expense.area)) return;
+    if (!id || !expense.invoice || !canUploadAreaFiles(expense.area, expense.subcategory)) return;
     if (!confirm('¿Quitar la factura adjunta de este gasto?')) return;
 
     setUploadingInvoices(prev => ({ ...prev, [expense.id]: true }));
@@ -1355,7 +1361,7 @@ export default function ProjectDetail() {
   };
 
   const createInvoiceUploadLink = async (expense: any) => {
-    if (!id || !canUploadAreaFiles(expense.area)) return;
+    if (!id || !canUploadAreaFiles(expense.area, expense.subcategory)) return;
     if (!expense.providerId || !expense.providerName) {
       alert('Asigná un proveedor a la fila antes de generar el link de factura.');
       return;
@@ -1397,7 +1403,7 @@ export default function ProjectDetail() {
   };
 
   const uploadOtherReceiptForExpense = async (expense: any, file?: File | null) => {
-    if (!id || !file || !canUploadAreaFiles(expense.area)) return;
+    if (!id || !file || !canUploadAreaFiles(expense.area, expense.subcategory)) return;
 
     const fileError = validateProjectDocumentFile(file);
     if (fileError) {
@@ -1929,6 +1935,7 @@ export default function ProjectDetail() {
       for (const col of collaboratorsToUpdate) {
         await updateDoc(doc(db, 'projects', id, 'collaborators', normalizeEmail(col.email)), {
           allowedCategories: safeArray(col.allowedCategories).filter(cat => cat !== area),
+          allowedSubcategories: safeArray(col.allowedSubcategories).filter(key => areaFromSubcategoryKey(key) !== area),
           updatedAt: serverTimestamp(),
         });
       }
@@ -1940,6 +1947,7 @@ export default function ProjectDetail() {
       setCollaborators(prev => prev.map(col => ({
         ...col,
         allowedCategories: safeArray(col.allowedCategories).filter(cat => cat !== area),
+        allowedSubcategories: safeArray(col.allowedSubcategories).filter(key => areaFromSubcategoryKey(key) !== area),
       })));
     } catch (e) {
       console.error("Error deleting category:", e);
@@ -1960,10 +1968,27 @@ export default function ProjectDetail() {
     }
   }, [activeTab, loading, visibleTabs]);
 
+  const userAllowedSubcategories = safeArray(userPermissions?.allowedSubcategories);
+  const canSeeAssignedSubcategoryInArea = (area?: string | null) => (
+    Boolean(area)
+    && userAllowedSubcategories.some((key) => areaFromSubcategoryKey(key) === area)
+    && safeArray(userPermissions?.allowedTabs).includes('areas')
+  );
+  const canSeeFullArea = (area?: string | null) => (
+    Boolean(area)
+    && (isProjectAdmin || safeArray(userPermissions?.allowedCategories).includes(area || ''))
+  );
+  const canSeeAreaSubcategory = (area?: string | null, subcategory?: string | null) => {
+    if (!area) return false;
+    if (canSeeFullArea(area)) return true;
+    const normalizedSubcategory = cleanAreaExpenseSubcategory(subcategory);
+    return Boolean(normalizedSubcategory && userAllowedSubcategories.includes(areaSubcategoryKey(area, normalizedSubcategory)));
+  };
+
   const visibleCategories = categories.filter(cat => {
     if (activeTab === 'areas') {
        // In areas tab, we only show active ones or what user is allowed
-       return activeAreas.includes(cat) && (isProjectAdmin || safeArray(userPermissions?.allowedCategories).includes(cat));
+       return activeAreas.includes(cat) && (isProjectAdmin || safeArray(userPermissions?.allowedCategories).includes(cat) || canSeeAssignedSubcategoryInArea(cat));
     }
     if (isProjectAdmin) return true;
     return safeArray(userPermissions?.allowedCategories).includes(cat);
@@ -2006,6 +2031,7 @@ export default function ProjectDetail() {
 
   const areaDashboardRows = React.useMemo(() => (
     visibleCategories.map((area) => {
+      const hasFullAreaAccess = canSeeFullArea(area);
       const searchTerm = normalizeText(areaExpenseSearch);
       const matchesAreaExpenseSearch = (item: AreaExpense) => {
         if (!searchTerm) return true;
@@ -2024,14 +2050,17 @@ export default function ProjectDetail() {
         .reduce((acc, item) => acc + (Number(item.total) || 0), 0);
       const allExpenses = areaExpenses
         .filter((item) => item.area === area)
+        .filter((item) => hasFullAreaAccess || canSeeAreaSubcategory(item.area, item.subcategory))
         .sort((a, b) => getDateTimestamp(b.updatedAt || b.createdAt) - getDateTimestamp(a.updatedAt || a.createdAt));
       const expenses = allExpenses.filter(matchesAreaExpenseSearch);
       const spent = expenses.reduce((acc, item) => acc + (Number(item.total) || 0), 0);
-      const balance = assigned - spent;
-      const usedPercent = assigned > 0 ? Math.min(100, (spent / assigned) * 100) : 0;
-      const knownSubcategories = areaExpenseSubcategoriesByArea[area] || [];
+      const visibleAssigned = hasFullAreaAccess ? assigned : 0;
+      const balance = visibleAssigned - spent;
+      const usedPercent = visibleAssigned > 0 ? Math.min(100, (spent / visibleAssigned) * 100) : 0;
+      const knownSubcategories = (areaExpenseSubcategoriesByArea[area] || [])
+        .filter((subcategory) => hasFullAreaAccess || canSeeAreaSubcategory(area, subcategory));
       const unassignedExpenses = sortAreaExpenses(
-        expenses.filter((expense) => !hasAreaExpenseSubcategory(expense.subcategory)),
+        hasFullAreaAccess ? expenses.filter((expense) => !hasAreaExpenseSubcategory(expense.subcategory)) : [],
         areaExpenseSort
       );
       const namedSubcategoryGroups = knownSubcategories
@@ -2059,9 +2088,9 @@ export default function ProjectDetail() {
         ...namedSubcategoryGroups,
       ];
 
-      return { area, assigned, expenses, subcategoryGroups, spent, balance, usedPercent, hasSubcategories: knownSubcategories.length > 0 };
+      return { area, assigned: visibleAssigned, expenses, subcategoryGroups, spent, balance, usedPercent, hasSubcategories: knownSubcategories.length > 0 };
     })
-  ), [areaExpenseSearch, areaExpenseSort, areaExpenseSubcategoriesByArea, areaExpenses, budgetItems, visibleCategoryKey]);
+  ), [areaExpenseSearch, areaExpenseSort, areaExpenseSubcategoriesByArea, areaExpenses, budgetItems, isProjectAdmin, userAllowedSubcategories, userPermissions, visibleCategoryKey]);
 
   const selectedAreaDashboardRows = areaDashboardRows.filter((row) => selectedVisibleAreas.includes(row.area));
   const areaDashboardTotals = selectedAreaDashboardRows.reduce((acc, row) => ({
@@ -2093,15 +2122,27 @@ export default function ProjectDetail() {
       && safeArray(userPermissions.allowedTabs).includes('areas')
     );
   };
+  const canEditAreaSubcategory = (area?: string | null, subcategory?: string | null) => {
+    if (canEditArea(area)) return true;
+    const normalizedSubcategory = cleanAreaExpenseSubcategory(subcategory);
+    return Boolean(
+      area
+      && normalizedSubcategory
+      && userPermissions?.canEditBudgetAreas
+      && safeArray(userPermissions.allowedTabs).includes('areas')
+      && safeArray(userPermissions.allowedSubcategories).includes(areaSubcategoryKey(area, normalizedSubcategory))
+    );
+  };
+  const canEditAreaExpense = (expense?: any | null) => canEditAreaSubcategory(expense?.area, expense?.subcategory);
   const canEditPaymentDateForItem = (item?: any | null, collectionName?: PaymentCollection) => {
     if (!item || !collectionName) return false;
     if (collectionName === 'budgetItems' && activeAreas.includes(item.area)) return false;
-    return isProjectAdmin || canEditArea(item.area);
+    return isProjectAdmin || canEditAreaSubcategory(item.area, item.subcategory);
   };
   const canManagePaymentForItem = (item?: any | null, collectionName?: PaymentCollection) => {
     if (!item || !collectionName) return false;
     if (isProjectAdmin) return true;
-    return collectionName === 'areaExpenses' && canEditArea(item.area);
+    return collectionName === 'areaExpenses' && canEditAreaSubcategory(item.area, item.subcategory);
   };
   const canEditPaymentRecord = (payment?: Payment | null) => {
     if (!payment) return false;
@@ -2112,7 +2153,7 @@ export default function ProjectDetail() {
     if (authorRole === 'admin' || authorRole === 'ayudante_admin') return false;
     return true;
   };
-  const canUploadAreaFiles = (area?: string | null) => canEditArea(area);
+  const canUploadAreaFiles = (area?: string | null, subcategory?: string | null) => canEditAreaSubcategory(area, subcategory);
   const canDeleteOtherReceipt = (receipt?: any | null) => {
     if (!receipt) return false;
     if (isProjectAdmin) return true;
@@ -2135,6 +2176,27 @@ export default function ProjectDetail() {
       return [candidate.displayName, candidate.email].filter(Boolean).join(' ').toLowerCase().includes(term);
     })
     .slice(0, 8);
+
+  const assignableSubcategoryOptions = React.useMemo(() => {
+    const stored = project?.areaExpenseSubcategories && typeof project.areaExpenseSubcategories === 'object'
+      ? project.areaExpenseSubcategories
+      : {};
+    const allowedParentAreas = isProjectAdmin ? categories : safeArray(userPermissions?.allowedCategories);
+
+    const options = activeAreas.flatMap((area) => (
+      (Array.isArray(stored[area]) ? stored[area] : [])
+        .map(cleanAreaExpenseSubcategory)
+        .filter(Boolean)
+        .map((subcategory) => ({
+          key: areaSubcategoryKey(area, subcategory),
+          area,
+          subcategory,
+        }))
+    ));
+    return Array.from(new Map(options.map((item) => [item.key, item])).values())
+      .filter((item: any) => allowedParentAreas.includes(item.area))
+      .sort((a: any, b: any) => `${a.area} ${a.subcategory}`.localeCompare(`${b.area} ${b.subcategory}`, 'es'));
+  }, [activeAreas, categories, isProjectAdmin, project?.areaExpenseSubcategories, userPermissions]);
 
   const filteredSourceProjects = React.useMemo(() => {
     const term = copyBudgetSearch.trim().toLowerCase();
@@ -3087,10 +3149,13 @@ export default function ProjectDetail() {
     if (!isProjectAdmin) {
       if (col.role !== 'jefe_area') return;
       const updateKeys = Object.keys(updates);
-      if (updateKeys.some((key) => key !== 'allowedCategories')) return;
+      if (updateKeys.some((key) => key !== 'allowedCategories' && key !== 'allowedSubcategories')) return;
       const nextCategories = safeArray(updates.allowedCategories);
       const ownCategories = safeArray(userPermissions?.allowedCategories);
-      if (nextCategories.some((category) => !ownCategories.includes(category))) return;
+      if (updates.allowedCategories && nextCategories.some((category) => !ownCategories.includes(category))) return;
+      const nextSubcategories = safeArray(updates.allowedSubcategories);
+      const assignableKeys = assignableSubcategoryOptions.map((item) => item.key);
+      if (updates.allowedSubcategories && nextSubcategories.some((key) => !assignableKeys.includes(key))) return;
     }
 
     try {
@@ -4131,21 +4196,33 @@ export default function ProjectDetail() {
                       return (
                         <div key={`mobile-${subcategoryKey}`} className="bg-white">
                           {subcategoryGroup.subcategory && (
-                            <button
-                              type="button"
-                              onClick={() => setCollapsedAreaSubcategories((current) => ({
-                                ...current,
-                                [subcategoryKey]: !current[subcategoryKey],
-                              }))}
-                              className="flex w-full items-center justify-between gap-2 bg-slate-50 px-3 py-2 text-left"
-                            >
-                              <span className="truncate text-[9px] font-black uppercase tracking-widest text-slate-700">
-                                {subcategoryGroup.subcategory}
-                              </span>
-                              <span className="shrink-0 font-mono text-[10px] font-black text-slate-700">
-                                ${subcategoryGroup.subtotal.toLocaleString()}
-                              </span>
-                            </button>
+                            <div className="flex items-center gap-1 bg-slate-50 px-3 py-2">
+                              <button
+                                type="button"
+                                onClick={() => setCollapsedAreaSubcategories((current) => ({
+                                  ...current,
+                                  [subcategoryKey]: !current[subcategoryKey],
+                                }))}
+                                className="flex min-w-0 flex-1 items-center justify-between gap-2 text-left"
+                              >
+                                <span className="truncate text-[9px] font-black uppercase tracking-widest text-slate-700">
+                                  {subcategoryGroup.subcategory}
+                                </span>
+                                <span className="shrink-0 font-mono text-[10px] font-black text-slate-700">
+                                  ${subcategoryGroup.subtotal.toLocaleString()}
+                                </span>
+                              </button>
+                              {canEditAreaSubcategory(areaRow.area, subcategoryGroup.subcategory) && (
+                                <button
+                                  type="button"
+                                  onClick={() => addAreaExpense(areaRow.area, subcategoryGroup.subcategory)}
+                                  className="rounded border border-red-100 bg-red-50 p-1 text-red-600"
+                                  title="Agregar gasto"
+                                >
+                                  <Plus className="h-3.5 w-3.5" />
+                                </button>
+                              )}
+                            </div>
                           )}
 
                           {(!subcategoryGroup.subcategory || !isSubcategoryCollapsed) && (
@@ -4161,14 +4238,14 @@ export default function ProjectDetail() {
                                         onDelete={deleteAreaExpense}
                                         type="provider"
                                         canCopyProviderInfo
-                                        disabled={!canEditArea(item.area)}
+                                        disabled={!canEditAreaExpense(item)}
                                       />
                                       <div className="mt-0.5">
                                         <BudgetRowCell
                                           item={item}
                                           onUpdate={updateAreaExpense}
                                           type="description"
-                                          disabled={!canEditArea(item.area)}
+                                          disabled={!canEditAreaExpense(item)}
                                         />
                                       </div>
                                     </div>
@@ -4216,7 +4293,7 @@ export default function ProjectDetail() {
                                           <FileText className="h-3 w-3" />
                                           Factura
                                         </a>
-                                        {canUploadAreaFiles(item.area) && (
+                                        {canUploadAreaFiles(item.area, item.subcategory) && (
                                           <button
                                             type="button"
                                             disabled={!!uploadingInvoices[item.id]}
@@ -4229,7 +4306,7 @@ export default function ProjectDetail() {
                                         )}
                                       </>
                                     ) : (
-                                      canUploadAreaFiles(item.area) ? (
+                                      canUploadAreaFiles(item.area, item.subcategory) ? (
                                         <>
                                           <label className="inline-flex h-7 items-center gap-1 rounded border border-slate-200 bg-white px-1.5 text-[8px] font-black uppercase tracking-widest text-slate-700">
                                             <Paperclip className="h-3 w-3" />
@@ -4261,7 +4338,7 @@ export default function ProjectDetail() {
                                       )
                                     )}
 
-                                    {canUploadAreaFiles(item.area) && (
+                                    {canUploadAreaFiles(item.area, item.subcategory) && (
                                       <label className="inline-flex h-7 items-center gap-1 rounded border border-slate-200 bg-white px-1.5 text-[8px] font-black uppercase tracking-widest text-slate-600">
                                         <Plus className="h-3 w-3" />
                                         Comp.
@@ -4287,14 +4364,14 @@ export default function ProjectDetail() {
 
                                     <button
                                       type="button"
-                                      disabled={!canEditArea(item.area)}
+                                      disabled={!canEditAreaExpense(item)}
                                       onClick={() => openPaymentModal(item, 'areaExpenses')}
                                       className="ml-auto inline-flex h-7 items-center gap-1 rounded border border-slate-900 bg-slate-900 px-1.5 text-[8px] font-black uppercase tracking-widest text-white disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-300"
                                     >
                                       <Wallet className="h-3 w-3" />
                                       Pago
                                     </button>
-                                    {canEditArea(item.area) && (
+                                    {canEditAreaExpense(item) && (
                                       <button
                                         type="button"
                                         onClick={() => deleteAreaExpense(item.id)}
@@ -4381,6 +4458,16 @@ export default function ProjectDetail() {
                               <div className="text-[10px] font-black font-mono text-slate-700">
                                 ${subcategoryGroup.subtotal.toLocaleString()}
                               </div>
+                              {canEditAreaSubcategory(areaRow.area, subcategoryGroup.subcategory) && (
+                                <button
+                                  type="button"
+                                  onClick={() => addAreaExpense(areaRow.area, subcategoryGroup.subcategory)}
+                                  className="rounded border border-red-100 bg-red-50 p-1 text-red-600 hover:bg-red-100 hover:text-red-700"
+                                  title="Agregar gasto en esta subcategoria"
+                                >
+                                  <Plus className="w-3.5 h-3.5" />
+                                </button>
+                              )}
                             </div>
                             )}
                             {(!subcategoryGroup.subcategory || !isSubcategoryCollapsed) && (
@@ -4388,7 +4475,7 @@ export default function ProjectDetail() {
                       {subcategoryGroup.expenses.map((item) => (
                           <div
                             key={item.id}
-                            draggable={canEditArea(item.area)}
+                            draggable={canEditAreaExpense(item)}
                             onDragStart={(event) => startAreaExpenseDrag(event, item)}
                             onDragEnd={() => {
                               setDraggedAreaExpenseId(null);
@@ -4397,13 +4484,13 @@ export default function ProjectDetail() {
                             onDragEnter={(event) => {
                               if (isAreaExpenseDrag(event)) return;
                               event.preventDefault();
-                              if (canUploadAreaFiles(item.area)) setDragOverExpenseId(item.id);
+                              if (canUploadAreaFiles(item.area, item.subcategory)) setDragOverExpenseId(item.id);
                             }}
                             onDragOver={(event) => {
                               if (isAreaExpenseDrag(event)) return;
                               event.preventDefault();
-                              event.dataTransfer.dropEffect = canUploadAreaFiles(item.area) ? 'copy' : 'none';
-                              if (canUploadAreaFiles(item.area)) setDragOverExpenseId(item.id);
+                              event.dataTransfer.dropEffect = canUploadAreaFiles(item.area, item.subcategory) ? 'copy' : 'none';
+                              if (canUploadAreaFiles(item.area, item.subcategory)) setDragOverExpenseId(item.id);
                             }}
                             onDragLeave={(event) => {
                               if (!event.currentTarget.contains(event.relatedTarget as Node)) {
@@ -4412,7 +4499,7 @@ export default function ProjectDetail() {
                             }}
                             onDrop={(event) => {
                               if (isAreaExpenseDrag(event)) return;
-                              canUploadAreaFiles(item.area) && handleInvoiceDrop(event, item);
+                              canUploadAreaFiles(item.area, item.subcategory) && handleInvoiceDrop(event, item);
                             }}
                             className={cn(
                               "relative grid grid-cols-[minmax(160px,1.45fr)_minmax(180px,1.6fr)_78px_100px_76px_92px_96px_104px_150px_78px] px-6 py-3 items-center gap-2 transition-colors group",
@@ -4433,7 +4520,7 @@ export default function ProjectDetail() {
                             )}
                             <div>
                               <div className="flex items-start gap-2">
-                                {canEditArea(item.area) && (
+                                {canEditAreaExpense(item) && (
                                   <div className="pt-1 text-slate-300 group-hover:text-slate-500 cursor-grab active:cursor-grabbing" title="Arrastrar gasto">
                                     <GripVertical className="w-3.5 h-3.5" />
                                   </div>
@@ -4445,7 +4532,7 @@ export default function ProjectDetail() {
                                   onDelete={deleteAreaExpense}
                                   type="provider"
                                   canCopyProviderInfo
-                                  disabled={!canEditArea(item.area)}
+                                  disabled={!canEditAreaExpense(item)}
                                 />
                               </div>
                             </div>
@@ -4454,7 +4541,7 @@ export default function ProjectDetail() {
                                 item={item} 
                                 onUpdate={updateAreaExpense} 
                                 type="description"
-                                disabled={!canEditArea(item.area)}
+                                disabled={!canEditAreaExpense(item)}
                               />
                             </div>
                             <div className="flex justify-center">
@@ -4470,7 +4557,7 @@ export default function ProjectDetail() {
                                     >
                                       <FileText className="w-3.5 h-3.5" />
                                     </a>
-                                    {canUploadAreaFiles(item.area) && (
+                                    {canUploadAreaFiles(item.area, item.subcategory) && (
                                       <button
                                         type="button"
                                         disabled={!!uploadingInvoices[item.id]}
@@ -4483,7 +4570,7 @@ export default function ProjectDetail() {
                                     )}
                                   </>
                                 ) : (
-                                  canUploadAreaFiles(item.area) ? (
+                                  canUploadAreaFiles(item.area, item.subcategory) ? (
                                     <>
                                       <label
                                         className={cn(
@@ -4528,7 +4615,7 @@ export default function ProjectDetail() {
                                 item={item} 
                                 onUpdate={updateAreaExpense} 
                                 type="price"
-                                disabled={!canEditArea(item.area)}
+                                disabled={!canEditAreaExpense(item)}
                               />
                             </div>
                             <div>
@@ -4536,7 +4623,7 @@ export default function ProjectDetail() {
                                 item={item} 
                                 onUpdate={updateAreaExpense} 
                                 type="quantity"
-                                disabled={!canEditArea(item.area)}
+                                disabled={!canEditAreaExpense(item)}
                               />
                             </div>
                             <div className="text-right font-bold text-slate-900 text-xs">
@@ -4574,7 +4661,7 @@ export default function ProjectDetail() {
                                     )}
                                   </div>
                                 ))}
-                                {canUploadAreaFiles(item.area) && (
+                                {canUploadAreaFiles(item.area, item.subcategory) && (
                                   <label
                                     className={cn(
                                       "w-7 h-7 rounded border transition-all flex items-center justify-center cursor-pointer",
@@ -4606,9 +4693,9 @@ export default function ProjectDetail() {
                                  onUpdate={updateAreaExpense} 
                                  type="paid"
                                  onManagePayment={(item) => openPaymentModal(item, 'areaExpenses')}
-                                 disabledPayment={!canEditArea(item.area)}
+                                 disabledPayment={!canEditAreaExpense(item)}
                                />
-                               {canEditArea(item.area) && (
+                               {canEditAreaExpense(item) && (
                                  <button 
                                    type="button"
                                    onClick={() => deleteAreaExpense(item.id)}
@@ -6173,6 +6260,40 @@ export default function ProjectDetail() {
                                 })}
                               </div>
                             </div>
+
+                            {assignableSubcategoryOptions.length > 0 && (
+                              <div className="lg:col-span-2">
+                                <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3 font-mono">Subcategorias asignadas</div>
+                                <div className="flex flex-wrap gap-2">
+                                  {assignableSubcategoryOptions.map((option) => {
+                                    const enabled = safeArray(col.allowedSubcategories).includes(option.key);
+                                    return (
+                                      <button
+                                        key={`${col.email}-${option.key}`}
+                                        type="button"
+                                        onClick={() => {
+                                          const current = safeArray(col.allowedSubcategories);
+                                          const next = enabled
+                                            ? current.filter((item) => item !== option.key)
+                                            : [...current, option.key];
+                                          updateCollaboratorPermissions(col, { allowedSubcategories: next });
+                                        }}
+                                        className={cn(
+                                          "px-3 py-1.5 rounded text-[10px] font-bold uppercase transition-all tracking-tight",
+                                          enabled ? "bg-rose-500 text-white" : "bg-white border border-slate-200 text-slate-400 hover:border-rose-500 hover:text-rose-500"
+                                        )}
+                                        title={`${option.area} / ${option.subcategory}`}
+                                      >
+                                        {option.area} / {option.subcategory}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                                <p className="mt-2 text-[10px] text-slate-400">
+                                  Da acceso solo a esa subcategoria dentro del area padre, sin habilitar toda el area.
+                                </p>
+                              </div>
+                            )}
 
                             {canManageProjectRoles && (
                             <div className="lg:col-span-2 flex flex-wrap gap-2 pt-2">

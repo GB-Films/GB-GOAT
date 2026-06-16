@@ -87,13 +87,34 @@ service cloud.firestore {
         );
     }
 
+    function areaSubcategoryKey(area, subcategory) {
+      return area + '||' + subcategory;
+    }
+
+    function canWriteAreaExpense(projectId, area, subcategory) {
+      return canWriteArea(projectId, area)
+        || (
+          hasCollaboratorDoc(projectId)
+          && collaboratorDoc(projectId).canEditBudgetAreas == true
+          && 'areas' in collaboratorDoc(projectId).allowedTabs
+          && subcategory is string
+          && subcategory != ''
+          && 'allowedSubcategories' in collaboratorDoc(projectId)
+          && areaSubcategoryKey(area, subcategory) in collaboratorDoc(projectId).allowedSubcategories
+        );
+    }
+
     function canAssignAreasAsProductionLead(projectId) {
       return isProjectProductionLead(projectId)
         && resource.data.role == 'jefe_area'
         && request.resource.data.role == 'jefe_area'
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['allowedCategories', 'updatedAt'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['allowedCategories', 'allowedSubcategories', 'updatedAt'])
         && request.resource.data.allowedCategories is list
-        && request.resource.data.allowedCategories.hasOnly(collaboratorDoc(projectId).allowedCategories);
+        && request.resource.data.allowedCategories.hasOnly(collaboratorDoc(projectId).allowedCategories)
+        && (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['allowedSubcategories'])
+          || request.resource.data.allowedSubcategories is list
+        );
     }
 
     function canUpdateProjectOperations(projectId) {
@@ -177,7 +198,7 @@ service cloud.firestore {
             request.resource.data.type == 'pago'
             && request.resource.data.fromUserEmail == userEmail()
             && request.resource.data.collectionName in ['budgetItems', 'areaExpenses']
-            && canWriteArea(projectId, request.resource.data.area)
+            && canWriteAreaExpense(projectId, request.resource.data.area, request.resource.data.subcategory)
           )
         );
     }
@@ -187,7 +208,7 @@ service cloud.firestore {
         || (
           resource.data.type == 'pago'
           && resource.data.fromUserEmail == userEmail()
-          && canWriteArea(projectId, resource.data.area)
+          && canWriteAreaExpense(projectId, resource.data.area, resource.data.subcategory)
         );
     }
 
@@ -202,7 +223,7 @@ service cloud.firestore {
           && request.resource.data.itemId == resource.data.itemId
           && request.resource.data.paymentId == resource.data.paymentId
           && request.resource.data.area == resource.data.area
-          && canWriteArea(projectId, resource.data.area)
+          && canWriteAreaExpense(projectId, resource.data.area, resource.data.subcategory)
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['amount', 'date', 'notes', 'updatedAt'])
         );
     }
@@ -357,13 +378,13 @@ service cloud.firestore {
 
       match /areaExpenses/{expenseId} {
         allow read: if hasProjectAccess(projectId);
-        allow create: if canWriteArea(projectId, request.resource.data.area);
+        allow create: if canWriteAreaExpense(projectId, request.resource.data.area, request.resource.data.subcategory);
         allow update: if (
-            canWriteArea(projectId, resource.data.area)
-            && canWriteArea(projectId, request.resource.data.area)
+            canWriteAreaExpense(projectId, resource.data.area, resource.data.subcategory)
+            && canWriteAreaExpense(projectId, request.resource.data.area, request.resource.data.subcategory)
           )
           || canPublicUploadAreaInvoice(projectId, expenseId);
-        allow delete: if canWriteArea(projectId, resource.data.area);
+        allow delete: if canWriteAreaExpense(projectId, resource.data.area, resource.data.subcategory);
       }
 
       match /expenses/{expenseId} {
