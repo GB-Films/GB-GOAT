@@ -1036,8 +1036,7 @@ export default function ProjectDetail() {
 
     if (assigned <= 0) {
       if (!isProjectAdmin) {
-        alert(`El área "${area}" no tiene presupuesto asignado en el Presupuesto Principal.`);
-        return false;
+        alert(`El área "${area}" no tiene presupuesto asignado en el Presupuesto Principal. Se guardara igual y el saldo proyectado quedara marcado en rojo.`);
       }
       return true;
     }
@@ -1047,29 +1046,13 @@ export default function ProjectDetail() {
     const overBy = nextSpent - assigned;
     const message = `Este gasto supera el presupuesto asignado para "${area}" por $${overBy.toLocaleString()}.`;
 
-    if (!isProjectAdmin) {
-      alert(`${message}\n\nSe guardara igual y el area quedara marcada como excedida.`);
-      return true;
-    }
-
-    return confirm(`${message}\n\nComo administrador, ¿querés guardarlo igual?`);
+    alert(`${message}\n\nSe guardara igual y el saldo proyectado quedara marcado en rojo.`);
+    return true;
   };
 
   const addAreaExpense = async (area: string, subcategory = '') => {
     const cleanSubcategory = cleanAreaExpenseSubcategory(subcategory);
     if (!id || !canEditAreaSubcategory(area, cleanSubcategory)) return;
-    const assigned = getAreaBudget(area);
-    const spent = getAreaSpent(area);
-
-    if (!isProjectAdmin && assigned <= 0) {
-      alert(`El área "${area}" todavía no tiene presupuesto asignado.`);
-      return;
-    }
-
-    if (!isProjectAdmin && assigned > 0 && spent >= assigned) {
-      alert(`El área "${area}" ya consumió todo el presupuesto asignado.`);
-      return;
-    }
 
     const newItem = {
       projectId: id,
@@ -4388,8 +4371,8 @@ export default function ProjectDetail() {
                     })}
                   </div>
 
-                  <div className="hidden min-w-[1360px] md:block">
-                    <div className="grid grid-cols-[minmax(160px,1.45fr)_minmax(180px,1.6fr)_78px_100px_76px_92px_96px_104px_150px_78px] bg-slate-50 border-b border-slate-200 px-6 py-3 gap-2">
+                  <div className="hidden overflow-x-auto md:block">
+                    <div className="grid min-w-[1360px] grid-cols-[minmax(160px,1.45fr)_minmax(180px,1.6fr)_78px_100px_76px_92px_96px_104px_150px_78px] bg-slate-50 border-b border-slate-200 px-6 py-3 gap-2">
                       <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Proveedor / Concepto</div>
                       <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Descripcion Detallada</div>
                       <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Factura</div>
@@ -4499,7 +4482,7 @@ export default function ProjectDetail() {
                               canUploadAreaFiles(item.area, item.subcategory) && handleInvoiceDrop(event, item);
                             }}
                             className={cn(
-                              "relative grid grid-cols-[minmax(160px,1.45fr)_minmax(180px,1.6fr)_78px_100px_76px_92px_96px_104px_150px_78px] px-6 py-3 items-center gap-2 transition-colors group",
+                              "relative grid min-w-[1360px] grid-cols-[minmax(160px,1.45fr)_minmax(180px,1.6fr)_78px_100px_76px_92px_96px_104px_150px_78px] px-6 py-3 items-center gap-2 transition-colors group",
                               dragOverExpenseId === item.id
                                 ? "bg-emerald-50 ring-2 ring-inset ring-emerald-400"
                                 : draggedAreaExpenseId === item.id

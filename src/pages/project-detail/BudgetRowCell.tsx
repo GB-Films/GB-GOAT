@@ -27,7 +27,7 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
   const [showProviderInfo, setShowProviderInfo] = useState(false);
   const [providerSearch, setProviderSearch] = useState('');
   const [copiedProviderField, setCopiedProviderField] = useState('');
-  const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0 });
+  const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0, width: 256 });
   const providerCellRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   
@@ -55,12 +55,15 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
     const updateDropdownPosition = () => {
       const rect = providerCellRef.current?.getBoundingClientRect();
       if (!rect) return;
-      const dropdownWidth = 256;
-      const left = Math.min(Math.max(12, rect.left), window.innerWidth - dropdownWidth - 12);
+      const viewportWidth = window.visualViewport?.width || window.innerWidth;
+      const viewportHeight = window.visualViewport?.height || window.innerHeight;
+      const dropdownWidth = Math.min(256, Math.max(220, viewportWidth - 24));
+      const left = Math.max(12, Math.min(rect.left, viewportWidth - dropdownWidth - 12));
       const dropdownHeight = isEditingProvider ? 320 : 180;
-      const opensUp = rect.bottom + dropdownHeight > window.innerHeight && rect.top > dropdownHeight;
+      const opensUp = rect.bottom + dropdownHeight > viewportHeight && rect.top > dropdownHeight;
       setDropdownPosition({
         left,
+        width: dropdownWidth,
         top: opensUp ? Math.max(12, rect.top - dropdownHeight + 28) : rect.bottom + 8,
       });
     };
@@ -68,9 +71,13 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
     updateDropdownPosition();
     window.addEventListener('resize', updateDropdownPosition);
     window.addEventListener('scroll', updateDropdownPosition, true);
+    window.visualViewport?.addEventListener('resize', updateDropdownPosition);
+    window.visualViewport?.addEventListener('scroll', updateDropdownPosition);
     return () => {
       window.removeEventListener('resize', updateDropdownPosition);
       window.removeEventListener('scroll', updateDropdownPosition, true);
+      window.visualViewport?.removeEventListener('resize', updateDropdownPosition);
+      window.visualViewport?.removeEventListener('scroll', updateDropdownPosition);
     };
   }, [isEditingProvider, showProviderInfo]);
 
@@ -176,8 +183,8 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
         {showProviderInfo && canShowProviderInfo && (
           <div
             ref={dropdownRef}
-            style={{ top: dropdownPosition.top, left: dropdownPosition.left }}
-            className="fixed w-64 bg-white border border-slate-200 shadow-2xl rounded-lg z-[420] p-3"
+            style={{ top: dropdownPosition.top, left: dropdownPosition.left, width: dropdownPosition.width }}
+            className="fixed max-w-[calc(100vw-24px)] bg-white border border-slate-200 shadow-2xl rounded-lg z-[420] p-3"
           >
             <div className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Datos del proveedor</div>
             {[
@@ -211,8 +218,8 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
         {isEditingProvider && !disabled && (
            <div 
              ref={dropdownRef}
-             style={{ top: dropdownPosition.top, left: dropdownPosition.left }}
-             className="fixed w-64 bg-white border border-slate-200 shadow-2xl rounded-lg z-[400] p-3"
+             style={{ top: dropdownPosition.top, left: dropdownPosition.left, width: dropdownPosition.width }}
+             className="fixed max-w-[calc(100vw-24px)] bg-white border border-slate-200 shadow-2xl rounded-lg z-[400] p-3"
            >
               <div className="relative mb-3">
                 <input 

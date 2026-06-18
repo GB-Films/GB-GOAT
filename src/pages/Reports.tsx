@@ -1,10 +1,14 @@
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, BarChart3, Building2, CalendarDays, Download, FileSpreadsheet, Layers3, ReceiptText, Wallet } from 'lucide-react';
-import { collection, getDocs, orderBy, query } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { AlertTriangle, BarChart3, Building2, CalendarDays, Download, ExternalLink, FileSpreadsheet, Layers3, ReceiptText, Wallet } from 'lucide-react';
+import { collection, deleteDoc, doc, getDocs, orderBy, query, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { deleteObject, ref } from 'firebase/storage';
+import { db, storage } from '../lib/firebase';
+import { useAuth } from '../context/AuthContext';
 import { cn } from '../lib/utils';
 import { buildPaymentCalendarDays, formatDateKey, formatPeriodLabel, formatScheduleDate, getOverdueLines, getTodayLines, getUnscheduledLines, sumDebt, type PaymentScheduleLine } from '../lib/paymentSchedule';
+import { PaymentModal } from './project-detail/PaymentModal';
+import type { Payment, PaymentCollection } from './project-detail/types';
 
 type ReportView = 'resumen' | 'proyectos' | 'proveedores' | 'areas' | 'pagos';
 
@@ -13,6 +17,8 @@ interface PayableLine {
   projectId: string;
   projectName: string;
   projectStatus: string;
+  collectionName: PaymentCollection;
+  item: any;
   area: string;
   providerId?: string;
   providerName?: string;
@@ -21,8 +27,15 @@ interface PayableLine {
   paid: number;
   debt: number;
   paymentDate?: any;
+  invoice?: any;
   source: 'area' | 'budget';
 }
+
+type ReportPaymentScheduleLine = PaymentScheduleLine & {
+  collectionName: PaymentCollection;
+  item: any;
+  invoice?: any;
+};
 
 interface ProjectReport {
   id: string;
@@ -121,6 +134,8 @@ const buildProjectReport = (project: any, budgetItems: any[], areaExpenses: any[
         projectId: project.id,
         projectName: project.name || 'Sin nombre',
         projectStatus: project.status || 'Presupuesto',
+        collectionName: 'areaExpenses' as const,
+        item,
         area: item.area || 'Sin area',
         providerId: item.providerId,
         providerName: item.providerName,
@@ -129,6 +144,7 @@ const buildProjectReport = (project: any, budgetItems: any[], areaExpenses: any[
         paid,
         debt: Math.max(0, total - paid),
         paymentDate: item.paymentDate,
+        invoice: item.invoice,
         source: 'area' as const,
       };
     }),
@@ -140,6 +156,8 @@ const buildProjectReport = (project: any, budgetItems: any[], areaExpenses: any[
         projectId: project.id,
         projectName: project.name || 'Sin nombre',
         projectStatus: project.status || 'Presupuesto',
+        collectionName: 'budgetItems' as const,
+        item,
         area: item.area || 'Sin area',
         providerId: item.providerId,
         providerName: item.providerName,
@@ -176,13 +194,33 @@ const buildProjectReport = (project: any, budgetItems: any[], areaExpenses: any[
   };
 };
 
+const recalculateProjectTotals = (project: ProjectReport): ProjectReport => {
+  const spent = project.payableLines.reduce((acc, line) => acc + line.total, 0);
+  const paid = project.payableLines.reduce((acc, line) => acc + line.paid, 0);
+  const debt = project.payableLines.reduce((acc, line) => acc + line.debt, 0);
+  const usagePercent = project.budgetTotal > 0 ? (spent / project.budgetTotal) * 100 : 0;
+
+  return {
+    ...project,
+    spent,
+    paid,
+    debt,
+    usagePercent,
+    overBudget: Math.max(0, spent - project.budgetTotal),
+    unpaidLines: project.payableLines.filter((line) => line.debt > 0.01).length,
+  };
+};
+
 export default function Reports() {
+  const { user, profile } = useAuth();
   const [projects, setProjects] = useState<ProjectReport[]>([]);
   const [activeView, setActiveView] = useState<ReportView>('resumen');
   const [loading, setLoading] = useState(true);
   const [paymentProjectionAnchor, setPaymentProjectionAnchor] = useState(() => formatDateKey(new Date()));
   const [paymentProjectFilter, setPaymentProjectFilter] = useState('all');
   const [selectedPaymentBucketKey, setSelectedPaymentBucketKey] = useState<string | null>(null);
+  const [selectedPaymentLine, setSelectedPaymentLine] = useState<ReportPaymentScheduleLine | null>(null);
+  const [isDeletingPayment, setIsDeletingPayment] = useState<number | null>(null);
 
   useEffect(() => {
     const fetchReports = async () => {
@@ -282,12 +320,14 @@ export default function Reports() {
     return Array.from(map.values()).sort((a, b) => b.spent - a.spent);
   }, [projects]);
 
-  const paymentScheduleLines = useMemo<PaymentScheduleLine[]>(() => (
+  const paymentScheduleLines = useMemo<ReportPaymentScheduleLine[]>(() => (
     projects.flatMap((project) => (
       project.payableLines.map((line) => ({
         id: `${project.id}-${line.source}-${line.id}`,
         projectId: project.id,
         projectName: project.name,
+        collectionName: line.collectionName,
+        item: line.item,
         area: line.area || 'Sin area',
         providerName: line.providerName || 'Sin proveedor asignado',
         description: line.description || 'Movimiento',
@@ -296,6 +336,7 @@ export default function Reports() {
         debt: line.debt,
         paymentDate: line.paymentDate,
         source: line.source === 'area' ? 'Gestion por Areas' : 'Presupuesto Principal',
+        invoice: line.invoice,
       }))
     ))
     .filter((line) => line.debt > 0.01)
@@ -367,6 +408,104 @@ export default function Reports() {
     .filter((row) => row.today > 0 || row.period > 0 || row.overdue > 0 || row.unscheduled > 0)
     .sort((a, b) => b.period - a.period || b.overdue - a.overdue);
   }, [filteredPaymentScheduleLines, paymentProjectFilter, paymentProjectionCalendarDays, projects]);
+
+  const currentUserEmail = (user?.email || '').trim().toLowerCase();
+  const currentUserName = profile?.displayName || user?.displayName || currentUserEmail;
+
+  const updatePaymentState = (
+    itemId: string,
+    collectionName: PaymentCollection,
+    updatedHistory: Payment[],
+    isFullyPaid: boolean
+  ) => {
+    setProjects((currentProjects) => currentProjects.map((project) => {
+      if (selectedPaymentLine?.projectId && project.id !== selectedPaymentLine.projectId) return project;
+      let didUpdateLine = false;
+      const nextPayableLines = project.payableLines.map((line) => {
+        if (line.id !== itemId || line.collectionName !== collectionName) return line;
+        didUpdateLine = true;
+
+        const paid = updatedHistory.reduce((acc, payment) => acc + (Number(payment.amount) || 0), 0);
+        const debt = Math.max(0, line.total - paid);
+        const nextItem = {
+          ...line.item,
+          paymentHistory: updatedHistory,
+          paid: isFullyPaid,
+        };
+
+        return {
+          ...line,
+          item: nextItem,
+          paid,
+          debt,
+        };
+      });
+
+      if (!didUpdateLine) return project;
+      return recalculateProjectTotals({ ...project, payableLines: nextPayableLines });
+    }));
+
+    setSelectedPaymentLine((current) => {
+      if (!current || current.item?.id !== itemId || current.collectionName !== collectionName) return current;
+      const paid = updatedHistory.reduce((acc, payment) => acc + (Number(payment.amount) || 0), 0);
+      const debt = Math.max(0, current.total - paid);
+      return {
+        ...current,
+        paid,
+        debt,
+        item: {
+          ...current.item,
+          paymentHistory: updatedHistory,
+          paid: isFullyPaid,
+        },
+      };
+    });
+  };
+
+  const canEditPaymentRecord = () => true;
+
+  const deletePaymentFromSelectedLine = async (paymentIndex: number) => {
+    if (!selectedPaymentLine?.projectId || !selectedPaymentLine.item?.id) return;
+    if (!window.confirm('¿Borrar definitivamente este registro de pago?')) return;
+
+    setIsDeletingPayment(paymentIndex);
+
+    try {
+      const currentHistory = Array.isArray(selectedPaymentLine.item.paymentHistory)
+        ? [...selectedPaymentLine.item.paymentHistory]
+        : [];
+      const paymentToDelete = currentHistory[paymentIndex];
+      if (!paymentToDelete) throw new Error('Índice de pago no válido.');
+
+      const updatedHistory = currentHistory.filter((payment: Payment, index: number) => {
+        if (paymentToDelete.id) return payment.id !== paymentToDelete.id;
+        return index !== paymentIndex;
+      });
+      const totalPaid = updatedHistory.reduce((acc: number, payment: Payment) => acc + (Number(payment.amount) || 0), 0);
+      const isFullyPaid = totalPaid >= ((Number(selectedPaymentLine.item.total) || 0) - 0.01);
+
+      await updateDoc(doc(db, 'projects', selectedPaymentLine.projectId, selectedPaymentLine.collectionName, selectedPaymentLine.item.id), {
+        paymentHistory: updatedHistory,
+        paid: isFullyPaid,
+        updatedAt: serverTimestamp(),
+      });
+
+      if (paymentToDelete.receipt?.path) {
+        deleteObject(ref(storage, paymentToDelete.receipt.path)).catch(() => {});
+      }
+
+      if (paymentToDelete.cashMovementId) {
+        await deleteDoc(doc(db, 'projects', selectedPaymentLine.projectId, 'cashMovements', paymentToDelete.cashMovementId));
+      }
+
+      updatePaymentState(selectedPaymentLine.item.id, selectedPaymentLine.collectionName, updatedHistory, isFullyPaid);
+    } catch (error: any) {
+      console.error('Error deleting payment:', error);
+      alert('Error al eliminar el pago: ' + (error.message || 'Error desconocido'));
+    } finally {
+      setIsDeletingPayment(null);
+    }
+  };
 
   const attentionProjects = useMemo(() => (
     projects
@@ -738,8 +877,10 @@ export default function Reports() {
                   </div>
                 </div>
                 <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
-                  {(selectedPaymentBucket?.lines || []).map((line) => (
-                    <div key={line.id} className="rounded-lg border border-slate-100 bg-white p-3">
+                  {(selectedPaymentBucket?.lines || []).map((line) => {
+                    const reportLine = line as ReportPaymentScheduleLine;
+                    return (
+                    <div key={reportLine.id} className="rounded-lg border border-slate-100 bg-white p-3">
                       <div className="flex justify-between gap-3">
                         <div className="min-w-0">
                           <Link to={`/proyectos/${line.projectId}`} className="text-[10px] font-black text-slate-400 uppercase tracking-widest hover:text-black truncate block">
@@ -751,8 +892,37 @@ export default function Reports() {
                         </div>
                         <div className="text-right text-xs font-black font-mono text-rose-600 whitespace-nowrap">{formatCurrency(line.debt)}</div>
                       </div>
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        {reportLine.invoice?.url && (
+                          <a
+                            href={reportLine.invoice.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 rounded border border-emerald-100 bg-emerald-50 px-2 py-1.5 text-[9px] font-black uppercase tracking-widest text-emerald-700 hover:bg-emerald-100"
+                            title={reportLine.invoice.fileName || 'Ver factura'}
+                          >
+                            <ExternalLink className="h-3 w-3" />
+                            Factura
+                          </a>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedPaymentLine({
+                              ...reportLine,
+                              item: { ...reportLine.item, __paymentCollection: reportLine.collectionName },
+                            });
+                            setIsDeletingPayment(null);
+                          }}
+                          className="inline-flex items-center gap-1 rounded border border-slate-900 bg-slate-900 px-2 py-1.5 text-[9px] font-black uppercase tracking-widest text-white hover:bg-slate-700"
+                        >
+                          <Wallet className="h-3 w-3" />
+                          Cargar pago
+                        </button>
+                      </div>
                     </div>
-                  ))}
+                    );
+                  })}
                   {selectedPaymentBucket && selectedPaymentBucket.lines.length === 0 && (
                     <div className="rounded-lg border border-dashed border-slate-200 bg-white p-8 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
                       Sin pagos programados
@@ -780,6 +950,24 @@ export default function Reports() {
           />
         </div>
       )}
+      <PaymentModal
+        projectId={selectedPaymentLine?.projectId}
+        item={selectedPaymentLine?.item || null}
+        isOpen={Boolean(selectedPaymentLine)}
+        canManagePayments={Boolean(selectedPaymentLine)}
+        canUseCashBox={false}
+        cashBoxBalance={0}
+        paymentType={selectedPaymentLine?.collectionName || 'areaExpenses'}
+        isDeletingPayment={isDeletingPayment}
+        canEditExistingPayments
+        currentUserEmail={currentUserEmail}
+        currentUserName={currentUserName}
+        currentUserRole="admin"
+        canEditPaymentRecord={canEditPaymentRecord}
+        onClose={() => setSelectedPaymentLine(null)}
+        onPaymentStateChange={updatePaymentState}
+        onDeletePayment={deletePaymentFromSelectedLine}
+      />
     </div>
   );
 }
