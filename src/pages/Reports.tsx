@@ -1,12 +1,13 @@
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, BarChart3, Building2, CalendarDays, Download, ExternalLink, FileSpreadsheet, Layers3, ReceiptText, Wallet } from 'lucide-react';
+import { AlertTriangle, BarChart3, Building2, CalendarDays, DollarSign, Download, FileSpreadsheet, FileText, Layers3, ReceiptText, Wallet } from 'lucide-react';
 import { collection, deleteDoc, doc, getDocs, orderBy, query, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { deleteObject, ref } from 'firebase/storage';
 import { db, storage } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { cn } from '../lib/utils';
 import { buildPaymentCalendarDays, formatDateKey, formatPeriodLabel, formatScheduleDate, getOverdueLines, getTodayLines, getUnscheduledLines, sumDebt, type PaymentScheduleLine } from '../lib/paymentSchedule';
+import { formatIdentifier, inferLegacyIdentifiers, normalizeProviderText, providerDisplayName, providerMatchesSearch } from '../lib/providerConstants';
 import { PaymentModal } from './project-detail/PaymentModal';
 import type { Payment, PaymentCollection } from './project-detail/types';
 
@@ -22,6 +23,8 @@ interface PayableLine {
   area: string;
   providerId?: string;
   providerName?: string;
+  providerCuit?: string;
+  cbu?: string;
   description?: string;
   total: number;
   paid: number;
@@ -35,6 +38,7 @@ type ReportPaymentScheduleLine = PaymentScheduleLine & {
   collectionName: PaymentCollection;
   item: any;
   invoice?: any;
+  providerCuit?: string;
 };
 
 interface ProjectReport {
@@ -92,6 +96,27 @@ const getPaymentTotal = (item: any) => {
 
 const getItemTotal = (item: any) => Number(item.total) || 0;
 
+const findProviderForLine = (item: any, providerById: Map<string, any>, providers: any[]) => {
+  if (item.providerId && providerById.has(item.providerId)) return providerById.get(item.providerId);
+  const providerName = normalizeProviderText(item.providerName);
+  if (!providerName) return null;
+
+  const exactMatches = providers.filter((provider) => normalizeProviderText(providerDisplayName(provider)) === providerName);
+  if (exactMatches.length === 1) return exactMatches[0];
+
+  const searchMatches = providers.filter((provider) => providerMatchesSearch(provider, item.providerName || ''));
+  return searchMatches.length === 1 ? searchMatches[0] : null;
+};
+
+const getProviderPaymentDetails = (item: any, providerById: Map<string, any>, providers: any[]) => {
+  const provider = findProviderForLine(item, providerById, providers);
+  const providerIdentifiers = inferLegacyIdentifiers(provider || item);
+  return {
+    providerCuit: provider?.cuit || providerIdentifiers.cuitNormalized || item.providerCuit || '',
+    cbu: provider?.bankAccount_cbu || provider?.bankAccount || item.cbu || item.bankAccount_cbu || item.bankAccount || '',
+  };
+};
+
 const csvEscape = (value: unknown) => {
   const text = String(value ?? '');
   if (/[",\n\r]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
@@ -114,7 +139,13 @@ const downloadCsv = (filename: string, rows: Array<Record<string, unknown>>) => 
   URL.revokeObjectURL(url);
 };
 
-const buildProjectReport = (project: any, budgetItems: any[], areaExpenses: any[]): ProjectReport => {
+const buildProjectReport = (
+  project: any,
+  budgetItems: any[],
+  areaExpenses: any[],
+  providerById: Map<string, any>,
+  providers: any[],
+): ProjectReport => {
   const activeAreas = Array.isArray(project.activeAreas) ? project.activeAreas : [];
   const standaloneBudgetItems = budgetItems.filter((item) => !activeAreas.includes(item.area));
   const committedBudget = budgetItems.reduce((acc, item) => acc + getItemTotal(item), 0);
@@ -129,6 +160,7 @@ const buildProjectReport = (project: any, budgetItems: any[], areaExpenses: any[
     ...areaExpenses.map((item) => {
       const total = getItemTotal(item);
       const paid = getPaymentTotal(item);
+      const providerDetails = getProviderPaymentDetails(item, providerById, providers);
       return {
         id: item.id,
         projectId: project.id,
@@ -139,6 +171,8 @@ const buildProjectReport = (project: any, budgetItems: any[], areaExpenses: any[
         area: item.area || 'Sin area',
         providerId: item.providerId,
         providerName: item.providerName,
+        providerCuit: providerDetails.providerCuit,
+        cbu: providerDetails.cbu,
         description: item.description,
         total,
         paid,
@@ -151,6 +185,7 @@ const buildProjectReport = (project: any, budgetItems: any[], areaExpenses: any[
     ...standaloneBudgetItems.map((item) => {
       const total = getItemTotal(item);
       const paid = getPaymentTotal(item);
+      const providerDetails = getProviderPaymentDetails(item, providerById, providers);
       return {
         id: item.id,
         projectId: project.id,
@@ -161,6 +196,8 @@ const buildProjectReport = (project: any, budgetItems: any[], areaExpenses: any[
         area: item.area || 'Sin area',
         providerId: item.providerId,
         providerName: item.providerName,
+        providerCuit: providerDetails.providerCuit,
+        cbu: providerDetails.cbu,
         description: item.description,
         total,
         paid,
@@ -219,6 +256,8 @@ export default function Reports() {
   const [paymentProjectionAnchor, setPaymentProjectionAnchor] = useState(() => formatDateKey(new Date()));
   const [paymentProjectFilter, setPaymentProjectFilter] = useState('all');
   const [selectedPaymentBucketKey, setSelectedPaymentBucketKey] = useState<string | null>(null);
+  const [expandedPaymentLineId, setExpandedPaymentLineId] = useState<string | null>(null);
+  const [copiedPaymentLineId, setCopiedPaymentLineId] = useState<string | null>(null);
   const [selectedPaymentLine, setSelectedPaymentLine] = useState<ReportPaymentScheduleLine | null>(null);
   const [isDeletingPayment, setIsDeletingPayment] = useState<number | null>(null);
 
@@ -226,8 +265,13 @@ export default function Reports() {
     const fetchReports = async () => {
       setLoading(true);
       try {
-        const projectsSnap = await getDocs(query(collection(db, 'projects'), orderBy('createdAt', 'desc')));
+        const [projectsSnap, providersSnap] = await Promise.all([
+          getDocs(query(collection(db, 'projects'), orderBy('createdAt', 'desc'))),
+          getDocs(collection(db, 'providers')),
+        ]);
         const projectRows = projectsSnap.docs.map((projectDoc) => ({ id: projectDoc.id, ...projectDoc.data() as any }));
+        const providers = providersSnap.docs.map((providerDoc) => ({ id: providerDoc.id, ...providerDoc.data() }));
+        const providerById = new Map(providers.map((provider) => [provider.id, provider]));
 
         const reports = await Promise.all(
           projectRows.map(async (project) => {
@@ -238,7 +282,7 @@ export default function Reports() {
 
             const budgetItems = budgetSnap.docs.map((itemDoc) => ({ id: itemDoc.id, ...itemDoc.data() }));
             const areaExpenses = expensesSnap.docs.map((itemDoc) => ({ id: itemDoc.id, ...itemDoc.data() }));
-            return buildProjectReport(project, budgetItems, areaExpenses);
+            return buildProjectReport(project, budgetItems, areaExpenses, providerById, providers);
           })
         );
 
@@ -330,6 +374,8 @@ export default function Reports() {
         item: line.item,
         area: line.area || 'Sin area',
         providerName: line.providerName || 'Sin proveedor asignado',
+        providerCuit: line.providerCuit,
+        cbu: line.cbu,
         description: line.description || 'Movimiento',
         total: line.total,
         paid: line.paid,
@@ -751,6 +797,7 @@ export default function Reports() {
                   onChange={(event) => {
                     setPaymentProjectFilter(event.target.value);
                     setSelectedPaymentBucketKey(null);
+                    setExpandedPaymentLineId(null);
                   }}
                   className="px-3 py-2 bg-slate-50 border border-slate-100 rounded-lg text-xs font-bold focus:outline-none focus:border-black"
                 >
@@ -765,6 +812,7 @@ export default function Reports() {
                     const anchor = new Date(`${paymentProjectionAnchor}T12:00:00`);
                     setPaymentProjectionAnchor(formatDateKey(new Date(anchor.getFullYear(), anchor.getMonth() - 1, 1)));
                     setSelectedPaymentBucketKey(null);
+                    setExpandedPaymentLineId(null);
                   }}
                   className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-[10px] font-black uppercase tracking-widest hover:border-black"
                 >
@@ -778,6 +826,7 @@ export default function Reports() {
                     onChange={(event) => {
                       setPaymentProjectionAnchor(`${event.target.value}-01`);
                       setSelectedPaymentBucketKey(null);
+                      setExpandedPaymentLineId(null);
                     }}
                     className="absolute inset-0 h-full w-full opacity-0 cursor-pointer"
                   />
@@ -788,6 +837,7 @@ export default function Reports() {
                     const anchor = new Date(`${paymentProjectionAnchor}T12:00:00`);
                     setPaymentProjectionAnchor(formatDateKey(new Date(anchor.getFullYear(), anchor.getMonth() + 1, 1)));
                     setSelectedPaymentBucketKey(null);
+                    setExpandedPaymentLineId(null);
                   }}
                   className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-[10px] font-black uppercase tracking-widest hover:border-black"
                 >
@@ -829,7 +879,10 @@ export default function Reports() {
                         <button
                           key={day.key}
                           type="button"
-                          onClick={() => setSelectedPaymentBucketKey(day.key)}
+                          onClick={() => {
+                            setSelectedPaymentBucketKey(day.key);
+                            setExpandedPaymentLineId(null);
+                          }}
                           className={cn(
                             "min-h-[90px] border-r border-b border-slate-100 p-2 text-left transition-all hover:bg-slate-50",
                             !day.isCurrentMonth && "bg-slate-50/60 text-slate-300",
@@ -865,22 +918,38 @@ export default function Reports() {
                 </div>
               </div>
 
-              <aside className="p-4 bg-slate-50/50">
+              <aside className="p-4 bg-slate-50/50 flex min-h-[520px] flex-col">
                 <div className="flex items-start justify-between gap-3 mb-3">
                   <div>
                     <h3 className="text-xs font-black text-slate-900">{selectedPaymentBucket ? formatScheduleDate(selectedPaymentBucket.date) : 'Sin seleccion'}</h3>
-                    <p className="text-[9px] uppercase font-bold tracking-widest text-slate-400">Pagos del dia seleccionado</p>
+                    <p className="text-[9px] uppercase font-bold tracking-widest text-slate-400">Proveedores a pagar en el dia</p>
                   </div>
                   <div className="text-right">
                     <div className="text-sm font-black font-mono text-slate-900">{formatCurrency(selectedPaymentBucket?.total || 0)}</div>
                     <div className="text-[9px] uppercase font-bold tracking-widest text-slate-300">Total</div>
                   </div>
                 </div>
-                <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+                <div className="space-y-2 flex-1 min-h-0 overflow-y-auto pr-1">
                   {(selectedPaymentBucket?.lines || []).map((line) => {
                     const reportLine = line as ReportPaymentScheduleLine;
+                    const isExpanded = expandedPaymentLineId === reportLine.id;
                     return (
-                    <div key={reportLine.id} className="rounded-lg border border-slate-100 bg-white p-3">
+                    <div
+                      key={reportLine.id}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => setExpandedPaymentLineId(isExpanded ? null : reportLine.id)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          setExpandedPaymentLineId(isExpanded ? null : reportLine.id);
+                        }
+                      }}
+                      className={cn(
+                        "w-full cursor-pointer rounded-lg border bg-white p-3 text-left transition-all",
+                        isExpanded ? "border-slate-900 shadow-sm" : "border-slate-100 hover:border-slate-300"
+                      )}
+                    >
                       <div className="flex justify-between gap-3">
                         <div className="min-w-0">
                           <Link to={`/proyectos/${line.projectId}`} className="text-[10px] font-black text-slate-400 uppercase tracking-widest hover:text-black truncate block">
@@ -892,34 +961,84 @@ export default function Reports() {
                         </div>
                         <div className="text-right text-xs font-black font-mono text-rose-600 whitespace-nowrap">{formatCurrency(line.debt)}</div>
                       </div>
-                      <div className="mt-3 flex flex-wrap items-center gap-2">
-                        {reportLine.invoice?.url && (
-                          <a
-                            href={reportLine.invoice.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex items-center gap-1 rounded border border-emerald-100 bg-emerald-50 px-2 py-1.5 text-[9px] font-black uppercase tracking-widest text-emerald-700 hover:bg-emerald-100"
-                            title={reportLine.invoice.fileName || 'Ver factura'}
-                          >
-                            <ExternalLink className="h-3 w-3" />
-                            Factura
-                          </a>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedPaymentLine({
-                              ...reportLine,
-                              item: { ...reportLine.item, __paymentCollection: reportLine.collectionName },
-                            });
-                            setIsDeletingPayment(null);
-                          }}
-                          className="inline-flex items-center gap-1 rounded border border-slate-900 bg-slate-900 px-2 py-1.5 text-[9px] font-black uppercase tracking-widest text-white hover:bg-slate-700"
-                        >
-                          <Wallet className="h-3 w-3" />
-                          Cargar pago
-                        </button>
-                      </div>
+                      {isExpanded && (
+                        <div className="mt-3 space-y-2 rounded-lg border border-slate-100 bg-slate-50 p-2">
+                          <div>
+                            <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Proyecto</div>
+                            <Link
+                              to={`/proyectos/${reportLine.projectId}`}
+                              onClick={(event) => event.stopPropagation()}
+                              className="mt-1 block truncate text-[10px] font-black uppercase tracking-widest text-slate-700 hover:text-black hover:underline"
+                            >
+                              {reportLine.projectName || 'Proyecto sin nombre'}
+                            </Link>
+                          </div>
+                          {[
+                            { label: 'CUIT', value: reportLine.providerCuit || '' },
+                            { label: 'CBU / Alias', value: reportLine.cbu || '' },
+                          ].map((copyItem) => (
+                            <div key={copyItem.label}>
+                              <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">{copyItem.label}</div>
+                              <div className="mt-1 flex items-center justify-between gap-2">
+                                <span className="min-w-0 truncate font-mono text-[10px] font-bold text-slate-700">
+                                  {copyItem.label === 'CUIT' && copyItem.value ? formatIdentifier(copyItem.value) : copyItem.value || 'No especificado'}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    if (!copyItem.value) return;
+                                    void navigator.clipboard?.writeText(copyItem.value);
+                                    setCopiedPaymentLineId(`${reportLine.id}-${copyItem.label}`);
+                                    window.setTimeout(() => setCopiedPaymentLineId(null), 1800);
+                                  }}
+                                  disabled={!copyItem.value}
+                                  className={cn(
+                                    "shrink-0 rounded border px-2 py-1 text-[9px] font-black uppercase tracking-widest transition-colors",
+                                    copiedPaymentLineId === `${reportLine.id}-${copyItem.label}`
+                                      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                      : copyItem.value
+                                        ? "border-slate-200 bg-white text-slate-700 hover:border-black"
+                                        : "border-slate-100 bg-white text-slate-300 cursor-not-allowed"
+                                  )}
+                                >
+                                  {copiedPaymentLineId === `${reportLine.id}-${copyItem.label}` ? 'Copiado' : 'Copiar'}
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                          <div className="flex flex-wrap gap-2 pt-1">
+                            {reportLine.invoice?.url && (
+                              <a
+                                href={reportLine.invoice.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                onClick={(event) => event.stopPropagation()}
+                                className="inline-flex items-center gap-1 rounded border border-emerald-100 bg-emerald-50 px-2 py-1.5 text-[9px] font-black uppercase tracking-widest text-emerald-700 hover:bg-emerald-600 hover:text-white"
+                                title={reportLine.invoice.fileName || 'Ver factura'}
+                              >
+                                <FileText className="h-3 w-3" />
+                                Factura
+                              </a>
+                            )}
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setSelectedPaymentLine({
+                                  ...reportLine,
+                                  item: { ...reportLine.item, __paymentCollection: reportLine.collectionName },
+                                });
+                                setIsDeletingPayment(null);
+                              }}
+                              className="inline-flex items-center gap-1 rounded border border-slate-900 bg-white px-2 py-1.5 text-[9px] font-black uppercase tracking-widest text-slate-900 hover:bg-slate-900 hover:text-white"
+                            >
+                              <DollarSign className="h-3 w-3" />
+                              Cargar pago
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                     );
                   })}
