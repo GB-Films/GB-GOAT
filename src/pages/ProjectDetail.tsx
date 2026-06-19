@@ -87,6 +87,14 @@ type ProjectPaymentScheduleLine = PaymentScheduleLine & {
   invoice?: any;
   providerCuit?: string;
 };
+type AreaSubcategoryBudgetDraft = {
+  mode: 'create' | 'edit';
+  area: string;
+  originalSubcategory?: string;
+  name: string;
+  budget: string;
+  notes: string;
+};
 
 const AREA_EXPENSE_SORT_OPTIONS: Array<{ id: AreaExpenseSortKey; label: string }> = [
   { id: 'updated', label: 'Ultimos cambios' },
@@ -126,7 +134,7 @@ const PROJECT_TAB_IDS = tabs.map(tab => tab.id);
 const DEFAULT_AREA_LEAD_TABS = ['resumen', 'areas', 'cajas', 'saldos', 'documentos', 'proveedores'];
 const DEFAULT_PRODUCTION_LEAD_TABS = ['resumen', 'areas', 'cajas', 'saldos', 'documentos', 'proveedores', 'permisos'];
 const PROJECT_ADMIN_ROLE_OPTIONS: Collaborator['role'][] = ['admin', 'jefe_produccion', 'jefe_area'];
-const PRODUCTION_LEAD_ROLE_OPTIONS: Collaborator['role'][] = ['jefe_area'];
+const PRODUCTION_LEAD_ROLE_OPTIONS: Collaborator['role'][] = ['jefe_produccion', 'jefe_area'];
 const safeArray = (value: any): string[] => Array.isArray(value) ? value : [];
 const normalizeProjectRole = (role: unknown): Collaborator['role'] => {
   if (role === 'admin' || role === 'jefe_produccion' || role === 'jefe_area') return role;
@@ -659,6 +667,8 @@ export default function ProjectDetail() {
   const [documentSearch, setDocumentSearch] = useState('');
   const [showDocumentUploadModal, setShowDocumentUploadModal] = useState(false);
   const [isUploadingProjectDocument, setIsUploadingProjectDocument] = useState(false);
+  const [subcategoryBudgetDraft, setSubcategoryBudgetDraft] = useState<AreaSubcategoryBudgetDraft | null>(null);
+  const [isSavingSubcategoryBudget, setIsSavingSubcategoryBudget] = useState(false);
   const areaSelectorRef = useRef<HTMLDivElement>(null);
   const isGlobalAdmin = profile?.role === 'admin';
   
@@ -1103,6 +1113,26 @@ export default function ProjectDetail() {
     return Array.isArray(list) ? list.map(normalizeAreaExpenseSubcategory) : [];
   };
 
+  const getAreaSubcategoryBudgetEntry = (area: string, subcategory: string) => {
+    const key = areaSubcategoryKey(area, subcategory);
+    const map = project?.areaExpenseSubcategoryBudgets && typeof project.areaExpenseSubcategoryBudgets === 'object'
+      ? project.areaExpenseSubcategoryBudgets
+      : {};
+    const entry = map[key];
+    if (typeof entry === 'number') {
+      return { area, subcategory: cleanAreaExpenseSubcategory(subcategory), budget: entry, notes: '' };
+    }
+    if (entry && typeof entry === 'object') {
+      return {
+        area: entry.area || area,
+        subcategory: entry.subcategory || cleanAreaExpenseSubcategory(subcategory),
+        budget: Number(entry.budget) || 0,
+        notes: entry.notes || '',
+      };
+    }
+    return { area, subcategory: cleanAreaExpenseSubcategory(subcategory), budget: 0, notes: '' };
+  };
+
   const saveAreaSubcategories = async (area: string, subcategories: string[]) => {
     if (!id || !canEditArea(area)) return;
     const normalized = Array.from(new Set(
@@ -1122,23 +1152,132 @@ export default function ProjectDetail() {
     setProject((current: any) => current ? { ...current, areaExpenseSubcategories: nextMap } : current);
   };
 
-  const createAreaExpenseSubcategory = async (area: string) => {
+  const openAreaExpenseSubcategoryModal = (area: string, subcategory = '') => {
     if (!canEditArea(area)) return;
-    const rawName = window.prompt(`Nueva subcategoria para ${area}`);
-    const name = cleanAreaExpenseSubcategory(rawName);
-    if (!rawName || !name) return;
+    const cleanSubcategory = cleanAreaExpenseSubcategory(subcategory);
+    const existingEntry = cleanSubcategory ? getAreaSubcategoryBudgetEntry(area, cleanSubcategory) : null;
+    setSubcategoryBudgetDraft({
+      mode: cleanSubcategory ? 'edit' : 'create',
+      area,
+      originalSubcategory: cleanSubcategory || undefined,
+      name: cleanSubcategory,
+      budget: existingEntry ? String(existingEntry.budget || '') : '',
+      notes: existingEntry?.notes || '',
+    });
+  };
+
+  const saveAreaExpenseSubcategoryBudget = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!id || !subcategoryBudgetDraft) return;
+    const area = subcategoryBudgetDraft.area;
+    if (!canManageSubcategoryBudget(area)) return;
+    const name = cleanAreaExpenseSubcategory(subcategoryBudgetDraft.name);
+    if (!name) {
+      alert('Ingresá un nombre de subcategoria.');
+      return;
+    }
 
     const existing = getStoredAreaSubcategories(area);
-    if (existing.some((item) => item.toLowerCase() === name.toLowerCase())) {
+    const original = cleanAreaExpenseSubcategory(subcategoryBudgetDraft.originalSubcategory);
+    const isRename = original && original.toLowerCase() !== name.toLowerCase();
+    if ((!original || isRename) && existing.some((item) => item.toLowerCase() === name.toLowerCase())) {
       alert('Esa subcategoria ya existe en esta area.');
       return;
     }
 
+    const budget = Math.max(0, Number(subcategoryBudgetDraft.budget) || 0);
+    const nextSubcategories = Array.from(new Set([
+      ...existing.filter((item) => item.toLowerCase() !== original.toLowerCase()),
+      name,
+    ]));
+    const currentBudgetMap = project?.areaExpenseSubcategoryBudgets && typeof project.areaExpenseSubcategoryBudgets === 'object'
+      ? { ...project.areaExpenseSubcategoryBudgets }
+      : {};
+    if (original && isRename) {
+      delete currentBudgetMap[areaSubcategoryKey(area, original)];
+    }
+    const oldPermissionKey = original ? areaSubcategoryKey(area, original) : '';
+    const nextPermissionKey = areaSubcategoryKey(area, name);
+    const nextBudgetMap = {
+      ...currentBudgetMap,
+      [areaSubcategoryKey(area, name)]: {
+        area,
+        subcategory: name,
+        budget,
+        notes: subcategoryBudgetDraft.notes.trim(),
+        updatedAt: new Date(),
+        updatedByEmail: currentUserEmail,
+        updatedByName: currentUserName,
+      },
+    };
+
+    setIsSavingSubcategoryBudget(true);
     try {
-      await saveAreaSubcategories(area, [...existing, name]);
+      await updateDoc(doc(db, 'projects', id), {
+        areaExpenseSubcategories: {
+          ...(project?.areaExpenseSubcategories || {}),
+          [area]: nextSubcategories,
+        },
+        areaExpenseSubcategoryBudgets: nextBudgetMap,
+        updatedAt: serverTimestamp(),
+      });
+
+      const expenseUpdates = isRename
+        ? areaExpenses.filter((expense) => expense.area === area && cleanAreaExpenseSubcategory(expense.subcategory) === original)
+        : [];
+      for (const expense of expenseUpdates) {
+        await updateDoc(doc(db, 'projects', id, 'areaExpenses', expense.id), {
+          subcategory: name,
+          updatedAt: serverTimestamp(),
+        });
+      }
+      if (isRename && oldPermissionKey) {
+        const collaboratorsToUpdate = collaborators.filter((col) => safeArray(col.allowedSubcategories).includes(oldPermissionKey));
+        for (const col of collaboratorsToUpdate) {
+          const nextAllowedSubcategories = Array.from(new Set(
+            safeArray(col.allowedSubcategories).map((key) => key === oldPermissionKey ? nextPermissionKey : key)
+          ));
+          await updateDoc(doc(db, 'projects', id, 'collaborators', normalizeEmail(col.email)), {
+            allowedSubcategories: nextAllowedSubcategories,
+            updatedAt: serverTimestamp(),
+          });
+        }
+        if (collaboratorsToUpdate.length > 0) {
+          setCollaborators((current) => current.map((col) => (
+            safeArray(col.allowedSubcategories).includes(oldPermissionKey)
+              ? {
+                  ...col,
+                  allowedSubcategories: Array.from(new Set(
+                    safeArray(col.allowedSubcategories).map((key) => key === oldPermissionKey ? nextPermissionKey : key)
+                  )),
+                  updatedAt: new Date(),
+                }
+              : col
+          )));
+        }
+      }
+
+      setProject((current: any) => current ? {
+        ...current,
+        areaExpenseSubcategories: {
+          ...(current.areaExpenseSubcategories || {}),
+          [area]: nextSubcategories,
+        },
+        areaExpenseSubcategoryBudgets: nextBudgetMap,
+      } : current);
+      if (expenseUpdates.length > 0) {
+        setAreaExpenses((current) => current.map((expense) => (
+          expense.area === area && cleanAreaExpenseSubcategory(expense.subcategory) === original
+            ? { ...expense, subcategory: name }
+            : expense
+        )));
+      }
+      setSubcategoryBudgetDraft(null);
     } catch (error) {
-      console.error('Error creating area expense subcategory:', error);
-      alert('No se pudo crear la subcategoria.');
+      console.error('Error saving area expense subcategory:', error);
+      alert('No se pudo guardar la subcategoria.');
+    } finally {
+      setIsSavingSubcategoryBudget(false);
     }
   };
 
@@ -2042,6 +2181,10 @@ export default function ProjectDetail() {
       const usedPercent = visibleAssigned > 0 ? Math.min(100, (spent / visibleAssigned) * 100) : 0;
       const knownSubcategories = (areaExpenseSubcategoriesByArea[area] || [])
         .filter((subcategory) => hasFullAreaAccess || canSeeAreaSubcategory(area, subcategory));
+      const subcategoryBudgetByName = new Map<string, number>(knownSubcategories.map((subcategory) => [
+        subcategory,
+        getAreaSubcategoryBudgetEntry(area, subcategory).budget,
+      ]));
       const unassignedExpenses = sortAreaExpenses(
         hasFullAreaAccess ? expenses.filter((expense) => !hasAreaExpenseSubcategory(expense.subcategory)) : [],
         areaExpenseSort
@@ -2056,24 +2199,48 @@ export default function ProjectDetail() {
           return {
             subcategory,
             expenses: groupExpenses,
-            subtotal: groupExpenses.reduce((acc, item) => acc + (Number(item.total) || 0), 0),
+            subtotal: groupExpenses.reduce((acc: number, item) => acc + (Number(item.total) || 0), 0),
+            budget: subcategoryBudgetByName.get(subcategory) || 0,
+            balance: (subcategoryBudgetByName.get(subcategory) || 0) - groupExpenses.reduce((acc: number, item) => acc + (Number(item.total) || 0), 0),
+            usedPercent: (subcategoryBudgetByName.get(subcategory) || 0) > 0
+              ? Math.min(100, (groupExpenses.reduce((acc: number, item) => acc + (Number(item.total) || 0), 0) / (subcategoryBudgetByName.get(subcategory) || 1)) * 100)
+              : 0,
           };
         })
         .filter((group) => group.expenses.length > 0 || !searchTerm);
+      const visibleSubcategoryBudget = knownSubcategories.reduce((acc, subcategory) => acc + (subcategoryBudgetByName.get(subcategory) || 0), 0);
       const subcategoryGroups = [
         ...(unassignedExpenses.length > 0
           ? [{
               subcategory: '',
               expenses: unassignedExpenses,
               subtotal: unassignedExpenses.reduce((acc, item) => acc + (Number(item.total) || 0), 0),
+              budget: 0,
+              balance: -unassignedExpenses.reduce((acc, item) => acc + (Number(item.total) || 0), 0),
+              usedPercent: 0,
             }]
           : []),
         ...namedSubcategoryGroups,
       ];
 
-      return { area, assigned: visibleAssigned, expenses, subcategoryGroups, spent, balance, usedPercent, hasSubcategories: knownSubcategories.length > 0 };
+      const delegatedAssigned = hasFullAreaAccess ? visibleAssigned : visibleSubcategoryBudget;
+      const delegatedBalance = delegatedAssigned - spent;
+      const delegatedUsedPercent = delegatedAssigned > 0 ? Math.min(100, (spent / delegatedAssigned) * 100) : 0;
+
+      return {
+        area,
+        assigned: delegatedAssigned,
+        areaAssigned: visibleAssigned,
+        subcategoryAssigned: visibleSubcategoryBudget,
+        expenses,
+        subcategoryGroups,
+        spent,
+        balance: delegatedBalance,
+        usedPercent: delegatedUsedPercent,
+        hasSubcategories: knownSubcategories.length > 0,
+      };
     })
-  ), [areaExpenseSearch, areaExpenseSort, areaExpenseSubcategoriesByArea, areaExpenses, budgetItems, isProjectAdmin, userAllowedSubcategories, userPermissions, visibleCategoryKey]);
+  ), [areaExpenseSearch, areaExpenseSort, areaExpenseSubcategoriesByArea, areaExpenses, budgetItems, isProjectAdmin, project?.areaExpenseSubcategoryBudgets, userAllowedSubcategories, userPermissions, visibleCategoryKey]);
 
   const selectedAreaDashboardRows = areaDashboardRows.filter((row) => selectedVisibleAreas.includes(row.area));
   const areaDashboardTotals = selectedAreaDashboardRows.reduce((acc, row) => ({
@@ -2087,11 +2254,13 @@ export default function ProjectDetail() {
   const canEditProjectOperations = isProjectAdmin || isProductionLead;
   const canManageProjectRoles = isProjectAdmin;
   const canAssignProjectAreas = isProjectAdmin || isProductionLead;
+  const canManageProjectAccess = isProjectAdmin || isProductionLead;
   const canUploadProjectDocuments = isProjectAdmin || (
     isProductionLead && safeArray(userPermissions?.allowedTabs).includes('documentos')
   );
   const canSeeFullPayroll = isProjectAdmin || isProductionLead;
   const roleOptionsForCurrentUser = isProjectAdmin ? PROJECT_ADMIN_ROLE_OPTIONS : PRODUCTION_LEAD_ROLE_OPTIONS;
+  const assignableAreaOptions = isProjectAdmin ? categories : safeArray(userPermissions?.allowedCategories);
   const currentUserEmail = normalizeEmail(user?.email);
   const currentUserName = profile?.displayName || user?.displayName || currentUserEmail;
   const currentProjectRole = isProjectAdmin ? 'admin' : userPermissions?.role || profile?.role || 'colaborador';
@@ -2116,6 +2285,11 @@ export default function ProjectDetail() {
       && safeArray(userPermissions.allowedSubcategories).includes(areaSubcategoryKey(area, normalizedSubcategory))
     );
   };
+  const canManageSubcategoryBudget = (area?: string | null) => (
+    Boolean(area)
+    && (isProjectAdmin || isProductionLead)
+    && canEditArea(area)
+  );
   const canEditAreaExpense = (expense?: any | null) => canEditAreaSubcategory(expense?.area, expense?.subcategory);
   const canEditPaymentDateForItem = (item?: any | null, collectionName?: PaymentCollection) => {
     if (!item || !collectionName) return false;
@@ -2148,7 +2322,7 @@ export default function ProjectDetail() {
   const collaboratorEmails = collaborators.map((col) => normalizeEmail(col.email));
   const visiblePermissionCollaborators = isProjectAdmin
     ? collaborators
-    : collaborators.filter((col) => col.role === 'jefe_area');
+    : collaborators.filter((col) => col.role === 'jefe_area' || col.role === 'jefe_produccion');
   const filteredAvailableUsers = availableUsers
     .filter((candidate) => {
       const email = normalizeEmail(candidate.email);
@@ -2171,12 +2345,13 @@ export default function ProjectDetail() {
           key: areaSubcategoryKey(area, subcategory),
           area,
           subcategory,
+          budget: getAreaSubcategoryBudgetEntry(area, subcategory).budget,
         }))
     ));
     return Array.from(new Map(options.map((item) => [item.key, item])).values())
       .filter((item: any) => allowedParentAreas.includes(item.area))
       .sort((a: any, b: any) => `${a.area} ${a.subcategory}`.localeCompare(`${b.area} ${b.subcategory}`, 'es'));
-  }, [activeAreas, areaExpenseSubcategoriesByArea, categories, isProjectAdmin, userPermissions]);
+  }, [activeAreas, areaExpenseSubcategoriesByArea, categories, isProjectAdmin, project?.areaExpenseSubcategoryBudgets, userPermissions]);
 
   const filteredSourceProjects = React.useMemo(() => {
     const term = copyBudgetSearch.trim().toLowerCase();
@@ -3054,15 +3229,17 @@ export default function ProjectDetail() {
   };
 
   const addCollaborator = async (selectedUser: any) => {
-    if (!id || !selectedUser?.email || !canManageProjectRoles) return;
+    if (!id || !selectedUser?.email || !canManageProjectAccess) return;
+    if (!isProjectAdmin && newCollaboratorRole === 'admin') return;
 
     const email = normalizeEmail(selectedUser.email);
     const selectedCategories = newCollaboratorRole === 'admin'
       ? categories
       : newCollaboratorCategories.length
         ? newCollaboratorCategories
-        : [activeAreas[0] || categories[0]].filter(Boolean);
-    const defaults = getDefaultCollaboratorPermissions(newCollaboratorRole, categories, selectedCategories);
+        : [activeAreas.find((area) => assignableAreaOptions.includes(area)) || assignableAreaOptions[0]].filter(Boolean);
+    if (!isProjectAdmin && selectedCategories.some((category) => !assignableAreaOptions.includes(category))) return;
+    const defaults = getDefaultCollaboratorPermissions(newCollaboratorRole, assignableAreaOptions.length ? assignableAreaOptions : categories, selectedCategories);
 
     const newCol: Collaborator = {
       uid: selectedUser.uid || selectedUser.id,
@@ -3099,16 +3276,20 @@ export default function ProjectDetail() {
   };
 
   const updateCollaboratorRole = async (col: Collaborator, role: Collaborator['role']) => {
-    if (!id || !canManageProjectRoles) return;
+    if (!id || !canManageProjectAccess) return;
+    if (!isProjectAdmin && (role === 'admin' || col.role === 'admin')) return;
 
     const defaults = getDefaultCollaboratorPermissions(
       role,
-      categories,
-      col.allowedCategories?.length ? col.allowedCategories : [activeAreas[0] || categories[0]].filter(Boolean)
+      isProjectAdmin ? categories : assignableAreaOptions,
+      col.allowedCategories?.length
+        ? col.allowedCategories.filter((category) => isProjectAdmin || assignableAreaOptions.includes(category))
+        : [activeAreas.find((area) => assignableAreaOptions.includes(area)) || assignableAreaOptions[0] || categories[0]].filter(Boolean)
     );
     const updates: Partial<Collaborator> = {
       role,
       ...defaults,
+      allowedSubcategories: role === 'admin' ? [] : safeArray(col.allowedSubcategories),
       updatedAt: serverTimestamp(),
     };
 
@@ -3127,7 +3308,7 @@ export default function ProjectDetail() {
   const updateCollaboratorPermissions = async (col: Collaborator, updates: Partial<Collaborator>) => {
     if (!id) return;
     if (!isProjectAdmin) {
-      if (col.role !== 'jefe_area') return;
+      if (col.role !== 'jefe_area' && col.role !== 'jefe_produccion') return;
       const updateKeys = Object.keys(updates);
       if (updateKeys.some((key) => key !== 'allowedCategories' && key !== 'allowedSubcategories')) return;
       const nextCategories = safeArray(updates.allowedCategories);
@@ -3149,7 +3330,7 @@ export default function ProjectDetail() {
   };
 
   const removeCollaborator = async (col: Collaborator) => {
-    if (!id || !canManageProjectRoles || !confirm('¿Quitar acceso a ' + col.email + '?')) return;
+    if (!id || !canManageProjectAccess || (!isProjectAdmin && col.role === 'admin') || !confirm('¿Quitar acceso a ' + col.email + '?')) return;
     const email = normalizeEmail(col.email);
 
     try {
@@ -4123,8 +4304,8 @@ export default function ProjectDetail() {
                     </div>
                      <div className="flex shrink-0 items-center gap-1 sm:gap-4">
                       <button
-                        onClick={() => createAreaExpenseSubcategory(areaRow.area)}
-                        disabled={!canEditArea(areaRow.area)}
+                        onClick={() => openAreaExpenseSubcategoryModal(areaRow.area)}
+                        disabled={!canManageSubcategoryBudget(areaRow.area)}
                         className="px-1.5 py-1.5 text-[8px] sm:px-2 sm:text-[9px] font-black uppercase tracking-widest text-slate-800 bg-white border border-slate-200 rounded hover:bg-slate-100 transition-colors disabled:bg-slate-300 disabled:cursor-not-allowed"
                         title="Crear subcategoria"
                       >
@@ -4185,13 +4366,28 @@ export default function ProjectDetail() {
                                 }))}
                                 className="flex min-w-0 flex-1 items-center justify-between gap-2 text-left"
                               >
-                                <span className="truncate text-[9px] font-black uppercase tracking-widest text-slate-700">
-                                  {subcategoryGroup.subcategory}
+                                <span className="min-w-0">
+                                  <span className="block truncate text-[9px] font-black uppercase tracking-widest text-slate-700">
+                                    {subcategoryGroup.subcategory}
+                                  </span>
+                                  <span className="mt-0.5 block truncate text-[8px] font-bold uppercase tracking-widest text-slate-400">
+                                    Presu ${subcategoryGroup.budget.toLocaleString()} / Gasto ${subcategoryGroup.subtotal.toLocaleString()}
+                                  </span>
                                 </span>
-                                <span className="shrink-0 font-mono text-[10px] font-black text-slate-700">
-                                  ${subcategoryGroup.subtotal.toLocaleString()}
+                                <span className={cn("shrink-0 font-mono text-[10px] font-black", subcategoryGroup.balance < 0 ? "text-red-600" : "text-slate-700")}>
+                                  ${subcategoryGroup.balance.toLocaleString()}
                                 </span>
                               </button>
+                              {canManageSubcategoryBudget(areaRow.area) && (
+                                <button
+                                  type="button"
+                                  onClick={() => openAreaExpenseSubcategoryModal(areaRow.area, subcategoryGroup.subcategory)}
+                                  className="rounded border border-slate-200 bg-white px-1.5 py-1 text-[8px] font-black uppercase tracking-widest text-slate-500"
+                                  title="Editar presupuesto"
+                                >
+                                  Presu
+                                </button>
+                              )}
                               {canEditAreaSubcategory(areaRow.area, subcategoryGroup.subcategory) && (
                                 <button
                                   type="button"
@@ -4416,7 +4612,7 @@ export default function ProjectDetail() {
                           >
                             {subcategoryGroup.subcategory && (
                             <div className="flex items-center justify-between gap-3 px-6 py-2 bg-slate-50/70 border-b border-slate-100">
-                              <div className="flex items-center gap-2 min-w-0">
+                              <div className="flex items-center gap-2 min-w-0 flex-1">
                                 <button
                                   type="button"
                                   onClick={() => setCollapsedAreaSubcategories((current) => ({
@@ -4428,16 +4624,45 @@ export default function ProjectDetail() {
                                 >
                                   {isSubcategoryCollapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                                 </button>
-                                <div className="text-[10px] font-black uppercase tracking-widest text-slate-700 truncate">
-                                  {subcategoryGroup.subcategory}
+                                <div className="min-w-0">
+                                  <div className="text-[10px] font-black uppercase tracking-widest text-slate-700 truncate">
+                                    {subcategoryGroup.subcategory}
+                                  </div>
+                                  <div className="mt-1 h-1.5 w-40 overflow-hidden rounded-full bg-white">
+                                    <div
+                                      className={cn("h-full rounded-full", subcategoryGroup.balance < 0 ? "bg-red-500" : subcategoryGroup.usedPercent >= 85 ? "bg-yellow-400" : "bg-emerald-500")}
+                                      style={{ width: `${Math.max(0, Math.min(100, subcategoryGroup.usedPercent))}%` }}
+                                    />
+                                  </div>
                                 </div>
                                 <span className="text-[9px] font-bold text-slate-400">
                                   {subcategoryGroup.expenses.length} gastos
                                 </span>
                               </div>
-                              <div className="text-[10px] font-black font-mono text-slate-700">
-                                ${subcategoryGroup.subtotal.toLocaleString()}
+                              <div className="grid grid-cols-3 gap-3 text-right">
+                                <div>
+                                  <div className="text-[8px] font-black uppercase tracking-widest text-slate-300">Presu</div>
+                                  <div className="text-[10px] font-black font-mono text-slate-700">${subcategoryGroup.budget.toLocaleString()}</div>
+                                </div>
+                                <div>
+                                  <div className="text-[8px] font-black uppercase tracking-widest text-slate-300">Real</div>
+                                  <div className="text-[10px] font-black font-mono text-emerald-700">${subcategoryGroup.subtotal.toLocaleString()}</div>
+                                </div>
+                                <div>
+                                  <div className="text-[8px] font-black uppercase tracking-widest text-slate-300">Saldo</div>
+                                  <div className={cn("text-[10px] font-black font-mono", subcategoryGroup.balance < 0 ? "text-red-600" : "text-slate-700")}>${subcategoryGroup.balance.toLocaleString()}</div>
+                                </div>
                               </div>
+                              {canManageSubcategoryBudget(areaRow.area) && (
+                                <button
+                                  type="button"
+                                  onClick={() => openAreaExpenseSubcategoryModal(areaRow.area, subcategoryGroup.subcategory)}
+                                  className="rounded border border-slate-200 bg-white px-2 py-1 text-[9px] font-black uppercase tracking-widest text-slate-500 hover:border-black hover:text-black"
+                                  title="Editar presupuesto de subcategoria"
+                                >
+                                  Presu
+                                </button>
+                              )}
                               {canEditAreaSubcategory(areaRow.area, subcategoryGroup.subcategory) && (
                                 <button
                                   type="button"
@@ -6016,7 +6241,7 @@ export default function ProjectDetail() {
                 </p>
               </header>
 
-              {canManageProjectRoles ? (
+              {canManageProjectAccess ? (
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 p-6 bg-slate-50 border border-slate-100 rounded-2xl">
                 <div className="lg:col-span-5 space-y-4">
                   <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400">Buscar usuario logueado</label>
@@ -6070,7 +6295,7 @@ export default function ProjectDetail() {
                   <div>
                     <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Rol dentro del proyecto</div>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                      {PROJECT_ADMIN_ROLE_OPTIONS.map((role) => (
+                      {roleOptionsForCurrentUser.map((role) => (
                         <button
                           key={role}
                           type="button"
@@ -6095,7 +6320,7 @@ export default function ProjectDetail() {
                     <div>
                       <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Áreas del presupuesto asignadas</div>
                       <div className="flex flex-wrap gap-2 max-h-36 overflow-y-auto pr-1">
-                        {categories.map((cat) => {
+                        {assignableAreaOptions.map((cat) => {
                           const selected = newCollaboratorCategories.includes(cat);
                           return (
                             <button
@@ -6158,7 +6383,7 @@ export default function ProjectDetail() {
                           </div>
 
                           <div className="flex flex-wrap gap-2 items-center justify-end">
-                            {canManageProjectRoles && (
+                            {canManageProjectAccess && (
                             <div className="flex gap-1 bg-white p-1 rounded border border-slate-200">
                               {roleOptionsForCurrentUser.map((role) => (
                                 <button
@@ -6265,6 +6490,7 @@ export default function ProjectDetail() {
                                         title={`${option.area} / ${option.subcategory}`}
                                       >
                                         {option.area} / {option.subcategory}
+                                        {option.budget > 0 ? ` · $${option.budget.toLocaleString()}` : ''}
                                       </button>
                                     );
                                   })}
@@ -6275,7 +6501,7 @@ export default function ProjectDetail() {
                               </div>
                             )}
 
-                            {canManageProjectRoles && (
+                            {canManageProjectAccess && (
                             <div className="lg:col-span-2 flex flex-wrap gap-2 pt-2">
                               <button
                                 onClick={() => updateCollaboratorPermissions(col, { canEditBudgetAreas: !col.canEditBudgetAreas })}
@@ -6507,6 +6733,85 @@ export default function ProjectDetail() {
                   </button>
                 </div>
               </div>
+            </motion.div>
+          </div>
+        )}
+        {subcategoryBudgetDraft && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[270] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden"
+            >
+              <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/30">
+                <div>
+                  <h2 className="text-xs font-bold uppercase tracking-widest text-slate-900 flex items-center gap-2">
+                    <LayoutGrid className="w-4 h-4" />
+                    {subcategoryBudgetDraft.mode === 'edit' ? 'Editar subpresupuesto' : 'Nueva subcategoria'}
+                  </h2>
+                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">
+                    {subcategoryBudgetDraft.area}
+                  </p>
+                </div>
+                <button onClick={() => setSubcategoryBudgetDraft(null)} className="text-slate-400 hover:text-black">
+                  <Plus className="w-5 h-5 rotate-45" />
+                </button>
+              </div>
+
+              <form onSubmit={saveAreaExpenseSubcategoryBudget} className="p-6 space-y-4">
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Nombre</label>
+                  <input
+                    value={subcategoryBudgetDraft.name}
+                    onChange={(event) => setSubcategoryBudgetDraft((current) => current ? { ...current, name: event.target.value } : current)}
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black"
+                    placeholder="Ej: Movilidad, Catering, Arte utileria"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Presupuesto asignado</label>
+                  <div className="relative">
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold">$</span>
+                    <input
+                      value={subcategoryBudgetDraft.budget}
+                      onChange={(event) => setSubcategoryBudgetDraft((current) => current ? { ...current, budget: event.target.value } : current)}
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      className="w-full pl-8 pr-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm font-black focus:outline-none focus:border-black"
+                      placeholder="0"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Notas</label>
+                  <textarea
+                    value={subcategoryBudgetDraft.notes}
+                    onChange={(event) => setSubcategoryBudgetDraft((current) => current ? { ...current, notes: event.target.value } : current)}
+                    rows={3}
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black resize-none"
+                    placeholder="Condiciones, alcance o responsable..."
+                  />
+                </div>
+                <div className="flex justify-end gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setSubcategoryBudgetDraft(null)}
+                    className="px-5 py-3 text-[10px] font-bold uppercase tracking-widest text-slate-400 hover:text-black"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSavingSubcategoryBudget}
+                    className="px-5 py-3 bg-black text-white rounded text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 disabled:bg-slate-300"
+                  >
+                    {isSavingSubcategoryBudget ? 'Guardando...' : 'Guardar subpresupuesto'}
+                  </button>
+                </div>
+              </form>
             </motion.div>
           </div>
         )}
