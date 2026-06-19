@@ -1281,6 +1281,96 @@ export default function ProjectDetail() {
     }
   };
 
+  const deleteAreaExpenseSubcategoryBudget = async () => {
+    if (!id || !subcategoryBudgetDraft || subcategoryBudgetDraft.mode !== 'edit') return;
+    const area = subcategoryBudgetDraft.area;
+    if (!canManageSubcategoryBudget(area)) return;
+    const subcategory = cleanAreaExpenseSubcategory(subcategoryBudgetDraft.originalSubcategory || subcategoryBudgetDraft.name);
+    if (!subcategory) return;
+
+    const affectedExpenses = areaExpenses.filter((expense) => (
+      expense.area === area && cleanAreaExpenseSubcategory(expense.subcategory) === subcategory
+    ));
+    const firstConfirmation = confirm(
+      `Eliminar la subcategoria "${subcategory}" de ${area}?\n\n` +
+      `Sus ${affectedExpenses.length} gastos no se borran: quedaran como "Sin subcategoria".`
+    );
+    if (!firstConfirmation) return;
+    const secondConfirmation = confirm(
+      `Confirmacion final: queres eliminar "${subcategory}"?\n\n` +
+      'Tambien se quitaran los permisos asignados a esta subcategoria.'
+    );
+    if (!secondConfirmation) return;
+
+    const existing = getStoredAreaSubcategories(area);
+    const nextSubcategories = existing.filter((item) => item.toLowerCase() !== subcategory.toLowerCase());
+    const currentBudgetMap = project?.areaExpenseSubcategoryBudgets && typeof project.areaExpenseSubcategoryBudgets === 'object'
+      ? { ...project.areaExpenseSubcategoryBudgets }
+      : {};
+    delete currentBudgetMap[areaSubcategoryKey(area, subcategory)];
+    const permissionKey = areaSubcategoryKey(area, subcategory);
+    const collaboratorsToUpdate = collaborators.filter((col) => safeArray(col.allowedSubcategories).includes(permissionKey));
+
+    setIsSavingSubcategoryBudget(true);
+    try {
+      await updateDoc(doc(db, 'projects', id), {
+        areaExpenseSubcategories: {
+          ...(project?.areaExpenseSubcategories || {}),
+          [area]: nextSubcategories,
+        },
+        areaExpenseSubcategoryBudgets: currentBudgetMap,
+        updatedAt: serverTimestamp(),
+      });
+
+      for (const expense of affectedExpenses) {
+        await updateDoc(doc(db, 'projects', id, 'areaExpenses', expense.id), {
+          subcategory: '',
+          updatedAt: serverTimestamp(),
+        });
+      }
+
+      for (const col of collaboratorsToUpdate) {
+        await updateDoc(doc(db, 'projects', id, 'collaborators', normalizeEmail(col.email)), {
+          allowedSubcategories: safeArray(col.allowedSubcategories).filter((key) => key !== permissionKey),
+          updatedAt: serverTimestamp(),
+        });
+      }
+
+      setProject((current: any) => current ? {
+        ...current,
+        areaExpenseSubcategories: {
+          ...(current.areaExpenseSubcategories || {}),
+          [area]: nextSubcategories,
+        },
+        areaExpenseSubcategoryBudgets: currentBudgetMap,
+      } : current);
+      if (affectedExpenses.length > 0) {
+        setAreaExpenses((current) => current.map((expense) => (
+          expense.area === area && cleanAreaExpenseSubcategory(expense.subcategory) === subcategory
+            ? { ...expense, subcategory: '' }
+            : expense
+        )));
+      }
+      if (collaboratorsToUpdate.length > 0) {
+        setCollaborators((current) => current.map((col) => (
+          safeArray(col.allowedSubcategories).includes(permissionKey)
+            ? {
+                ...col,
+                allowedSubcategories: safeArray(col.allowedSubcategories).filter((key) => key !== permissionKey),
+                updatedAt: new Date(),
+              }
+            : col
+        )));
+      }
+      setSubcategoryBudgetDraft(null);
+    } catch (error) {
+      console.error('Error deleting area expense subcategory:', error);
+      alert('No se pudo eliminar la subcategoria.');
+    } finally {
+      setIsSavingSubcategoryBudget(false);
+    }
+  };
+
   const moveAreaExpense = async (expense: AreaExpense, nextArea: string, nextSubcategory: string) => {
     if (!expense?.id) return;
     const targetArea = nextArea || expense.area;
@@ -2128,20 +2218,33 @@ export default function ProjectDetail() {
     const stored = project?.areaExpenseSubcategories && typeof project.areaExpenseSubcategories === 'object'
       ? project.areaExpenseSubcategories
       : {};
+    const budgetMap = project?.areaExpenseSubcategoryBudgets && typeof project.areaExpenseSubcategoryBudgets === 'object'
+      ? project.areaExpenseSubcategoryBudgets
+      : {};
 
     visibleCategories.forEach((area) => {
       const storedList = Array.isArray(stored[area]) ? stored[area] : [];
       const expenseList = areaExpenses
         .filter((expense) => expense.area === area)
         .map((expense) => normalizeAreaExpenseSubcategory(expense.subcategory));
+      const budgetList = Object.entries(budgetMap)
+        .filter(([key, entry]: [string, any]) => {
+          const entryArea = entry && typeof entry === 'object' ? entry.area : areaFromSubcategoryKey(key);
+          return entryArea === area;
+        })
+        .map(([key, entry]: [string, any]) => {
+          if (entry && typeof entry === 'object' && entry.subcategory) return normalizeAreaExpenseSubcategory(entry.subcategory);
+          return normalizeAreaExpenseSubcategory(key.split('||')[1] || '');
+        });
       map[area] = Array.from(new Set([
         ...storedList.map(normalizeAreaExpenseSubcategory),
         ...expenseList,
+        ...budgetList,
       ])).filter(hasAreaExpenseSubcategory);
     });
 
     return map;
-  }, [areaExpenses, project?.areaExpenseSubcategories, visibleCategoryKey]);
+  }, [areaExpenses, project?.areaExpenseSubcategories, project?.areaExpenseSubcategoryBudgets, visibleCategoryKey]);
 
   useEffect(() => {
     setSelectedAreaTabs((current) => {
@@ -4278,7 +4381,7 @@ export default function ProjectDetail() {
                     dragOverAreaTarget === `area:${areaRow.area}` && "bg-emerald-50/50"
                   )}
                 >
-                  <div className="bg-slate-900 text-white px-2 py-2 sm:px-4 sm:py-3 flex justify-between items-center gap-2 border-l-4 border-emerald-400 shadow-sm">
+                  <div className="flex flex-col gap-2 border-l-4 border-emerald-400 bg-slate-900 px-2 py-2 text-white shadow-sm sm:flex-row sm:items-center sm:justify-between sm:px-4 sm:py-3">
                     <div className="flex min-w-0 items-center gap-1.5 sm:gap-3">
                        <button
                          type="button"
@@ -4302,7 +4405,21 @@ export default function ProjectDetail() {
                         </button>
                       )}
                     </div>
-                     <div className="flex shrink-0 items-center gap-1 sm:gap-4">
+                     <div className="flex w-full flex-wrap items-center justify-between gap-1.5 sm:w-auto sm:justify-end sm:gap-2">
+                      <div className="grid min-w-[210px] flex-1 grid-cols-3 gap-1 sm:min-w-[330px] sm:flex-none sm:gap-2">
+                        <div className="rounded border border-white/10 bg-white/10 px-2 py-1">
+                          <div className="text-[7px] font-bold uppercase tracking-widest text-slate-300 sm:text-[8px]">Asignado</div>
+                          <div className="truncate font-mono text-[10px] font-black text-white sm:text-xs">${areaRow.assigned.toLocaleString()}</div>
+                        </div>
+                        <div className="rounded border border-white/10 bg-white/10 px-2 py-1">
+                          <div className="text-[7px] font-bold uppercase tracking-widest text-slate-300 sm:text-[8px]">Gastado</div>
+                          <div className="truncate font-mono text-[10px] font-black text-emerald-300 sm:text-xs">${areaRow.spent.toLocaleString()}</div>
+                        </div>
+                        <div className="rounded border border-white/10 bg-white/10 px-2 py-1">
+                          <div className="text-[7px] font-bold uppercase tracking-widest text-slate-300 sm:text-[8px]">Saldo</div>
+                          <div className={cn("truncate font-mono text-[10px] font-black sm:text-xs", areaRow.balance >= 0 ? "text-white" : "text-red-300")}>${areaRow.balance.toLocaleString()}</div>
+                        </div>
+                      </div>
                       <button
                         onClick={() => openAreaExpenseSubcategoryModal(areaRow.area)}
                         disabled={!canManageSubcategoryBudget(areaRow.area)}
@@ -4324,31 +4441,6 @@ export default function ProjectDetail() {
                   </div>
                   {!collapsedCategories[areaRow.area] && (
                   <>
-                  <div className="grid grid-cols-3 gap-1.5 px-2 py-2 sm:gap-3 sm:px-6 sm:py-4 border-b border-slate-100 bg-white">
-                    <div>
-                      <div className="text-[7px] sm:text-[9px] font-bold uppercase tracking-widest text-slate-400">Asignado</div>
-                      <div className="truncate text-[10px] sm:text-sm font-black text-slate-900">${areaRow.assigned.toLocaleString()}</div>
-                    </div>
-                    <div>
-                      <div className="text-[7px] sm:text-[9px] font-bold uppercase tracking-widest text-slate-400">Gastado</div>
-                      <div className="truncate text-[10px] sm:text-sm font-black text-emerald-600">${areaRow.spent.toLocaleString()}</div>
-                    </div>
-                    <div>
-                      <div className="flex items-center justify-between gap-1 sm:gap-3">
-                        <div className="min-w-0">
-                          <div className="text-[7px] sm:text-[9px] font-bold uppercase tracking-widest text-slate-400">Saldo</div>
-                          <div className={cn("truncate text-[10px] sm:text-sm font-black", areaRow.balance >= 0 ? "text-slate-900" : "text-red-600")}>${areaRow.balance.toLocaleString()}</div>
-                        </div>
-                        <div className="hidden sm:block w-28 h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                          <div
-                            className={cn("h-full rounded-full", areaRow.balance < 0 ? "bg-red-500" : areaRow.usedPercent >= 85 ? "bg-yellow-400" : "bg-emerald-500")}
-                            style={{ width: `${areaRow.usedPercent}%` }}
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                  
                   <div className="divide-y divide-slate-100 md:hidden">
                     {areaRow.subcategoryGroups.map((subcategoryGroup) => {
                       const subcategoryKey = `${areaRow.area}__${subcategoryGroup.subcategory}`;
@@ -4371,29 +4463,34 @@ export default function ProjectDetail() {
                                 ...current,
                                 [subcategoryKey]: !current[subcategoryKey],
                               }))}
-                              className="flex min-w-0 flex-1 items-center justify-between gap-2 text-left"
+                              className="flex min-w-0 flex-1 flex-col gap-1.5 text-left"
                             >
-                              <span className="min-w-0">
+                              <span className="min-w-0 pr-1">
                                 <span className={cn(
                                   "block truncate text-[9px] font-black uppercase tracking-widest",
                                   hasNamedSubcategory ? "text-white" : "text-slate-800"
                                 )}>
                                   {subcategoryLabel}
                                 </span>
-                                <span className={cn(
-                                  "mt-0.5 block truncate text-[8px] font-bold uppercase tracking-widest",
-                                  hasNamedSubcategory ? "text-slate-300" : "text-slate-500"
-                                )}>
-                                  Presu ${subcategoryGroup.budget.toLocaleString()} / Real ${subcategoryGroup.subtotal.toLocaleString()}
-                                </span>
                               </span>
-                              <span className={cn(
-                                "shrink-0 font-mono text-[10px] font-black",
-                                subcategoryGroup.balance < 0
-                                  ? "text-red-400"
-                                  : hasNamedSubcategory ? "text-white" : "text-slate-800"
-                              )}>
-                                ${subcategoryGroup.balance.toLocaleString()}
+                              <span className="grid w-full grid-cols-3 gap-1">
+                                <span className={cn("rounded px-1.5 py-1", hasNamedSubcategory ? "bg-white/10" : "bg-white/70")}>
+                                  <span className={cn("block text-[7px] font-black uppercase tracking-widest", hasNamedSubcategory ? "text-slate-300" : "text-slate-500")}>Presu</span>
+                                  <span className={cn("block truncate font-mono text-[9px] font-black", hasNamedSubcategory ? "text-white" : "text-slate-800")}>${subcategoryGroup.budget.toLocaleString()}</span>
+                                </span>
+                                <span className={cn("rounded px-1.5 py-1", hasNamedSubcategory ? "bg-white/10" : "bg-white/70")}>
+                                  <span className={cn("block text-[7px] font-black uppercase tracking-widest", hasNamedSubcategory ? "text-slate-300" : "text-slate-500")}>Real</span>
+                                  <span className={cn("block truncate font-mono text-[9px] font-black", hasNamedSubcategory ? "text-emerald-300" : "text-emerald-700")}>${subcategoryGroup.subtotal.toLocaleString()}</span>
+                                </span>
+                                <span className={cn("rounded px-1.5 py-1", hasNamedSubcategory ? "bg-white/10" : "bg-white/70")}>
+                                  <span className={cn("block text-[7px] font-black uppercase tracking-widest", hasNamedSubcategory ? "text-slate-300" : "text-slate-500")}>Saldo</span>
+                                  <span className={cn(
+                                    "block truncate font-mono text-[9px] font-black",
+                                    subcategoryGroup.balance < 0
+                                      ? "text-red-400"
+                                      : hasNamedSubcategory ? "text-white" : "text-slate-800"
+                                  )}>${subcategoryGroup.balance.toLocaleString()}</span>
+                                </span>
                               </span>
                             </button>
                             {hasNamedSubcategory && canManageSubcategoryBudget(areaRow.area) && (
@@ -6837,21 +6934,36 @@ export default function ProjectDetail() {
                     placeholder="Condiciones, alcance o responsable..."
                   />
                 </div>
-                <div className="flex justify-end gap-3 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setSubcategoryBudgetDraft(null)}
-                    className="px-5 py-3 text-[10px] font-bold uppercase tracking-widest text-slate-400 hover:text-black"
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={isSavingSubcategoryBudget}
-                    className="px-5 py-3 bg-black text-white rounded text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 disabled:bg-slate-300"
-                  >
-                    {isSavingSubcategoryBudget ? 'Guardando...' : 'Guardar subpresupuesto'}
-                  </button>
+                <div className="flex flex-col gap-3 pt-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    {subcategoryBudgetDraft.mode === 'edit' && (
+                      <button
+                        type="button"
+                        onClick={deleteAreaExpenseSubcategoryBudget}
+                        disabled={isSavingSubcategoryBudget}
+                        className="inline-flex items-center gap-2 rounded border border-red-100 bg-red-50 px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-red-600 hover:border-red-200 hover:bg-red-100 disabled:opacity-40"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        Eliminar subcategoria
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex justify-end gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setSubcategoryBudgetDraft(null)}
+                      className="px-5 py-3 text-[10px] font-bold uppercase tracking-widest text-slate-400 hover:text-black"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isSavingSubcategoryBudget}
+                      className="px-5 py-3 bg-black text-white rounded text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 disabled:bg-slate-300"
+                    >
+                      {isSavingSubcategoryBudget ? 'Guardando...' : 'Guardar subpresupuesto'}
+                    </button>
+                  </div>
                 </div>
               </form>
             </motion.div>
