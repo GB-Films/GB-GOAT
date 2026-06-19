@@ -106,8 +106,8 @@ service cloud.firestore {
 
     function canAssignAreasAsProductionLead(projectId) {
       return isProjectProductionLead(projectId)
-        && resource.data.role == 'jefe_area'
-        && request.resource.data.role == 'jefe_area'
+        && resource.data.role in ['jefe_produccion', 'jefe_area']
+        && request.resource.data.role == resource.data.role
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['allowedCategories', 'allowedSubcategories', 'updatedAt'])
         && request.resource.data.allowedCategories is list
         && request.resource.data.allowedCategories.hasOnly(collaboratorDoc(projectId).allowedCategories)
@@ -134,8 +134,26 @@ service cloud.firestore {
         && 'areas' in collaboratorDoc(projectId).allowedTabs
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'areaExpenseSubcategories',
+          'areaExpenseSubcategoryBudgets',
           'updatedAt'
         ]);
+    }
+
+    function canCreateCollaboratorAsProductionLead(projectId) {
+      return isProjectProductionLead(projectId)
+        && request.resource.data.role in ['jefe_produccion', 'jefe_area']
+        && request.resource.data.allowedCategories is list
+        && request.resource.data.allowedCategories.hasOnly(collaboratorDoc(projectId).allowedCategories)
+        && (
+          !request.resource.data.keys().hasAny(['allowedSubcategories'])
+          || request.resource.data.allowedSubcategories is list
+        );
+    }
+
+    function canDeleteCollaboratorAsProductionLead(projectId) {
+      return isProjectProductionLead(projectId)
+        && resource.data.role in ['jefe_produccion', 'jefe_area']
+        && resource.data.allowedCategories.hasOnly(collaboratorDoc(projectId).allowedCategories);
     }
 
     function canWriteProjectDocument(projectId) {
@@ -362,7 +380,8 @@ service cloud.firestore {
 
       match /collaborators/{email} {
         allow read: if hasProjectAccess(projectId);
-        allow create, delete: if isProjectAdmin(projectId);
+        allow create: if isProjectAdmin(projectId) || canCreateCollaboratorAsProductionLead(projectId);
+        allow delete: if isProjectAdmin(projectId) || canDeleteCollaboratorAsProductionLead(projectId);
         allow update: if isProjectAdmin(projectId) || canAssignAreasAsProductionLead(projectId);
       }
 
