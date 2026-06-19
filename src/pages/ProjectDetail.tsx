@@ -4353,58 +4353,80 @@ export default function ProjectDetail() {
                     {areaRow.subcategoryGroups.map((subcategoryGroup) => {
                       const subcategoryKey = `${areaRow.area}__${subcategoryGroup.subcategory}`;
                       const isSubcategoryCollapsed = collapsedAreaSubcategories[subcategoryKey];
+                      const hasNamedSubcategory = Boolean(subcategoryGroup.subcategory);
+                      const subcategoryLabel = subcategoryGroup.subcategory || DEFAULT_AREA_EXPENSE_SUBCATEGORY;
+                      const canEditThisSubcategory = canEditAreaSubcategory(areaRow.area, subcategoryGroup.subcategory);
 
                       return (
-                        <div key={`mobile-${subcategoryKey}`} className="bg-white">
-                          {subcategoryGroup.subcategory && (
-                            <div className="flex items-center gap-1 bg-slate-50 px-3 py-2">
+                        <div key={`mobile-${subcategoryKey}`} className="bg-slate-50">
+                          <div className={cn(
+                            "flex items-center gap-1 border-y px-3 py-2",
+                            hasNamedSubcategory
+                              ? "border-slate-800 bg-slate-900 text-white"
+                              : "border-slate-300 bg-slate-200 text-slate-800"
+                          )}>
+                            <button
+                              type="button"
+                              onClick={() => setCollapsedAreaSubcategories((current) => ({
+                                ...current,
+                                [subcategoryKey]: !current[subcategoryKey],
+                              }))}
+                              className="flex min-w-0 flex-1 items-center justify-between gap-2 text-left"
+                            >
+                              <span className="min-w-0">
+                                <span className={cn(
+                                  "block truncate text-[9px] font-black uppercase tracking-widest",
+                                  hasNamedSubcategory ? "text-white" : "text-slate-800"
+                                )}>
+                                  {subcategoryLabel}
+                                </span>
+                                <span className={cn(
+                                  "mt-0.5 block truncate text-[8px] font-bold uppercase tracking-widest",
+                                  hasNamedSubcategory ? "text-slate-300" : "text-slate-500"
+                                )}>
+                                  Presu ${subcategoryGroup.budget.toLocaleString()} / Real ${subcategoryGroup.subtotal.toLocaleString()}
+                                </span>
+                              </span>
+                              <span className={cn(
+                                "shrink-0 font-mono text-[10px] font-black",
+                                subcategoryGroup.balance < 0
+                                  ? "text-red-400"
+                                  : hasNamedSubcategory ? "text-white" : "text-slate-800"
+                              )}>
+                                ${subcategoryGroup.balance.toLocaleString()}
+                              </span>
+                            </button>
+                            {hasNamedSubcategory && canManageSubcategoryBudget(areaRow.area) && (
                               <button
                                 type="button"
-                                onClick={() => setCollapsedAreaSubcategories((current) => ({
-                                  ...current,
-                                  [subcategoryKey]: !current[subcategoryKey],
-                                }))}
-                                className="flex min-w-0 flex-1 items-center justify-between gap-2 text-left"
+                                onClick={() => openAreaExpenseSubcategoryModal(areaRow.area, subcategoryGroup.subcategory)}
+                                className={cn(
+                                  "rounded px-1.5 py-1 text-[8px] font-black uppercase tracking-widest transition-colors",
+                                  hasNamedSubcategory
+                                    ? "border border-white/20 bg-white/10 text-white hover:bg-white/20"
+                                    : "border border-slate-300 bg-white text-slate-600 hover:border-slate-500"
+                                )}
+                                title="Editar presupuesto"
                               >
-                                <span className="min-w-0">
-                                  <span className="block truncate text-[9px] font-black uppercase tracking-widest text-slate-700">
-                                    {subcategoryGroup.subcategory}
-                                  </span>
-                                  <span className="mt-0.5 block truncate text-[8px] font-bold uppercase tracking-widest text-slate-400">
-                                    Presu ${subcategoryGroup.budget.toLocaleString()} / Gasto ${subcategoryGroup.subtotal.toLocaleString()}
-                                  </span>
-                                </span>
-                                <span className={cn("shrink-0 font-mono text-[10px] font-black", subcategoryGroup.balance < 0 ? "text-red-600" : "text-slate-700")}>
-                                  ${subcategoryGroup.balance.toLocaleString()}
-                                </span>
+                                Presu
                               </button>
-                              {canManageSubcategoryBudget(areaRow.area) && (
-                                <button
-                                  type="button"
-                                  onClick={() => openAreaExpenseSubcategoryModal(areaRow.area, subcategoryGroup.subcategory)}
-                                  className="rounded border border-slate-200 bg-white px-1.5 py-1 text-[8px] font-black uppercase tracking-widest text-slate-500"
-                                  title="Editar presupuesto"
-                                >
-                                  Presu
-                                </button>
-                              )}
-                              {canEditAreaSubcategory(areaRow.area, subcategoryGroup.subcategory) && (
-                                <button
-                                  type="button"
-                                  onClick={() => addAreaExpense(areaRow.area, subcategoryGroup.subcategory)}
-                                  className="rounded border border-red-100 bg-red-50 p-1 text-red-600"
-                                  title="Agregar gasto"
-                                >
-                                  <Plus className="h-3.5 w-3.5" />
-                                </button>
-                              )}
-                            </div>
-                          )}
+                            )}
+                            {canEditThisSubcategory && (
+                              <button
+                                type="button"
+                                onClick={() => addAreaExpense(areaRow.area, subcategoryGroup.subcategory)}
+                                className="rounded border border-red-200 bg-red-50 p-1 text-red-600 hover:bg-red-100"
+                                title="Agregar gasto"
+                              >
+                                <Plus className="h-3.5 w-3.5" />
+                              </button>
+                            )}
+                          </div>
 
-                          {(!subcategoryGroup.subcategory || !isSubcategoryCollapsed) && (
-                            <div className="space-y-1.5 p-1.5">
+                          {!isSubcategoryCollapsed && (
+                            <div className="space-y-2 bg-slate-100/80 p-2">
                               {subcategoryGroup.expenses.map((item) => (
-                                <div key={`mobile-${item.id}`} className="rounded-lg border border-slate-200 bg-white p-1.5 shadow-sm">
+                                <div key={`mobile-${item.id}`} className="rounded-lg border border-slate-300 bg-white p-2 shadow-sm">
                                   <div className="flex items-start justify-between gap-1.5">
                                     <div className="min-w-0 flex-1">
                                       <BudgetRowCell
@@ -4585,6 +4607,9 @@ export default function ProjectDetail() {
                       {areaRow.subcategoryGroups.map((subcategoryGroup) => {
                         const subcategoryKey = `${areaRow.area}__${subcategoryGroup.subcategory}`;
                         const isSubcategoryCollapsed = collapsedAreaSubcategories[subcategoryKey];
+                        const hasNamedSubcategory = Boolean(subcategoryGroup.subcategory);
+                        const subcategoryLabel = subcategoryGroup.subcategory || DEFAULT_AREA_EXPENSE_SUBCATEGORY;
+                        const canEditThisSubcategory = canEditAreaSubcategory(areaRow.area, subcategoryGroup.subcategory);
 
                         return (
                           <div
@@ -4606,12 +4631,16 @@ export default function ProjectDetail() {
                               finishAreaExpenseDrop(areaRow.area, subcategoryGroup.subcategory);
                             }}
                             className={cn(
-                              "bg-white transition-colors",
+                              "bg-slate-50 transition-colors",
                               dragOverAreaTarget === `subcategory:${subcategoryKey}` && "bg-emerald-50"
                             )}
                           >
-                            {subcategoryGroup.subcategory && (
-                            <div className="flex items-center justify-between gap-3 px-6 py-2 bg-slate-50/70 border-b border-slate-100">
+                            <div className={cn(
+                              "flex items-center justify-between gap-3 border-b px-6 py-2.5",
+                              hasNamedSubcategory
+                                ? "border-slate-800 bg-slate-900 text-white"
+                                : "border-slate-300 bg-slate-200 text-slate-800"
+                            )}>
                               <div className="flex items-center gap-2 min-w-0 flex-1">
                                 <button
                                   type="button"
@@ -4619,51 +4648,65 @@ export default function ProjectDetail() {
                                     ...current,
                                     [subcategoryKey]: !current[subcategoryKey],
                                   }))}
-                                  className="p-1 text-slate-400 hover:text-slate-900 transition-colors"
+                                  className={cn(
+                                    "p-1 transition-colors",
+                                    hasNamedSubcategory ? "text-slate-300 hover:text-white" : "text-slate-500 hover:text-slate-900"
+                                  )}
                                   title={isSubcategoryCollapsed ? 'Expandir subcategoria' : 'Colapsar subcategoria'}
                                 >
                                   {isSubcategoryCollapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                                 </button>
                                 <div className="min-w-0">
-                                  <div className="text-[10px] font-black uppercase tracking-widest text-slate-700 truncate">
-                                    {subcategoryGroup.subcategory}
+                                  <div className={cn(
+                                    "truncate text-[10px] font-black uppercase tracking-widest",
+                                    hasNamedSubcategory ? "text-white" : "text-slate-800"
+                                  )}>
+                                    {subcategoryLabel}
                                   </div>
-                                  <div className="mt-1 h-1.5 w-40 overflow-hidden rounded-full bg-white">
+                                  <div className={cn(
+                                    "mt-1 h-1.5 w-40 overflow-hidden rounded-full",
+                                    hasNamedSubcategory ? "bg-white/20" : "bg-white"
+                                  )}>
                                     <div
                                       className={cn("h-full rounded-full", subcategoryGroup.balance < 0 ? "bg-red-500" : subcategoryGroup.usedPercent >= 85 ? "bg-yellow-400" : "bg-emerald-500")}
                                       style={{ width: `${Math.max(0, Math.min(100, subcategoryGroup.usedPercent))}%` }}
                                     />
                                   </div>
                                 </div>
-                                <span className="text-[9px] font-bold text-slate-400">
+                                <span className={cn("text-[9px] font-bold", hasNamedSubcategory ? "text-slate-300" : "text-slate-500")}>
                                   {subcategoryGroup.expenses.length} gastos
                                 </span>
                               </div>
                               <div className="grid grid-cols-3 gap-3 text-right">
                                 <div>
-                                  <div className="text-[8px] font-black uppercase tracking-widest text-slate-300">Presu</div>
-                                  <div className="text-[10px] font-black font-mono text-slate-700">${subcategoryGroup.budget.toLocaleString()}</div>
+                                  <div className={cn("text-[8px] font-black uppercase tracking-widest", hasNamedSubcategory ? "text-slate-300" : "text-slate-500")}>Presu</div>
+                                  <div className={cn("text-[10px] font-black font-mono", hasNamedSubcategory ? "text-white" : "text-slate-800")}>${subcategoryGroup.budget.toLocaleString()}</div>
                                 </div>
                                 <div>
-                                  <div className="text-[8px] font-black uppercase tracking-widest text-slate-300">Real</div>
-                                  <div className="text-[10px] font-black font-mono text-emerald-700">${subcategoryGroup.subtotal.toLocaleString()}</div>
+                                  <div className={cn("text-[8px] font-black uppercase tracking-widest", hasNamedSubcategory ? "text-slate-300" : "text-slate-500")}>Real</div>
+                                  <div className={cn("text-[10px] font-black font-mono", hasNamedSubcategory ? "text-emerald-300" : "text-emerald-700")}>${subcategoryGroup.subtotal.toLocaleString()}</div>
                                 </div>
                                 <div>
-                                  <div className="text-[8px] font-black uppercase tracking-widest text-slate-300">Saldo</div>
-                                  <div className={cn("text-[10px] font-black font-mono", subcategoryGroup.balance < 0 ? "text-red-600" : "text-slate-700")}>${subcategoryGroup.balance.toLocaleString()}</div>
+                                  <div className={cn("text-[8px] font-black uppercase tracking-widest", hasNamedSubcategory ? "text-slate-300" : "text-slate-500")}>Saldo</div>
+                                  <div className={cn(
+                                    "text-[10px] font-black font-mono",
+                                    subcategoryGroup.balance < 0
+                                      ? "text-red-400"
+                                      : hasNamedSubcategory ? "text-white" : "text-slate-800"
+                                  )}>${subcategoryGroup.balance.toLocaleString()}</div>
                                 </div>
                               </div>
-                              {canManageSubcategoryBudget(areaRow.area) && (
+                              {hasNamedSubcategory && canManageSubcategoryBudget(areaRow.area) && (
                                 <button
                                   type="button"
                                   onClick={() => openAreaExpenseSubcategoryModal(areaRow.area, subcategoryGroup.subcategory)}
-                                  className="rounded border border-slate-200 bg-white px-2 py-1 text-[9px] font-black uppercase tracking-widest text-slate-500 hover:border-black hover:text-black"
+                                  className="rounded border border-white/20 bg-white/10 px-2 py-1 text-[9px] font-black uppercase tracking-widest text-white transition-colors hover:bg-white/20"
                                   title="Editar presupuesto de subcategoria"
                                 >
                                   Presu
                                 </button>
                               )}
-                              {canEditAreaSubcategory(areaRow.area, subcategoryGroup.subcategory) && (
+                              {canEditThisSubcategory && (
                                 <button
                                   type="button"
                                   onClick={() => addAreaExpense(areaRow.area, subcategoryGroup.subcategory)}
@@ -4674,9 +4717,8 @@ export default function ProjectDetail() {
                                 </button>
                               )}
                             </div>
-                            )}
-                            {(!subcategoryGroup.subcategory || !isSubcategoryCollapsed) && (
-                              <div className="divide-y divide-slate-100">
+                            {!isSubcategoryCollapsed && (
+                              <div className="divide-y divide-slate-200 bg-slate-50">
                       {subcategoryGroup.expenses.map((item) => (
                           <div
                             key={item.id}
@@ -4712,7 +4754,7 @@ export default function ProjectDetail() {
                                 ? "bg-emerald-50 ring-2 ring-inset ring-emerald-400"
                                 : draggedAreaExpenseId === item.id
                                   ? "bg-slate-100 opacity-70"
-                                : "hover:bg-slate-50"
+                                : "bg-white hover:bg-slate-50"
                             )}
                           >
                             {dragOverExpenseId === item.id && (
