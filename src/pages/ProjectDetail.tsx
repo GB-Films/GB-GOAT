@@ -569,6 +569,63 @@ function PaymentDatePicker({
   );
 }
 
+function ShootingDateButton({
+  label,
+  value,
+  min,
+  title,
+  onChange,
+}: {
+  label: string;
+  value?: any;
+  min?: string;
+  title: string;
+  onChange: (value: string) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const valueKey = toDateInputValue(value);
+
+  const openPicker = () => {
+    const input = inputRef.current;
+    if (!input) return;
+
+    try {
+      if (input.showPicker) {
+        input.showPicker();
+      } else {
+        input.focus();
+        input.click();
+      }
+    } catch {
+      input.focus();
+      input.click();
+    }
+  };
+
+  return (
+    <span className="relative inline-flex min-w-[76px] items-center justify-center">
+      <button
+        type="button"
+        onClick={openPicker}
+        className="w-full text-center text-[11px] font-bold text-slate-900 cursor-pointer"
+        title={title}
+      >
+        {valueKey ? formatDate(valueKey) : label}
+      </button>
+      <input
+        ref={inputRef}
+        type="date"
+        min={min}
+        value={valueKey}
+        onChange={(e) => onChange(e.target.value)}
+        className="pointer-events-none absolute h-px w-px opacity-0"
+        tabIndex={-1}
+        aria-hidden="true"
+      />
+    </span>
+  );
+}
+
 const providerExportRow = (provider: any, extra: Record<string, any> = {}) => {
   const inferred = inferLegacyIdentifiers(provider);
   const category = provider.category === 'Otra'
@@ -3550,35 +3607,26 @@ export default function ProjectDetail() {
     <div className="inline-flex h-8 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 shadow-sm hover:border-blue-200 hover:shadow-md transition-all">
       <Calendar className="w-3.5 h-3.5 text-slate-500" />
       <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">Rodaje</span>
-      <label className="relative min-w-[76px] text-center text-[11px] font-bold text-slate-900 cursor-pointer">
-        {getShootingStartDate(project) ? formatDate(getShootingStartDate(project)) : 'Inicio'}
-        <input
-          type="date"
-          value={toDateInputValue(getShootingStartDate(project))}
-          onChange={(e) => {
-            const newStart = e.target.value;
-            const currentEnd = toDateInputValue(project.shootingEndDate);
-            updateShootingRange({
-              shootingStartDate: newStart,
-              shootingEndDate: currentEnd && currentEnd < newStart ? newStart : currentEnd,
-            });
-          }}
-          className="absolute inset-0 h-full w-full opacity-0 cursor-pointer"
-          title="Inicio de rodaje"
-        />
-      </label>
+      <ShootingDateButton
+        label="Inicio"
+        value={getShootingStartDate(project)}
+        title="Inicio de rodaje"
+        onChange={(newStart) => {
+          const currentEnd = toDateInputValue(project.shootingEndDate);
+          updateShootingRange({
+            shootingStartDate: newStart,
+            shootingEndDate: currentEnd && currentEnd < newStart ? newStart : currentEnd,
+          });
+        }}
+      />
       <span className="text-slate-300">a</span>
-      <label className="relative min-w-[76px] text-center text-[11px] font-bold text-slate-900 cursor-pointer">
-        {getShootingEndDate(project) ? formatDate(getShootingEndDate(project)) : 'Fin'}
-        <input
-          type="date"
-          min={toDateInputValue(getShootingStartDate(project))}
-          value={toDateInputValue(project.shootingEndDate)}
-          onChange={(e) => updateShootingRange({ shootingEndDate: e.target.value })}
-          className="absolute inset-0 h-full w-full opacity-0 cursor-pointer"
-          title="Fin de rodaje"
-        />
-      </label>
+      <ShootingDateButton
+        label="Fin"
+        value={project.shootingEndDate}
+        min={toDateInputValue(getShootingStartDate(project))}
+        title="Fin de rodaje"
+        onChange={(newEnd) => updateShootingRange({ shootingEndDate: newEnd })}
+      />
     </div>
   );
 
@@ -4446,6 +4494,7 @@ export default function ProjectDetail() {
                       const subcategoryKey = `${areaRow.area}__${subcategoryGroup.subcategory}`;
                       const isSubcategoryCollapsed = collapsedAreaSubcategories[subcategoryKey];
                       const hasNamedSubcategory = Boolean(subcategoryGroup.subcategory);
+                      const hasSubcategoryBudget = Number(subcategoryGroup.budget) > 0;
                       const subcategoryLabel = subcategoryGroup.subcategory || DEFAULT_AREA_EXPENSE_SUBCATEGORY;
                       const canEditThisSubcategory = canEditAreaSubcategory(areaRow.area, subcategoryGroup.subcategory);
 
@@ -4473,6 +4522,7 @@ export default function ProjectDetail() {
                                   {subcategoryLabel}
                                 </span>
                               </span>
+                              {hasSubcategoryBudget && (
                               <span className="grid w-full grid-cols-3 gap-1">
                                 <span className={cn("rounded px-1.5 py-1", hasNamedSubcategory ? "bg-white/10" : "bg-white/70")}>
                                   <span className={cn("block text-[7px] font-black uppercase tracking-widest", hasNamedSubcategory ? "text-slate-300" : "text-slate-500")}>Presu</span>
@@ -4492,7 +4542,19 @@ export default function ProjectDetail() {
                                   )}>${subcategoryGroup.balance.toLocaleString()}</span>
                                 </span>
                               </span>
+                              )}
                             </button>
+                            {!hasSubcategoryBudget && (
+                              <div
+                                className={cn(
+                                  "shrink-0 font-mono text-[10px] font-black",
+                                  hasNamedSubcategory ? "text-emerald-300" : "text-emerald-700"
+                                )}
+                                title="Total gastado"
+                              >
+                                ${subcategoryGroup.subtotal.toLocaleString()}
+                              </div>
+                            )}
                             {hasNamedSubcategory && canManageSubcategoryBudget(areaRow.area) && (
                               <button
                                 type="button"
@@ -4705,6 +4767,7 @@ export default function ProjectDetail() {
                         const subcategoryKey = `${areaRow.area}__${subcategoryGroup.subcategory}`;
                         const isSubcategoryCollapsed = collapsedAreaSubcategories[subcategoryKey];
                         const hasNamedSubcategory = Boolean(subcategoryGroup.subcategory);
+                        const hasSubcategoryBudget = Number(subcategoryGroup.budget) > 0;
                         const subcategoryLabel = subcategoryGroup.subcategory || DEFAULT_AREA_EXPENSE_SUBCATEGORY;
                         const canEditThisSubcategory = canEditAreaSubcategory(areaRow.area, subcategoryGroup.subcategory);
 
@@ -4774,25 +4837,37 @@ export default function ProjectDetail() {
                                   {subcategoryGroup.expenses.length} gastos
                                 </span>
                               </div>
-                              <div className="grid grid-cols-3 gap-3 text-right">
-                                <div>
-                                  <div className={cn("text-[8px] font-black uppercase tracking-widest", hasNamedSubcategory ? "text-slate-300" : "text-slate-500")}>Presu</div>
-                                  <div className={cn("text-[10px] font-black font-mono", hasNamedSubcategory ? "text-white" : "text-slate-800")}>${subcategoryGroup.budget.toLocaleString()}</div>
+                              {hasSubcategoryBudget ? (
+                                <div className="grid grid-cols-3 gap-3 text-right">
+                                  <div>
+                                    <div className={cn("text-[8px] font-black uppercase tracking-widest", hasNamedSubcategory ? "text-slate-300" : "text-slate-500")}>Presu</div>
+                                    <div className={cn("text-[10px] font-black font-mono", hasNamedSubcategory ? "text-white" : "text-slate-800")}>${subcategoryGroup.budget.toLocaleString()}</div>
+                                  </div>
+                                  <div>
+                                    <div className={cn("text-[8px] font-black uppercase tracking-widest", hasNamedSubcategory ? "text-slate-300" : "text-slate-500")}>Real</div>
+                                    <div className={cn("text-[10px] font-black font-mono", hasNamedSubcategory ? "text-emerald-300" : "text-emerald-700")}>${subcategoryGroup.subtotal.toLocaleString()}</div>
+                                  </div>
+                                  <div>
+                                    <div className={cn("text-[8px] font-black uppercase tracking-widest", hasNamedSubcategory ? "text-slate-300" : "text-slate-500")}>Saldo</div>
+                                    <div className={cn(
+                                      "text-[10px] font-black font-mono",
+                                      subcategoryGroup.balance < 0
+                                        ? "text-red-400"
+                                        : hasNamedSubcategory ? "text-white" : "text-slate-800"
+                                    )}>${subcategoryGroup.balance.toLocaleString()}</div>
+                                  </div>
                                 </div>
-                                <div>
-                                  <div className={cn("text-[8px] font-black uppercase tracking-widest", hasNamedSubcategory ? "text-slate-300" : "text-slate-500")}>Real</div>
-                                  <div className={cn("text-[10px] font-black font-mono", hasNamedSubcategory ? "text-emerald-300" : "text-emerald-700")}>${subcategoryGroup.subtotal.toLocaleString()}</div>
+                              ) : (
+                                <div
+                                  className={cn(
+                                    "shrink-0 text-right font-mono text-[11px] font-black",
+                                    hasNamedSubcategory ? "text-emerald-300" : "text-emerald-700"
+                                  )}
+                                  title="Total gastado"
+                                >
+                                  ${subcategoryGroup.subtotal.toLocaleString()}
                                 </div>
-                                <div>
-                                  <div className={cn("text-[8px] font-black uppercase tracking-widest", hasNamedSubcategory ? "text-slate-300" : "text-slate-500")}>Saldo</div>
-                                  <div className={cn(
-                                    "text-[10px] font-black font-mono",
-                                    subcategoryGroup.balance < 0
-                                      ? "text-red-400"
-                                      : hasNamedSubcategory ? "text-white" : "text-slate-800"
-                                  )}>${subcategoryGroup.balance.toLocaleString()}</div>
-                                </div>
-                              </div>
+                              )}
                               {hasNamedSubcategory && canManageSubcategoryBudget(areaRow.area) && (
                                 <button
                                   type="button"
