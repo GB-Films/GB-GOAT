@@ -3263,15 +3263,25 @@ export default function ProjectDetail() {
   const areaSummaryRows = React.useMemo(() => {
     const targetAreas = isProjectAdmin
       ? categories
-      : safeArray(userPermissions?.allowedCategories);
+      : categories.filter((area) => (
+          safeArray(userPermissions?.allowedCategories).includes(area)
+          || userAllowedSubcategories.some((key) => areaFromSubcategoryKey(key) === area)
+        ));
 
     return targetAreas
       .map((area) => {
+        const canReadWholeArea = isProjectAdmin || safeArray(userPermissions?.allowedCategories).includes(area);
         const assigned = budgetItems
-          .filter((item) => item.area === area)
+          .filter((item) => canReadWholeArea && item.area === area)
           .reduce((acc, item) => acc + (Number(item.total) || 0), 0);
         const spent = areaExpenses
-          .filter((item) => item.area === area)
+          .filter((item) => (
+            item.area === area
+            && (
+              canReadWholeArea
+              || userAllowedSubcategories.includes(areaSubcategoryKey(item.area, item.subcategory))
+            )
+          ))
           .reduce((acc, item) => acc + (Number(item.total) || 0), 0);
         const balance = assigned - spent;
         const usedPercent = assigned > 0 ? Math.min(100, (spent / assigned) * 100) : 0;
@@ -3279,7 +3289,7 @@ export default function ProjectDetail() {
         return { area, assigned, spent, balance, usedPercent, actualCost: isProjectAdmin && spent === 0 ? assigned : spent };
       })
       .filter((row) => row.assigned > 0 || row.spent > 0 || !isProjectAdmin);
-  }, [areaExpenses, budgetItems, categories, isProjectAdmin, userPermissions]);
+  }, [areaExpenses, budgetItems, categories, isProjectAdmin, userAllowedSubcategories, userPermissions]);
 
   const areaSummaryTotals = React.useMemo(() => {
     const totals = areaSummaryRows.reduce((acc, row) => ({
@@ -3298,10 +3308,21 @@ export default function ProjectDetail() {
   const summaryBudgetTotal = isProjectAdmin
     ? (Number(project?.budgetTotal) || areaSummaryTotals.assigned)
     : areaSummaryTotals.assigned;
-  const summaryProjectedBalance = summaryBudgetTotal - areaSummaryTotals.actualCost;
+  const summaryIncidenceTotal = isProjectAdmin ? incidenceTotal : 0;
+  const summaryProjectedCost = areaSummaryTotals.actualCost + summaryIncidenceTotal;
+  const summaryProjectedBalance = summaryBudgetTotal - summaryProjectedCost;
   const summaryUsedPercent = summaryBudgetTotal > 0
-    ? Math.min(100, (areaSummaryTotals.actualCost / summaryBudgetTotal) * 100)
+    ? Math.min(100, (summaryProjectedCost / summaryBudgetTotal) * 100)
     : 0;
+  const summaryBudgetItemCount = isProjectAdmin
+    ? budgetItems.length
+    : budgetItems.filter((item) => safeArray(userPermissions?.allowedCategories).includes(item.area)).length;
+  const summaryAreaExpenseCount = isProjectAdmin
+    ? areaExpenses.length
+    : areaExpenses.filter((item) => (
+        safeArray(userPermissions?.allowedCategories).includes(item.area)
+        || userAllowedSubcategories.includes(areaSubcategoryKey(item.area, item.subcategory))
+      )).length;
   const locationValue = locationDraft || project?.location || '';
   const mapsSearchUrl = buildGoogleMapsLink(locationValue);
   const mapsEmbedUrl = buildGoogleMapsEmbedLink(locationValue);
@@ -3627,7 +3648,7 @@ export default function ProjectDetail() {
   };
 
   const saveLocation = async () => {
-    const nextLocation = buildGoogleMapsLink(locationDraft);
+    const nextLocation = locationDraft.trim();
     if (!id || !canEditProjectOperations || nextLocation === (project.location || '')) return;
 
     setIsSavingLocation(true);
@@ -3731,7 +3752,7 @@ export default function ProjectDetail() {
                         <label className="inline-flex h-7 w-full min-w-0 max-w-full flex-1 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 shadow-sm transition-all hover:border-blue-200 hover:shadow-md sm:h-8 sm:min-w-[260px] sm:max-w-[430px] sm:px-3">
                           <MapPin className="w-3.5 h-3.5 flex-none text-slate-500" />
                           <input
-                            type="url"
+                            type="text"
                             aria-label="Link de Google Maps"
                             placeholder="Link de Google Maps o dirección"
                             value={locationDraft}
@@ -3767,7 +3788,7 @@ export default function ProjectDetail() {
                             <label className="inline-flex h-7 w-full min-w-0 max-w-full flex-1 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 shadow-sm transition-all hover:border-blue-200 hover:shadow-md sm:h-8 sm:min-w-[260px] sm:max-w-[430px] sm:px-3">
                               <MapPin className="w-3.5 h-3.5 flex-none text-slate-500" />
                               <input
-                                type="url"
+                                type="text"
                                 aria-label="Link de Google Maps"
                                 placeholder="Link de Google Maps o dirección"
                                 value={locationDraft}
@@ -3876,7 +3897,7 @@ export default function ProjectDetail() {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                  <div className={cn("grid grid-cols-1 gap-3", isProjectAdmin ? "md:grid-cols-4" : "md:grid-cols-3")}>
                     <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
                       <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">{isProjectAdmin ? 'Presupuesto' : 'Presupuesto asignado'}</div>
                       <div className="mt-1 truncate font-mono text-2xl font-black text-slate-950">${summaryBudgetTotal.toLocaleString()}</div>
@@ -3885,6 +3906,12 @@ export default function ProjectDetail() {
                       <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Costo proyectado</div>
                       <div className="mt-1 truncate font-mono text-2xl font-black text-slate-950">${areaSummaryTotals.actualCost.toLocaleString()}</div>
                     </div>
+                    {isProjectAdmin && (
+                      <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+                        <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Incidencias</div>
+                        <div className="mt-1 truncate font-mono text-2xl font-black text-rose-600">${summaryIncidenceTotal.toLocaleString()}</div>
+                      </div>
+                    )}
                     <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
                       <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Saldo proyectado</div>
                       <div className={cn("mt-1 truncate font-mono text-2xl font-black", summaryProjectedBalance >= 0 ? "text-emerald-600" : "text-rose-600")}>
@@ -3907,8 +3934,8 @@ export default function ProjectDetail() {
                     <div className="mt-3 grid grid-cols-2 gap-2 text-[10px] font-bold text-slate-500 sm:grid-cols-4">
                       <div>Asignado: <span className="font-black text-slate-900">${areaSummaryTotals.assigned.toLocaleString()}</span></div>
                       <div>Gastado: <span className="font-black text-slate-900">${areaSummaryTotals.spent.toLocaleString()}</span></div>
-                      <div>Principal: <span className="font-black text-slate-900">{budgetItems.length} filas</span></div>
-                      <div>Areas: <span className="font-black text-slate-900">{areaExpenses.length} gastos</span></div>
+                      <div>Principal: <span className="font-black text-slate-900">{summaryBudgetItemCount} filas</span></div>
+                      <div>Areas: <span className="font-black text-slate-900">{summaryAreaExpenseCount} gastos</span></div>
                     </div>
                   </div>
                 </div>
@@ -3961,13 +3988,6 @@ export default function ProjectDetail() {
                     <h3 className="text-xs font-black uppercase tracking-widest text-slate-950">Contactos clave</h3>
                     <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-slate-400">Direccion, produccion y linea</p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setShowKeyPeopleData((current) => !current)}
-                    className="rounded border border-slate-200 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-widest text-slate-600 transition-colors hover:border-black hover:text-black"
-                  >
-                    {showKeyPeopleData ? 'Ocultar datos' : 'Ver datos'}
-                  </button>
                 </div>
                 <div className="divide-y divide-slate-100">
                   {projectKeyPeople.map(({ id: roleId, label, provider }) => (
@@ -3993,7 +4013,7 @@ export default function ProjectDetail() {
                           <div className="mt-2 truncate text-sm font-black text-slate-950">
                             {provider ? providerDisplayName(provider) : 'Sin asignar'}
                           </div>
-                          {provider && showKeyPeopleData && (
+                          {provider && (
                             <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] font-semibold text-slate-500">
                               <span>Email: <span className="font-bold text-slate-800">{provider.email || provider.adminEmail || '-'}</span></span>
                               <span>Tel: <span className="font-bold text-slate-800">{provider.phone || '-'}</span></span>
