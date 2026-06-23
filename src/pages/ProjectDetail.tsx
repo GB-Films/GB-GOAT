@@ -726,6 +726,8 @@ export default function ProjectDetail() {
   const [isUploadingProjectDocument, setIsUploadingProjectDocument] = useState(false);
   const [subcategoryBudgetDraft, setSubcategoryBudgetDraft] = useState<AreaSubcategoryBudgetDraft | null>(null);
   const [isSavingSubcategoryBudget, setIsSavingSubcategoryBudget] = useState(false);
+  const [expenseConfirmation, setExpenseConfirmation] = useState<string | null>(null);
+  const expenseConfirmationTimeoutRef = useRef<number | null>(null);
   const areaSelectorRef = useRef<HTMLDivElement>(null);
   const isGlobalAdmin = profile?.role === 'admin';
   
@@ -907,6 +909,25 @@ export default function ProjectDetail() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  useEffect(() => {
+    return () => {
+      if (expenseConfirmationTimeoutRef.current) {
+        window.clearTimeout(expenseConfirmationTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const showExpenseConfirmation = (message: string) => {
+    setExpenseConfirmation(message);
+    if (expenseConfirmationTimeoutRef.current) {
+      window.clearTimeout(expenseConfirmationTimeoutRef.current);
+    }
+    expenseConfirmationTimeoutRef.current = window.setTimeout(() => {
+      setExpenseConfirmation(null);
+      expenseConfirmationTimeoutRef.current = null;
+    }, 2200);
+  };
+
   const updateBudgetItem = async (itemId: string, updates: any) => {
     if (!id || !canEditMainBudget) return;
     try {
@@ -955,7 +976,8 @@ export default function ProjectDetail() {
     };
     try {
       const docRef = await addDoc(collection(db, 'projects', id, 'budgetItems'), newItem);
-      setBudgetItems([...budgetItems, { id: docRef.id, ...newItem }]);
+      setBudgetItems(items => [...items, { id: docRef.id, ...newItem }]);
+      showExpenseConfirmation('Nuevo gasto agregado en Presu Ppal');
     } catch (e) {
       console.error("Error adding empty row:", e);
     }
@@ -1137,7 +1159,8 @@ export default function ProjectDetail() {
     };
     try {
       const docRef = await addDoc(collection(db, 'projects', id, 'areaExpenses'), newItem);
-      setAreaExpenses([{ id: docRef.id, ...newItem }, ...areaExpenses]);
+      setAreaExpenses(expenses => [{ id: docRef.id, ...newItem }, ...expenses]);
+      showExpenseConfirmation('Nuevo gasto agregado en Gestión por Áreas');
     } catch (e) {
       console.error("Error adding area expense:", e);
     }
@@ -3637,6 +3660,19 @@ export default function ProjectDetail() {
 
   return (
     <div className="mx-auto max-w-[1600px] text-[11px] sm:text-xs">
+      <AnimatePresence>
+        {expenseConfirmation && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            className="fixed right-4 top-4 z-[300] rounded border border-emerald-200 bg-white px-4 py-2 text-[10px] font-black uppercase tracking-widest text-emerald-700 shadow-xl"
+          >
+            {expenseConfirmation}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <div className="mb-2 overflow-hidden rounded-xl border border-slate-200 bg-white/95 shadow-[0_10px_28px_rgba(15,23,42,0.10)] ring-1 ring-white backdrop-blur-sm sm:mb-4 sm:rounded-2xl sm:shadow-[0_16px_45px_rgba(15,23,42,0.12)]">
         <header className="px-3 py-2.5 md:px-5 md:py-4">
           <div className="flex flex-col gap-2.5 lg:flex-row lg:items-start lg:justify-between">
@@ -4220,6 +4256,19 @@ export default function ProjectDetail() {
                                             );
                                           })}
                                           {provided.placeholder}
+                                          {canEditMainBudget && (
+                                            <button
+                                              type="button"
+                                              onClick={() => addEmptyRow(area)}
+                                              className="group grid h-6 w-full grid-cols-12 items-center border-b border-dashed border-slate-200 bg-white px-4 text-slate-300 transition-colors hover:bg-slate-50 hover:text-slate-600"
+                                              title="Agregar nuevo gasto"
+                                            >
+                                              <span className="col-span-12 flex items-center justify-center gap-1.5 text-[9px] font-black uppercase tracking-widest">
+                                                <Plus className="h-3 w-3" />
+                                                Nuevo Gasto
+                                              </span>
+                                            </button>
+                                          )}
                                         </div>
                                       )}
                                     </Droppable>
@@ -4741,6 +4790,17 @@ export default function ProjectDetail() {
                                   </div>
                                 </div>
                               ))}
+                              {canEditThisSubcategory && (
+                                <button
+                                  type="button"
+                                  onClick={() => addAreaExpense(areaRow.area, subcategoryGroup.subcategory)}
+                                  className="flex h-8 w-full items-center justify-center gap-1.5 rounded border border-dashed border-slate-200 bg-white text-[9px] font-black uppercase tracking-widest text-slate-300 transition-colors hover:border-slate-300 hover:bg-slate-50 hover:text-slate-600"
+                                  title="Agregar nuevo gasto"
+                                >
+                                  <Plus className="h-3 w-3" />
+                                  Nuevo Gasto
+                                </button>
+                              )}
                             </div>
                           )}
                         </div>
@@ -5127,6 +5187,19 @@ export default function ProjectDetail() {
                             </div>
                           </div>
                         ))}
+                        {canEditThisSubcategory && (
+                          <button
+                            type="button"
+                            onClick={() => addAreaExpense(areaRow.area, subcategoryGroup.subcategory)}
+                            className="grid h-6 min-w-[1360px] grid-cols-[minmax(160px,1.45fr)_minmax(180px,1.6fr)_78px_100px_76px_92px_96px_104px_150px_78px] items-center gap-2 border-b border-dashed border-slate-200 bg-white px-6 text-slate-300 transition-colors hover:bg-slate-50 hover:text-slate-600"
+                            title="Agregar nuevo gasto"
+                          >
+                            <span className="col-span-10 flex items-center justify-center gap-1.5 text-[9px] font-black uppercase tracking-widest">
+                              <Plus className="h-3 w-3" />
+                              Nuevo Gasto
+                            </span>
+                          </button>
+                        )}
                               </div>
                             )}
                           </div>
