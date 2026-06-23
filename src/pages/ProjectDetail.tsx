@@ -319,6 +319,12 @@ const buildGoogleMapsLink = (value: string) => {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${trimmed}, Buenos Aires, Argentina`)}`;
 };
 
+const buildGoogleMapsEmbedLink = (value: string) => {
+  const trimmed = value.trim();
+  if (!trimmed || /^https?:\/\//i.test(trimmed)) return '';
+  return `https://maps.google.com/maps?q=${encodeURIComponent(`${trimmed}, Buenos Aires, Argentina`)}&output=embed`;
+};
+
 const getPaymentLeadTimeLabel = (paymentDate: any, shootingDate: any) => {
   if (!paymentDate) return 'Sin fecha';
   const payment = parseProjectDate(paymentDate);
@@ -3289,6 +3295,17 @@ export default function ProjectDetail() {
     };
   }, [areaSummaryRows]);
 
+  const summaryBudgetTotal = isProjectAdmin
+    ? (Number(project?.budgetTotal) || areaSummaryTotals.assigned)
+    : areaSummaryTotals.assigned;
+  const summaryProjectedBalance = summaryBudgetTotal - areaSummaryTotals.actualCost;
+  const summaryUsedPercent = summaryBudgetTotal > 0
+    ? Math.min(100, (areaSummaryTotals.actualCost / summaryBudgetTotal) * 100)
+    : 0;
+  const locationValue = locationDraft || project?.location || '';
+  const mapsSearchUrl = buildGoogleMapsLink(locationValue);
+  const mapsEmbedUrl = buildGoogleMapsEmbedLink(locationValue);
+
   const createCashDelivery = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!id || !isProjectAdmin) return;
@@ -3653,8 +3670,6 @@ export default function ProjectDetail() {
     </div>
   );
 
-  const mapsSearchUrl = buildGoogleMapsLink(locationDraft || project?.location || '');
-
   if (loading) return <div className="p-8 text-center text-slate-500 font-mono text-xs uppercase tracking-widest">Analizando proyecto...</div>;
   if (!project) return <div className="p-8 text-center text-slate-900 font-bold uppercase tracking-widest">Proyecto no encontrado</div>;
 
@@ -3846,6 +3861,164 @@ export default function ProjectDetail() {
         animate={{ opacity: 1, y: 0 }}
       >
         {activeTab === 'resumen' && (
+          <div className="space-y-4 pb-20">
+            <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_12px_32px_rgba(15,23,42,0.10)] ring-1 ring-white">
+              <div className="grid grid-cols-1 lg:grid-cols-[1.25fr_0.75fr]">
+                <div className="space-y-5 p-5 sm:p-6">
+                  <div>
+                    <div className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-400">Resumen del proyecto</div>
+                    <h2 className="mt-2 text-2xl font-black tracking-[-0.04em] text-slate-950 sm:text-4xl">{project.name}</h2>
+                    <div className="mt-3 flex flex-wrap items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                      <span className={cn("rounded-full border px-2.5 py-1", statusColors[project.status || 'Presupuesto'] || 'bg-emerald-100 text-emerald-700 border-emerald-200')}>
+                        {project.status || 'Presupuesto'}
+                      </span>
+                      <span>{project.clientName || 'Cliente sin asignar'}</span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+                      <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">{isProjectAdmin ? 'Presupuesto' : 'Presupuesto asignado'}</div>
+                      <div className="mt-1 truncate font-mono text-2xl font-black text-slate-950">${summaryBudgetTotal.toLocaleString()}</div>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+                      <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Costo proyectado</div>
+                      <div className="mt-1 truncate font-mono text-2xl font-black text-slate-950">${areaSummaryTotals.actualCost.toLocaleString()}</div>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+                      <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Saldo proyectado</div>
+                      <div className={cn("mt-1 truncate font-mono text-2xl font-black", summaryProjectedBalance >= 0 ? "text-emerald-600" : "text-rose-600")}>
+                        ${summaryProjectedBalance.toLocaleString()}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="mb-2 flex items-center justify-between text-[9px] font-black uppercase tracking-widest text-slate-400">
+                      <span>Uso proyectado del presupuesto</span>
+                      <span>{summaryUsedPercent.toFixed(0)}%</span>
+                    </div>
+                    <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+                      <div
+                        className={cn("h-full rounded-full", summaryProjectedBalance < 0 ? "bg-rose-500" : summaryUsedPercent >= 85 ? "bg-yellow-400" : "bg-emerald-500")}
+                        style={{ width: `${summaryUsedPercent}%` }}
+                      />
+                    </div>
+                    <div className="mt-3 grid grid-cols-2 gap-2 text-[10px] font-bold text-slate-500 sm:grid-cols-4">
+                      <div>Asignado: <span className="font-black text-slate-900">${areaSummaryTotals.assigned.toLocaleString()}</span></div>
+                      <div>Gastado: <span className="font-black text-slate-900">${areaSummaryTotals.spent.toLocaleString()}</span></div>
+                      <div>Principal: <span className="font-black text-slate-900">{budgetItems.length} filas</span></div>
+                      <div>Areas: <span className="font-black text-slate-900">{areaExpenses.length} gastos</span></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="border-t border-slate-200 bg-slate-950 p-5 text-white lg:border-l lg:border-t-0 sm:p-6">
+                  <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
+                    <Calendar className="h-3.5 w-3.5" />
+                    Rodaje
+                  </div>
+                  <div className="mt-2 text-xl font-black tracking-[-0.03em]">{formatShootingRange(project)}</div>
+                  <div className="mt-5 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
+                    <MapPin className="h-3.5 w-3.5" />
+                    Locacion
+                  </div>
+                  <div className="mt-2 text-sm font-bold text-white">{locationValue || 'Locacion sin definir'}</div>
+                  <div className="mt-4 overflow-hidden rounded-lg border border-white/10 bg-white/5">
+                    {mapsEmbedUrl ? (
+                      <iframe
+                        title="Mapa de locacion de rodaje"
+                        src={mapsEmbedUrl}
+                        className="h-56 w-full border-0"
+                        loading="lazy"
+                        referrerPolicy="no-referrer-when-downgrade"
+                      />
+                    ) : (
+                      <div className="flex h-56 items-center justify-center px-6 text-center text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                        {locationValue ? 'Abrir Maps para ver esta locacion' : 'Carga una direccion para ver el mapa'}
+                      </div>
+                    )}
+                  </div>
+                  {mapsSearchUrl && (
+                    <a
+                      href={mapsSearchUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-3 inline-flex items-center gap-1.5 rounded border border-white/10 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-widest text-slate-950 transition-colors hover:bg-slate-100"
+                    >
+                      <LinkIcon className="h-3.5 w-3.5" />
+                      Abrir en Maps
+                    </a>
+                  )}
+                </div>
+              </div>
+            </section>
+
+            <section className="grid grid-cols-1 gap-4 xl:grid-cols-[0.95fr_1.05fr]">
+              <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+                <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/60 px-5 py-4">
+                  <div>
+                    <h3 className="text-xs font-black uppercase tracking-widest text-slate-950">Contactos clave</h3>
+                    <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-slate-400">Direccion, produccion y linea</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowKeyPeopleData((current) => !current)}
+                    className="rounded border border-slate-200 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-widest text-slate-600 transition-colors hover:border-black hover:text-black"
+                  >
+                    {showKeyPeopleData ? 'Ocultar datos' : 'Ver datos'}
+                  </button>
+                </div>
+                <div className="divide-y divide-slate-100">
+                  {projectKeyPeople.map(({ id: roleId, label, provider }) => (
+                    <div key={roleId} className="p-4">
+                      <div className="flex items-start gap-3">
+                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-slate-950 text-sm font-black uppercase text-white">
+                          {provider ? providerDisplayName(provider)[0] || 'P' : label[0]}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">{label}</div>
+                          {isProjectAdmin && (
+                            <select
+                              value={provider?.id || ''}
+                              onChange={(event) => updateProjectKeyPerson(roleId, event.target.value)}
+                              className="mt-2 w-full rounded border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[11px] font-bold outline-none focus:border-blue-500"
+                            >
+                              <option value="">Sin asignar</option>
+                              {providers.map((candidate) => (
+                                <option key={candidate.id} value={candidate.id}>{providerDisplayName(candidate)}</option>
+                              ))}
+                            </select>
+                          )}
+                          <div className="mt-2 truncate text-sm font-black text-slate-950">
+                            {provider ? providerDisplayName(provider) : 'Sin asignar'}
+                          </div>
+                          {provider && showKeyPeopleData && (
+                            <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] font-semibold text-slate-500">
+                              <span>Email: <span className="font-bold text-slate-800">{provider.email || provider.adminEmail || '-'}</span></span>
+                              <span>Tel: <span className="font-bold text-slate-800">{provider.phone || '-'}</span></span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+                <div className="border-b border-slate-100 bg-slate-50/60 px-5 py-4">
+                  <h3 className="text-xs font-black uppercase tracking-widest text-slate-950">Descripcion del proyecto</h3>
+                </div>
+                <div className="p-6 text-sm leading-relaxed text-slate-600">
+                  {project.description || 'No hay una descripcion extendida registrada para esta produccion audiovisual.'}
+                </div>
+              </div>
+            </section>
+          </div>
+        )}
+
+        {false && activeTab === 'resumen' && (
           <div className="grid grid-cols-12 gap-3 lg:gap-5">
             <div className="col-span-12 space-y-4">
               <section className="bg-white rounded-xl border border-slate-200 shadow-[0_12px_32px_rgba(15,23,42,0.10)] ring-1 ring-white overflow-hidden">
