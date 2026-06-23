@@ -3200,6 +3200,8 @@ export default function ProjectDetail() {
   const postProductionTotal = resultCategoryTotals
     .filter((item) => isPostProductionArea(item.area))
     .reduce((acc, item) => acc + item.total, 0);
+  const executiveCategoryRows = resultCategoryTotals.filter((item) => isExecutiveArea(item.area));
+  const postProductionCategoryRows = resultCategoryTotals.filter((item) => isPostProductionArea(item.area));
   const productionCategoryTotals = resultCategoryTotals.filter((item) => !isExecutiveArea(item.area) && !isPostProductionArea(item.area));
   const productionTotal = productionCategoryTotals.reduce((acc, item) => acc + item.total, 0);
   const directCostTotal = productionTotal + executiveTotal + postProductionTotal;
@@ -3884,7 +3886,7 @@ export default function ProjectDetail() {
         {activeTab === 'resumen' && (
           <div className="space-y-4 pb-20">
             <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_12px_32px_rgba(15,23,42,0.10)] ring-1 ring-white">
-              <div className="grid grid-cols-1 lg:grid-cols-[1.25fr_0.75fr]">
+              <div>
                 <div className="space-y-5 p-5 sm:p-6">
                   <div>
                     <div className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-400">Resumen del proyecto</div>
@@ -3904,7 +3906,7 @@ export default function ProjectDetail() {
                     </div>
                     <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
                       <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Costo proyectado</div>
-                      <div className="mt-1 truncate font-mono text-2xl font-black text-slate-950">${areaSummaryTotals.actualCost.toLocaleString()}</div>
+                      <div className="mt-1 truncate font-mono text-2xl font-black text-rose-600">${areaSummaryTotals.actualCost.toLocaleString()}</div>
                     </div>
                     {isProjectAdmin && (
                       <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
@@ -3938,30 +3940,40 @@ export default function ProjectDetail() {
                       <div>Areas: <span className="font-black text-slate-900">{summaryAreaExpenseCount} gastos</span></div>
                     </div>
                   </div>
-                </div>
 
-                <div className="border-t border-slate-200 bg-slate-950 p-5 text-white lg:border-l lg:border-t-0 sm:p-6">
+                  <div className="rounded-lg border border-slate-100 bg-slate-50/70 px-4 py-3 text-sm leading-relaxed text-slate-600">
+                    {project.description || 'No hay una descripcion extendida registrada para esta produccion audiovisual.'}
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_0.7fr]">
+              <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-950 text-white shadow-sm">
+                <div className="border-b border-white/10 px-5 py-4">
                   <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
                     <Calendar className="h-3.5 w-3.5" />
                     Rodaje
                   </div>
                   <div className="mt-2 text-xl font-black tracking-[-0.03em]">{formatShootingRange(project)}</div>
-                  <div className="mt-5 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
+                  <div className="mt-4 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
                     <MapPin className="h-3.5 w-3.5" />
                     Locacion
                   </div>
                   <div className="mt-2 text-sm font-bold text-white">{locationValue || 'Locacion sin definir'}</div>
-                  <div className="mt-4 overflow-hidden rounded-lg border border-white/10 bg-white/5">
+                </div>
+                <div className="p-4">
+                  <div className="overflow-hidden rounded-lg border border-white/10 bg-white/5">
                     {mapsEmbedUrl ? (
                       <iframe
                         title="Mapa de locacion de rodaje"
                         src={mapsEmbedUrl}
-                        className="h-56 w-full border-0"
+                        className="h-[360px] w-full border-0"
                         loading="lazy"
                         referrerPolicy="no-referrer-when-downgrade"
                       />
                     ) : (
-                      <div className="flex h-56 items-center justify-center px-6 text-center text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                      <div className="flex h-[360px] items-center justify-center px-6 text-center text-[10px] font-bold uppercase tracking-widest text-slate-500">
                         {locationValue ? 'Abrir Maps para ver esta locacion' : 'Carga una direccion para ver el mapa'}
                       </div>
                     )}
@@ -3979,9 +3991,7 @@ export default function ProjectDetail() {
                   )}
                 </div>
               </div>
-            </section>
 
-            <section className="grid grid-cols-1 gap-4 xl:grid-cols-[0.95fr_1.05fr]">
               <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
                 <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/60 px-5 py-4">
                   <div>
@@ -4026,14 +4036,6 @@ export default function ProjectDetail() {
                 </div>
               </div>
 
-              <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-                <div className="border-b border-slate-100 bg-slate-50/60 px-5 py-4">
-                  <h3 className="text-xs font-black uppercase tracking-widest text-slate-950">Descripcion del proyecto</h3>
-                </div>
-                <div className="p-6 text-sm leading-relaxed text-slate-600">
-                  {project.description || 'No hay una descripcion extendida registrada para esta produccion audiovisual.'}
-                </div>
-              </div>
             </section>
           </div>
         )}
@@ -5683,35 +5685,107 @@ export default function ProjectDetail() {
             </header>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
-              <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
+              <div className="group relative bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Valor de Venta</div>
                 <div className="text-lg font-bold text-slate-900">${saleValue.toLocaleString()}</div>
                 <div className="text-[9px] text-slate-400 mt-2">Presupuesto cargado en el proyecto</div>
+                <div className="pointer-events-none absolute left-3 right-3 top-full z-40 mt-2 rounded-lg border border-slate-200 bg-white p-3 text-[10px] font-bold text-slate-600 opacity-0 shadow-xl transition-opacity group-hover:opacity-100">
+                  <div className="mb-1 font-black uppercase tracking-widest text-slate-400">Suma</div>
+                  Presupuesto total cargado en datos del proyecto.
+                </div>
               </div>
-              <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
+              <div className="group relative bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Produccion</div>
                 <div className="text-lg font-bold text-slate-900">${productionTotal.toLocaleString()}</div>
                 <div className="text-[9px] text-slate-400 mt-2">{productionCategoryTotals.length} categorias con costo</div>
+                <div className="pointer-events-none absolute left-3 right-3 top-full z-40 mt-2 rounded-lg border border-slate-200 bg-white p-3 opacity-0 shadow-xl transition-opacity group-hover:opacity-100">
+                  <div className="mb-2 text-[10px] font-black uppercase tracking-widest text-slate-400">Suma</div>
+                  <div className="max-h-44 overflow-y-auto space-y-1">
+                    {productionCategoryTotals.length > 0 ? productionCategoryTotals.map((item) => (
+                      <div key={`tooltip-production-${item.area}`} className="flex justify-between gap-2 text-[10px] font-bold text-slate-600">
+                        <span className="truncate">{item.area}</span>
+                        <span className="font-mono text-slate-900">${item.total.toLocaleString()}</span>
+                      </div>
+                    )) : (
+                      <div className="text-[10px] font-bold text-slate-400">Sin categorias con costo</div>
+                    )}
+                  </div>
+                </div>
               </div>
-              <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
+              <div className="group relative bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Ejecutiva</div>
                 <div className="text-lg font-bold text-slate-900">${executiveTotal.toLocaleString()}</div>
                 <div className="text-[9px] text-slate-400 mt-2">Separado de Produccion</div>
+                <div className="pointer-events-none absolute left-3 right-3 top-full z-40 mt-2 rounded-lg border border-slate-200 bg-white p-3 opacity-0 shadow-xl transition-opacity group-hover:opacity-100">
+                  <div className="mb-2 text-[10px] font-black uppercase tracking-widest text-slate-400">Suma</div>
+                  <div className="space-y-1">
+                    {executiveCategoryRows.length > 0 ? executiveCategoryRows.map((item) => (
+                      <div key={`tooltip-executive-${item.area}`} className="flex justify-between gap-2 text-[10px] font-bold text-slate-600">
+                        <span className="truncate">{item.area}</span>
+                        <span className="font-mono text-slate-900">${item.total.toLocaleString()}</span>
+                      </div>
+                    )) : (
+                      <div className="text-[10px] font-bold text-slate-400">Sin categorias ejecutivas con costo</div>
+                    )}
+                  </div>
+                </div>
               </div>
-              <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
+              <div className="group relative bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Post Produccion</div>
                 <div className="text-lg font-bold text-slate-900">${postProductionTotal.toLocaleString()}</div>
                 <div className="text-[9px] text-slate-400 mt-2">Separado de Produccion</div>
+                <div className="pointer-events-none absolute left-3 right-3 top-full z-40 mt-2 rounded-lg border border-slate-200 bg-white p-3 opacity-0 shadow-xl transition-opacity group-hover:opacity-100">
+                  <div className="mb-2 text-[10px] font-black uppercase tracking-widest text-slate-400">Suma</div>
+                  <div className="space-y-1">
+                    {postProductionCategoryRows.length > 0 ? postProductionCategoryRows.map((item) => (
+                      <div key={`tooltip-post-${item.area}`} className="flex justify-between gap-2 text-[10px] font-bold text-slate-600">
+                        <span className="truncate">{item.area}</span>
+                        <span className="font-mono text-slate-900">${item.total.toLocaleString()}</span>
+                      </div>
+                    )) : (
+                      <div className="text-[10px] font-bold text-slate-400">Sin categorias de post con costo</div>
+                    )}
+                  </div>
+                </div>
               </div>
-              <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
+              <div className="group relative bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Incidencias</div>
                 <div className="text-lg font-bold text-slate-900">${incidenceTotal.toLocaleString()}</div>
                 <div className="text-[9px] text-slate-400 mt-2">Sobre valor de venta</div>
+                <div className="pointer-events-none absolute left-3 right-3 top-full z-40 mt-2 rounded-lg border border-slate-200 bg-white p-3 opacity-0 shadow-xl transition-opacity group-hover:opacity-100">
+                  <div className="mb-2 text-[10px] font-black uppercase tracking-widest text-slate-400">Suma</div>
+                  <div className="space-y-1">
+                    {incidenceRows.some((item) => item.amount > 0) ? incidenceRows.filter((item) => item.amount > 0).map((item) => (
+                      <div key={`tooltip-incidence-${item.id}`} className="flex justify-between gap-2 text-[10px] font-bold text-slate-600">
+                        <span className="truncate">{item.label} ({item.percent}%)</span>
+                        <span className="font-mono text-slate-900">${item.amount.toLocaleString()}</span>
+                      </div>
+                    )) : (
+                      <div className="text-[10px] font-bold text-slate-400">Sin incidencias cargadas</div>
+                    )}
+                  </div>
+                </div>
               </div>
-              <div className="bg-slate-900 p-5 rounded-xl border border-slate-900 shadow-sm text-white">
+              <div className="group relative bg-slate-900 p-5 rounded-xl border border-slate-900 shadow-sm text-white">
                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Costo Total</div>
                 <div className="text-xl font-bold font-mono">${totalCost.toLocaleString()}</div>
                 <div className="text-[9px] text-slate-400 mt-2">Directos + incidencias</div>
+                <div className="pointer-events-none absolute left-3 right-3 top-full z-40 mt-2 rounded-lg border border-slate-700 bg-slate-950 p-3 opacity-0 shadow-xl transition-opacity group-hover:opacity-100">
+                  <div className="mb-2 text-[10px] font-black uppercase tracking-widest text-slate-500">Suma</div>
+                  <div className="space-y-1">
+                    {[
+                      { label: 'Produccion', value: productionTotal },
+                      { label: 'Ejecutiva', value: executiveTotal },
+                      { label: 'Post Produccion', value: postProductionTotal },
+                      { label: 'Incidencias', value: incidenceTotal },
+                    ].map((item) => (
+                      <div key={`tooltip-total-${item.label}`} className="flex justify-between gap-2 text-[10px] font-bold text-slate-300">
+                        <span>{item.label}</span>
+                        <span className="font-mono text-white">${item.value.toLocaleString()}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
             </div>
 
