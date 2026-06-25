@@ -419,13 +419,23 @@ export default function ProviderInvite() {
             updatedAt: serverTimestamp(),
           });
         }
-        transaction.update(inviteRef, {
-          used: true,
-          status: 'used',
-          usedAt: serverTimestamp(),
-          providerId: providerRef.id,
-          providerType: form.type,
-        });
+        if (inviteData.mode === 'multi_use') {
+          transaction.update(inviteRef, {
+            usageCount: (Number(inviteData.usageCount) || 0) + 1,
+            lastUsedAt: serverTimestamp(),
+            lastProviderId: providerRef.id,
+            lastProviderType: form.type,
+            updatedAt: serverTimestamp(),
+          });
+        } else {
+          transaction.update(inviteRef, {
+            used: true,
+            status: 'used',
+            usedAt: serverTimestamp(),
+            providerId: providerRef.id,
+            providerType: form.type,
+          });
+        }
       });
 
       setSubmitted(true);

@@ -108,11 +108,14 @@ export default function Providers() {
   const [editingProvider, setEditingProvider] = useState<any | null>(null);
   const [providerDetail, setProviderDetail] = useState<any | null>(null);
   const [loadingProviderDetail, setLoadingProviderDetail] = useState(false);
+  const [showProviderInviteModal, setShowProviderInviteModal] = useState(false);
+  const [providerInviteModalView, setProviderInviteModalView] = useState<'generate' | 'manage'>('generate');
   const [generatedInviteLink, setGeneratedInviteLink] = useState('');
   const [generatedInviteExpiresAt, setGeneratedInviteExpiresAt] = useState<Date | null>(null);
+  const [generatedInviteMode, setGeneratedInviteMode] = useState<'single_use' | 'multi_use'>('single_use');
   const [copiedInviteLink, setCopiedInviteLink] = useState(false);
   const [generatingInvite, setGeneratingInvite] = useState(false);
-  const [providerInviteDays, setProviderInviteDays] = useState(1);
+  const [providerInviteDays, setProviderInviteDays] = useState(4);
   const [providerInvites, setProviderInvites] = useState<any[]>([]);
   const [cancellingInviteToken, setCancellingInviteToken] = useState('');
   const [savingProvider, setSavingProvider] = useState(false);
@@ -376,23 +379,27 @@ export default function Providers() {
     else reader.readAsBinaryString(file);
   };
 
-  const handleGenerateProviderInvite = async () => {
+  const handleGenerateProviderInvite = async (mode: 'single_use' | 'multi_use' = 'single_use') => {
     if (!canCreateProviders) return;
     setGeneratingInvite(true);
     setGeneratedInviteLink('');
     setGeneratedInviteExpiresAt(null);
+    setGeneratedInviteMode(mode);
     setCopiedInviteLink(false);
 
     try {
       const token = generateInviteToken();
-      const days = clampProviderInviteDays(providerInviteDays);
+      const days = mode === 'single_use' ? 1 : clampProviderInviteDays(providerInviteDays);
       const expiresAt = buildProviderInviteExpiration(days);
       await setDoc(doc(db, 'providerInvites', token), {
         token,
+        mode,
+        multiUse: mode === 'multi_use',
         status: 'pending',
         used: false,
         expiresAt: Timestamp.fromDate(expiresAt),
         expiresInDays: days,
+        usageCount: 0,
         createdBy: profile?.uid,
         createdByEmail: profile?.email,
         createdAt: serverTimestamp(),
@@ -405,10 +412,13 @@ export default function Providers() {
       setProviderInvites((current) => [{
         id: token,
         token,
+        mode,
+        multiUse: mode === 'multi_use',
         status: 'pending',
         used: false,
         expiresAt,
         expiresInDays: days,
+        usageCount: 0,
         createdBy: profile?.uid,
         createdByEmail: profile?.email,
         createdAt: new Date(),
@@ -783,20 +793,15 @@ export default function Providers() {
           )}
           {canCreateProviders && (
             <>
-              <label className="flex items-center gap-2 rounded border border-slate-200 bg-white px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-slate-500">
-                Vigencia
-                <select
-                  value={providerInviteDays}
-                  onChange={(event) => setProviderInviteDays(clampProviderInviteDays(Number(event.target.value)))}
-                  className="bg-transparent text-slate-900 outline-none"
-                >
-                  {[1, 2, 3, 4].map((days) => (
-                    <option key={days} value={days}>{days} dia{days === 1 ? '' : 's'}</option>
-                  ))}
-                </select>
-              </label>
-              <button onClick={handleGenerateProviderInvite} disabled={generatingInvite} className="px-4 py-2 bg-slate-900 text-white text-[10px] font-bold uppercase tracking-widest rounded hover:bg-black transition-colors flex items-center gap-2 disabled:bg-slate-300">
-                <Link2 className="w-3 h-3" /> {generatingInvite ? 'Generando...' : 'Generar Link Alta'}
+              <button
+                type="button"
+                onClick={() => {
+                  setProviderInviteModalView('generate');
+                  setShowProviderInviteModal(true);
+                }}
+                className="px-4 py-2 bg-slate-900 text-white text-[10px] font-bold uppercase tracking-widest rounded hover:bg-black transition-colors flex items-center gap-2"
+              >
+                <Link2 className="w-3 h-3" /> Links de alta
               </button>
               <button onClick={() => setShowNewModal(true)} className="px-4 py-2 bg-black text-white text-[10px] font-bold uppercase tracking-widest rounded hover:bg-slate-800 transition-colors flex items-center gap-2">
                 <Plus className="w-3 h-3" /> Nuevo Manual
@@ -806,7 +811,7 @@ export default function Providers() {
         </div>
       </header>
 
-      {generatedInviteLink && (
+      {false && generatedInviteLink && (
         <div className="bg-white rounded-xl border border-emerald-200 p-5 shadow-sm flex flex-col lg:flex-row gap-4 lg:items-center justify-between">
           <div>
             <div className="text-[10px] font-bold uppercase tracking-widest text-emerald-600 mb-2 flex items-center gap-2">
@@ -824,7 +829,7 @@ export default function Providers() {
         </div>
       )}
 
-      {canCreateProviders && providerInvites.some((invite) => !invite.used && invite.status === 'pending') && (
+      {false && canCreateProviders && providerInvites.some((invite) => !invite.used && invite.status === 'pending') && (
         <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm">
           <div className="mb-3 text-[10px] font-bold uppercase tracking-widest text-slate-400">Links de alta pendientes</div>
           <div className="space-y-2">
@@ -942,6 +947,182 @@ export default function Providers() {
           </table>
         </div>
       )}
+
+      <AnimatePresence>
+        {showProviderInviteModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowProviderInviteModal(false)}
+              className="absolute inset-0 bg-white/80 backdrop-blur-md"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.98 }}
+              className="relative z-10 w-full max-w-3xl overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl shadow-slate-200/50"
+            >
+              <div className="flex items-start justify-between gap-4 border-b border-slate-100 p-6">
+                <div>
+                  <div className="mb-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">Alta de proveedores</div>
+                  <h2 className="text-xl font-bold text-slate-950">Links de alta</h2>
+                </div>
+                <button onClick={() => setShowProviderInviteModal(false)} className="text-slate-400 hover:text-black">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="flex gap-1 border-b border-slate-100 bg-slate-50 px-6 py-2">
+                {[
+                  { id: 'generate' as const, label: 'Generar' },
+                  { id: 'manage' as const, label: 'Gestionar links' },
+                ].map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setProviderInviteModalView(tab.id)}
+                    className={`rounded px-3 py-2 text-[10px] font-bold uppercase tracking-widest transition-colors ${
+                      providerInviteModalView === tab.id
+                        ? 'bg-black text-white'
+                        : 'text-slate-400 hover:bg-white hover:text-slate-700'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="max-h-[70vh] overflow-auto p-6">
+                {providerInviteModalView === 'generate' ? (
+                  <div className="space-y-5">
+                    <div className="grid gap-3 md:grid-cols-[1fr_0.85fr]">
+                      <button
+                        type="button"
+                        onClick={() => handleGenerateProviderInvite('single_use')}
+                        disabled={generatingInvite}
+                        className="rounded-xl border border-slate-900 bg-slate-900 p-5 text-left text-white transition-colors hover:bg-black disabled:bg-slate-300"
+                      >
+                        <div className="mb-2 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-slate-300">
+                          <Link2 className="h-3.5 w-3.5" />
+                          Opcion por default
+                        </div>
+                        <div className="text-sm font-bold">Generar link de un solo uso</div>
+                        <div className="mt-2 text-xs text-slate-300">Se copia para compartir y queda inutilizado cuando el proveedor completa el alta.</div>
+                      </button>
+
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
+                        <div className="mb-3 text-[10px] font-black uppercase tracking-widest text-slate-400">Link multiuso</div>
+                        <div className="flex items-center gap-2">
+                          <select
+                            value={providerInviteDays}
+                            onChange={(event) => setProviderInviteDays(clampProviderInviteDays(Number(event.target.value)))}
+                            className="flex-1 rounded border border-slate-200 bg-white px-3 py-2 text-xs font-bold outline-none focus:border-black"
+                          >
+                            {[1, 2, 3, 4].map((days) => (
+                              <option key={days} value={days}>{days} dia{days === 1 ? '' : 's'}</option>
+                            ))}
+                          </select>
+                          <button
+                            type="button"
+                            onClick={() => handleGenerateProviderInvite('multi_use')}
+                            disabled={generatingInvite}
+                            className="rounded border border-slate-900 bg-white px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-slate-900 hover:bg-slate-900 hover:text-white disabled:border-slate-200 disabled:text-slate-300"
+                          >
+                            {generatingInvite ? 'Generando...' : 'Generar'}
+                          </button>
+                        </div>
+                        <div className="mt-2 text-xs text-slate-500">Permite muchas altas hasta vencer o darse de baja.</div>
+                      </div>
+                    </div>
+
+                    {generatedInviteLink && (
+                      <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-5">
+                        <div className="mb-2 flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-emerald-700">
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          Link generado
+                        </div>
+                        <input readOnly value={generatedInviteLink} className="w-full rounded border border-emerald-100 bg-white px-3 py-2 text-xs text-slate-700" />
+                        <div className="mt-2 text-[11px] font-bold text-slate-500">
+                          {generatedInviteMode === 'multi_use' ? 'Multiuso' : 'Un solo uso'} · Vence {generatedInviteExpiresAt ? formatDate(generatedInviteExpiresAt) : '-'}
+                        </div>
+                        <button onClick={handleCopyInviteLink} className="mt-3 inline-flex items-center gap-2 rounded border border-slate-200 bg-white px-4 py-2 text-[10px] font-bold uppercase tracking-widest hover:border-black">
+                          <Copy className="w-3.5 h-3.5" /> {copiedInviteLink ? 'Copiado' : 'Copiar'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {providerInvites.length === 0 ? (
+                      <div className="rounded-xl border border-dashed border-slate-200 p-10 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
+                        No hay links generados
+                      </div>
+                    ) : (
+                      providerInvites.slice(0, 20).map((invite) => {
+                        const expiresAt = getInviteDate(invite.expiresAt);
+                        const expired = isProviderInviteExpired(invite);
+                        const isPending = !invite.used && invite.status === 'pending';
+                        const canCancelInvite = isPending && !expired;
+                        const inviteLink = getPublicInviteLink(invite.id);
+                        return (
+                          <div key={invite.id} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className={`rounded-full px-2 py-1 text-[8px] font-black uppercase tracking-widest ${
+                                    invite.status === 'cancelled'
+                                      ? 'bg-red-50 text-red-600'
+                                      : expired
+                                        ? 'bg-amber-50 text-amber-700'
+                                        : invite.used
+                                          ? 'bg-slate-200 text-slate-500'
+                                          : 'bg-emerald-50 text-emerald-700'
+                                  }`}>
+                                    {invite.status === 'cancelled' ? 'Baja' : expired ? 'Vencido' : invite.used ? 'Usado' : 'Activo'}
+                                  </span>
+                                  <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">
+                                    {invite.mode === 'multi_use' ? `Multiuso · ${Number(invite.usageCount) || 0} altas` : 'Un solo uso'}
+                                  </span>
+                                </div>
+                                <div className="mt-2 truncate font-mono text-[11px] font-bold text-slate-700">{inviteLink}</div>
+                                <div className="mt-1 text-[9px] font-black uppercase tracking-widest text-slate-400">
+                                  Vence: {expiresAt ? formatDate(expiresAt) : 'Sin vencimiento'}
+                                  {invite.projectName ? ` - ${invite.projectName}` : ''}
+                                </div>
+                              </div>
+                              <div className="flex shrink-0 gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => navigator.clipboard?.writeText(inviteLink)}
+                                  className="rounded border border-slate-200 bg-white px-3 py-2 text-[9px] font-black uppercase tracking-widest text-slate-600 hover:border-black hover:text-black"
+                                >
+                                  Copiar
+                                </button>
+                                {canCancelInvite && (
+                                  <button
+                                    type="button"
+                                    disabled={cancellingInviteToken === invite.id}
+                                    onClick={() => handleCancelProviderInvite(invite)}
+                                    className="rounded border border-red-100 bg-white px-3 py-2 text-[9px] font-black uppercase tracking-widest text-red-500 hover:border-red-200 hover:bg-red-50 disabled:text-slate-300"
+                                  >
+                                    {cancellingInviteToken === invite.id ? 'Dando baja...' : 'Dar de baja'}
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {showNewModal && (

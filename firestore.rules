@@ -531,11 +531,24 @@ service cloud.firestore {
           && resource.data.used == false
           && resource.data.status == 'pending'
           && providerInviteNotExpired(token)
+          && (!resource.data.keys().hasAny(['mode']) || resource.data.mode != 'multi_use')
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'status', 'usedAt', 'providerId', 'providerType'])
           && request.resource.data.used == true
           && request.resource.data.status == 'used'
           && request.resource.data.providerId is string
           && request.resource.data.providerType in ['persona', 'empresa']
+        )
+        || (
+          request.auth == null
+          && resource.data.used == false
+          && resource.data.status == 'pending'
+          && resource.data.mode == 'multi_use'
+          && providerInviteNotExpired(token)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['usageCount', 'lastUsedAt', 'lastProviderId', 'lastProviderType', 'updatedAt'])
+          && request.resource.data.usageCount is number
+          && request.resource.data.usageCount >= resource.data.usageCount
+          && request.resource.data.lastProviderId is string
+          && request.resource.data.lastProviderType in ['persona', 'empresa']
         );
       allow delete: if isAppAdmin();
     }
