@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Copy, Plus } from 'lucide-react';
+import { Copy, Link2, Plus } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import {
   formatIdentifier,
@@ -20,9 +20,11 @@ interface BudgetRowCellProps {
   disabledPayment?: boolean;
   disabled?: boolean;
   canCopyProviderInfo?: boolean;
+  onCreateProviderInvite?: (item: any) => Promise<void> | void;
+  creatingProviderInvite?: boolean;
 }
 
-export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment, disabledPayment, disabled, canCopyProviderInfo }: BudgetRowCellProps) {
+export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment, disabledPayment, disabled, canCopyProviderInfo, onCreateProviderInvite, creatingProviderInvite }: BudgetRowCellProps) {
   const [isEditingProvider, setIsEditingProvider] = useState(false);
   const [showProviderInfo, setShowProviderInfo] = useState(false);
   const [providerSearch, setProviderSearch] = useState('');
@@ -241,6 +243,21 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
                 >
                   X Desvincular actual
                 </button>
+                {onCreateProviderInvite && (
+                  <button
+                    type="button"
+                    disabled={creatingProviderInvite}
+                    onClick={async () => {
+                      await onCreateProviderInvite(item);
+                      setIsEditingProvider(false);
+                      setProviderSearch('');
+                    }}
+                    className="mb-1 flex w-full items-center gap-2 rounded px-3 py-2 text-left text-[10px] font-bold uppercase text-blue-600 transition-colors hover:bg-blue-50 disabled:text-slate-300"
+                  >
+                    <Link2 className="h-3 w-3" />
+                    {creatingProviderInvite ? 'Generando link...' : 'Generar link alta proveedor'}
+                  </button>
+                )}
                 {providers?.filter(p => providerMatchesSearch(p, providerSearch)).slice(0, 40).map(p => (
                   <button
                     key={p.id}

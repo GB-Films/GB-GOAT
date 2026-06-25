@@ -9,9 +9,11 @@ import {
   orderBy,
   doc,
   setDoc,
+  updateDoc,
   writeBatch,
   where,
   or,
+  Timestamp,
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { handleFirestoreError } from '../lib/firestoreUtils';
@@ -68,6 +70,27 @@ const getPublicInviteLink = (token: string) => {
   return `${window.location.origin}${baseUrl}#/alta-proveedor/${token}`;
 };
 
+const clampProviderInviteDays = (value: number) => Math.max(1, Math.min(4, Math.floor(value) || 1));
+
+const buildProviderInviteExpiration = (days: number) => {
+  const expiresAt = new Date();
+  expiresAt.setDate(expiresAt.getDate() + clampProviderInviteDays(days));
+  return expiresAt;
+};
+
+const getInviteDate = (dateValue: any) => {
+  if (!dateValue) return null;
+  if (typeof dateValue.toDate === 'function') return dateValue.toDate();
+  if (dateValue.seconds) return new Date(dateValue.seconds * 1000);
+  const date = new Date(dateValue);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const isProviderInviteExpired = (invite: any) => {
+  const expiresAt = getInviteDate(invite.expiresAt);
+  return Boolean(expiresAt && expiresAt.getTime() < Date.now());
+};
+
 const buildProviderIdentifiers = (provider: any) => {
   const { dniNormalized, cuitNormalized } = inferLegacyIdentifiers(provider);
   const identifiers: Array<{ id: string; type: 'dni' | 'cuit'; value: string }> = [];
@@ -86,8 +109,12 @@ export default function Providers() {
   const [providerDetail, setProviderDetail] = useState<any | null>(null);
   const [loadingProviderDetail, setLoadingProviderDetail] = useState(false);
   const [generatedInviteLink, setGeneratedInviteLink] = useState('');
+  const [generatedInviteExpiresAt, setGeneratedInviteExpiresAt] = useState<Date | null>(null);
   const [copiedInviteLink, setCopiedInviteLink] = useState(false);
   const [generatingInvite, setGeneratingInvite] = useState(false);
+  const [providerInviteDays, setProviderInviteDays] = useState(1);
+  const [providerInvites, setProviderInvites] = useState<any[]>([]);
+  const [cancellingInviteToken, setCancellingInviteToken] = useState('');
   const [savingProvider, setSavingProvider] = useState(false);
   const { profile } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
@@ -169,6 +196,20 @@ export default function Providers() {
     };
     fetchProviders();
   }, [profile, canEditProviders]);
+
+  useEffect(() => {
+    if (!profile || !canCreateProviders) return;
+    const fetchProviderInvites = async () => {
+      try {
+        const inviteQuery = query(collection(db, 'providerInvites'), orderBy('createdAt', 'desc'));
+        const snapshot = await getDocs(inviteQuery);
+        setProviderInvites(snapshot.docs.map((item) => ({ id: item.id, ...item.data() })));
+      } catch (error) {
+        console.error('Error fetching provider invites:', error);
+      }
+    };
+    fetchProviderInvites();
+  }, [profile, canCreateProviders]);
 
   const downloadTemplate = () => {
     const templateData = [
@@ -339,21 +380,40 @@ export default function Providers() {
     if (!canCreateProviders) return;
     setGeneratingInvite(true);
     setGeneratedInviteLink('');
+    setGeneratedInviteExpiresAt(null);
     setCopiedInviteLink(false);
 
     try {
       const token = generateInviteToken();
+      const days = clampProviderInviteDays(providerInviteDays);
+      const expiresAt = buildProviderInviteExpiration(days);
       await setDoc(doc(db, 'providerInvites', token), {
         token,
         status: 'pending',
         used: false,
+        expiresAt: Timestamp.fromDate(expiresAt),
+        expiresInDays: days,
         createdBy: profile?.uid,
         createdByEmail: profile?.email,
         createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
       });
 
       const link = getPublicInviteLink(token);
       setGeneratedInviteLink(link);
+      setGeneratedInviteExpiresAt(expiresAt);
+      setProviderInvites((current) => [{
+        id: token,
+        token,
+        status: 'pending',
+        used: false,
+        expiresAt,
+        expiresInDays: days,
+        createdBy: profile?.uid,
+        createdByEmail: profile?.email,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }, ...current]);
       try {
         await navigator.clipboard.writeText(link);
         setCopiedInviteLink(true);
@@ -365,6 +425,32 @@ export default function Providers() {
       alert('No se pudo generar el link de alta.');
     } finally {
       setGeneratingInvite(false);
+    }
+  };
+
+  const handleCancelProviderInvite = async (invite: any) => {
+    if (!canCreateProviders || !invite?.id) return;
+    if (!confirm('¿Dar de baja este link de alta? La persona ya no podra usarlo.')) return;
+
+    setCancellingInviteToken(invite.id);
+    try {
+      await updateDoc(doc(db, 'providerInvites', invite.id), {
+        status: 'cancelled',
+        cancelledAt: serverTimestamp(),
+        cancelledBy: profile?.uid || '',
+        cancelledByEmail: profile?.email || '',
+        updatedAt: serverTimestamp(),
+      });
+      setProviderInvites((current) => current.map((item) => (
+        item.id === invite.id
+          ? { ...item, status: 'cancelled', cancelledAt: new Date(), updatedAt: new Date() }
+          : item
+      )));
+    } catch (error) {
+      console.error('Error cancelling provider invite:', error);
+      alert('No se pudo dar de baja el link.');
+    } finally {
+      setCancellingInviteToken('');
     }
   };
 
@@ -697,6 +783,18 @@ export default function Providers() {
           )}
           {canCreateProviders && (
             <>
+              <label className="flex items-center gap-2 rounded border border-slate-200 bg-white px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                Vigencia
+                <select
+                  value={providerInviteDays}
+                  onChange={(event) => setProviderInviteDays(clampProviderInviteDays(Number(event.target.value)))}
+                  className="bg-transparent text-slate-900 outline-none"
+                >
+                  {[1, 2, 3, 4].map((days) => (
+                    <option key={days} value={days}>{days} dia{days === 1 ? '' : 's'}</option>
+                  ))}
+                </select>
+              </label>
               <button onClick={handleGenerateProviderInvite} disabled={generatingInvite} className="px-4 py-2 bg-slate-900 text-white text-[10px] font-bold uppercase tracking-widest rounded hover:bg-black transition-colors flex items-center gap-2 disabled:bg-slate-300">
                 <Link2 className="w-3 h-3" /> {generatingInvite ? 'Generando...' : 'Generar Link Alta'}
               </button>
@@ -715,11 +813,48 @@ export default function Providers() {
               <CheckCircle2 className="w-3.5 h-3.5" /> Link de alta generado
             </div>
             <input readOnly value={generatedInviteLink} className="w-full lg:w-[720px] px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs text-slate-600" />
+            <p className="text-[11px] text-slate-500 mt-2">
+              Vence {generatedInviteExpiresAt ? `el ${formatDate(generatedInviteExpiresAt)}` : 'segun la vigencia definida'}.
+            </p>
             <p className="text-[11px] text-slate-400 mt-2">Es genérico, de un solo uso, y la persona elegirá si corresponde a Persona física o Empresa.</p>
           </div>
           <button onClick={handleCopyInviteLink} className="px-4 py-3 border border-slate-200 rounded text-[10px] font-bold uppercase tracking-widest hover:border-black flex items-center justify-center gap-2">
             <Copy className="w-3.5 h-3.5" /> {copiedInviteLink ? 'Copiado' : 'Copiar'}
           </button>
+        </div>
+      )}
+
+      {canCreateProviders && providerInvites.some((invite) => !invite.used && invite.status === 'pending') && (
+        <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm">
+          <div className="mb-3 text-[10px] font-bold uppercase tracking-widest text-slate-400">Links de alta pendientes</div>
+          <div className="space-y-2">
+            {providerInvites
+              .filter((invite) => !invite.used && invite.status === 'pending')
+              .slice(0, 8)
+              .map((invite) => {
+                const expiresAt = getInviteDate(invite.expiresAt);
+                const expired = isProviderInviteExpired(invite);
+                return (
+                  <div key={invite.id} className="flex flex-col gap-2 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <div className="truncate font-mono text-[11px] font-bold text-slate-700">{getPublicInviteLink(invite.id)}</div>
+                      <div className={`mt-1 text-[9px] font-black uppercase tracking-widest ${expired ? 'text-red-500' : 'text-slate-400'}`}>
+                        {expired ? 'Vencido' : `Vence: ${expiresAt ? formatDate(expiresAt) : 'Sin vencimiento'}`}
+                        {invite.projectName ? ` - ${invite.projectName}` : ''}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={cancellingInviteToken === invite.id}
+                      onClick={() => handleCancelProviderInvite(invite)}
+                      className="shrink-0 rounded border border-red-100 bg-white px-3 py-2 text-[9px] font-black uppercase tracking-widest text-red-500 hover:border-red-200 hover:bg-red-50 disabled:text-slate-300"
+                    >
+                      {cancellingInviteToken === invite.id ? 'Dando baja...' : 'Dar de baja'}
+                    </button>
+                  </div>
+                );
+              })}
+          </div>
         </div>
       )}
 

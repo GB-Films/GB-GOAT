@@ -51,6 +51,19 @@ const parseDateKey = (value?: string) => {
   return Number.isNaN(date.getTime()) ? null : date;
 };
 
+const getInviteDate = (dateValue: any) => {
+  if (!dateValue) return null;
+  if (typeof dateValue.toDate === 'function') return dateValue.toDate();
+  if (dateValue.seconds) return new Date(dateValue.seconds * 1000);
+  const date = new Date(dateValue);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const isInviteExpired = (inviteData: any) => {
+  const expiresAt = getInviteDate(inviteData?.expiresAt);
+  return Boolean(expiresAt && expiresAt.getTime() < Date.now());
+};
+
 function InlineDatePicker({ value, onChange }: { value: string; onChange: (value: string) => void }) {
   const [isOpen, setIsOpen] = useState(false);
   const [position, setPosition] = useState({ top: 0, left: 0 });
@@ -207,6 +220,10 @@ export default function ProviderInvite() {
           setError('Este link fue cancelado. Pedí un nuevo link a Gran Berta Films.');
           return;
         }
+        if (isInviteExpired(data)) {
+          setError('Este link vencio. Pedi un nuevo link a Gran Berta Films.');
+          return;
+        }
         setInvite({ id: snap.id, ...data });
       } catch (err) {
         console.error('Error loading provider invite:', err);
@@ -317,6 +334,7 @@ export default function ProviderInvite() {
         const inviteData = inviteSnap.data();
         if (inviteData.used || inviteData.status === 'used') throw new Error('INVITE_USED');
         if (inviteData.status === 'cancelled') throw new Error('INVITE_CANCELLED');
+        if (isInviteExpired(inviteData)) throw new Error('INVITE_EXPIRED');
 
         const identifierRefs = [] as Array<{ ref: ReturnType<typeof doc>; kind: 'dni' | 'cuit'; value: string }>;
         if (form.type === 'persona') {
@@ -364,6 +382,17 @@ export default function ProviderInvite() {
               businessName: form.businessName.trim(),
             };
 
+        const targetCollectionName = inviteData.collectionName === 'budgetItems' ? 'budgetItems' : 'areaExpenses';
+        const targetExpenseRef = inviteData.projectId && inviteData.expenseId
+          ? doc(db, 'projects', inviteData.projectId, targetCollectionName, inviteData.expenseId)
+          : null;
+        const targetExpenseSnap = targetExpenseRef ? await transaction.get(targetExpenseRef) : null;
+        if (targetExpenseRef && !targetExpenseSnap?.exists()) throw new Error('TARGET_EXPENSE_NOT_FOUND');
+        const targetExpenseData = targetExpenseSnap?.data();
+        if (targetExpenseData && (targetExpenseData.providerId || targetExpenseData.providerName)) {
+          throw new Error('TARGET_EXPENSE_ALREADY_ASSIGNED');
+        }
+
         transaction.set(providerRef, providerData);
         for (const item of identifierRefs) {
           transaction.set(item.ref, {
@@ -373,6 +402,21 @@ export default function ProviderInvite() {
             identifierType: item.kind,
             value: item.value,
             createdAt: serverTimestamp(),
+          });
+        }
+        if (targetExpenseRef) {
+          const providerName = form.type === 'persona'
+            ? `${form.name.trim()} ${form.lastName.trim()}`.trim()
+            : form.businessName.trim();
+          transaction.update(targetExpenseRef, {
+            providerId: providerRef.id,
+            providerName,
+            providerInviteAssignment: {
+              token,
+              providerId: providerRef.id,
+              assignedAt: serverTimestamp(),
+            },
+            updatedAt: serverTimestamp(),
           });
         }
         transaction.update(inviteRef, {
@@ -391,6 +435,9 @@ export default function ProviderInvite() {
         INVITE_NOT_FOUND: 'Este link de alta no existe o fue eliminado.',
         INVITE_USED: 'Este link ya fue utilizado. Pedí un nuevo link a Gran Berta Films.',
         INVITE_CANCELLED: 'Este link fue cancelado. Pedí un nuevo link a Gran Berta Films.',
+        INVITE_EXPIRED: 'Este link vencio. Pedi un nuevo link a Gran Berta Films.',
+        TARGET_EXPENSE_NOT_FOUND: 'El gasto asociado a este link ya no existe. Pedi un nuevo link.',
+        TARGET_EXPENSE_ALREADY_ASSIGNED: 'Este gasto ya tiene un proveedor asignado. Pedi un nuevo link si corresponde.',
         DNI_EXISTS: 'Ya existe una persona registrada con este DNI.',
         CUIT_EXISTS: 'Ya existe un proveedor registrado con este CUIT/CUIL.',
       };

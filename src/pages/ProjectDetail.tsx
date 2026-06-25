@@ -374,9 +374,22 @@ const generateInvoiceUploadToken = () => {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
 };
 
+const getPublicProviderInviteLink = (token: string) => {
+  const baseUrl = ((import.meta as ImportMeta & { env?: { BASE_URL?: string } }).env?.BASE_URL || '/');
+  return `${window.location.origin}${baseUrl}#/alta-proveedor/${token}`;
+};
+
 const getPublicInvoiceUploadLink = (token: string) => {
   const baseUrl = ((import.meta as ImportMeta & { env?: { BASE_URL?: string } }).env?.BASE_URL || '/');
   return `${window.location.origin}${baseUrl}#/carga-factura/${token}`;
+};
+
+const clampProviderInviteDays = (value: number) => Math.max(1, Math.min(4, Math.floor(value) || 1));
+
+const buildProviderInviteExpiration = (days: number) => {
+  const expiresAt = new Date();
+  expiresAt.setDate(expiresAt.getDate() + clampProviderInviteDays(days));
+  return expiresAt;
 };
 
 const validateProjectDocumentFile = (file?: File | null) => {
@@ -709,6 +722,7 @@ export default function ProjectDetail() {
   const [isDeletingPayment, setIsDeletingPayment] = useState<number | null>(null);
   const [uploadingInvoices, setUploadingInvoices] = useState<Record<string, boolean>>({});
   const [generatingInvoiceLinks, setGeneratingInvoiceLinks] = useState<Record<string, boolean>>({});
+  const [generatingProviderInviteLinks, setGeneratingProviderInviteLinks] = useState<Record<string, boolean>>({});
   const [dragOverExpenseId, setDragOverExpenseId] = useState<string | null>(null);
   const [isDeletingProject, setIsDeletingProject] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
@@ -1697,6 +1711,48 @@ export default function ProjectDetail() {
       alert('No se pudo generar el link para cargar factura.');
     } finally {
       setGeneratingInvoiceLinks(prev => ({ ...prev, [expense.id]: false }));
+    }
+  };
+
+  const createProviderInviteForItem = async (item: any, collectionName: PaymentCollection) => {
+    if (!id || !item?.id) return;
+    if (!canManagePaymentForItem(item, collectionName)) return;
+
+    const rawDays = window.prompt('Cantidad de dias de validez del link (1 a 4):', '1');
+    if (rawDays === null) return;
+    const days = clampProviderInviteDays(Number(rawDays));
+    const token = generateInvoiceUploadToken();
+    const link = getPublicProviderInviteLink(token);
+    const loadingKey = `${collectionName}-${item.id}`;
+
+    setGeneratingProviderInviteLinks(prev => ({ ...prev, [loadingKey]: true }));
+    try {
+      await setDoc(doc(db, 'providerInvites', token), {
+        token,
+        status: 'pending',
+        used: false,
+        projectId: id,
+        projectName: project?.name || '',
+        collectionName,
+        expenseId: item.id,
+        area: item.area || '',
+        subcategory: cleanAreaExpenseSubcategory(item.subcategory),
+        description: item.description || '',
+        expiresAt: Timestamp.fromDate(buildProviderInviteExpiration(days)),
+        expiresInDays: days,
+        createdBy: user?.uid || '',
+        createdByEmail: currentUserEmail,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+
+      await navigator.clipboard?.writeText(link);
+      alert(`Link de alta de proveedor copiado al portapapeles:\n\n${link}\n\nVence en ${days} dia${days === 1 ? '' : 's'} y se asignara automaticamente a este gasto.`);
+    } catch (error) {
+      console.error('Error creating provider invite for item:', error);
+      alert('No se pudo generar el link de alta de proveedor.');
+    } finally {
+      setGeneratingProviderInviteLinks(prev => ({ ...prev, [loadingKey]: false }));
     }
   };
 
@@ -3273,15 +3329,24 @@ export default function ProjectDetail() {
     return targetAreas
       .map((area) => {
         const canReadWholeArea = isProjectAdmin || safeArray(userPermissions?.allowedCategories).includes(area);
-        const assigned = budgetItems
+        const areaAssigned = budgetItems
           .filter((item) => canReadWholeArea && item.area === area)
           .reduce((acc, item) => acc + (Number(item.total) || 0), 0);
+        const subcategoryAssigned = canReadWholeArea
+          ? 0
+          : userAllowedSubcategories
+              .filter((key) => areaFromSubcategoryKey(key) === area)
+              .reduce((acc, key) => {
+                const subcategory = key.split('||')[1] || '';
+                return acc + (Number(getAreaSubcategoryBudgetEntry(area, subcategory).budget) || 0);
+              }, 0);
+        const assigned = canReadWholeArea ? areaAssigned : subcategoryAssigned;
         const spent = areaExpenses
           .filter((item) => (
             item.area === area
             && (
               canReadWholeArea
-              || userAllowedSubcategories.includes(areaSubcategoryKey(item.area, item.subcategory))
+              || userAllowedSubcategories.includes(areaSubcategoryKey(item.area, cleanAreaExpenseSubcategory(item.subcategory)))
             )
           ))
           .reduce((acc, item) => acc + (Number(item.total) || 0), 0);
@@ -3291,7 +3356,7 @@ export default function ProjectDetail() {
         return { area, assigned, spent, balance, usedPercent, actualCost: isProjectAdmin && spent === 0 ? assigned : spent };
       })
       .filter((row) => row.assigned > 0 || row.spent > 0 || !isProjectAdmin);
-  }, [areaExpenses, budgetItems, categories, isProjectAdmin, userAllowedSubcategories, userPermissions]);
+  }, [areaExpenses, budgetItems, categories, isProjectAdmin, project?.areaExpenseSubcategoryBudgets, userAllowedSubcategories, userPermissions]);
 
   const areaSummaryTotals = React.useMemo(() => {
     const totals = areaSummaryRows.reduce((acc, row) => ({
@@ -4385,6 +4450,8 @@ export default function ProjectDetail() {
                                                             onDelete={deleteBudgetItem} 
                                                             type="provider"
                                                             canCopyProviderInfo={isProjectAdmin || isProductionLead}
+                                                            onCreateProviderInvite={(row) => createProviderInviteForItem(row, 'budgetItems')}
+                                                            creatingProviderInvite={!!generatingProviderInviteLinks[`budgetItems-${item.id}`]}
                                                             disabled={!canEditMainBudget}
                                                           />
                                                         </div>
@@ -4839,6 +4906,8 @@ export default function ProjectDetail() {
                                         onDelete={deleteAreaExpense}
                                         type="provider"
                                         canCopyProviderInfo
+                                        onCreateProviderInvite={(row) => createProviderInviteForItem(row, 'areaExpenses')}
+                                        creatingProviderInvite={!!generatingProviderInviteLinks[`areaExpenses-${item.id}`]}
                                         disabled={!canEditAreaExpense(item)}
                                       />
                                       <div className="mt-0.5">
@@ -4957,11 +5026,19 @@ export default function ProjectDetail() {
                                       </label>
                                     )}
 
-                                    {(Array.isArray(item.otherReceipts) ? item.otherReceipts : []).length > 0 && (
-                                      <span className="inline-flex h-7 items-center rounded border border-sky-100 bg-sky-50 px-1.5 text-[8px] font-black uppercase tracking-widest text-sky-700">
-                                        {(Array.isArray(item.otherReceipts) ? item.otherReceipts : []).length} comp.
-                                      </span>
-                                    )}
+                                    {(Array.isArray(item.otherReceipts) ? item.otherReceipts : []).map((receipt: any, receiptIndex: number) => (
+                                      <a
+                                        key={receipt.id || receipt.path || receipt.url}
+                                        href={receipt.url}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="inline-flex h-7 items-center gap-1 rounded border border-sky-100 bg-sky-50 px-1.5 text-[8px] font-black uppercase tracking-widest text-sky-700"
+                                        title={receipt.originalFileName || receipt.fileName || 'Ver comprobante'}
+                                      >
+                                        <Paperclip className="h-3 w-3" />
+                                        Comp. {receiptIndex + 1}
+                                      </a>
+                                    ))}
 
                                     <button
                                       type="button"
@@ -5206,6 +5283,8 @@ export default function ProjectDetail() {
                                   onDelete={deleteAreaExpense}
                                   type="provider"
                                   canCopyProviderInfo
+                                  onCreateProviderInvite={(row) => createProviderInviteForItem(row, 'areaExpenses')}
+                                  creatingProviderInvite={!!generatingProviderInviteLinks[`areaExpenses-${item.id}`]}
                                   disabled={!canEditAreaExpense(item)}
                                 />
                               </div>

@@ -250,7 +250,8 @@ service cloud.firestore {
       return token is string
         && exists(/databases/$(database)/documents/providerInvites/$(token))
         && get(/databases/$(database)/documents/providerInvites/$(token)).data.used == false
-        && get(/databases/$(database)/documents/providerInvites/$(token)).data.status == 'pending';
+        && get(/databases/$(database)/documents/providerInvites/$(token)).data.status == 'pending'
+        && providerInviteNotExpired(token);
     }
 
     function invoiceUploadInviteIsPending(token, projectId, expenseId) {
@@ -261,6 +262,17 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/invoiceUploadInvites/$(token)).data.status == 'pending'
         && get(/databases/$(database)/documents/invoiceUploadInvites/$(token)).data.projectId == projectId
         && get(/databases/$(database)/documents/invoiceUploadInvites/$(token)).data.expenseId == expenseId;
+    }
+
+    function validProviderInviteExpiration() {
+      return request.resource.data.expiresAt is timestamp
+        && request.resource.data.expiresAt > request.time
+        && request.resource.data.expiresAt <= request.time + duration.value(4, 'd');
+    }
+
+    function providerInviteNotExpired(token) {
+      return !get(/databases/$(database)/documents/providerInvites/$(token)).data.keys().hasAny(['expiresAt'])
+        || get(/databases/$(database)/documents/providerInvites/$(token)).data.expiresAt > request.time;
     }
 
     function canPublicUploadAreaInvoice(projectId, expenseId) {
@@ -293,6 +305,51 @@ service cloud.firestore {
         && request.resource.data.email is string
         && request.resource.data.phone is string
         && request.resource.data.address is string;
+    }
+
+    function canCreateLinkedProviderInvite() {
+      return isSignedIn()
+        && request.resource.data.status == 'pending'
+        && request.resource.data.used == false
+        && validProviderInviteExpiration()
+        && request.resource.data.projectId is string
+        && request.resource.data.expenseId is string
+        && request.resource.data.collectionName in ['budgetItems', 'areaExpenses']
+        && request.resource.data.area is string
+        && (
+          (
+            request.resource.data.collectionName == 'areaExpenses'
+            && canWriteAreaExpense(request.resource.data.projectId, request.resource.data.area, request.resource.data.subcategory)
+          )
+          || (
+            request.resource.data.collectionName == 'budgetItems'
+            && isProjectAdmin(request.resource.data.projectId)
+          )
+        );
+    }
+
+    function providerInviteTargetsItem(projectId, collectionName, itemId, token) {
+      return request.auth == null
+        && token is string
+        && exists(/databases/$(database)/documents/providerInvites/$(token))
+        && get(/databases/$(database)/documents/providerInvites/$(token)).data.used == false
+        && get(/databases/$(database)/documents/providerInvites/$(token)).data.status == 'pending'
+        && providerInviteNotExpired(token)
+        && get(/databases/$(database)/documents/providerInvites/$(token)).data.projectId == projectId
+        && get(/databases/$(database)/documents/providerInvites/$(token)).data.collectionName == collectionName
+        && get(/databases/$(database)/documents/providerInvites/$(token)).data.expenseId == itemId;
+    }
+
+    function canPublicAssignProviderFromInvite(projectId, collectionName, itemId) {
+      return request.auth == null
+        && (!resource.data.keys().hasAny(['providerId']) || resource.data.providerId == '')
+        && (!resource.data.keys().hasAny(['providerName']) || resource.data.providerName == '')
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['providerId', 'providerName', 'providerInviteAssignment', 'updatedAt'])
+        && request.resource.data.providerId is string
+        && request.resource.data.providerName is string
+        && request.resource.data.providerInviteAssignment.token is string
+        && request.resource.data.providerInviteAssignment.providerId == request.resource.data.providerId
+        && providerInviteTargetsItem(projectId, collectionName, itemId, request.resource.data.providerInviteAssignment.token);
     }
 
     function userInviteIsPending(token) {
@@ -389,6 +446,7 @@ service cloud.firestore {
         allow read: if hasProjectAccess(projectId);
         allow create, delete: if isProjectAdmin(projectId);
         allow update: if isProjectAdmin(projectId)
+          || canPublicAssignProviderFromInvite(projectId, 'budgetItems', itemId)
           || (
             canUpdatePaymentFields(projectId, resource.data.area)
             && request.resource.data.area == resource.data.area
@@ -402,6 +460,7 @@ service cloud.firestore {
             canWriteAreaExpense(projectId, resource.data.area, resource.data.subcategory)
             && canWriteAreaExpense(projectId, request.resource.data.area, request.resource.data.subcategory)
           )
+          || canPublicAssignProviderFromInvite(projectId, 'areaExpenses', expenseId)
           || canPublicUploadAreaInvoice(projectId, expenseId);
         allow delete: if canWriteAreaExpense(projectId, resource.data.area, resource.data.subcategory);
       }
@@ -455,14 +514,23 @@ service cloud.firestore {
     match /providerInvites/{token} {
       allow get: if true;
       allow list: if canCreateGlobalProvider();
-      allow create: if canCreateGlobalProvider()
+      allow create: if (canCreateGlobalProvider() || canCreateLinkedProviderInvite())
         && request.resource.data.status == 'pending'
-        && request.resource.data.used == false;
+        && request.resource.data.used == false
+        && validProviderInviteExpiration();
       allow update: if isAppAdmin()
+        || (
+          canCreateGlobalProvider()
+          && resource.data.used == false
+          && resource.data.status == 'pending'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'cancelledAt', 'cancelledBy', 'cancelledByEmail', 'updatedAt'])
+          && request.resource.data.status == 'cancelled'
+        )
         || (
           request.auth == null
           && resource.data.used == false
           && resource.data.status == 'pending'
+          && providerInviteNotExpired(token)
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'status', 'usedAt', 'providerId', 'providerType'])
           && request.resource.data.used == true
           && request.resource.data.status == 'used'
