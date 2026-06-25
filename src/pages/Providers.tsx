@@ -1176,13 +1176,13 @@ function ProviderDetailModal({ detail, loading, onClose }: { detail: any; loadin
     { label: 'Nombre', value: provider.name || '-' },
     { label: 'Apellido', value: provider.lastName || '-' },
     { label: 'Razon social', value: provider.businessName || '-' },
-    { label: 'DNI', value: dni },
-    { label: 'CUIT / CUIL', value: cuit },
+    { label: 'DNI', value: dni, copyValue: normalizeDigits(provider.dni || inferred.dniNormalized) || dni },
+    { label: 'CUIT / CUIL', value: cuit, copyValue: cuitRaw || cuit },
     { label: 'CBU / Alias', value: cbu },
     { label: 'Email', value: provider.email || provider.adminEmail || '-' },
     { label: 'Telefono', value: provider.phone || '-' },
     { label: 'Domicilio', value: provider.address || '-' },
-    { label: 'Fecha nacimiento', value: provider.birthDate ? formatDate(provider.birthDate) : '-' },
+    { label: 'Fecha nacimiento', value: provider.birthDate ? formatDate(provider.birthDate) : '-', copyValue: provider.birthDate || '-' },
     { label: 'Categoria', value: category },
     { label: 'Restriccion alimentaria', value: provider.dietaryRestriction || '-' },
     { label: 'Origen', value: provider.source === 'provider_invite' ? 'Alta por link' : 'Carga interna' },
@@ -1264,10 +1264,10 @@ function ProviderDetailModal({ detail, loading, onClose }: { detail: any; loadin
                           <div className="text-[9px] font-black uppercase tracking-widest text-slate-300">{item.label}</div>
                           <div className="mt-1 break-words text-xs font-bold text-slate-700">{item.value || '-'}</div>
                         </div>
-                        {['DNI', 'CUIT / CUIL', 'CBU / Alias'].includes(item.label) && item.value !== '-' && (
+                        {item.value !== '-' && (
                           <button
                             type="button"
-                            onClick={() => copyValue(item.label, item.label === 'CUIT / CUIL' ? cuitRaw : item.value)}
+                            onClick={() => copyValue(item.label, item.copyValue || item.value)}
                             className={`shrink-0 rounded border px-2 py-1 text-[9px] font-black uppercase tracking-widest transition-colors ${
                               copiedProviderField === item.label
                                 ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
