@@ -241,6 +241,15 @@ const parseProjectDate = (dateValue: any): Date | null => {
   return Number.isNaN(date.getTime()) ? null : date;
 };
 
+const toProjectDateInputValue = (dateValue: any) => {
+  const date = parseProjectDate(dateValue);
+  if (!date) return '';
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 const getDateTimestamp = (dateValue: any) => {
   const date = parseProjectDate(dateValue);
   return date ? date.getTime() : 0;
@@ -3400,15 +3409,19 @@ export default function ProjectDetail() {
     const formData = new FormData(event.currentTarget);
     const toEmail = normalizeEmail(formData.get('toUserEmail') as string);
     const amount = Number(formData.get('amount'));
+    const date = parseProjectDate(String(formData.get('date') || ''));
     const notes = String(formData.get('notes') || '').trim();
     const recipient = cashResponsibles.find((item) => normalizeEmail(item.email) === toEmail);
 
-    if (!recipient || !amount || amount <= 0) return;
+    if (!recipient || !amount || amount <= 0 || !date) {
+      alert('Completá una fecha y un monto válidos.');
+      return;
+    }
 
     const payload = {
       type: 'entrega',
       amount,
-      date: new Date(),
+      date,
       toUserEmail: recipient.email,
       toUserName: recipient.displayName || recipient.email,
       notes,
@@ -3424,7 +3437,8 @@ export default function ProjectDetail() {
   };
 
   const editCashDelivery = async (movement: CashMovement) => {
-    if (!id || !isProjectAdmin || movement.type !== 'entrega') return;
+    const canEditDelivery = isProjectAdmin || normalizeEmail(movement.createdByEmail) === currentUserEmail;
+    if (!id || !canEditDelivery || movement.type !== 'entrega') return;
     const amountText = window.prompt('Nuevo monto de la entrega:', String(Number(movement.amount) || 0));
     if (amountText === null) return;
     const amount = Number(amountText);
@@ -3433,10 +3447,20 @@ export default function ProjectDetail() {
       return;
     }
 
+    const currentDate = toProjectDateInputValue(movement.date || movement.createdAt);
+    const dateText = window.prompt('Fecha de la entrega (AAAA-MM-DD):', currentDate);
+    if (dateText === null) return;
+    const date = parseProjectDate(dateText);
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(dateText) || toProjectDateInputValue(date) !== dateText) {
+      alert('Ingresá una fecha válida con formato AAAA-MM-DD.');
+      return;
+    }
+
     const notesPrompt = window.prompt('Nota de la entrega:', movement.notes || '');
     const notes = notesPrompt === null ? movement.notes || '' : notesPrompt;
     const updates = {
       amount,
+      date,
       notes,
       updatedAt: serverTimestamp(),
     };
@@ -3444,7 +3468,7 @@ export default function ProjectDetail() {
     try {
       await updateDoc(doc(db, 'projects', id, 'cashMovements', movement.id), updates);
       setCashMovements((current) => current.map((item) => (
-        item.id === movement.id ? { ...item, amount, notes, updatedAt: new Date() } : item
+        item.id === movement.id ? { ...item, amount, date, notes, updatedAt: new Date() } : item
       )));
     } catch (error) {
       console.error('Error editing cash delivery:', error);
@@ -5543,6 +5567,10 @@ export default function ProjectDetail() {
                       <input name="amount" type="number" min="0" step="0.01" required className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black" />
                     </div>
                   </div>
+                  <div>
+                    <label className="block text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Fecha de entrega</label>
+                    <input name="date" type="date" defaultValue={toProjectDateInputValue(new Date())} required className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black" />
+                  </div>
                   <input name="notes" placeholder="Nota opcional" className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs focus:outline-none focus:border-black" />
                   <button type="submit" className="w-full px-4 py-3 bg-black text-white rounded text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 transition-all">
                     Registrar entrega
@@ -5630,7 +5658,7 @@ export default function ProjectDetail() {
                             <div className={cn("text-xs font-black font-mono", signedAmount >= 0 ? "text-emerald-600" : "text-rose-600")}>
                               {signedAmount >= 0 ? '+' : '-'}${Math.abs(signedAmount).toLocaleString()}
                             </div>
-                            {isProjectAdmin && movement.type === 'entrega' && (
+                            {(isProjectAdmin || normalizeEmail(movement.createdByEmail) === currentUserEmail) && movement.type === 'entrega' && (
                               <div className="mt-2 flex justify-end gap-1">
                                 <button
                                   type="button"
