@@ -1,5 +1,5 @@
 import { type FormEvent, useEffect, useRef, useState } from 'react';
-import { collection, doc, serverTimestamp, updateDoc, writeBatch } from 'firebase/firestore';
+import { collection, doc, runTransaction, serverTimestamp } from 'firebase/firestore';
 import { deleteObject, getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { Calendar, DollarSign, ExternalLink, History, Paperclip, Plus, Trash2, Wallet } from 'lucide-react';
 import { motion } from 'motion/react';
@@ -65,6 +65,8 @@ const formatFileSize = (size: number) => {
   if (size >= 1024) return `${Math.round(size / 1024)} KB`;
   return `${size} B`;
 };
+
+const toMoneyCents = (value: unknown) => Math.round((Number(value) || 0) * 100);
 
 interface PaymentModalProps {
   projectId?: string;
@@ -171,8 +173,9 @@ export function PaymentModal({
   if (!isOpen || !item) return null;
 
   const paymentHistory = item.paymentHistory || [];
-  const totalPaid = paymentHistory.reduce((acc: number, p: any) => acc + p.amount, 0);
-  const balance = (Number(item.total) || 0) - totalPaid;
+  const totalPaidCents = paymentHistory.reduce((acc: number, p: any) => acc + toMoneyCents(p.amount), 0);
+  const totalPaid = totalPaidCents / 100;
+  const balance = (toMoneyCents(item.total) - totalPaidCents) / 100;
   const collectionName: PaymentCollection = item.__paymentCollection || paymentType;
 
   const updateExistingPayment = async (event: FormEvent<HTMLFormElement>, paymentIndex: number) => {
@@ -186,7 +189,13 @@ export function PaymentModal({
     const nextDetail = String(formData.get('editDetail') || '');
 
     if (!nextAmount || nextAmount <= 0) {
-      alert('IngresÃ¡ un monto vÃ¡lido.');
+      alert('Ingresá un monto válido.');
+      return;
+    }
+
+    const maxEditableAmount = Math.max(0, (Number(item.total) || 0) - (totalPaid - (Number(currentPayment.amount) || 0)));
+    if (toMoneyCents(nextAmount) > toMoneyCents(maxEditableAmount)) {
+      alert(`El pago no puede superar el saldo disponible de $${maxEditableAmount.toLocaleString()}.`);
       return;
     }
 
@@ -221,12 +230,9 @@ export function PaymentModal({
           uploadedBy: currentUserEmail,
         };
 
-        if (currentPayment.receipt?.path && currentPayment.receipt.path !== path) {
-          deleteObject(ref(storage, currentPayment.receipt.path)).catch(() => {});
-        }
       }
 
-      const updatedPayment: Payment = {
+      const paymentChanges: Payment = {
         ...currentPayment,
         amount: nextAmount,
         detail: nextDetail,
@@ -234,47 +240,76 @@ export function PaymentModal({
         type: nextAmount >= (Number(item.total) || 0) - 0.01 ? 'total' : 'partial',
         receipt: nextReceipt,
       };
-
-      const updatedHistory = paymentHistory.map((payment: Payment, index: number) => (
-        index === paymentIndex ? updatedPayment : payment
-      ));
-      const nextTotalPaid = updatedHistory.reduce((acc: number, payment: Payment) => acc + (Number(payment.amount) || 0), 0);
-      const itemTotal = Number(item.total) || 0;
-      const isFullyPaid = nextTotalPaid >= (itemTotal - 0.01);
       const itemRef = doc(db, 'projects', projectId, collectionName, item.id);
 
+      const result = await runTransaction(db, async (transaction) => {
+        const latestItemSnap = await transaction.get(itemRef);
+        if (!latestItemSnap.exists()) throw new Error('ITEM_NOT_FOUND');
+
+        const latestItem = latestItemSnap.data();
+        const latestHistory = Array.isArray(latestItem.paymentHistory) ? latestItem.paymentHistory as Payment[] : [];
+        const latestPaymentIndex = currentPayment.id
+          ? latestHistory.findIndex((payment) => payment.id === currentPayment.id)
+          : paymentIndex;
+        if (latestPaymentIndex < 0 || !latestHistory[latestPaymentIndex]) throw new Error('PAYMENT_NOT_FOUND');
+
+        const itemTotalCents = toMoneyCents(latestItem.total);
+        const otherPaymentsTotalCents = latestHistory.reduce((acc, payment, index) => (
+          index === latestPaymentIndex ? acc : acc + toMoneyCents(payment.amount)
+        ), 0);
+        const nextTotalPaidCents = otherPaymentsTotalCents + toMoneyCents(nextAmount);
+        if (nextTotalPaidCents > itemTotalCents) throw new Error('PAYMENT_EXCEEDS_TOTAL');
+
+        const isFullyPaid = nextTotalPaidCents >= itemTotalCents;
+        const updatedPayment = {
+          ...latestHistory[latestPaymentIndex],
+          ...paymentChanges,
+          type: isFullyPaid ? 'total' as const : 'partial' as const,
+        };
+        const updatedHistory = latestHistory.map((payment, index) => index === latestPaymentIndex ? updatedPayment : payment);
+        transaction.update(itemRef, {
+          paymentHistory: updatedHistory,
+          paid: isFullyPaid,
+          updatedAt: serverTimestamp(),
+        });
+
+        if (currentPayment.cashMovementId) {
+          transaction.update(doc(db, 'projects', projectId, 'cashMovements', currentPayment.cashMovementId), {
+            amount: nextAmount,
+            date: paymentChanges.date,
+            notes: nextDetail,
+            updatedAt: serverTimestamp(),
+          });
+        }
+
+        return { updatedHistory, isFullyPaid };
+      });
+
+      if (editReceipt && currentPayment.receipt?.path && currentPayment.receipt.path !== nextReceipt?.path) {
+        deleteObject(ref(storage, currentPayment.receipt.path)).catch(() => {});
+      }
+
       if (currentPayment.cashMovementId) {
-        const movementUpdates = {
+        onCashMovementUpdated?.(currentPayment.cashMovementId, {
           amount: nextAmount,
-          date: updatedPayment.date,
+          date: paymentChanges.date,
           notes: nextDetail,
           updatedAt: new Date(),
-        };
-        const batch = writeBatch(db);
-        batch.update(itemRef, {
-          paymentHistory: updatedHistory,
-          paid: isFullyPaid,
-          updatedAt: serverTimestamp(),
-        });
-        batch.update(doc(db, 'projects', projectId, 'cashMovements', currentPayment.cashMovementId), {
-          ...movementUpdates,
-          updatedAt: serverTimestamp(),
-        });
-        await batch.commit();
-        onCashMovementUpdated?.(currentPayment.cashMovementId, movementUpdates);
-      } else {
-        await updateDoc(itemRef, {
-          paymentHistory: updatedHistory,
-          paid: isFullyPaid,
-          updatedAt: serverTimestamp(),
         });
       }
 
-      onPaymentStateChange(item.id, collectionName, updatedHistory, isFullyPaid);
+      onPaymentStateChange(item.id, collectionName, result.updatedHistory, result.isFullyPaid);
       setEditingPaymentIndex(null);
       setEditReceipt(null);
     } catch (error: any) {
       console.error('Error editing payment:', error);
+      if (editReceipt && nextReceipt?.path && nextReceipt.path !== currentPayment.receipt?.path) {
+        deleteObject(ref(storage, nextReceipt.path)).catch(() => {});
+      }
+      if (error?.message === 'PAYMENT_EXCEEDS_TOTAL') {
+        alert('El pago no puede superar el valor total del gasto. Otro pago pudo haberse registrado mientras editabas.');
+        return;
+      }
       handleFirestoreError(error, 'update', `projects/${projectId}/${collectionName}/${item.id}`);
       alert('No se pudo actualizar el pago.');
     }
@@ -286,9 +321,9 @@ export function PaymentModal({
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.95 }}
-        className="bg-white rounded-2xl w-full max-w-xl max-h-[92vh] shadow-2xl overflow-hidden flex flex-col"
+        className="bg-white rounded-2xl w-full max-w-xl h-[92vh] max-h-[760px] shadow-2xl overflow-hidden flex flex-col"
       >
-        <div className="px-5 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/30">
+        <div className="shrink-0 px-5 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/30">
           <h2 className="text-xs font-bold uppercase tracking-widest text-slate-900 flex items-center gap-2">
             <Wallet className="w-4 h-4 text-emerald-600" />
             Gestión de Pagos
@@ -298,7 +333,7 @@ export function PaymentModal({
           </button>
         </div>
 
-        <div className="p-5 space-y-4 overflow-y-auto">
+        <div className="min-h-0 flex-1 p-5 space-y-4 overflow-y-auto custom-scrollbar">
           <div className="flex justify-between items-start gap-4">
             <div>
               <h3 className="text-sm font-bold text-slate-900">{item.description}</h3>
@@ -344,6 +379,13 @@ export function PaymentModal({
                 return;
               }
 
+              const remainingBalanceCents = Math.max(0, toMoneyCents(item.total) - totalPaidCents);
+              const remainingBalance = remainingBalanceCents / 100;
+              if (toMoneyCents(amount) > remainingBalanceCents) {
+                alert(`El pago no puede superar el saldo pendiente de $${remainingBalance.toLocaleString()}.`);
+                return;
+              }
+
               if (useCashBox && amount > cashBoxBalance + 0.01) {
                 alert('El monto supera el saldo disponible en caja.');
                 return;
@@ -358,8 +400,7 @@ export function PaymentModal({
               }
 
               const currentItemId = item.id;
-              const totalPaidBefore = paymentHistory.reduce((acc: number, p: any) => acc + p.amount, 0);
-              const isRemainingBalance = Math.abs(amount - ((Number(item.total) || 0) - totalPaidBefore)) < 0.01;
+              const isRemainingBalance = toMoneyCents(amount) === remainingBalanceCents;
               const paymentId = Math.random().toString(36).substr(2, 9);
 
               const newPayment: Payment = {
@@ -373,11 +414,6 @@ export function PaymentModal({
                 createdByName: currentUserName,
                 createdByRole: currentUserRole,
               };
-
-              const updatedHistory = [...paymentHistory, newPayment];
-              const nextTotalPaid = updatedHistory.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
-              const itemTotal = Number(item.total) || 0;
-              const isFullyPaid = nextTotalPaid >= (itemTotal - 0.01);
 
               const collectionName: PaymentCollection = item.__paymentCollection || paymentType;
               const docRef = doc(db, 'projects', projectId, collectionName, currentItemId);
@@ -419,9 +455,8 @@ export function PaymentModal({
                   };
                 }
 
-                if (useCashBox && cashMovementRef) {
-                  const paymentDate = customDate ? new Date(customDate + 'T12:00:00') : new Date();
-                  const movement = {
+                const paymentDate = customDate ? new Date(customDate + 'T12:00:00') : new Date();
+                const movement = useCashBox && cashMovementRef ? {
                     type: 'pago',
                     amount,
                     date: paymentDate,
@@ -438,31 +473,48 @@ export function PaymentModal({
                     createdByName: cashOwnerName || '',
                     createdAt: serverTimestamp(),
                     updatedAt: serverTimestamp(),
-                  };
-                  const batch = writeBatch(db);
-                  batch.set(cashMovementRef, movement);
-                  batch.update(docRef, {
+                  } : null;
+
+                const result = await runTransaction(db, async (transaction) => {
+                  const latestItemSnap = await transaction.get(docRef);
+                  if (!latestItemSnap.exists()) throw new Error('ITEM_NOT_FOUND');
+
+                  const latestItem = latestItemSnap.data();
+                  const latestHistory = Array.isArray(latestItem.paymentHistory) ? latestItem.paymentHistory as Payment[] : [];
+                  const latestItemTotalCents = toMoneyCents(latestItem.total);
+                  const latestTotalPaidCents = latestHistory.reduce((acc, payment) => acc + toMoneyCents(payment.amount), 0);
+                  if (latestTotalPaidCents + toMoneyCents(amount) > latestItemTotalCents) throw new Error('PAYMENT_EXCEEDS_TOTAL');
+
+                  const updatedHistory = [...latestHistory, newPayment];
+                  const nextTotalPaidCents = latestTotalPaidCents + toMoneyCents(amount);
+                  const isFullyPaid = nextTotalPaidCents >= latestItemTotalCents;
+
+                  if (movement && cashMovementRef) transaction.set(cashMovementRef, movement);
+                  transaction.update(docRef, {
                     paymentHistory: updatedHistory,
                     paid: isFullyPaid,
-                    updatedAt: serverTimestamp()
+                    updatedAt: serverTimestamp(),
                   });
-                  await batch.commit();
+
+                  return { updatedHistory, isFullyPaid };
+                });
+
+                if (movement && cashMovementRef) {
                   onCashMovementCreated?.({ id: cashMovementRef.id, ...movement, createdAt: new Date(), updatedAt: new Date() });
-                } else {
-                  await updateDoc(docRef, {
-                    paymentHistory: updatedHistory,
-                    paid: isFullyPaid,
-                    updatedAt: serverTimestamp()
-                  });
                 }
 
-                onPaymentStateChange(currentItemId, collectionName, updatedHistory, isFullyPaid);
+                onPaymentStateChange(currentItemId, collectionName, result.updatedHistory, result.isFullyPaid);
                 
                 (e.target as HTMLFormElement).reset();
                 setSelectedReceipt(null);
                 setPaymentDateInput(toDateInputValue());
               } catch (err: any) {
                 console.error("Error updating payment:", err);
+                if (newPayment.receipt?.path) deleteObject(ref(storage, newPayment.receipt.path)).catch(() => {});
+                if (err?.message === 'PAYMENT_EXCEEDS_TOTAL') {
+                  alert('No se registró el pago porque el gasto ya alcanzó su valor total. Actualizá y revisá el historial.');
+                  return;
+                }
                 handleFirestoreError(err, 'update', `projects/${projectId}/${collectionName}/${currentItemId}`);
               }
             }} className="space-y-3 pt-3 border-t border-slate-100">
@@ -502,6 +554,8 @@ export function PaymentModal({
                     name="amount" 
                     type="number" 
                     step="0.01" 
+                    min="0.01"
+                    max={Math.max(0, balance)}
                     required
                     placeholder="0.00" 
                     className="w-full pl-8 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-base font-black text-slate-900 focus:outline-none focus:border-black focus:ring-4 focus:ring-slate-100 transition-all" 
@@ -579,7 +633,7 @@ export function PaymentModal({
                   </button>
                 )}
               </div>
-              <button type="submit" className="w-full py-3 bg-emerald-600 text-white rounded-xl text-[10px] font-bold tracking-widest uppercase hover:bg-emerald-700 transition-colors flex items-center justify-center gap-2">
+              <button type="submit" disabled={balance <= 0.01} className="w-full py-3 bg-emerald-600 text-white rounded-xl text-[10px] font-bold tracking-widest uppercase hover:bg-emerald-700 transition-colors flex items-center justify-center gap-2 disabled:bg-slate-300 disabled:cursor-not-allowed">
                  <DollarSign className="w-4 h-4" /> Registrar Pago
               </button>
             </form>
@@ -590,11 +644,12 @@ export function PaymentModal({
               <h3 className="text-[10px] font-bold uppercase text-slate-400 mb-3 tracking-widest flex items-center gap-2">
                  <History className="w-3 h-3" /> Historial de Pagos
               </h3>
-              <div className="space-y-2 max-h-48 overflow-y-auto pr-2 custom-scrollbar">
+              <div className="space-y-2">
                 {(paymentHistory as Payment[]).map((payment, idx) => {
                   const paymentAuthor = payment.createdByName || payment.paidByName || payment.createdByEmail || payment.paidByEmail || '';
                   const cashOwner = payment.paidByName || payment.paidByEmail || payment.createdByName || payment.createdByEmail || '';
                   const wasPaidWithCashBox = payment.method === 'caja_efectivo';
+                  const editableMaxAmount = Math.max(0, (toMoneyCents(item.total) - (totalPaidCents - toMoneyCents(payment.amount))) / 100);
                   return (
                   <div key={payment.id || idx} className="p-3 bg-slate-50 rounded-lg border border-slate-100">
                     {editingPaymentIndex === idx ? (
@@ -611,7 +666,8 @@ export function PaymentModal({
                             name="editAmount"
                             type="number"
                             step="0.01"
-                            min="0"
+                            min="0.01"
+                            max={editableMaxAmount}
                             defaultValue={payment.amount}
                             className="px-3 py-2 bg-white border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black"
                           />
