@@ -267,7 +267,7 @@ service cloud.firestore {
     function validProviderInviteExpiration() {
       return request.resource.data.expiresAt is timestamp
         && request.resource.data.expiresAt > request.time
-        && request.resource.data.expiresAt <= request.time + duration.value(4, 'd');
+        && request.resource.data.expiresAt <= request.time + duration.value(7, 'd');
     }
 
     function providerInviteNotExpired(token) {
@@ -304,7 +304,10 @@ service cloud.firestore {
         && request.resource.data.category is string
         && request.resource.data.email is string
         && request.resource.data.phone is string
-        && request.resource.data.address is string;
+        && request.resource.data.address is string
+        && request.resource.data.bankAccount_cbu is string
+        && request.resource.data.bankAccount_cbu.matches('^[0-9]{22}$')
+        && request.resource.data.bankAccount_alias is string;
     }
 
     function canCreateLinkedProviderInvite() {

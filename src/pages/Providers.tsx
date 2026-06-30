@@ -25,6 +25,7 @@ import Papa from 'papaparse';
 import {
   PRODUCTION_AREA_CATEGORIES,
   COMPANY_PROVIDER_CATEGORIES,
+  isValidCbu,
   normalizeDigits,
   formatIdentifier,
   providerDisplayName,
@@ -480,6 +481,12 @@ export default function Providers() {
     const category = String(formData.get('category') || '');
     const categoryOther = String(formData.get('categoryOther') || '');
     const cuit = String(formData.get('cuit') || '');
+    const cbu = String(formData.get('bankAccount_cbu') || '').trim();
+    const alias = String(formData.get('bankAccount_alias') || '').trim();
+    if (!isValidCbu(cbu)) {
+      alert('El CBU debe tener exactamente 22 números consecutivos.');
+      return;
+    }
 
     const data: any = type === 'empresa'
       ? {
@@ -492,7 +499,8 @@ export default function Providers() {
           email: formData.get('email'),
           phone: formData.get('phone'),
           address: formData.get('address'),
-          bankAccount_cbu: formData.get('bankAccount_cbu'),
+          bankAccount_cbu: cbu,
+          bankAccount_alias: alias,
           category,
           categoryOther: category === 'Otra' ? categoryOther : '',
           createdBy: profile?.uid,
@@ -510,7 +518,8 @@ export default function Providers() {
           cuitNormalized: normalizeDigits(cuit),
           address: formData.get('address'),
           birthDate: formData.get('birthDate'),
-          bankAccount_cbu: formData.get('bankAccount_cbu'),
+          bankAccount_cbu: cbu,
+          bankAccount_alias: alias,
           category,
           categoryOther: category === 'Otra' ? categoryOther : '',
           dietaryRestriction: formData.get('dietaryRestriction'),
@@ -558,6 +567,11 @@ export default function Providers() {
     const dni = String(formData.get('dni') || '').trim();
     const cuit = String(formData.get('cuit') || '').trim();
     const category = String(formData.get('category') || '').trim();
+    const cbu = String(formData.get('bankAccount_cbu') || '').trim();
+    if (!isValidCbu(cbu)) {
+      alert('El CBU debe tener exactamente 22 números consecutivos.');
+      return;
+    }
 
     const data: any = {
       type: providerType,
@@ -572,7 +586,8 @@ export default function Providers() {
       dni_cuit: formData.get('dni_cuit') || '',
       address: String(formData.get('address') || '').trim(),
       birthDate: providerType === 'persona' ? formData.get('birthDate') || '' : '',
-      bankAccount_cbu: String(formData.get('bankAccount_cbu') || '').trim(),
+      bankAccount_cbu: cbu,
+      bankAccount_alias: String(formData.get('bankAccount_alias') || '').trim(),
       category,
       categoryOther: category === 'Otra' ? String(formData.get('categoryOther') || '').trim() : '',
       dietaryRestriction: providerType === 'persona' ? String(formData.get('dietaryRestriction') || '').trim() : '',
@@ -1158,6 +1173,7 @@ function ProviderDetailModal({ detail, loading, onClose }: { detail: any; loadin
   const cuitRaw = normalizeDigits(provider.cuit || inferred.cuitNormalized);
   const cuit = formatIdentifier(cuitRaw) || '-';
   const cbu = provider.bankAccount_cbu || provider.bankAccount || '-';
+  const alias = provider.bankAccount_alias || '-';
   const category = provider.category === 'Otra'
     ? `Otra: ${provider.categoryOther || '-'}`
     : provider.category || '-';
@@ -1178,7 +1194,8 @@ function ProviderDetailModal({ detail, loading, onClose }: { detail: any; loadin
     { label: 'Razon social', value: provider.businessName || '-' },
     { label: 'DNI', value: dni, copyValue: normalizeDigits(provider.dni || inferred.dniNormalized) || dni },
     { label: 'CUIT / CUIL', value: cuit, copyValue: cuitRaw || cuit },
-    { label: 'CBU / Alias', value: cbu },
+    { label: 'CBU', value: cbu },
+    { label: 'Alias', value: alias },
     { label: 'Email', value: provider.email || provider.adminEmail || '-' },
     { label: 'Telefono', value: provider.phone || '-' },
     { label: 'Domicilio', value: provider.address || '-' },
@@ -1200,7 +1217,8 @@ function ProviderDetailModal({ detail, loading, onClose }: { detail: any; loadin
             <div className="mt-3 flex flex-wrap gap-2">
               {[
                 { label: 'CUIT', value: cuit },
-                { label: 'CBU / Alias', value: cbu },
+                { label: 'CBU', value: cbu },
+                { label: 'Alias', value: alias },
               ].map((item) => (
                 <button
                   key={item.label}
@@ -1410,7 +1428,12 @@ function ProviderManualModal({ saving, onClose, onSubmit }: { saving?: boolean; 
             </Field>
             {category === 'Otra' && <Field label="Comentario Otra" required><input name="categoryOther" required className={inputClass} /></Field>}
           </div>
-          <Field label="CBU / Alias" required><input name="bankAccount_cbu" required className={`${inputClass} font-mono`} /></Field>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Field label="CBU" required>
+              <input name="bankAccount_cbu" required inputMode="numeric" pattern="[0-9]{22}" minLength={22} maxLength={22} placeholder="22 números sin espacios" className={`${inputClass} font-mono`} />
+            </Field>
+            <Field label="Alias"><input name="bankAccount_alias" className={inputClass} /></Field>
+          </div>
           <div className="flex gap-3 pt-4">
             <button type="button" onClick={onClose} className="flex-1 px-4 py-3 border border-slate-200 rounded text-xs font-bold tracking-widest uppercase hover:bg-slate-50 transition-colors">Cancelar</button>
             <button type="submit" disabled={saving} className="flex-1 px-4 py-3 bg-black text-white rounded text-xs font-bold tracking-widest uppercase hover:bg-slate-800 transition-colors disabled:bg-slate-300 disabled:cursor-not-allowed">
@@ -1603,7 +1626,12 @@ function ProviderEditModal({ saving, provider, onClose, onSubmit }: { saving?: b
             <Field label="Restricción alimentaria"><input name="dietaryRestriction" defaultValue={provider.dietaryRestriction} className={inputClass} /></Field>
           </div>
           <Field label="Domicilio"><input name="address" defaultValue={provider.address} className={inputClass} /></Field>
-          <Field label="CBU / Cuenta Bancaria"><input name="bankAccount_cbu" defaultValue={provider.bankAccount_cbu} className={`${inputClass} font-mono`} /></Field>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Field label="CBU" required>
+              <input name="bankAccount_cbu" defaultValue={provider.bankAccount_cbu || provider.bankAccount || ''} required inputMode="numeric" pattern="[0-9]{22}" minLength={22} maxLength={22} placeholder="22 números sin espacios" className={`${inputClass} font-mono`} />
+            </Field>
+            <Field label="Alias"><input name="bankAccount_alias" defaultValue={provider.bankAccount_alias || ''} className={inputClass} /></Field>
+          </div>
           <div className="flex gap-3 pt-4">
             <button type="button" onClick={onClose} className="flex-1 px-4 py-3 border border-slate-200 rounded text-xs font-bold tracking-widest uppercase hover:bg-slate-50 transition-colors">Cancelar</button>
             <button type="submit" disabled={saving} className="flex-1 px-4 py-3 bg-black text-white rounded text-xs font-bold tracking-widest uppercase hover:bg-slate-800 transition-colors disabled:bg-slate-300 disabled:cursor-not-allowed">

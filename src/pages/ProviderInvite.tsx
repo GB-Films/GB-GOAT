@@ -6,6 +6,7 @@ import { db } from '../lib/firebase';
 import {
   COMPANY_PROVIDER_CATEGORIES,
   PRODUCTION_AREA_CATEGORIES,
+  isValidCbu,
   normalizeDigits,
 } from '../lib/providerConstants';
 
@@ -26,6 +27,7 @@ const emptyForm = {
   category: '',
   categoryOther: '',
   bankAccount_cbu: '',
+  bankAccount_alias: '',
   dietaryRestriction: '',
 };
 
@@ -296,7 +298,7 @@ export default function ProviderInvite() {
     if (!form.email.trim()) return 'Completá el email.';
     if (!form.phone.trim()) return 'Completá el teléfono.';
     if (!form.address.trim()) return 'Completá la dirección.';
-    if (!form.bankAccount_cbu.trim()) return 'Completá el CBU o alias.';
+    if (!isValidCbu(form.bankAccount_cbu)) return 'El CBU debe tener exactamente 22 números consecutivos.';
     if (!cuitNormalized || cuitNormalized.length < 10) return 'Completá un CUIT/CUIL válido.';
     if (duplicates.cuit) return 'Ya existe un proveedor registrado con este CUIT/CUIL.';
 
@@ -358,6 +360,7 @@ export default function ProviderInvite() {
           category: form.category,
           categoryOther: form.category === 'Otra' ? form.categoryOther.trim() : '',
           bankAccount_cbu: form.bankAccount_cbu.trim(),
+          bankAccount_alias: form.bankAccount_alias.trim(),
           source: 'provider_invite',
           inviteToken: token,
           createdAt: serverTimestamp(),
@@ -594,9 +597,24 @@ export default function ProviderInvite() {
                 )}
               </div>
 
-              <Field label="CBU / Alias" required>
-                <input value={form.bankAccount_cbu} onChange={(e) => updateField('bankAccount_cbu', e.target.value)} required className={`${inputClass} font-mono`} />
-              </Field>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <Field label="CBU" required>
+                  <input
+                    value={form.bankAccount_cbu}
+                    onChange={(e) => updateField('bankAccount_cbu', e.target.value)}
+                    required
+                    inputMode="numeric"
+                    pattern="[0-9]{22}"
+                    minLength={22}
+                    maxLength={22}
+                    placeholder="22 números sin espacios"
+                    className={`${inputClass} font-mono`}
+                  />
+                </Field>
+                <Field label="Alias">
+                  <input value={form.bankAccount_alias} onChange={(e) => updateField('bankAccount_alias', e.target.value)} className={inputClass} />
+                </Field>
+              </div>
 
               {checkingDuplicates && <p className="text-xs text-slate-400 font-bold uppercase tracking-widest">Revisando duplicados...</p>}
               {error && <div className="p-4 rounded-lg bg-red-50 border border-red-100 text-sm font-bold text-red-600">{error}</div>}

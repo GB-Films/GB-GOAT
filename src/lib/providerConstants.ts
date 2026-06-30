@@ -52,6 +52,8 @@ export const TAX_CONDITIONS = [
 
 export const normalizeDigits = (value: unknown) => String(value || '').replace(/\D/g, '');
 
+export const isValidCbu = (value: unknown) => /^\d{22}$/.test(String(value || '').trim());
+
 export const normalizeProviderText = (value: unknown) => String(value || '')
   .toLowerCase()
   .normalize('NFD')
@@ -104,6 +106,8 @@ export const providerSearchText = (provider: any) => [
   provider?.address,
   provider?.category,
   provider?.categoryOther,
+  provider?.bankAccount_cbu,
+  provider?.bankAccount_alias,
 ].filter(Boolean).join(' ').toLowerCase();
 
 export const providerMatchesSearch = (provider: any, search: string) => {

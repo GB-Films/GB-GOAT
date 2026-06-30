@@ -384,7 +384,7 @@ const getPublicInvoiceUploadLink = (token: string) => {
   return `${window.location.origin}${baseUrl}#/carga-factura/${token}`;
 };
 
-const clampProviderInviteDays = (value: number) => Math.max(1, Math.min(4, Math.floor(value) || 1));
+const clampProviderInviteDays = (value: number) => Math.max(1, Math.min(7, Math.floor(value) || 7));
 
 const buildProviderInviteExpiration = (days: number) => {
   const expiresAt = new Date();
@@ -1718,9 +1718,7 @@ export default function ProjectDetail() {
     if (!id || !item?.id) return;
     if (!canManagePaymentForItem(item, collectionName)) return;
 
-    const rawDays = window.prompt('Cantidad de dias de validez del link (1 a 4):', '1');
-    if (rawDays === null) return;
-    const days = clampProviderInviteDays(Number(rawDays));
+    const days = 7;
     const token = generateInvoiceUploadToken();
     const link = getPublicProviderInviteLink(token);
     const loadingKey = `${collectionName}-${item.id}`;
@@ -1731,6 +1729,7 @@ export default function ProjectDetail() {
         token,
         status: 'pending',
         used: false,
+        mode: 'single_use',
         projectId: id,
         projectName: project?.name || '',
         collectionName,
@@ -1747,7 +1746,7 @@ export default function ProjectDetail() {
       });
 
       await navigator.clipboard?.writeText(link);
-      alert(`Link de alta de proveedor copiado al portapapeles:\n\n${link}\n\nVence en ${days} dia${days === 1 ? '' : 's'} y se asignara automaticamente a este gasto.`);
+      alert(`Link de alta de proveedor copiado al portapapeles:\n\n${link}\n\nEs de un solo uso, vence en ${days} dias y se asignara automaticamente a este gasto.`);
     } catch (error) {
       console.error('Error creating provider invite for item:', error);
       alert('No se pudo generar el link de alta de proveedor.');
@@ -5614,7 +5613,7 @@ export default function ProjectDetail() {
                     </div>
                   </div>
                   <div className="max-h-64 overflow-y-auto divide-y divide-slate-100">
-                    {row.movements.slice(0, 12).map((movement) => {
+                    {row.movements.map((movement) => {
                       const incoming = normalizeEmail(movement.toUserEmail) === row.email;
                       const signedAmount = incoming ? Number(movement.amount) || 0 : -(Number(movement.amount) || 0);
                       return (

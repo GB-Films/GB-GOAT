@@ -104,7 +104,8 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
   const providerCuitRaw = normalizeDigits(provider?.cuit || providerIdentifiers.cuitNormalized);
   const providerCuit = formatIdentifier(providerCuitRaw) || '';
   const providerCbu = provider?.bankAccount_cbu || provider?.bankAccount || '';
-  const canShowProviderInfo = Boolean(canCopyProviderInfo && provider && (providerCuit || providerCbu));
+  const providerAlias = provider?.bankAccount_alias || '';
+  const canShowProviderInfo = Boolean(canCopyProviderInfo && provider && (providerCuit || providerCbu || providerAlias));
 
   const copyProviderValue = async (label: string, value: string) => {
     if (!value) return;
@@ -149,7 +150,7 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
                 isInvalidProvider ? "text-red-500 underline decoration-dotted" : "text-slate-900",
                 !canShowProviderInfo && "cursor-default"
               )}
-              title={canShowProviderInfo ? "Ver CUIT / CBU" : undefined}
+              title={canShowProviderInfo ? "Ver CUIT / CBU / Alias" : undefined}
             >
               {item.providerName || 'Sin Nombre'}
             </button>
@@ -192,6 +193,7 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
             {[
               { label: 'Copiar CUIT', value: providerCuit, copyValue: providerCuitRaw || providerCuit },
               { label: 'Copiar CBU', value: providerCbu },
+              { label: 'Copiar Alias', value: providerAlias },
             ].filter((entry) => entry.value).map((entry) => (
               <div key={entry.label} className="flex items-center justify-between gap-2 py-1.5 border-t border-slate-50 first:border-0">
                 <div className="min-w-0">
