@@ -755,7 +755,7 @@ export default function ProjectDetail() {
   const [isUploadingProjectDocument, setIsUploadingProjectDocument] = useState(false);
   const [subcategoryBudgetDraft, setSubcategoryBudgetDraft] = useState<AreaSubcategoryBudgetDraft | null>(null);
   const [isSavingSubcategoryBudget, setIsSavingSubcategoryBudget] = useState(false);
-  const [expenseConfirmation, setExpenseConfirmation] = useState<string | null>(null);
+  const [expenseConfirmation, setExpenseConfirmation] = useState<{ message: string; tone: 'success' | 'warning' } | null>(null);
   const expenseConfirmationTimeoutRef = useRef<number | null>(null);
   const areaSelectorRef = useRef<HTMLDivElement>(null);
   const isGlobalAdmin = profile?.role === 'admin';
@@ -946,8 +946,8 @@ export default function ProjectDetail() {
     };
   }, []);
 
-  const showExpenseConfirmation = (message: string) => {
-    setExpenseConfirmation(message);
+  const showExpenseConfirmation = (message: string, tone: 'success' | 'warning' = 'success') => {
+    setExpenseConfirmation({ message, tone });
     if (expenseConfirmationTimeoutRef.current) {
       window.clearTimeout(expenseConfirmationTimeoutRef.current);
     }
@@ -1148,24 +1148,20 @@ export default function ProjectDetail() {
       .reduce((acc, item) => acc + (Number(item.total) || 0), 0);
   };
 
-  const canSaveAreaExpense = (area: string, nextTotal: number, excludeExpenseId?: string) => {
+  const getAreaExpenseBudgetWarning = (area: string, nextTotal: number, excludeExpenseId?: string) => {
     const assigned = getAreaBudget(area);
     const nextSpent = getAreaSpent(area, excludeExpenseId) + (Number(nextTotal) || 0);
 
     if (assigned <= 0) {
-      if (!isProjectAdmin) {
-        alert(`El área "${area}" no tiene presupuesto asignado en el Presupuesto Principal. Se guardara igual y el saldo proyectado quedara marcado en rojo.`);
-      }
-      return true;
+      return !isProjectAdmin
+        ? `El área "${area}" no tiene presupuesto asignado. Se guardó igual y el saldo proyectado quedó marcado en rojo.`
+        : '';
     }
 
-    if (nextSpent <= assigned + 0.01) return true;
+    if (nextSpent <= assigned + 0.01) return '';
 
     const overBy = nextSpent - assigned;
-    const message = `Este gasto supera el presupuesto asignado para "${area}" por $${overBy.toLocaleString()}.`;
-
-    alert(`${message}\n\nSe guardara igual y el saldo proyectado quedara marcado en rojo.`);
-    return true;
+    return `El área "${area}" supera lo asignado por $${overBy.toLocaleString()}. Se guardó igual y el saldo proyectado quedó marcado en rojo.`;
   };
 
   const addAreaExpense = async (area: string, subcategory = '') => {
@@ -1210,12 +1206,12 @@ export default function ProjectDetail() {
       const nextSubcategory = updates.subcategory !== undefined ? updates.subcategory : currentExpense.subcategory;
       if (!canEditAreaExpense(currentExpense) || !canEditAreaSubcategory(nextArea, nextSubcategory)) return;
       const nextTotal = updates.total !== undefined ? Number(updates.total) : Number(currentExpense.total) || 0;
-
-      if (!canSaveAreaExpense(nextArea, nextTotal, expenseId)) return;
+      const budgetWarning = getAreaExpenseBudgetWarning(nextArea, nextTotal, expenseId);
 
       const docRef = doc(db, 'projects', id, 'areaExpenses', expenseId);
       await updateDoc(docRef, { ...updates, updatedAt: serverTimestamp() });
       setAreaExpenses(areaExpenses.map(e => e.id === expenseId ? { ...e, ...updates } : e));
+      if (budgetWarning) showExpenseConfirmation(budgetWarning, 'warning');
     } catch (e) {
       console.error("Error updating area expense:", e);
     }
@@ -3822,9 +3818,14 @@ export default function ProjectDetail() {
             initial={{ opacity: 0, y: -8 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -8 }}
-            className="fixed right-4 top-4 z-[300] rounded border border-emerald-200 bg-white px-4 py-2 text-[10px] font-black uppercase tracking-widest text-emerald-700 shadow-xl"
+            className={cn(
+              "fixed right-4 top-4 z-[300] max-w-md rounded border bg-white px-4 py-2 text-[10px] font-black uppercase tracking-widest shadow-xl",
+              expenseConfirmation.tone === 'warning'
+                ? "border-amber-200 text-amber-700"
+                : "border-emerald-200 text-emerald-700"
+            )}
           >
-            {expenseConfirmation}
+            {expenseConfirmation.message}
           </motion.div>
         )}
       </AnimatePresence>

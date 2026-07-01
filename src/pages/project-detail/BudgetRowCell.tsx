@@ -116,8 +116,13 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
 
   const handleValueUpdate = (field: string, value: any) => {
     if (disabled) return;
+    const isNumericField = field === 'quantity' || field === 'unitPrice';
+    const valueDidNotChange = isNumericField
+      ? Number(item[field]) === Number(value)
+      : String(item[field] ?? '') === String(value ?? '');
+    if (valueDidNotChange) return;
     const updates: any = { [field]: value };
-    if (field === 'quantity' || field === 'unitPrice') {
+    if (isNumericField) {
        const qty = field === 'quantity' ? Number(value) : item.quantity;
        const price = field === 'unitPrice' ? Number(value) : item.unitPrice;
        updates.total = qty * price;
