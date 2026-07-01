@@ -1080,6 +1080,7 @@ export default function Reports() {
         isDeletingPayment={isDeletingPayment}
         canEditExistingPayments
         currentUserEmail={currentUserEmail}
+        currentUserId={user?.uid || ''}
         currentUserName={currentUserName}
         currentUserRole="admin"
         canEditPaymentRecord={canEditPaymentRecord}

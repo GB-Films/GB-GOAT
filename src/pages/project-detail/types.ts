@@ -6,6 +6,7 @@ export interface Payment {
   type: 'partial' | 'total';
   method?: 'caja_efectivo' | 'otro';
   createdByEmail?: string;
+  createdBy?: string;
   createdByName?: string;
   createdByRole?: string;
   paidByEmail?: string;
@@ -37,6 +38,10 @@ export interface BudgetItem {
   paid?: boolean;
   paymentDate?: string;
   paymentHistory?: Payment[];
+  paymentLocked?: boolean;
+  paymentAuthorIds?: string[];
+  createdBy?: string;
+  createdByEmail?: string;
   order: number;
   createdAt: any;
   updatedAt?: any;

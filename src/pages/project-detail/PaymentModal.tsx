@@ -81,6 +81,7 @@ interface PaymentModalProps {
   isDeletingPayment: number | null;
   canEditExistingPayments?: boolean;
   currentUserEmail?: string;
+  currentUserId?: string;
   currentUserName?: string;
   currentUserRole?: string;
   canEditPaymentRecord?: (payment: Payment, paymentIndex: number) => boolean;
@@ -89,7 +90,8 @@ interface PaymentModalProps {
     itemId: string,
     collectionName: PaymentCollection,
     updatedHistory: Payment[],
-    isFullyPaid: boolean
+    isFullyPaid: boolean,
+    audit?: { paymentLocked: boolean; paymentAuthorIds: string[] }
   ) => void;
   onDeletePayment: (paymentIndex: number) => Promise<void>;
   onCashMovementCreated?: (movement: any) => void;
@@ -109,6 +111,7 @@ export function PaymentModal({
   isDeletingPayment,
   canEditExistingPayments = false,
   currentUserEmail = '',
+  currentUserId = '',
   currentUserName = '',
   currentUserRole = '',
   canEditPaymentRecord,
@@ -411,6 +414,7 @@ export function PaymentModal({
                 type: isRemainingBalance ? 'total' : 'partial',
                 method: useCashBox ? 'caja_efectivo' : 'otro',
                 createdByEmail: currentUserEmail,
+                createdBy: currentUserId,
                 createdByName: currentUserName,
                 createdByRole: currentUserRole,
               };
@@ -486,6 +490,13 @@ export function PaymentModal({
                   if (latestTotalPaidCents + toMoneyCents(amount) > latestItemTotalCents) throw new Error('PAYMENT_EXCEEDS_TOTAL');
 
                   const updatedHistory = [...latestHistory, newPayment];
+                  const existingPaymentAuthorIds = Array.isArray(latestItem.paymentAuthorIds)
+                    ? latestItem.paymentAuthorIds.filter((authorId: unknown) => typeof authorId === 'string' && authorId)
+                    : [];
+                  const canInitializePaymentAudit = latestHistory.length === 0 || latestItem.paymentLocked === true;
+                  const paymentAuthorIds = canInitializePaymentAudit && currentUserId
+                    ? [...existingPaymentAuthorIds, currentUserId]
+                    : existingPaymentAuthorIds;
                   const nextTotalPaidCents = latestTotalPaidCents + toMoneyCents(amount);
                   const isFullyPaid = nextTotalPaidCents >= latestItemTotalCents;
 
@@ -494,16 +505,26 @@ export function PaymentModal({
                     paymentHistory: updatedHistory,
                     paid: isFullyPaid,
                     updatedAt: serverTimestamp(),
+                    ...(canInitializePaymentAudit && currentUserId ? {
+                      paymentLocked: true,
+                      paymentAuthorIds,
+                    } : {}),
                   });
 
-                  return { updatedHistory, isFullyPaid };
+                  return {
+                    updatedHistory,
+                    isFullyPaid,
+                    audit: canInitializePaymentAudit && currentUserId
+                      ? { paymentLocked: true, paymentAuthorIds }
+                      : undefined,
+                  };
                 });
 
                 if (movement && cashMovementRef) {
                   onCashMovementCreated?.({ id: cashMovementRef.id, ...movement, createdAt: new Date(), updatedAt: new Date() });
                 }
 
-                onPaymentStateChange(currentItemId, collectionName, result.updatedHistory, result.isFullyPaid);
+                onPaymentStateChange(currentItemId, collectionName, result.updatedHistory, result.isFullyPaid, result.audit);
                 
                 (e.target as HTMLFormElement).reset();
                 setSelectedReceipt(null);

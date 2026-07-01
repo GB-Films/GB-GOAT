@@ -1183,6 +1183,11 @@ export default function ProjectDetail() {
       quantity: 1,
       unitPrice: 0,
       total: 0,
+      createdBy: user?.uid || '',
+      createdByEmail: currentUserEmail,
+      paymentHistory: [],
+      paymentLocked: false,
+      paymentAuthorIds: [],
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp()
     };
@@ -1569,7 +1574,12 @@ export default function ProjectDetail() {
     const currentExpense = areaExpenses.find(e => e.id === expenseId);
     const itemLabel = currentExpense?.description || currentExpense?.providerName || 'este gasto';
     const itemTotal = Number(currentExpense?.total) || 0;
-    if (!id || !currentExpense || !canEditAreaExpense(currentExpense)) return;
+    if (!id || !currentExpense || !canDeleteAreaExpense(currentExpense)) {
+      if (currentExpense && !isProjectAdmin) {
+        alert('Este gasto recibió un pago. Sólo puede eliminarlo un administrador o la persona que cargó tanto el gasto como todos sus pagos.');
+      }
+      return;
+    }
     if (!confirm(`¿Eliminar "${itemLabel}" de Gestión por Áreas?\n\nÁrea: ${currentExpense.area || 'Sin área'}\nTotal: $${itemTotal.toLocaleString()}\nEsta acción no se puede deshacer.`)) return;
     try {
       await deleteDoc(doc(db, 'projects', id, 'areaExpenses', expenseId));
@@ -1999,9 +2009,10 @@ export default function ProjectDetail() {
     itemId: string,
     collectionName: PaymentCollection,
     updatedHistory: Payment[],
-    isFullyPaid: boolean
+    isFullyPaid: boolean,
+    audit?: { paymentLocked: boolean; paymentAuthorIds: string[] }
   ) => {
-    const updates = { paymentHistory: updatedHistory, paid: isFullyPaid };
+    const updates = { paymentHistory: updatedHistory, paid: isFullyPaid, ...(audit || {}) };
 
     if (collectionName === 'budgetItems') {
       setBudgetItems(prev => prev.map(i => i.id === itemId ? { ...i, ...updates } : i));
@@ -2019,6 +2030,10 @@ export default function ProjectDetail() {
     if (!id || !selectedItemForPayment) return;
     const collectionName: PaymentCollection = selectedItemForPayment.__paymentCollection || paymentType;
     if (!canManagePaymentForItem(selectedItemForPayment, collectionName)) return;
+    if (collectionName === 'areaExpenses' && !isProjectAdmin && selectedItemForPayment.paymentLocked !== true) {
+      alert('Por seguridad, los pagos históricos sin autor identificado sólo pueden ser eliminados por un administrador.');
+      return;
+    }
 
     if (!window.confirm('¿Borrar definitivamente este registro de pago?')) return;
 
@@ -2544,6 +2559,21 @@ export default function ProjectDetail() {
     && canEditArea(area)
   );
   const canEditAreaExpense = (expense?: any | null) => canEditAreaSubcategory(expense?.area, expense?.subcategory);
+  const canDeleteAreaExpense = (expense?: any | null) => {
+    if (!expense || !canEditAreaExpense(expense)) return false;
+    if (isProjectAdmin) return true;
+    const hasReceivedPayment = expense.paymentLocked === true || safeArray(expense.paymentHistory).length > 0;
+    if (!hasReceivedPayment) return true;
+    const isExpenseAuthor = expense.createdBy === user?.uid
+      || normalizeEmail(expense.createdByEmail) === currentUserEmail;
+    const paymentAuthorIds = safeArray(expense.paymentAuthorIds).filter(Boolean);
+    return Boolean(
+      isExpenseAuthor
+      && user?.uid
+      && paymentAuthorIds.length > 0
+      && paymentAuthorIds.every((authorId) => authorId === user.uid)
+    );
+  };
   const canEditPaymentDateForItem = (item?: any | null, collectionName?: PaymentCollection) => {
     if (!item || !collectionName) return false;
     if (collectionName === 'budgetItems' && activeAreas.includes(item.area)) return false;
@@ -5072,7 +5102,7 @@ export default function ProjectDetail() {
                                       <Wallet className="h-3 w-3" />
                                       Pago
                                     </button>
-                                    {canEditAreaExpense(item) && (
+                                    {canDeleteAreaExpense(item) && (
                                       <button
                                         type="button"
                                         onClick={() => deleteAreaExpense(item.id)}
@@ -5471,7 +5501,7 @@ export default function ProjectDetail() {
                                  onManagePayment={(item) => openPaymentModal(item, 'areaExpenses')}
                                  disabledPayment={!canEditAreaExpense(item)}
                                />
-                               {canEditAreaExpense(item) && (
+                               {canDeleteAreaExpense(item) && (
                                  <button 
                                    type="button"
                                    onClick={() => deleteAreaExpense(item.id)}
@@ -7503,6 +7533,7 @@ export default function ProjectDetail() {
           isDeletingPayment={isDeletingPayment}
           canEditExistingPayments={isProjectAdmin || isProductionLead}
           currentUserEmail={currentUserEmail}
+          currentUserId={user?.uid || ''}
           currentUserName={currentUserName}
           currentUserRole={currentProjectRole}
           canEditPaymentRecord={(payment) => canEditPaymentRecord(payment)}

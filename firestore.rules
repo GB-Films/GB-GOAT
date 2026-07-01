@@ -189,6 +189,74 @@ service cloud.firestore {
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['paymentHistory', 'paid', 'paymentDate', 'updatedAt']);
     }
 
+    function storedPaymentCount() {
+      return resource.data.keys().hasAny(['paymentHistory'])
+        && resource.data.paymentHistory is list
+        ? resource.data.paymentHistory.size()
+        : 0;
+    }
+
+    function hasReceivedPayment() {
+      return (resource.data.keys().hasAny(['paymentLocked']) && resource.data.paymentLocked == true)
+        || storedPaymentCount() > 0;
+    }
+
+    function validPaymentAuditAppend() {
+      let oldCount = storedPaymentCount();
+      let hadAudit = resource.data.keys().hasAny(['paymentAuthorIds'])
+        && resource.data.paymentAuthorIds is list;
+      return request.resource.data.keys().hasAll(['paymentHistory', 'paymentLocked', 'paymentAuthorIds'])
+        && request.resource.data.paymentHistory is list
+        && request.resource.data.paymentAuthorIds is list
+        && request.resource.data.paymentLocked == true
+        && request.resource.data.paymentHistory.size() == oldCount + 1
+        && (oldCount == 0 || request.resource.data.paymentHistory.hasAll(resource.data.paymentHistory))
+        && request.resource.data.paymentHistory[oldCount].createdBy == request.auth.uid
+        && (
+          (hadAudit && request.resource.data.paymentAuthorIds == resource.data.paymentAuthorIds + [request.auth.uid])
+          || (!hadAudit && oldCount == 0 && request.resource.data.paymentAuthorIds == [request.auth.uid])
+        );
+    }
+
+    function preservesExpensePaymentAudit() {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return !changed.hasAny(['createdBy', 'createdByEmail'])
+        && (
+          !changed.hasAny(['paymentLocked'])
+          || (
+            (!resource.data.keys().hasAny(['paymentLocked']) || resource.data.paymentLocked == false)
+            && validPaymentAuditAppend()
+          )
+        )
+        && (
+          !changed.hasAny(['paymentAuthorIds'])
+          || validPaymentAuditAppend()
+        )
+        && (
+          !changed.hasAny(['paymentHistory'])
+          || (
+            resource.data.keys().hasAny(['paymentLocked'])
+            && resource.data.paymentLocked == true
+          )
+          || request.resource.data.paymentHistory.size() >= storedPaymentCount()
+        );
+    }
+
+    function canDeleteAreaExpenseWithPayment(projectId) {
+      return canWriteAreaExpense(projectId, resource.data.area, resource.data.subcategory)
+        && (
+          !hasReceivedPayment()
+          || isProjectAdmin(projectId)
+          || (
+            resource.data.createdBy == request.auth.uid
+            && resource.data.keys().hasAny(['paymentAuthorIds'])
+            && resource.data.paymentAuthorIds is list
+            && resource.data.paymentAuthorIds.size() > 0
+            && resource.data.paymentAuthorIds.hasOnly([request.auth.uid])
+          )
+        );
+    }
+
     function cashMovementBaseIsValid() {
       return request.resource.data.amount is number
         && request.resource.data.amount > 0
@@ -475,14 +543,20 @@ service cloud.firestore {
 
       match /areaExpenses/{expenseId} {
         allow read: if hasProjectAccess(projectId);
-        allow create: if canWriteAreaExpense(projectId, request.resource.data.area, request.resource.data.subcategory);
-        allow update: if (
+        allow create: if canWriteAreaExpense(projectId, request.resource.data.area, request.resource.data.subcategory)
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.createdByEmail is string
+          && request.resource.data.paymentHistory == []
+          && request.resource.data.paymentLocked == false
+          && request.resource.data.paymentAuthorIds == [];
+        allow update: if isProjectAdmin(projectId)
+          || ((
             canWriteAreaExpense(projectId, resource.data.area, resource.data.subcategory)
             && canWriteAreaExpense(projectId, request.resource.data.area, request.resource.data.subcategory)
-          )
+          ) && preservesExpensePaymentAudit())
           || canPublicAssignProviderFromInvite(projectId, 'areaExpenses', expenseId)
           || canPublicUploadAreaInvoice(projectId, expenseId);
-        allow delete: if canWriteAreaExpense(projectId, resource.data.area, resource.data.subcategory);
+        allow delete: if canDeleteAreaExpenseWithPayment(projectId);
       }
 
       match /expenses/{expenseId} {
