@@ -213,7 +213,7 @@ service cloud.firestore {
         && (oldCount == 0 || request.resource.data.paymentHistory.hasAll(resource.data.paymentHistory))
         && request.resource.data.paymentHistory[oldCount].createdBy == request.auth.uid
         && (
-          (hadAudit && request.resource.data.paymentAuthorIds == resource.data.paymentAuthorIds + [request.auth.uid])
+          (hadAudit && request.resource.data.paymentAuthorIds == resource.data.paymentAuthorIds.concat([request.auth.uid]))
           || (!hadAudit && oldCount == 0 && request.resource.data.paymentAuthorIds == [request.auth.uid])
         );
     }
