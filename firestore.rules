@@ -317,8 +317,14 @@ service cloud.firestore {
         && request.resource.data.phone is string
         && request.resource.data.address is string
         && request.resource.data.bankAccount_cbu is string
-        && request.resource.data.bankAccount_cbu.matches('^[0-9]{22}$')
-        && request.resource.data.bankAccount_alias is string;
+        && request.resource.data.bankAccount_alias is string
+        && (
+          request.resource.data.bankAccount_cbu.matches('^[0-9]{22}$')
+          || (
+            request.resource.data.bankAccount_cbu == ''
+            && request.resource.data.bankAccount_alias.size() > 0
+          )
+        );
     }
 
     function canCreateLinkedProviderInvite() {
