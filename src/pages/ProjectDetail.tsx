@@ -32,7 +32,9 @@ import {
   FileText,
   Paperclip,
   X,
-  Truck
+  Truck,
+  CheckCircle2,
+  Clock3
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
@@ -711,6 +713,7 @@ export default function ProjectDetail() {
   const [cashMovements, setCashMovements] = useState<CashMovement[]>([]);
   const [cashRecipientEmail, setCashRecipientEmail] = useState('');
   const [cashTransferTargetEmail, setCashTransferTargetEmail] = useState('');
+  const [confirmingCashDeliveryId, setConfirmingCashDeliveryId] = useState('');
   const [availableUsers, setAvailableUsers] = useState<any[]>([]);
   const [newCollaboratorSearch, setNewCollaboratorSearch] = useState('');
   const [selectedUserToAdd, setSelectedUserToAdd] = useState<any | null>(null);
@@ -2658,6 +2661,7 @@ export default function ProjectDetail() {
   const cashBalanceByEmail = React.useMemo(() => {
     const balances = new Map<string, number>();
     cashMovements.forEach((movement) => {
+      if (movement.type === 'entrega' && movement.status === 'pending') return;
       const amount = Number(movement.amount) || 0;
       const toEmail = normalizeEmail(movement.toUserEmail);
       const fromEmail = normalizeEmail(movement.fromUserEmail);
@@ -2668,6 +2672,19 @@ export default function ProjectDetail() {
   }, [cashMovements]);
 
   const currentCashBalance = cashBalanceByEmail.get(currentUserEmail) || 0;
+  const pendingCashDeliveries = React.useMemo(() => (
+    cashMovements
+      .filter((movement) => (
+        movement.type === 'entrega'
+        && movement.status === 'pending'
+        && normalizeEmail(movement.toUserEmail) === currentUserEmail
+      ))
+      .sort((a, b) => {
+        const ad = a.createdAt?.seconds ? a.createdAt.seconds : new Date(a.date || 0).getTime() / 1000;
+        const bd = b.createdAt?.seconds ? b.createdAt.seconds : new Date(b.date || 0).getTime() / 1000;
+        return bd - ad;
+      })
+  ), [cashMovements, currentUserEmail]);
   const productionTransferTargets = React.useMemo(() => (
     cashResponsibles.filter((responsible) => {
       if (responsible.role !== 'jefe_area') return false;
@@ -2699,7 +2716,10 @@ export default function ProjectDetail() {
             return bd - ad;
           });
         const received = movements
-          .filter((movement) => normalizeEmail(movement.toUserEmail) === email)
+          .filter((movement) => (
+            normalizeEmail(movement.toUserEmail) === email
+            && !(movement.type === 'entrega' && movement.status === 'pending')
+          ))
           .reduce((acc, movement) => acc + (Number(movement.amount) || 0), 0);
         const used = movements
           .filter((movement) => normalizeEmail(movement.fromUserEmail) === email && movement.type === 'pago')
@@ -3446,11 +3466,13 @@ export default function ProjectDetail() {
 
     const payload = {
       type: 'entrega',
+      status: 'pending',
       amount,
       date,
       toUserEmail: recipient.email,
       toUserName: recipient.displayName || recipient.email,
       notes,
+      createdBy: user?.uid || '',
       createdByEmail: currentUserEmail,
       createdByName: currentUserName,
       createdAt: serverTimestamp(),
@@ -3460,11 +3482,57 @@ export default function ProjectDetail() {
     const docRef = await addDoc(collection(db, 'projects', id, 'cashMovements'), payload);
     setCashMovements((current) => [{ id: docRef.id, ...payload, createdAt: new Date(), updatedAt: new Date() } as CashMovement, ...current]);
     event.currentTarget.reset();
+    showExpenseConfirmation(`Entrega de $${amount.toLocaleString()} registrada. Queda pendiente de confirmación por ${recipient.displayName || recipient.email}.`, 'warning');
+  };
+
+  const confirmCashDelivery = async (movement: CashMovement) => {
+    if (
+      !id
+      || !user?.uid
+      || movement.type !== 'entrega'
+      || movement.status !== 'pending'
+      || normalizeEmail(movement.toUserEmail) !== currentUserEmail
+      || confirmingCashDeliveryId
+    ) return;
+
+    const sender = movement.createdByName || movement.createdByEmail || 'la persona que generó la entrega';
+    const amount = Number(movement.amount) || 0;
+    const accepted = window.confirm(
+      `Confirmación de recepción de caja\n\n`
+      + `Confirmás que recibiste de ${sender} la suma de $${amount.toLocaleString()} `
+      + `el ${formatDate(movement.date || movement.createdAt)}, en efectivo o mediante el medio acordado.\n\n`
+      + `Al aceptar, el dinero se incorporará a tu saldo de caja. No confirmes si todavía no lo recibiste.`
+    );
+    if (!accepted) return;
+
+    setConfirmingCashDeliveryId(movement.id);
+    try {
+      const updates = {
+        status: 'confirmed' as const,
+        confirmedAt: serverTimestamp(),
+        confirmedBy: user.uid,
+        confirmedByEmail: currentUserEmail,
+        confirmedByName: currentUserName,
+        updatedAt: serverTimestamp(),
+      };
+      await updateDoc(doc(db, 'projects', id, 'cashMovements', movement.id), updates);
+      setCashMovements((current) => current.map((item) => (
+        item.id === movement.id
+          ? { ...item, ...updates, confirmedAt: new Date(), updatedAt: new Date() }
+          : item
+      )));
+      showExpenseConfirmation(`Recepción confirmada. Se sumaron $${amount.toLocaleString()} a tu caja.`);
+    } catch (error) {
+      console.error('Error confirming cash delivery:', error);
+      alert('No se pudo confirmar la recepción. Intentá nuevamente.');
+    } finally {
+      setConfirmingCashDeliveryId('');
+    }
   };
 
   const editCashDelivery = async (movement: CashMovement) => {
     const canEditDelivery = isProjectAdmin || normalizeEmail(movement.createdByEmail) === currentUserEmail;
-    if (!id || !canEditDelivery || movement.type !== 'entrega') return;
+    if (!id || !canEditDelivery || movement.type !== 'entrega' || movement.status === 'confirmed') return;
     const amountText = window.prompt('Nuevo monto de la entrega:', String(Number(movement.amount) || 0));
     if (amountText === null) return;
     const amount = Number(amountText);
@@ -3996,6 +4064,39 @@ export default function ProjectDetail() {
           ))}
         </nav>
       </div>
+
+      {pendingCashDeliveries.length > 0 && activeTab !== 'cajas' && (
+        <section className="mb-4 overflow-hidden rounded-xl border-2 border-amber-300 bg-amber-50 shadow-lg shadow-amber-100">
+          <div className="flex items-center gap-3 border-b border-amber-200 px-5 py-4">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500 text-white">
+              <Clock3 className="h-5 w-5" />
+            </span>
+            <span className="min-w-0">
+              <span className="block text-sm font-black text-amber-950">Tenés {pendingCashDeliveries.length} entrega{pendingCashDeliveries.length === 1 ? '' : 's'} de caja pendiente{pendingCashDeliveries.length === 1 ? '' : 's'} de confirmar</span>
+              <span className="mt-1 block text-[10px] font-bold uppercase tracking-widest text-amber-700">El saldo no se acredita hasta que confirmes la recepción</span>
+            </span>
+          </div>
+          <div className="divide-y divide-amber-200">
+            {pendingCashDeliveries.map((movement) => (
+              <div key={`global-pending-${movement.id}`} className="flex flex-col gap-3 px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="text-xs font-bold text-amber-950">
+                  <span className="font-mono text-base font-black">${Number(movement.amount || 0).toLocaleString()}</span>
+                  {' · '}{movement.createdByName || movement.createdByEmail || 'Responsable sin identificar'} · {formatDate(movement.date || movement.createdAt)}
+                </div>
+                <button
+                  type="button"
+                  disabled={confirmingCashDeliveryId === movement.id}
+                  onClick={() => confirmCashDelivery(movement)}
+                  className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-lg bg-amber-950 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-white hover:bg-black disabled:bg-amber-300"
+                >
+                  <CheckCircle2 className="h-4 w-4" />
+                  {confirmingCashDeliveryId === movement.id ? 'Confirmando...' : 'Confirmar recepción'}
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       <motion.div
         key={activeTab}
@@ -5570,12 +5671,44 @@ export default function ProjectDetail() {
               </div>
             </header>
 
+            {pendingCashDeliveries.length > 0 && (
+              <section className="overflow-hidden rounded-xl border-2 border-amber-300 bg-amber-50 shadow-lg shadow-amber-100">
+                <div className="flex items-center gap-3 border-b border-amber-200 px-5 py-4">
+                  <Clock3 className="h-5 w-5 text-amber-700" />
+                  <div>
+                    <h3 className="text-sm font-black text-amber-950">Entregas pendientes de confirmar</h3>
+                    <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-amber-700">Confirmá únicamente cuando el dinero esté efectivamente en tu poder</p>
+                  </div>
+                </div>
+                <div className="divide-y divide-amber-200">
+                  {pendingCashDeliveries.map((movement) => (
+                    <div key={`pending-${movement.id}`} className="flex flex-col gap-4 px-5 py-4 md:flex-row md:items-center md:justify-between">
+                      <div>
+                        <div className="text-2xl font-black font-mono text-amber-950">${Number(movement.amount || 0).toLocaleString()}</div>
+                        <div className="mt-1 text-xs font-bold text-amber-900">Entregado por {movement.createdByName || movement.createdByEmail || 'responsable sin identificar'}</div>
+                        <div className="mt-1 text-[10px] font-bold uppercase tracking-widest text-amber-700">Fecha: {formatDate(movement.date || movement.createdAt)}{movement.notes ? ` · ${movement.notes}` : ''}</div>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={confirmingCashDeliveryId === movement.id}
+                        onClick={() => confirmCashDelivery(movement)}
+                        className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-amber-950 px-6 py-3 text-xs font-black uppercase tracking-widest text-white shadow-md transition-colors hover:bg-black disabled:bg-amber-300"
+                      >
+                        <CheckCircle2 className="h-5 w-5" />
+                        {confirmingCashDeliveryId === movement.id ? 'Confirmando...' : 'Confirmar que recibí el dinero'}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               {isProjectAdmin && (
                 <form onSubmit={createCashDelivery} className="bg-white border border-slate-200 rounded-xl shadow-sm p-5 space-y-4">
                   <div>
                     <h3 className="text-sm font-bold text-slate-900">Entregar efectivo</h3>
-                    <p className="text-[10px] uppercase tracking-widest text-slate-400 font-bold mt-1">Admin a responsable del proyecto</p>
+                    <p className="text-[10px] uppercase tracking-widest text-slate-400 font-bold mt-1">Quedará pendiente hasta que el responsable confirme la recepción</p>
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
@@ -5604,7 +5737,7 @@ export default function ProjectDetail() {
                   </div>
                   <input name="notes" placeholder="Nota opcional" className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs focus:outline-none focus:border-black" />
                   <button type="submit" className="w-full px-4 py-3 bg-black text-white rounded text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 transition-all">
-                    Registrar entrega
+                    Registrar entrega pendiente
                   </button>
                 </form>
               )}
@@ -5674,30 +5807,41 @@ export default function ProjectDetail() {
                   <div className="max-h-64 overflow-y-auto divide-y divide-slate-100">
                     {row.movements.map((movement) => {
                       const incoming = normalizeEmail(movement.toUserEmail) === row.email;
+                      const isPendingDelivery = movement.type === 'entrega' && movement.status === 'pending';
                       const signedAmount = incoming ? Number(movement.amount) || 0 : -(Number(movement.amount) || 0);
                       return (
-                        <div key={movement.id} className="px-5 py-3 flex items-center justify-between gap-4">
+                        <div key={movement.id} className={cn("px-5 py-3 flex items-center justify-between gap-4", isPendingDelivery && "bg-amber-50/70")}>
                           <div className="min-w-0">
-                            <div className="text-xs font-bold text-slate-900 truncate">
-                              {movement.type === 'entrega' ? 'Entrega recibida' : movement.type === 'transferencia' ? (incoming ? 'Transferencia recibida' : 'Transferencia enviada') : 'Pago en efectivo'}
+                            <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-slate-900">
+                              <span className="truncate">
+                                {movement.type === 'entrega'
+                                  ? (isPendingDelivery ? 'Entrega pendiente de recepción' : 'Entrega recibida')
+                                  : movement.type === 'transferencia'
+                                    ? (incoming ? 'Transferencia recibida' : 'Transferencia enviada')
+                                    : 'Pago en efectivo'}
+                              </span>
+                              {isPendingDelivery && <span className="rounded-full bg-amber-200 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-amber-900">Pendiente</span>}
+                              {movement.type === 'entrega' && movement.status === 'confirmed' && <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-emerald-700">Confirmada</span>}
                             </div>
                             <div className="text-[10px] text-slate-400 truncate">
                               {movement.description || movement.notes || movement.area || 'Movimiento de caja'} · {formatDate(movement.date || movement.createdAt)}
                             </div>
                           </div>
                           <div className="shrink-0 text-right">
-                            <div className={cn("text-xs font-black font-mono", signedAmount >= 0 ? "text-emerald-600" : "text-rose-600")}>
-                              {signedAmount >= 0 ? '+' : '-'}${Math.abs(signedAmount).toLocaleString()}
+                            <div className={cn("text-xs font-black font-mono", isPendingDelivery ? "text-amber-700" : signedAmount >= 0 ? "text-emerald-600" : "text-rose-600")}>
+                              {isPendingDelivery ? '' : signedAmount >= 0 ? '+' : '-'}${Math.abs(signedAmount).toLocaleString()}
                             </div>
                             {(isProjectAdmin || normalizeEmail(movement.createdByEmail) === currentUserEmail) && movement.type === 'entrega' && (
                               <div className="mt-2 flex justify-end gap-1">
-                                <button
-                                  type="button"
-                                  onClick={() => editCashDelivery(movement)}
-                                  className="rounded border border-slate-200 px-2 py-1 text-[8px] font-black uppercase tracking-widest text-slate-500 hover:border-black hover:text-black"
-                                >
-                                  Editar
-                                </button>
+                                {movement.status !== 'confirmed' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => editCashDelivery(movement)}
+                                    className="rounded border border-slate-200 px-2 py-1 text-[8px] font-black uppercase tracking-widest text-slate-500 hover:border-black hover:text-black"
+                                  >
+                                    Editar
+                                  </button>
+                                )}
                                 <button
                                   type="button"
                                   onClick={() => deleteCashDelivery(movement)}

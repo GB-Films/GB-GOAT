@@ -87,7 +87,13 @@ export interface CashMovement {
   description?: string;
   notes?: string;
   createdByEmail?: string;
+  createdBy?: string;
   createdByName?: string;
+  status?: 'pending' | 'confirmed';
+  confirmedAt?: any;
+  confirmedBy?: string;
+  confirmedByEmail?: string;
+  confirmedByName?: string;
   createdAt?: any;
   updatedAt?: any;
 }

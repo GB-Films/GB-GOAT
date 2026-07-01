@@ -269,6 +269,9 @@ service cloud.firestore {
           (
             isProjectAdmin(projectId)
             && request.resource.data.type == 'entrega'
+            && request.resource.data.status == 'pending'
+            && request.resource.data.createdBy == request.auth.uid
+            && request.resource.data.createdByEmail == userEmail()
             && hasCollaboratorDocByEmail(projectId, request.resource.data.toUserEmail)
             && collaboratorDocByEmail(projectId, request.resource.data.toUserEmail).role in ['jefe_produccion', 'jefe_area']
           )
@@ -301,11 +304,30 @@ service cloud.firestore {
     function canUpdateCashMovement(projectId) {
       return cashMovementBaseIsValid()
         && (
-          isProjectAdmin(projectId)
+          (
+            resource.data.type == 'entrega'
+            && resource.data.status == 'pending'
+            && resource.data.toUserEmail == userEmail()
+            && request.resource.data.type == resource.data.type
+            && request.resource.data.status == 'confirmed'
+            && request.resource.data.confirmedBy == request.auth.uid
+            && request.resource.data.confirmedByEmail == userEmail()
+            && request.resource.data.confirmedByName is string
+            && request.resource.data.confirmedAt == request.time
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status',
+              'confirmedAt',
+              'confirmedBy',
+              'confirmedByEmail',
+              'confirmedByName',
+              'updatedAt'
+            ])
+          )
           || (
             resource.data.type == 'entrega'
             && request.resource.data.type == resource.data.type
-            && resource.data.createdByEmail == userEmail()
+            && (!resource.data.keys().hasAny(['status']) || resource.data.status == 'pending')
+            && (isProjectAdmin(projectId) || resource.data.createdByEmail == userEmail())
             && request.resource.data.createdByEmail == resource.data.createdByEmail
             && request.resource.data.toUserEmail == resource.data.toUserEmail
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['amount', 'date', 'notes', 'updatedAt'])
@@ -313,7 +335,7 @@ service cloud.firestore {
           || (
             resource.data.type == 'pago'
             && request.resource.data.type == resource.data.type
-            && resource.data.fromUserEmail == userEmail()
+            && (isProjectAdmin(projectId) || resource.data.fromUserEmail == userEmail())
             && request.resource.data.fromUserEmail == resource.data.fromUserEmail
             && request.resource.data.collectionName == resource.data.collectionName
             && request.resource.data.itemId == resource.data.itemId
