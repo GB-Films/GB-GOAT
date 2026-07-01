@@ -18,7 +18,7 @@ import {
 import { db } from '../lib/firebase';
 import { handleFirestoreError } from '../lib/firestoreUtils';
 import { useAuth } from '../context/AuthContext';
-import { Plus, Search, Truck, X, Upload, Download, Pencil, Trash2, Link2, Copy, CheckCircle2, FileText, Paperclip } from 'lucide-react';
+import { Plus, Search, Truck, X, Upload, Download, Pencil, Trash2, Link2, Copy, CheckCircle2, FileText, Paperclip, CalendarDays } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import * as XLSX from 'xlsx';
 import Papa from 'papaparse';
@@ -483,7 +483,11 @@ export default function Providers() {
     const cuit = String(formData.get('cuit') || '');
     const cbu = String(formData.get('bankAccount_cbu') || '').trim();
     const alias = String(formData.get('bankAccount_alias') || '').trim();
-    if (!isValidCbu(cbu)) {
+    if (!cbu && !alias) {
+      alert('Completá el CBU o el Alias.');
+      return;
+    }
+    if (cbu && !isValidCbu(cbu)) {
       alert('El CBU debe tener exactamente 22 números consecutivos.');
       return;
     }
@@ -568,7 +572,12 @@ export default function Providers() {
     const cuit = String(formData.get('cuit') || '').trim();
     const category = String(formData.get('category') || '').trim();
     const cbu = String(formData.get('bankAccount_cbu') || '').trim();
-    if (!isValidCbu(cbu)) {
+    const alias = String(formData.get('bankAccount_alias') || '').trim();
+    if (!cbu && !alias) {
+      alert('Completá el CBU o el Alias.');
+      return;
+    }
+    if (cbu && !isValidCbu(cbu)) {
       alert('El CBU debe tener exactamente 22 números consecutivos.');
       return;
     }
@@ -587,7 +596,7 @@ export default function Providers() {
       address: String(formData.get('address') || '').trim(),
       birthDate: providerType === 'persona' ? formData.get('birthDate') || '' : '',
       bankAccount_cbu: cbu,
-      bankAccount_alias: String(formData.get('bankAccount_alias') || '').trim(),
+      bankAccount_alias: alias,
       category,
       categoryOther: category === 'Otra' ? String(formData.get('categoryOther') || '').trim() : '',
       dietaryRestriction: providerType === 'persona' ? String(formData.get('dietaryRestriction') || '').trim() : '',
@@ -1428,11 +1437,15 @@ function ProviderManualModal({ saving, onClose, onSubmit }: { saving?: boolean; 
             </Field>
             {category === 'Otra' && <Field label="Comentario Otra" required><input name="categoryOther" required className={inputClass} /></Field>}
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Field label="CBU" required>
-              <input name="bankAccount_cbu" required inputMode="numeric" pattern="[0-9]{22}" minLength={22} maxLength={22} placeholder="22 números sin espacios" className={`${inputClass} font-mono`} />
-            </Field>
-            <Field label="Alias"><input name="bankAccount_alias" className={inputClass} /></Field>
+          <div>
+            <div className={labelClass}>Datos bancarios<span className="ml-1 text-red-500">*</span></div>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <Field label="CBU">
+                <input name="bankAccount_cbu" inputMode="numeric" pattern="[0-9]{22}" maxLength={22} placeholder="22 números sin espacios" className={`${inputClass} font-mono`} />
+              </Field>
+              <Field label="Alias"><input name="bankAccount_alias" placeholder="Alias de la cuenta" className={inputClass} /></Field>
+            </div>
+            <p className="mt-2 text-xs text-slate-400">Completá al menos uno de los dos datos bancarios.</p>
           </div>
           <div className="flex gap-3 pt-4">
             <button type="button" onClick={onClose} className="flex-1 px-4 py-3 border border-slate-200 rounded text-xs font-bold tracking-widest uppercase hover:bg-slate-50 transition-colors">Cancelar</button>
@@ -1459,14 +1472,39 @@ const parseDateKey = (value?: string) => {
   return Number.isNaN(date.getTime()) ? null : date;
 };
 
+const parseWrittenDate = (value: string) => {
+  const match = value.trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!match) return '';
+  const [, day, month, year] = match;
+  const date = new Date(Number(year), Number(month) - 1, Number(day));
+  if (
+    date.getFullYear() !== Number(year)
+    || date.getMonth() !== Number(month) - 1
+    || date.getDate() !== Number(day)
+  ) return '';
+  return `${year}-${month}-${day}`;
+};
+
+const formatWrittenDate = (value: string) => {
+  const digits = value.replace(/\D/g, '').slice(0, 8);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+};
+
 function DateInputField({ name, defaultValue = '' }: { name: string; defaultValue?: string }) {
   const [value, setValue] = useState(defaultValue);
+  const [writtenValue, setWrittenValue] = useState(() => defaultValue ? formatDate(defaultValue) : '');
+  const [dateError, setDateError] = useState('');
   const [isOpen, setIsOpen] = useState(false);
   const [position, setPosition] = useState({ top: 0, left: 0 });
   const [anchorDate, setAnchorDate] = useState(() => parseDateKey(defaultValue) || new Date(1990, 0, 1));
+  const inputRef = useRef<HTMLInputElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const todayKey = toDateKey(new Date());
+  const currentYear = new Date().getFullYear();
+  const years = Array.from({ length: currentYear - 1899 }, (_, index) => currentYear - index);
   const monthStart = new Date(anchorDate.getFullYear(), anchorDate.getMonth(), 1);
   const firstDayOffset = (monthStart.getDay() + 6) % 7;
   const gridStart = new Date(monthStart);
@@ -1505,24 +1543,71 @@ function DateInputField({ name, defaultValue = '' }: { name: string; defaultValu
     });
   }, [isOpen]);
 
+  useEffect(() => {
+    inputRef.current?.setCustomValidity(dateError);
+  }, [dateError]);
+
   const moveMonth = (offset: number) => {
-    setAnchorDate((current) => new Date(current.getFullYear(), current.getMonth() + offset, 1));
+    setAnchorDate((current) => {
+      const next = new Date(current.getFullYear(), current.getMonth() + offset, 1);
+      const currentMonth = new Date(currentYear, new Date().getMonth(), 1);
+      return next.getFullYear() >= 1900 && next <= currentMonth ? next : current;
+    });
+  };
+
+  const handleWrittenDate = (rawValue: string) => {
+    const nextValue = formatWrittenDate(rawValue);
+    const parsed = parseWrittenDate(nextValue);
+    setWrittenValue(nextValue);
+    setDateError(nextValue.length === 10 && !parsed ? 'Ingresá una fecha válida con formato dd/mm/aaaa.' : '');
+    if (!nextValue) {
+      setValue('');
+    } else if (parsed) {
+      setValue(parsed);
+      setAnchorDate(parseDateKey(parsed) || new Date(1990, 0, 1));
+    }
+  };
+
+  const selectDate = (dateValue: string) => {
+    setValue(dateValue);
+    setWrittenValue(formatDate(dateValue));
+    setDateError('');
+    setIsOpen(false);
   };
 
   return (
     <div>
       <input type="hidden" name={name} value={value} />
-      <button
-        ref={buttonRef}
-        type="button"
-        onClick={() => {
-          setAnchorDate(parseDateKey(value) || new Date(1990, 0, 1));
-          setIsOpen((current) => !current);
-        }}
-        className={`${inputClass} text-center font-bold text-slate-800`}
-      >
-        {value ? formatDate(value) : 'dd/mm/aaaa'}
-      </button>
+      <div className="relative">
+        <input
+          ref={inputRef}
+          type="text"
+          value={writtenValue}
+          onChange={(event) => handleWrittenDate(event.target.value)}
+          onBlur={() => {
+            if (writtenValue && !parseWrittenDate(writtenValue)) setDateError('Ingresá una fecha válida con formato dd/mm/aaaa.');
+          }}
+          inputMode="numeric"
+          placeholder="dd/mm/aaaa"
+          maxLength={10}
+          pattern="[0-9]{2}/[0-9]{2}/[0-9]{4}"
+          title="Ingresá la fecha con formato dd/mm/aaaa"
+          className={`${inputClass} pr-12 ${dateError ? 'border-red-400 bg-red-50' : ''}`}
+        />
+        <button
+          ref={buttonRef}
+          type="button"
+          aria-label="Abrir calendario"
+          onClick={() => {
+            setAnchorDate(parseDateKey(value) || new Date(1990, 0, 1));
+            setIsOpen((current) => !current);
+          }}
+          className="absolute inset-y-0 right-0 flex w-12 items-center justify-center text-slate-400 hover:text-black"
+        >
+          <CalendarDays className="h-4 w-4" />
+        </button>
+      </div>
+      {dateError && <p className="mt-2 text-xs font-bold text-red-500">{dateError}</p>}
       {isOpen && (
         <div
           ref={popoverRef}
@@ -1531,8 +1616,25 @@ function DateInputField({ name, defaultValue = '' }: { name: string; defaultValu
         >
           <div className="mb-3 flex items-center justify-between gap-2">
             <button type="button" onClick={() => moveMonth(-1)} className="px-2 py-1 rounded border border-slate-100 text-[10px] font-black text-slate-500 hover:border-black">Ant.</button>
-            <div className="text-[11px] font-black uppercase tracking-widest text-slate-800">
-              {anchorDate.toLocaleDateString('es-AR', { month: 'long', year: 'numeric' })}
+            <div className="flex gap-1">
+              <select
+                aria-label="Mes"
+                value={anchorDate.getMonth()}
+                onChange={(event) => setAnchorDate(new Date(anchorDate.getFullYear(), Number(event.target.value), 1))}
+                className="rounded border border-slate-200 bg-white px-1 py-1 text-[10px] font-black uppercase text-slate-700"
+              >
+                {Array.from({ length: 12 }, (_, month) => (
+                  <option key={month} value={month}>{new Date(2020, month, 1).toLocaleDateString('es-AR', { month: 'short' })}</option>
+                ))}
+              </select>
+              <select
+                aria-label="Año"
+                value={anchorDate.getFullYear()}
+                onChange={(event) => setAnchorDate(new Date(Number(event.target.value), anchorDate.getMonth(), 1))}
+                className="rounded border border-slate-200 bg-white px-1 py-1 text-[10px] font-black text-slate-700"
+              >
+                {years.map((year) => <option key={year} value={year}>{year}</option>)}
+              </select>
             </div>
             <button type="button" onClick={() => moveMonth(1)} className="px-2 py-1 rounded border border-slate-100 text-[10px] font-black text-slate-500 hover:border-black">Sig.</button>
           </div>
@@ -1549,11 +1651,9 @@ function DateInputField({ name, defaultValue = '' }: { name: string; defaultValu
                 <button
                   key={key}
                   type="button"
-                  onClick={() => {
-                    setValue(key);
-                    setIsOpen(false);
-                  }}
-                  className={`relative h-8 rounded border text-[10px] font-black transition-all ${
+                  disabled={key > todayKey}
+                  onClick={() => selectDate(key)}
+                  className={`relative h-8 rounded border text-[10px] font-black transition-all disabled:cursor-not-allowed disabled:opacity-25 ${
                     isSelected
                       ? 'bg-slate-900 text-white border-slate-900'
                       : isToday
@@ -1577,7 +1677,7 @@ function DateInputField({ name, defaultValue = '' }: { name: string; defaultValu
               <span className="h-2 w-2 rounded-full bg-blue-500" />Hoy
             </span>
             {value && (
-              <button type="button" onClick={() => { setValue(''); setIsOpen(false); }} className="text-[9px] font-black uppercase tracking-widest text-slate-400 hover:text-red-500">
+              <button type="button" onClick={() => { setValue(''); setWrittenValue(''); setDateError(''); setIsOpen(false); }} className="text-[9px] font-black uppercase tracking-widest text-slate-400 hover:text-red-500">
                 Limpiar
               </button>
             )}
@@ -1626,11 +1726,15 @@ function ProviderEditModal({ saving, provider, onClose, onSubmit }: { saving?: b
             <Field label="Restricción alimentaria"><input name="dietaryRestriction" defaultValue={provider.dietaryRestriction} className={inputClass} /></Field>
           </div>
           <Field label="Domicilio"><input name="address" defaultValue={provider.address} className={inputClass} /></Field>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Field label="CBU" required>
-              <input name="bankAccount_cbu" defaultValue={provider.bankAccount_cbu || provider.bankAccount || ''} required inputMode="numeric" pattern="[0-9]{22}" minLength={22} maxLength={22} placeholder="22 números sin espacios" className={`${inputClass} font-mono`} />
-            </Field>
-            <Field label="Alias"><input name="bankAccount_alias" defaultValue={provider.bankAccount_alias || ''} className={inputClass} /></Field>
+          <div>
+            <div className={labelClass}>Datos bancarios<span className="ml-1 text-red-500">*</span></div>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <Field label="CBU">
+                <input name="bankAccount_cbu" defaultValue={provider.bankAccount_cbu || provider.bankAccount || ''} inputMode="numeric" pattern="[0-9]{22}" maxLength={22} placeholder="22 números sin espacios" className={`${inputClass} font-mono`} />
+              </Field>
+              <Field label="Alias"><input name="bankAccount_alias" defaultValue={provider.bankAccount_alias || ''} placeholder="Alias de la cuenta" className={inputClass} /></Field>
+            </div>
+            <p className="mt-2 text-xs text-slate-400">Completá al menos uno de los dos datos bancarios.</p>
           </div>
           <div className="flex gap-3 pt-4">
             <button type="button" onClick={onClose} className="flex-1 px-4 py-3 border border-slate-200 rounded text-xs font-bold tracking-widest uppercase hover:bg-slate-50 transition-colors">Cancelar</button>
