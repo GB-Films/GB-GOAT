@@ -104,6 +104,16 @@ service firebase.storage {
         && firestore.get(/databases/(default)/documents/invoiceUploadInvites/$(request.resource.metadata.token)).data.status == 'pending'
         && firestore.get(/databases/(default)/documents/invoiceUploadInvites/$(request.resource.metadata.token)).data.projectId == projectId
         && firestore.get(/databases/(default)/documents/invoiceUploadInvites/$(request.resource.metadata.token)).data.expenseId == request.resource.metadata.expenseId
+        && (
+          (
+            firestore.get(/databases/(default)/documents/invoiceUploadInvites/$(request.resource.metadata.token)).data.keys().hasAny(['collectionName'])
+            && firestore.get(/databases/(default)/documents/invoiceUploadInvites/$(request.resource.metadata.token)).data.collectionName == request.resource.metadata.collectionName
+          )
+          || (
+            !firestore.get(/databases/(default)/documents/invoiceUploadInvites/$(request.resource.metadata.token)).data.keys().hasAny(['collectionName'])
+            && request.resource.metadata.collectionName == 'areaExpenses'
+          )
+        )
         && firestore.get(/databases/(default)/documents/invoiceUploadInvites/$(request.resource.metadata.token)).data.providerId == request.resource.metadata.providerId;
     }
 

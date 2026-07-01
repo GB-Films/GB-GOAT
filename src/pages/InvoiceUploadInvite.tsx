@@ -80,6 +80,7 @@ export default function InvoiceUploadInvite() {
 
     setUploading(true);
     try {
+      const collectionName = invite.collectionName === 'budgetItems' ? 'budgetItems' : 'areaExpenses';
       const fileName = buildInvoiceFileName(token, file!);
       const areaFolder = sanitizeFileName(invite.area || 'sin-area') || 'sin-area';
       const path = `projects/${invite.projectId}/areas/${areaFolder}/facturas/${fileName}`;
@@ -91,6 +92,7 @@ export default function InvoiceUploadInvite() {
           token,
           projectId: invite.projectId,
           expenseId: invite.expenseId,
+          collectionName,
           providerId: invite.providerId || '',
           providerName: invite.providerName || '',
           originalFileName: file!.name,
@@ -110,7 +112,7 @@ export default function InvoiceUploadInvite() {
         uploadedBy: 'provider_public_link',
       };
 
-      await updateDoc(doc(db, 'projects', invite.projectId, 'areaExpenses', invite.expenseId), {
+      await updateDoc(doc(db, 'projects', invite.projectId, collectionName, invite.expenseId), {
         invoice,
         invoiceStatus: 'pendiente',
         publicInvoiceUpload: {

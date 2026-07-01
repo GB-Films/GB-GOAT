@@ -82,7 +82,7 @@ const MANUAL_DOCUMENT_FAMILIES = DOCUMENT_FAMILIES.filter((family) => family.id 
 const DEFAULT_AREA_EXPENSE_SUBCATEGORY = 'Sin subcategoria';
 const AREA_EXPENSE_DRAG_TYPE = 'application/gb-goat-area-expense';
 
-type AreaExpenseSortKey = 'updated' | 'provider' | 'paymentDate' | 'amountDesc' | 'amountAsc' | 'created';
+type AreaExpenseSortKey = 'manual' | 'updated' | 'provider' | 'paymentDate' | 'amountDesc' | 'amountAsc' | 'created';
 type ProjectPaymentScheduleLine = PaymentScheduleLine & {
   collectionName: PaymentCollection;
   item: any;
@@ -99,6 +99,7 @@ type AreaSubcategoryBudgetDraft = {
 };
 
 const AREA_EXPENSE_SORT_OPTIONS: Array<{ id: AreaExpenseSortKey; label: string }> = [
+  { id: 'manual', label: 'Orden manual' },
   { id: 'updated', label: 'Ultimos cambios' },
   { id: 'provider', label: 'Proveedor A-Z' },
   { id: 'paymentDate', label: 'Fecha de pago' },
@@ -272,6 +273,11 @@ const areaFromSubcategoryKey = (key: string) => key.split('||')[0] || '';
 
 const sortAreaExpenses = (expenses: AreaExpense[], sortKey: AreaExpenseSortKey) => {
   return [...expenses].sort((a, b) => {
+    if (sortKey === 'manual') {
+      const orderDiff = (Number(a.order) || 0) - (Number(b.order) || 0);
+      if (orderDiff !== 0) return orderDiff;
+      return getDateTimestamp(a.createdAt) - getDateTimestamp(b.createdAt);
+    }
     if (sortKey === 'provider') {
       const providerDiff = String(a.providerName || '').localeCompare(String(b.providerName || ''), 'es', { sensitivity: 'base' });
       if (providerDiff !== 0) return providerDiff;
@@ -705,7 +711,7 @@ export default function ProjectDetail() {
   const [activeAreas, setActiveAreas] = useState<string[]>([]);
   const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>({});
   const [collapsedAreaSubcategories, setCollapsedAreaSubcategories] = useState<Record<string, boolean>>({});
-  const [areaExpenseSort, setAreaExpenseSort] = useState<AreaExpenseSortKey>('updated');
+  const [areaExpenseSort, setAreaExpenseSort] = useState<AreaExpenseSortKey>('manual');
   const [areaExpenseSearch, setAreaExpenseSearch] = useState('');
   const [draggedAreaExpenseId, setDraggedAreaExpenseId] = useState<string | null>(null);
   const [dragOverAreaTarget, setDragOverAreaTarget] = useState<string | null>(null);
@@ -1113,15 +1119,79 @@ export default function ProjectDetail() {
   const [isAreaSelectorOpen, setIsAreaSelectorOpen] = useState(false);
   
   const addActiveArea = async (areaName: string) => {
+    if (!id || !isProjectAdmin) return;
     try {
       const currentActive = Array.isArray(activeAreas) ? activeAreas : [];
       const newActiveAreas = [...currentActive, areaName];
+      const alreadyMigratedIds = new Set(
+        areaExpenses
+          .filter((expense: any) => expense.area === areaName && expense.sourceBudgetItemId)
+          .map((expense: any) => expense.sourceBudgetItemId)
+      );
+      const budgetItemsToMigrate = budgetItems.filter((item) => (
+        item.area === areaName && !alreadyMigratedIds.has(item.id)
+      ));
+      const migratedExpenses: AreaExpense[] = [];
+      const batch = writeBatch(db);
+
+      budgetItemsToMigrate.forEach((item, index) => {
+        const expenseRef = doc(collection(db, 'projects', id, 'areaExpenses'));
+        const paymentHistory = Array.isArray(item.paymentHistory) ? item.paymentHistory : [];
+        const paymentAuthorIds = Array.isArray(item.paymentAuthorIds)
+          ? item.paymentAuthorIds
+          : paymentHistory.map((payment: any) => payment.createdBy).filter(Boolean);
+        const migratedExpense: any = {
+          projectId: id,
+          area: areaName,
+          subcategory: '',
+          providerId: item.providerId || '',
+          providerName: item.providerName || '',
+          description: item.description || '',
+          unit: item.unit || 'Unidad',
+          quantity: Number(item.quantity) || 0,
+          unitPrice: Number(item.unitPrice) || 0,
+          total: Number(item.total) || 0,
+          order: Number(item.order) || index,
+          invoice: item.invoice || null,
+          invoiceStatus: item.invoiceStatus || null,
+          otherReceipts: Array.isArray(item.otherReceipts) ? item.otherReceipts : [],
+          paymentHistory,
+          paid: item.paid === true,
+          paymentDate: item.paymentDate || '',
+          paymentLocked: item.paymentLocked === true || paymentHistory.length > 0,
+          paymentAuthorIds,
+          sourceBudgetItemId: item.id,
+          createdBy: user?.uid || '',
+          createdByEmail: currentUserEmail,
+          migratedFromBudgetAt: serverTimestamp(),
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        };
+        batch.set(expenseRef, migratedExpense);
+        migratedExpenses.push({ id: expenseRef.id, ...migratedExpense } as AreaExpense);
+      });
+
+      batch.update(doc(db, 'projects', id), {
+        activeAreas: newActiveAreas,
+        updatedAt: serverTimestamp(),
+      });
+      await batch.commit();
+
       setActiveAreas(newActiveAreas);
       setSelectedAreaTabs((current) => Array.from(new Set([...current, areaName])));
-      if (id) {
-        await updateDoc(doc(db, 'projects', id), { activeAreas: newActiveAreas });
+      if (migratedExpenses.length > 0) {
+        setAreaExpenses((current) => [...current, ...migratedExpenses.map((expense) => ({
+          ...expense,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        }))]);
       }
       setIsAreaSelectorOpen(false);
+      showExpenseConfirmation(
+        migratedExpenses.length > 0
+          ? `Gestión activada. Se migraron ${migratedExpenses.length} gastos con sus pagos y comprobantes.`
+          : 'Gestión por área activada.'
+      );
     } catch (error) {
       console.error("Error activating area:", error);
       alert("Error al activar el área.");
@@ -1170,6 +1240,13 @@ export default function ProjectDetail() {
   const addAreaExpense = async (area: string, subcategory = '') => {
     const cleanSubcategory = cleanAreaExpenseSubcategory(subcategory);
     if (!id || !canEditAreaSubcategory(area, cleanSubcategory)) return;
+    const groupExpenses = areaExpenses.filter((expense) => (
+      expense.area === area
+      && cleanAreaExpenseSubcategory(expense.subcategory) === cleanSubcategory
+    ));
+    const nextOrder = groupExpenses.length > 0
+      ? Math.max(...groupExpenses.map((expense) => Number(expense.order) || 0)) + 1
+      : 0;
 
     const newItem = {
       projectId: id,
@@ -1182,6 +1259,7 @@ export default function ProjectDetail() {
       quantity: 1,
       unitPrice: 0,
       total: 0,
+      order: nextOrder,
       createdBy: user?.uid || '',
       createdByEmail: currentUserEmail,
       paymentHistory: [],
@@ -1192,7 +1270,8 @@ export default function ProjectDetail() {
     };
     try {
       const docRef = await addDoc(collection(db, 'projects', id, 'areaExpenses'), newItem);
-      setAreaExpenses(expenses => [{ id: docRef.id, ...newItem }, ...expenses]);
+      setAreaExpenses(expenses => [...expenses, { id: docRef.id, ...newItem }]);
+      setAreaExpenseSort('manual');
       showExpenseConfirmation('Nuevo gasto agregado en Gestión por Áreas');
     } catch (e) {
       console.error("Error adding area expense:", e);
@@ -1265,15 +1344,15 @@ export default function ProjectDetail() {
     setProject((current: any) => current ? { ...current, areaExpenseSubcategories: nextMap } : current);
   };
 
-  const openAreaExpenseSubcategoryModal = (area: string, subcategory = '') => {
+  const openAreaExpenseSubcategoryModal = (area: string, subcategory = '', editDefault = false) => {
     if (!canEditArea(area)) return;
     const cleanSubcategory = cleanAreaExpenseSubcategory(subcategory);
-    const existingEntry = cleanSubcategory ? getAreaSubcategoryBudgetEntry(area, cleanSubcategory) : null;
+    const existingEntry = (cleanSubcategory || editDefault) ? getAreaSubcategoryBudgetEntry(area, cleanSubcategory) : null;
     setSubcategoryBudgetDraft({
-      mode: cleanSubcategory ? 'edit' : 'create',
+      mode: cleanSubcategory || editDefault ? 'edit' : 'create',
       area,
-      originalSubcategory: cleanSubcategory || undefined,
-      name: cleanSubcategory,
+      originalSubcategory: editDefault ? DEFAULT_AREA_EXPENSE_SUBCATEGORY : cleanSubcategory || undefined,
+      name: editDefault ? DEFAULT_AREA_EXPENSE_SUBCATEGORY : cleanSubcategory,
       budget: existingEntry ? String(existingEntry.budget || '') : '',
       notes: existingEntry?.notes || '',
     });
@@ -1291,8 +1370,9 @@ export default function ProjectDetail() {
     }
 
     const existing = getStoredAreaSubcategories(area);
-    const original = cleanAreaExpenseSubcategory(subcategoryBudgetDraft.originalSubcategory);
-    const isRename = original && original.toLowerCase() !== name.toLowerCase();
+    const editsDefaultSubcategory = subcategoryBudgetDraft.originalSubcategory === DEFAULT_AREA_EXPENSE_SUBCATEGORY;
+    const original = editsDefaultSubcategory ? '' : cleanAreaExpenseSubcategory(subcategoryBudgetDraft.originalSubcategory);
+    const isRename = editsDefaultSubcategory || Boolean(original && original.toLowerCase() !== name.toLowerCase());
     if ((!original || isRename) && existing.some((item) => item.toLowerCase() === name.toLowerCase())) {
       alert('Esa subcategoria ya existe en esta area.');
       return;
@@ -1300,13 +1380,13 @@ export default function ProjectDetail() {
 
     const budget = Math.max(0, Number(subcategoryBudgetDraft.budget) || 0);
     const nextSubcategories = Array.from(new Set([
-      ...existing.filter((item) => item.toLowerCase() !== original.toLowerCase()),
+      ...existing.filter((item) => !original || item.toLowerCase() !== original.toLowerCase()),
       name,
     ]));
     const currentBudgetMap = project?.areaExpenseSubcategoryBudgets && typeof project.areaExpenseSubcategoryBudgets === 'object'
       ? { ...project.areaExpenseSubcategoryBudgets }
       : {};
-    if (original && isRename) {
+    if (isRename) {
       delete currentBudgetMap[areaSubcategoryKey(area, original)];
     }
     const oldPermissionKey = original ? areaSubcategoryKey(area, original) : '';
@@ -1336,7 +1416,12 @@ export default function ProjectDetail() {
       });
 
       const expenseUpdates = isRename
-        ? areaExpenses.filter((expense) => expense.area === area && cleanAreaExpenseSubcategory(expense.subcategory) === original)
+        ? areaExpenses.filter((expense) => (
+            expense.area === area
+            && (editsDefaultSubcategory
+              ? !hasAreaExpenseSubcategory(expense.subcategory)
+              : cleanAreaExpenseSubcategory(expense.subcategory) === original)
+          ))
         : [];
       for (const expense of expenseUpdates) {
         await updateDoc(doc(db, 'projects', id, 'areaExpenses', expense.id), {
@@ -1380,7 +1465,9 @@ export default function ProjectDetail() {
       } : current);
       if (expenseUpdates.length > 0) {
         setAreaExpenses((current) => current.map((expense) => (
-          expense.area === area && cleanAreaExpenseSubcategory(expense.subcategory) === original
+          expense.area === area && (editsDefaultSubcategory
+            ? !hasAreaExpenseSubcategory(expense.subcategory)
+            : cleanAreaExpenseSubcategory(expense.subcategory) === original)
             ? { ...expense, subcategory: name }
             : expense
         )));
@@ -1484,24 +1571,67 @@ export default function ProjectDetail() {
     }
   };
 
-  const moveAreaExpense = async (expense: AreaExpense, nextArea: string, nextSubcategory: string) => {
-    if (!expense?.id) return;
-    const targetArea = nextArea || expense.area;
+  const moveAreaExpense = async (expense: AreaExpense, nextArea: string, nextSubcategory: string, beforeExpenseId?: string) => {
+    if (!id || !expense?.id || beforeExpenseId === expense.id) return;
+    const sourceArea = expense.area;
+    const sourceSubcategory = cleanAreaExpenseSubcategory(expense.subcategory);
+    const targetArea = nextArea || sourceArea;
     const targetSubcategory = cleanAreaExpenseSubcategory(nextSubcategory);
-    const updates: Partial<AreaExpense> = {};
+    const inGroup = (item: AreaExpense, area: string, subcategory: string) => (
+      item.area === area && cleanAreaExpenseSubcategory(item.subcategory) === subcategory
+    );
+    const byManualOrder = (a: AreaExpense, b: AreaExpense) => (
+      (Number(a.order) || 0) - (Number(b.order) || 0)
+      || getDateTimestamp(a.createdAt) - getDateTimestamp(b.createdAt)
+    );
+    const sourceItems = areaExpenses
+      .filter((item) => inGroup(item, sourceArea, sourceSubcategory) && item.id !== expense.id)
+      .sort(byManualOrder);
+    const targetItems = sourceArea === targetArea && sourceSubcategory === targetSubcategory
+      ? sourceItems
+      : areaExpenses
+        .filter((item) => inGroup(item, targetArea, targetSubcategory) && item.id !== expense.id)
+        .sort(byManualOrder);
+    const beforeIndex = beforeExpenseId ? targetItems.findIndex((item) => item.id === beforeExpenseId) : -1;
+    const insertIndex = beforeIndex >= 0 ? beforeIndex : targetItems.length;
+    const movedExpense = { ...expense, area: targetArea, subcategory: targetSubcategory };
+    targetItems.splice(insertIndex, 0, movedExpense);
 
-    if (targetArea !== expense.area) {
-      updates.area = targetArea;
-      const targetSubcategories = getStoredAreaSubcategories(targetArea);
-      updates.subcategory = targetSubcategories.some((item) => item.toLowerCase() === targetSubcategory.toLowerCase())
-        ? targetSubcategory
-        : '';
-    } else if (targetSubcategory !== cleanAreaExpenseSubcategory(expense.subcategory)) {
-      updates.subcategory = targetSubcategory;
+    const updatedSource = sourceArea === targetArea && sourceSubcategory === targetSubcategory
+      ? []
+      : sourceItems.map((item, index) => ({ ...item, order: index }));
+    const updatedTarget = targetItems.map((item, index) => ({
+      ...item,
+      area: targetArea,
+      subcategory: targetSubcategory,
+      order: index,
+    }));
+    const updatedById = new Map([...updatedSource, ...updatedTarget].map((item) => [item.id, item]));
+    const nextTotal = Number(expense.total) || 0;
+    const budgetWarning = getAreaExpenseBudgetWarning(targetArea, nextTotal, expense.id);
+
+    setAreaExpenses((current) => current.map((item) => updatedById.get(item.id) || item));
+    setAreaExpenseSort('manual');
+
+    try {
+      const batch = writeBatch(db);
+      [...updatedSource, ...updatedTarget].forEach((item) => {
+        batch.update(doc(db, 'projects', id, 'areaExpenses', item.id), {
+          area: item.area,
+          subcategory: cleanAreaExpenseSubcategory(item.subcategory),
+          order: item.order,
+          updatedAt: serverTimestamp(),
+        });
+      });
+      await batch.commit();
+      if (budgetWarning && (sourceArea !== targetArea || sourceSubcategory !== targetSubcategory)) {
+        showExpenseConfirmation(budgetWarning, 'warning');
+      }
+    } catch (error) {
+      console.error('Error moving area expense:', error);
+      setAreaExpenses(areaExpenses);
+      alert('No se pudo mover el gasto. Intentá nuevamente.');
     }
-
-    if (Object.keys(updates).length === 0) return;
-    await updateAreaExpense(expense.id, updates);
   };
 
   const startAreaExpenseDrag = (event: React.DragEvent<HTMLDivElement>, expense: AreaExpense) => {
@@ -1510,9 +1640,10 @@ export default function ProjectDetail() {
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData(AREA_EXPENSE_DRAG_TYPE, expense.id);
     event.dataTransfer.setData('text/plain', expense.id);
+    setAreaExpenseSort('manual');
   };
 
-  const finishAreaExpenseDrop = async (area: string, subcategory = '') => {
+  const finishAreaExpenseDrop = async (area: string, subcategory = '', beforeExpenseId?: string) => {
     const expenseId = draggedAreaExpenseId;
     setDraggedAreaExpenseId(null);
     setDragOverAreaTarget(null);
@@ -1520,7 +1651,7 @@ export default function ProjectDetail() {
 
     const expense = areaExpenses.find((item) => item.id === expenseId);
     if (!expense || !canEditAreaExpense(expense) || !canEditAreaSubcategory(area, subcategory)) return;
-    await moveAreaExpense(expense, area, subcategory);
+    await moveAreaExpense(expense, area, subcategory, beforeExpenseId);
   };
 
   const isAreaExpenseDrag = (event: React.DragEvent<HTMLElement>) => (
@@ -1569,6 +1700,20 @@ export default function ProjectDetail() {
     </div>
   );
 
+  const canManageItemFiles = (item: any, collectionName: PaymentCollection) => (
+    collectionName === 'budgetItems'
+      ? Boolean(isProjectAdmin && !activeAreas.includes(item?.area))
+      : canUploadAreaFiles(item?.area, item?.subcategory)
+  );
+
+  const updateItemCollectionState = (collectionName: PaymentCollection, itemId: string, updates: any) => {
+    if (collectionName === 'budgetItems') {
+      setBudgetItems((current) => current.map((item) => item.id === itemId ? { ...item, ...updates } : item));
+    } else {
+      setAreaExpenses((current) => current.map((item) => item.id === itemId ? { ...item, ...updates } : item));
+    }
+  };
+
   const deleteAreaExpense = async (expenseId: string) => {
     const currentExpense = areaExpenses.find(e => e.id === expenseId);
     const itemLabel = currentExpense?.description || currentExpense?.providerName || 'este gasto';
@@ -1588,8 +1733,8 @@ export default function ProjectDetail() {
     }
   };
 
-  const uploadInvoiceForExpense = async (expense: any, file?: File | null) => {
-    if (!id || !file || !canUploadAreaFiles(expense.area, expense.subcategory)) return;
+  const uploadInvoiceForExpense = async (expense: any, file?: File | null, collectionName: PaymentCollection = 'areaExpenses') => {
+    if (!id || !file || !canManageItemFiles(expense, collectionName)) return;
 
     if (expense.invoice?.url) {
       alert('Para cambiar la factura, primero elimina la factura actual y luego carga otra.');
@@ -1607,7 +1752,8 @@ export default function ProjectDetail() {
       return;
     }
 
-    setUploadingInvoices(prev => ({ ...prev, [expense.id]: true }));
+    const uploadKey = `${collectionName}-${expense.id}`;
+    setUploadingInvoices(prev => ({ ...prev, [uploadKey]: true }));
 
     try {
       const areaFolder = sanitizeFileName(expense.area || 'sin-area') || 'sin-area';
@@ -1620,6 +1766,7 @@ export default function ProjectDetail() {
         customMetadata: {
           projectId: id,
           expenseId: expense.id,
+          collectionName,
           area: expense.area || '',
           originalFileName: file.name,
           uploadedBy: user?.email || user?.uid || 'unknown',
@@ -1638,37 +1785,34 @@ export default function ProjectDetail() {
         uploadedBy: user?.email || user?.uid || '',
       };
 
-      await updateDoc(doc(db, 'projects', id, 'areaExpenses', expense.id), {
+      await updateDoc(doc(db, 'projects', id, collectionName, expense.id), {
         invoice,
         invoiceStatus: 'pendiente',
         updatedAt: serverTimestamp(),
       });
 
-      setAreaExpenses(areaExpenses.map(item => item.id === expense.id
-        ? {
-            ...item,
-            invoice: { ...invoice, uploadedAt: new Date() },
-            invoiceStatus: 'pendiente',
-          }
-        : item
-      ));
+      updateItemCollectionState(collectionName, expense.id, {
+        invoice: { ...invoice, uploadedAt: new Date() },
+        invoiceStatus: 'pendiente',
+      });
     } catch (error: any) {
       console.error('Error uploading invoice:', error);
-      handleFirestoreError(error, 'update', `projects/${id}/areaExpenses/${expense.id}`);
+      handleFirestoreError(error, 'update', `projects/${id}/${collectionName}/${expense.id}`);
       alert('No se pudo subir la factura. Revisá que Firebase Storage esté activado y que las reglas permitan PDFs.');
     } finally {
-      setUploadingInvoices(prev => ({ ...prev, [expense.id]: false }));
+      setUploadingInvoices(prev => ({ ...prev, [uploadKey]: false }));
     }
   };
 
-  const removeInvoiceFromExpense = async (expense: any) => {
-    if (!id || !expense.invoice || !canUploadAreaFiles(expense.area, expense.subcategory)) return;
+  const removeInvoiceFromExpense = async (expense: any, collectionName: PaymentCollection = 'areaExpenses') => {
+    if (!id || !expense.invoice || !canManageItemFiles(expense, collectionName)) return;
     if (!confirm('¿Quitar la factura adjunta de este gasto?')) return;
 
-    setUploadingInvoices(prev => ({ ...prev, [expense.id]: true }));
+    const uploadKey = `${collectionName}-${expense.id}`;
+    setUploadingInvoices(prev => ({ ...prev, [uploadKey]: true }));
 
     try {
-      await updateDoc(doc(db, 'projects', id, 'areaExpenses', expense.id), {
+      await updateDoc(doc(db, 'projects', id, collectionName, expense.id), {
         invoice: null,
         invoiceStatus: null,
         updatedAt: serverTimestamp(),
@@ -1678,20 +1822,17 @@ export default function ProjectDetail() {
         await deleteObject(ref(storage, expense.invoice.path)).catch(() => {});
       }
 
-      setAreaExpenses(areaExpenses.map(item => item.id === expense.id
-        ? { ...item, invoice: null, invoiceStatus: null }
-        : item
-      ));
+      updateItemCollectionState(collectionName, expense.id, { invoice: null, invoiceStatus: null });
     } catch (error: any) {
       console.error('Error removing invoice:', error);
-      handleFirestoreError(error, 'update', `projects/${id}/areaExpenses/${expense.id}`);
+      handleFirestoreError(error, 'update', `projects/${id}/${collectionName}/${expense.id}`);
     } finally {
-      setUploadingInvoices(prev => ({ ...prev, [expense.id]: false }));
+      setUploadingInvoices(prev => ({ ...prev, [uploadKey]: false }));
     }
   };
 
-  const createInvoiceUploadLink = async (expense: any) => {
-    if (!id || !canUploadAreaFiles(expense.area, expense.subcategory)) return;
+  const createInvoiceUploadLink = async (expense: any, collectionName: PaymentCollection = 'areaExpenses') => {
+    if (!id || !canManageItemFiles(expense, collectionName)) return;
     if (!expense.providerId || !expense.providerName) {
       alert('Asigná un proveedor a la fila antes de generar el link de factura.');
       return;
@@ -1701,7 +1842,8 @@ export default function ProjectDetail() {
       return;
     }
 
-    setGeneratingInvoiceLinks(prev => ({ ...prev, [expense.id]: true }));
+    const loadingKey = `${collectionName}-${expense.id}`;
+    setGeneratingInvoiceLinks(prev => ({ ...prev, [loadingKey]: true }));
     try {
       const token = generateInvoiceUploadToken();
       const link = getPublicInvoiceUploadLink(token);
@@ -1710,6 +1852,7 @@ export default function ProjectDetail() {
         projectId: id,
         projectName: project?.name || '',
         expenseId: expense.id,
+        collectionName,
         area: expense.area || '',
         providerId: expense.providerId || '',
         providerName: expense.providerName || '',
@@ -1728,7 +1871,7 @@ export default function ProjectDetail() {
       console.error('Error creating invoice upload link:', error);
       alert('No se pudo generar el link para cargar factura.');
     } finally {
-      setGeneratingInvoiceLinks(prev => ({ ...prev, [expense.id]: false }));
+      setGeneratingInvoiceLinks(prev => ({ ...prev, [loadingKey]: false }));
     }
   };
 
@@ -1773,8 +1916,8 @@ export default function ProjectDetail() {
     }
   };
 
-  const uploadOtherReceiptForExpense = async (expense: any, file?: File | null) => {
-    if (!id || !file || !canUploadAreaFiles(expense.area, expense.subcategory)) return;
+  const uploadOtherReceiptForExpense = async (expense: any, file?: File | null, collectionName: PaymentCollection = 'areaExpenses') => {
+    if (!id || !file || !canManageItemFiles(expense, collectionName)) return;
 
     const fileError = validateProjectDocumentFile(file);
     if (fileError) {
@@ -1782,12 +1925,13 @@ export default function ProjectDetail() {
       return;
     }
 
-    setUploadingInvoices(prev => ({ ...prev, [`other-${expense.id}`]: true }));
+    const uploadKey = `other-${collectionName}-${expense.id}`;
+    setUploadingInvoices(prev => ({ ...prev, [uploadKey]: true }));
 
     try {
       const receiptId = Math.random().toString(36).slice(2, 11);
       const fileName = buildOtherReceiptFileName(expense, file, receiptId);
-      const path = `projects/${id}/areaExpenses/${expense.id}/comprobantes/${fileName}`;
+      const path = `projects/${id}/${collectionName}/${expense.id}/comprobantes/${fileName}`;
       const storageRef = ref(storage, path);
       const uploadedByRole = currentProjectRole;
 
@@ -1796,6 +1940,7 @@ export default function ProjectDetail() {
         customMetadata: {
           projectId: id,
           expenseId: expense.id,
+          collectionName,
           area: expense.area || '',
           originalFileName: file.name,
           uploadedBy: user?.email || user?.uid || 'unknown',
@@ -1821,33 +1966,33 @@ export default function ProjectDetail() {
       const currentReceipts = Array.isArray(expense.otherReceipts) ? expense.otherReceipts : [];
       const nextReceipts = [...currentReceipts, receipt];
 
-      await updateDoc(doc(db, 'projects', id, 'areaExpenses', expense.id), {
+      await updateDoc(doc(db, 'projects', id, collectionName, expense.id), {
         otherReceipts: nextReceipts,
         updatedAt: serverTimestamp(),
       });
 
-      setAreaExpenses(areaExpenses.map(item => item.id === expense.id
-        ? { ...item, otherReceipts: nextReceipts.map((entry) => entry.id === receiptId ? { ...entry, uploadedAt: new Date() } : entry) }
-        : item
-      ));
+      updateItemCollectionState(collectionName, expense.id, {
+        otherReceipts: nextReceipts.map((entry) => entry.id === receiptId ? { ...entry, uploadedAt: new Date() } : entry),
+      });
     } catch (error: any) {
       console.error('Error uploading other receipt:', error);
       alert('No se pudo subir el comprobante.');
     } finally {
-      setUploadingInvoices(prev => ({ ...prev, [`other-${expense.id}`]: false }));
+      setUploadingInvoices(prev => ({ ...prev, [uploadKey]: false }));
     }
   };
 
-  const removeOtherReceiptFromExpense = async (expense: any, receipt: any) => {
+  const removeOtherReceiptFromExpense = async (expense: any, receipt: any, collectionName: PaymentCollection = 'areaExpenses') => {
     if (!id || !receipt || !canDeleteOtherReceipt(receipt)) return;
     if (!confirm('Â¿Quitar este comprobante de la rendiciÃ³n?')) return;
 
-    setUploadingInvoices(prev => ({ ...prev, [`other-${expense.id}`]: true }));
+    const uploadKey = `other-${collectionName}-${expense.id}`;
+    setUploadingInvoices(prev => ({ ...prev, [uploadKey]: true }));
 
     try {
       const currentReceipts = Array.isArray(expense.otherReceipts) ? expense.otherReceipts : [];
       const nextReceipts = currentReceipts.filter((item: any) => item.id !== receipt.id);
-      await updateDoc(doc(db, 'projects', id, 'areaExpenses', expense.id), {
+      await updateDoc(doc(db, 'projects', id, collectionName, expense.id), {
         otherReceipts: nextReceipts,
         updatedAt: serverTimestamp(),
       });
@@ -1856,15 +2001,12 @@ export default function ProjectDetail() {
         await deleteObject(ref(storage, receipt.path)).catch(() => {});
       }
 
-      setAreaExpenses(areaExpenses.map(item => item.id === expense.id
-        ? { ...item, otherReceipts: nextReceipts }
-        : item
-      ));
+      updateItemCollectionState(collectionName, expense.id, { otherReceipts: nextReceipts });
     } catch (error: any) {
       console.error('Error removing other receipt:', error);
-      handleFirestoreError(error, 'update', `projects/${id}/areaExpenses/${expense.id}`);
+      handleFirestoreError(error, 'update', `projects/${id}/${collectionName}/${expense.id}`);
     } finally {
-      setUploadingInvoices(prev => ({ ...prev, [`other-${expense.id}`]: false }));
+      setUploadingInvoices(prev => ({ ...prev, [uploadKey]: false }));
     }
   };
 
@@ -1941,12 +2083,12 @@ export default function ProjectDetail() {
     }
   };
 
-  const handleInvoiceDrop = async (event: React.DragEvent<HTMLDivElement>, expense: any) => {
+  const handleInvoiceDrop = async (event: React.DragEvent<HTMLDivElement>, expense: any, collectionName: PaymentCollection = 'areaExpenses') => {
     event.preventDefault();
     event.stopPropagation();
     setDragOverExpenseId(null);
 
-    if (uploadingInvoices[expense.id]) return;
+    if (uploadingInvoices[`${collectionName}-${expense.id}`]) return;
     if (expense.invoice?.url) {
       alert('Para cambiar la factura, primero elimina la factura actual y luego carga otra.');
       return;
@@ -1964,7 +2106,7 @@ export default function ProjectDetail() {
       return;
     }
 
-    await uploadInvoiceForExpense(expense, pdfFile);
+    await uploadInvoiceForExpense(expense, pdfFile, collectionName);
   };
 
   const renameCategory = async (oldName: string) => {
@@ -2580,6 +2722,7 @@ export default function ProjectDetail() {
   };
   const canManagePaymentForItem = (item?: any | null, collectionName?: PaymentCollection) => {
     if (!item || !collectionName) return false;
+    if (collectionName === 'budgetItems') return isProjectAdmin && !activeAreas.includes(item.area);
     if (isProjectAdmin) return true;
     return collectionName === 'areaExpenses' && canEditAreaSubcategory(item.area, item.subcategory);
   };
@@ -2832,6 +2975,8 @@ export default function ProjectDetail() {
           description: item.description || 'Partida de presupuesto',
           total: Number(item.total) || 0,
           paid: itemPaid,
+          invoice: item.invoice,
+          otherReceipts: Array.isArray(item.otherReceipts) ? item.otherReceipts : [],
         });
       }
     });
@@ -4495,7 +4640,7 @@ export default function ProjectDetail() {
                   <div className="col-span-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Fecha Pago</div>
                   <div className="col-span-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Rodaje → Pago</div>
                   <div className="col-span-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Pagado</div>
-                  <div className="col-span-1"></div>
+                  <div className="col-span-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Docs</div>
                 </div>
 
                 <DragDropContext onDragEnd={canEditMainBudget ? onDragEnd : () => {}}>
@@ -4653,16 +4798,67 @@ export default function ProjectDetail() {
                                                             disabled={!canEditMainBudget}
                                                           />
                                                         </div>
-                                                        <div className="col-span-1 text-right">
+                                                        <div className="col-span-1 flex flex-wrap items-center justify-end gap-1">
+                                                          {!activeAreas.includes(item.area) && (
+                                                            <>
+                                                              {item.invoice?.url ? (
+                                                                <>
+                                                                  <a href={item.invoice.url} target="_blank" rel="noreferrer" className="inline-flex h-7 w-7 items-center justify-center rounded border border-emerald-100 bg-emerald-50 text-emerald-600" title="Ver factura">
+                                                                    <FileText className="h-3.5 w-3.5" />
+                                                                  </a>
+                                                                  <button type="button" onClick={() => removeInvoiceFromExpense(item, 'budgetItems')} className="inline-flex h-7 w-7 items-center justify-center rounded border border-slate-100 text-slate-300 hover:text-red-500" title="Quitar factura">
+                                                                    <X className="h-3.5 w-3.5" />
+                                                                  </button>
+                                                                </>
+                                                              ) : (
+                                                                <>
+                                                                  <label className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded border border-slate-200 bg-white text-slate-400 hover:border-black hover:text-black" title="Adjuntar factura PDF">
+                                                                    <Paperclip className="h-3.5 w-3.5" />
+                                                                    <input
+                                                                      type="file"
+                                                                      accept="application/pdf,.pdf"
+                                                                      className="hidden"
+                                                                      disabled={!!uploadingInvoices[`budgetItems-${item.id}`]}
+                                                                      onChange={(event) => {
+                                                                        uploadInvoiceForExpense(item, event.target.files?.[0], 'budgetItems');
+                                                                        event.target.value = '';
+                                                                      }}
+                                                                    />
+                                                                  </label>
+                                                                  <button type="button" disabled={!!generatingInvoiceLinks[`budgetItems-${item.id}`]} onClick={() => createInvoiceUploadLink(item, 'budgetItems')} className="inline-flex h-7 w-7 items-center justify-center rounded border border-blue-100 bg-blue-50 text-blue-600 disabled:text-slate-300" title="Generar link para cargar factura">
+                                                                    <LinkIcon className="h-3.5 w-3.5" />
+                                                                  </button>
+                                                                </>
+                                                              )}
+                                                              <label className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded border border-sky-100 bg-sky-50 text-sky-600" title="Adjuntar otro comprobante">
+                                                                <Plus className="h-3.5 w-3.5" />
+                                                                <input
+                                                                  type="file"
+                                                                  accept="application/pdf,image/jpeg,image/png,image/webp,.pdf,.jpg,.jpeg,.png,.webp"
+                                                                  className="hidden"
+                                                                  disabled={!!uploadingInvoices[`other-budgetItems-${item.id}`]}
+                                                                  onChange={(event) => {
+                                                                    uploadOtherReceiptForExpense(item, event.target.files?.[0], 'budgetItems');
+                                                                    event.target.value = '';
+                                                                  }}
+                                                                />
+                                                              </label>
+                                                              {(item.otherReceipts || []).slice(0, 2).map((receipt: any, receiptIndex: number) => (
+                                                                <a key={receipt.id || receipt.path || receiptIndex} href={receipt.url} target="_blank" rel="noreferrer" className="inline-flex h-7 min-w-7 items-center justify-center rounded border border-sky-100 bg-white px-1 text-[8px] font-black text-sky-700" title={receipt.originalFileName || 'Ver comprobante'}>
+                                                                  C{receiptIndex + 1}
+                                                                </a>
+                                                              ))}
+                                                            </>
+                                                          )}
                                                           {canEditMainBudget && (
-                                                          <button 
-                                                            type="button"
-                                                            onClick={() => deleteBudgetItem(item.id)}
-                                                            className="inline-flex h-7 w-7 items-center justify-center rounded border border-red-100 bg-red-50 text-red-600 transition-all hover:bg-red-600 hover:text-white"
-                                                            title="Eliminar partida"
-                                                          >
-                                                            <Trash2 className="w-3 h-3" />
-                                                          </button>
+                                                            <button
+                                                              type="button"
+                                                              onClick={() => deleteBudgetItem(item.id)}
+                                                              className="inline-flex h-7 w-7 items-center justify-center rounded border border-red-100 bg-red-50 text-red-600 transition-all hover:bg-red-600 hover:text-white"
+                                                              title="Eliminar partida"
+                                                            >
+                                                              <Trash2 className="w-3 h-3" />
+                                                            </button>
                                                           )}
                                                         </div>
                                                       </div>
@@ -5021,10 +5217,10 @@ export default function ProjectDetail() {
                                 ${subcategoryGroup.subtotal.toLocaleString()}
                               </div>
                             )}
-                            {hasNamedSubcategory && canManageSubcategoryBudget(areaRow.area) && (
+                            {canManageSubcategoryBudget(areaRow.area) && (
                               <button
                                 type="button"
-                                onClick={() => openAreaExpenseSubcategoryModal(areaRow.area, subcategoryGroup.subcategory)}
+                                onClick={() => openAreaExpenseSubcategoryModal(areaRow.area, subcategoryGroup.subcategory, !hasNamedSubcategory)}
                                 className={cn(
                                   "rounded px-1.5 py-1 text-[8px] font-black uppercase tracking-widest transition-colors",
                                   hasNamedSubcategory
@@ -5121,7 +5317,7 @@ export default function ProjectDetail() {
                                         {canUploadAreaFiles(item.area, item.subcategory) && (
                                           <button
                                             type="button"
-                                            disabled={!!uploadingInvoices[item.id]}
+                                            disabled={!!uploadingInvoices[`areaExpenses-${item.id}`]}
                                             onClick={() => removeInvoiceFromExpense(item)}
                                             className="inline-flex h-7 w-7 items-center justify-center rounded border border-red-100 bg-red-50 text-red-600 disabled:opacity-40"
                                             title="Quitar factura"
@@ -5140,7 +5336,7 @@ export default function ProjectDetail() {
                                               type="file"
                                               accept="application/pdf,.pdf"
                                               className="hidden"
-                                              disabled={!!uploadingInvoices[item.id]}
+                                              disabled={!!uploadingInvoices[`areaExpenses-${item.id}`]}
                                               onChange={(event) => {
                                                 const file = event.target.files?.[0];
                                                 uploadInvoiceForExpense(item, file);
@@ -5150,7 +5346,7 @@ export default function ProjectDetail() {
                                           </label>
                                           <button
                                             type="button"
-                                            disabled={!!generatingInvoiceLinks[item.id]}
+                                            disabled={!!generatingInvoiceLinks[`areaExpenses-${item.id}`]}
                                             onClick={() => createInvoiceUploadLink(item)}
                                             className="inline-flex h-7 items-center gap-1 rounded border border-blue-100 bg-blue-50 px-1.5 text-[8px] font-black uppercase tracking-widest text-blue-700 disabled:opacity-40"
                                           >
@@ -5171,7 +5367,7 @@ export default function ProjectDetail() {
                                           type="file"
                                           accept="application/pdf,image/jpeg,image/png,image/webp,.pdf,.jpg,.jpeg,.png,.webp"
                                           className="hidden"
-                                          disabled={!!uploadingInvoices[`other-${item.id}`]}
+                                          disabled={!!uploadingInvoices[`other-areaExpenses-${item.id}`]}
                                           onChange={(event) => {
                                             const file = event.target.files?.[0];
                                             uploadOtherReceiptForExpense(item, file);
@@ -5355,11 +5551,16 @@ export default function ProjectDetail() {
                                   ${subcategoryGroup.subtotal.toLocaleString()}
                                 </div>
                               )}
-                              {hasNamedSubcategory && canManageSubcategoryBudget(areaRow.area) && (
+                              {canManageSubcategoryBudget(areaRow.area) && (
                                 <button
                                   type="button"
-                                  onClick={() => openAreaExpenseSubcategoryModal(areaRow.area, subcategoryGroup.subcategory)}
-                                  className="rounded border border-white/20 bg-white/10 px-2 py-1 text-[9px] font-black uppercase tracking-widest text-white transition-colors hover:bg-white/20"
+                                  onClick={() => openAreaExpenseSubcategoryModal(areaRow.area, subcategoryGroup.subcategory, !hasNamedSubcategory)}
+                                  className={cn(
+                                    "rounded px-2 py-1 text-[9px] font-black uppercase tracking-widest transition-colors",
+                                    hasNamedSubcategory
+                                      ? "border border-white/20 bg-white/10 text-white hover:bg-white/20"
+                                      : "border border-slate-300 bg-white text-slate-600 hover:border-slate-500"
+                                  )}
                                   title="Editar presupuesto de subcategoria"
                                 >
                                   Presu
@@ -5381,19 +5582,24 @@ export default function ProjectDetail() {
                       {subcategoryGroup.expenses.map((item) => (
                           <div
                             key={item.id}
-                            draggable={canEditAreaExpense(item)}
-                            onDragStart={(event) => startAreaExpenseDrag(event, item)}
-                            onDragEnd={() => {
-                              setDraggedAreaExpenseId(null);
-                              setDragOverAreaTarget(null);
-                            }}
                             onDragEnter={(event) => {
-                              if (isAreaExpenseDrag(event)) return;
+                              if (isAreaExpenseDrag(event)) {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                setDragOverAreaTarget(`item:${item.id}`);
+                                return;
+                              }
                               event.preventDefault();
                               if (canUploadAreaFiles(item.area, item.subcategory)) setDragOverExpenseId(item.id);
                             }}
                             onDragOver={(event) => {
-                              if (isAreaExpenseDrag(event)) return;
+                              if (isAreaExpenseDrag(event)) {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                event.dataTransfer.dropEffect = 'move';
+                                setDragOverAreaTarget(`item:${item.id}`);
+                                return;
+                              }
                               event.preventDefault();
                               event.dataTransfer.dropEffect = canUploadAreaFiles(item.area, item.subcategory) ? 'copy' : 'none';
                               if (canUploadAreaFiles(item.area, item.subcategory)) setDragOverExpenseId(item.id);
@@ -5404,13 +5610,20 @@ export default function ProjectDetail() {
                               }
                             }}
                             onDrop={(event) => {
-                              if (isAreaExpenseDrag(event)) return;
+                              if (isAreaExpenseDrag(event)) {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                finishAreaExpenseDrop(item.area, item.subcategory, item.id);
+                                return;
+                              }
                               canUploadAreaFiles(item.area, item.subcategory) && handleInvoiceDrop(event, item);
                             }}
                             className={cn(
                               "relative grid min-w-[1360px] grid-cols-[minmax(160px,1.45fr)_minmax(180px,1.6fr)_78px_100px_76px_92px_96px_104px_150px_78px] px-6 py-3 items-center gap-2 transition-colors group",
                               dragOverExpenseId === item.id
                                 ? "bg-emerald-50 ring-2 ring-inset ring-emerald-400"
+                                : dragOverAreaTarget === `item:${item.id}`
+                                  ? "border-t-2 border-t-blue-500 bg-blue-50"
                                 : draggedAreaExpenseId === item.id
                                   ? "bg-slate-100 opacity-70"
                                 : "bg-white hover:bg-slate-50"
@@ -5427,7 +5640,16 @@ export default function ProjectDetail() {
                             <div>
                               <div className="flex items-start gap-2">
                                 {canEditAreaExpense(item) && (
-                                  <div className="pt-1 text-slate-300 group-hover:text-slate-500 cursor-grab active:cursor-grabbing" title="Arrastrar gasto">
+                                  <div
+                                    draggable
+                                    onDragStart={(event) => startAreaExpenseDrag(event, item)}
+                                    onDragEnd={() => {
+                                      setDraggedAreaExpenseId(null);
+                                      setDragOverAreaTarget(null);
+                                    }}
+                                    className="pt-1 text-slate-300 group-hover:text-slate-500 cursor-grab active:cursor-grabbing"
+                                    title="Arrastrar gasto"
+                                  >
                                     <GripVertical className="w-3.5 h-3.5" />
                                   </div>
                                 )}
@@ -5468,7 +5690,7 @@ export default function ProjectDetail() {
                                     {canUploadAreaFiles(item.area, item.subcategory) && (
                                       <button
                                         type="button"
-                                        disabled={!!uploadingInvoices[item.id]}
+                                        disabled={!!uploadingInvoices[`areaExpenses-${item.id}`]}
                                         onClick={() => removeInvoiceFromExpense(item)}
                                         className="w-7 h-7 rounded border border-slate-100 bg-white text-slate-300 hover:text-red-500 hover:border-red-100 transition-all flex items-center justify-center"
                                         title="Quitar factura"
@@ -5483,7 +5705,7 @@ export default function ProjectDetail() {
                                       <label
                                         className={cn(
                                           "w-7 h-7 rounded border transition-all flex items-center justify-center cursor-pointer",
-                                          uploadingInvoices[item.id]
+                                          uploadingInvoices[`areaExpenses-${item.id}`]
                                             ? "bg-slate-100 border-slate-200 text-slate-300 cursor-wait"
                                             : "bg-white border-slate-200 text-slate-400 hover:text-black hover:border-black"
                                         )}
@@ -5494,7 +5716,7 @@ export default function ProjectDetail() {
                                           type="file"
                                           accept="application/pdf,.pdf"
                                           className="hidden"
-                                          disabled={!!uploadingInvoices[item.id]}
+                                          disabled={!!uploadingInvoices[`areaExpenses-${item.id}`]}
                                           onChange={(event) => {
                                             const file = event.target.files?.[0];
                                             uploadInvoiceForExpense(item, file);
@@ -5504,7 +5726,7 @@ export default function ProjectDetail() {
                                       </label>
                                       <button
                                         type="button"
-                                        disabled={!!generatingInvoiceLinks[item.id]}
+                                        disabled={!!generatingInvoiceLinks[`areaExpenses-${item.id}`]}
                                         onClick={() => createInvoiceUploadLink(item)}
                                         className="w-7 h-7 rounded border border-blue-100 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white transition-all flex items-center justify-center disabled:bg-slate-100 disabled:text-slate-300"
                                         title="Copiar link para que el proveedor cargue su factura"
@@ -5559,7 +5781,7 @@ export default function ProjectDetail() {
                                     {canDeleteOtherReceipt(receipt) && (
                                       <button
                                         type="button"
-                                        disabled={!!uploadingInvoices[`other-${item.id}`]}
+                                        disabled={!!uploadingInvoices[`other-areaExpenses-${item.id}`]}
                                         onClick={() => removeOtherReceiptFromExpense(item, receipt)}
                                         className="w-6 h-7 rounded-r border-y border-r border-blue-100 bg-white text-slate-300 hover:text-red-500 hover:border-red-100 transition-all flex items-center justify-center"
                                         title="Quitar comprobante"
@@ -5573,7 +5795,7 @@ export default function ProjectDetail() {
                                   <label
                                     className={cn(
                                       "w-7 h-7 rounded border transition-all flex items-center justify-center cursor-pointer",
-                                      uploadingInvoices[`other-${item.id}`]
+                                      uploadingInvoices[`other-areaExpenses-${item.id}`]
                                         ? "bg-slate-100 border-slate-200 text-slate-300 cursor-wait"
                                         : "bg-white border-slate-200 text-slate-400 hover:text-black hover:border-black"
                                     )}
@@ -5584,7 +5806,7 @@ export default function ProjectDetail() {
                                       type="file"
                                       accept="application/pdf,image/jpeg,image/png,image/webp,.pdf,.jpg,.jpeg,.png,.webp"
                                       className="hidden"
-                                      disabled={!!uploadingInvoices[`other-${item.id}`]}
+                                      disabled={!!uploadingInvoices[`other-areaExpenses-${item.id}`]}
                                       onChange={(event) => {
                                         const file = event.target.files?.[0];
                                         uploadOtherReceiptForExpense(item, file);
@@ -7632,7 +7854,7 @@ export default function ProjectDetail() {
                 </div>
                 <div className="flex flex-col gap-3 pt-2 sm:flex-row sm:items-center sm:justify-between">
                   <div>
-                    {subcategoryBudgetDraft.mode === 'edit' && (
+                    {subcategoryBudgetDraft.mode === 'edit' && subcategoryBudgetDraft.originalSubcategory !== DEFAULT_AREA_EXPENSE_SUBCATEGORY && (
                       <button
                         type="button"
                         onClick={deleteAreaExpenseSubcategoryBudget}

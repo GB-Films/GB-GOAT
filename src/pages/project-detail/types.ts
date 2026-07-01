@@ -42,6 +42,10 @@ export interface BudgetItem {
   paymentAuthorIds?: string[];
   createdBy?: string;
   createdByEmail?: string;
+  invoice?: any;
+  invoiceStatus?: string | null;
+  otherReceipts?: Array<any>;
+  sourceBudgetItemId?: string;
   order: number;
   createdAt: any;
   updatedAt?: any;

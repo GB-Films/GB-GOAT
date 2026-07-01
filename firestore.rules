@@ -355,13 +355,23 @@ service cloud.firestore {
         && providerInviteNotExpired(token);
     }
 
-    function invoiceUploadInviteIsPending(token, projectId, expenseId) {
+    function invoiceUploadInviteIsPending(token, projectId, collectionName, expenseId) {
       return request.auth == null
         && token is string
         && exists(/databases/$(database)/documents/invoiceUploadInvites/$(token))
         && get(/databases/$(database)/documents/invoiceUploadInvites/$(token)).data.used == false
         && get(/databases/$(database)/documents/invoiceUploadInvites/$(token)).data.status == 'pending'
         && get(/databases/$(database)/documents/invoiceUploadInvites/$(token)).data.projectId == projectId
+        && (
+          (
+            get(/databases/$(database)/documents/invoiceUploadInvites/$(token)).data.keys().hasAny(['collectionName'])
+            && get(/databases/$(database)/documents/invoiceUploadInvites/$(token)).data.collectionName == collectionName
+          )
+          || (
+            !get(/databases/$(database)/documents/invoiceUploadInvites/$(token)).data.keys().hasAny(['collectionName'])
+            && collectionName == 'areaExpenses'
+          )
+        )
         && get(/databases/$(database)/documents/invoiceUploadInvites/$(token)).data.expenseId == expenseId;
     }
 
@@ -376,7 +386,7 @@ service cloud.firestore {
         || get(/databases/$(database)/documents/providerInvites/$(token)).data.expiresAt > request.time;
     }
 
-    function canPublicUploadAreaInvoice(projectId, expenseId) {
+    function canPublicUploadInvoice(projectId, collectionName, expenseId) {
       return request.auth == null
         && (
           !resource.data.keys().hasAny(['invoice'])
@@ -393,7 +403,7 @@ service cloud.firestore {
         && request.resource.data.invoice.size <= 2 * 1024 * 1024
         && request.resource.data.invoice.uploadedBy == 'provider_public_link'
         && request.resource.data.publicInvoiceUpload.token is string
-        && invoiceUploadInviteIsPending(request.resource.data.publicInvoiceUpload.token, projectId, expenseId);
+        && invoiceUploadInviteIsPending(request.resource.data.publicInvoiceUpload.token, projectId, collectionName, expenseId);
     }
 
     function publicProviderCreateIsValid() {
@@ -557,6 +567,7 @@ service cloud.firestore {
         allow create, delete: if isProjectAdmin(projectId);
         allow update: if isProjectAdmin(projectId)
           || canPublicAssignProviderFromInvite(projectId, 'budgetItems', itemId)
+          || canPublicUploadInvoice(projectId, 'budgetItems', itemId)
           || (
             canUpdatePaymentFields(projectId, resource.data.area)
             && request.resource.data.area == resource.data.area
@@ -565,19 +576,22 @@ service cloud.firestore {
 
       match /areaExpenses/{expenseId} {
         allow read: if hasProjectAccess(projectId);
-        allow create: if canWriteAreaExpense(projectId, request.resource.data.area, request.resource.data.subcategory)
-          && request.resource.data.createdBy == request.auth.uid
-          && request.resource.data.createdByEmail is string
-          && request.resource.data.paymentHistory == []
-          && request.resource.data.paymentLocked == false
-          && request.resource.data.paymentAuthorIds == [];
+        allow create: if isProjectAdmin(projectId)
+          || (
+            canWriteAreaExpense(projectId, request.resource.data.area, request.resource.data.subcategory)
+            && request.resource.data.createdBy == request.auth.uid
+            && request.resource.data.createdByEmail is string
+            && request.resource.data.paymentHistory == []
+            && request.resource.data.paymentLocked == false
+            && request.resource.data.paymentAuthorIds == []
+          );
         allow update: if isProjectAdmin(projectId)
           || ((
             canWriteAreaExpense(projectId, resource.data.area, resource.data.subcategory)
             && canWriteAreaExpense(projectId, request.resource.data.area, request.resource.data.subcategory)
           ) && preservesExpensePaymentAudit())
           || canPublicAssignProviderFromInvite(projectId, 'areaExpenses', expenseId)
-          || canPublicUploadAreaInvoice(projectId, expenseId);
+          || canPublicUploadInvoice(projectId, 'areaExpenses', expenseId);
         allow delete: if canDeleteAreaExpenseWithPayment(projectId);
       }
 
@@ -692,6 +706,7 @@ service cloud.firestore {
         && request.resource.data.used == false
         && request.resource.data.projectId is string
         && request.resource.data.expenseId is string
+        && request.resource.data.collectionName in ['budgetItems', 'areaExpenses']
         && request.resource.data.area is string
         && canWriteArea(request.resource.data.projectId, request.resource.data.area);
       allow update: if isAppAdmin()
