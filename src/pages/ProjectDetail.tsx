@@ -2790,16 +2790,41 @@ export default function ProjectDetail() {
     });
   }, [copyBudgetSearch, sourceProjects]);
 
-  const cashResponsibles = React.useMemo(() => (
+  const cashResponsibles = React.useMemo(() => {
+    const recipients = new Map<string, Collaborator>();
+
     collaborators
-      .filter((col) => col.role === 'jefe_produccion' || col.role === 'jefe_area')
-      .map((col) => ({
-        ...col,
-        email: normalizeEmail(col.email),
-        displayName: col.displayName || col.email,
-      }))
-      .sort((a, b) => (a.displayName || a.email).localeCompare(b.displayName || b.email, 'es'))
-  ), [collaborators]);
+      .filter((col) => col.role === 'admin' || col.role === 'jefe_produccion' || col.role === 'jefe_area')
+      .forEach((col) => {
+        const email = normalizeEmail(col.email);
+        if (!email) return;
+        recipients.set(email, {
+          ...col,
+          email,
+          displayName: col.displayName || col.email,
+        });
+      });
+
+    // Los administradores generales tienen acceso a todos los proyectos aunque no
+    // necesariamente exista para ellos un documento en collaborators.
+    availableUsers
+      .filter((candidate) => candidate.role === 'admin')
+      .forEach((candidate) => {
+        const email = normalizeEmail(candidate.email);
+        if (!email || recipients.has(email)) return;
+        recipients.set(email, {
+          uid: candidate.id,
+          email,
+          displayName: candidate.displayName || candidate.email,
+          role: 'admin',
+          allowedTabs: PROJECT_TAB_IDS,
+          allowedCategories: categories,
+        });
+      });
+
+    return Array.from(recipients.values())
+      .sort((a, b) => (a.displayName || a.email).localeCompare(b.displayName || b.email, 'es'));
+  }, [availableUsers, categories, collaborators]);
 
   const cashBalanceByEmail = React.useMemo(() => {
     const balances = new Map<string, number>();
@@ -3614,6 +3639,7 @@ export default function ProjectDetail() {
       status: 'pending',
       amount,
       date,
+      ...(recipient.uid ? { toUserId: recipient.uid } : {}),
       toUserEmail: recipient.email,
       toUserName: recipient.displayName || recipient.email,
       notes,

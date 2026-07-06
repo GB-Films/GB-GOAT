@@ -81,6 +81,7 @@ export interface CashMovement {
   date: any;
   fromUserEmail?: string;
   fromUserName?: string;
+  toUserId?: string;
   toUserEmail?: string;
   toUserName?: string;
   area?: string;

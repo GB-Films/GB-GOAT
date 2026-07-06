@@ -47,6 +47,16 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/projects/$(projectId)/collaborators/$(email));
     }
 
+    function isAppAdminRecipient(userId, email) {
+      return email == 'info@granbertafilms.com'
+        || (
+          userId is string
+          && exists(/databases/$(database)/documents/users/$(userId))
+          && get(/databases/$(database)/documents/users/$(userId)).data.role == 'admin'
+          && get(/databases/$(database)/documents/users/$(userId)).data.email == email
+        );
+    }
+
     function isProjectOwner(projectId) {
       return isSignedIn() && projectDoc(projectId).createdBy == request.auth.uid;
     }
@@ -272,8 +282,17 @@ service cloud.firestore {
             && request.resource.data.status == 'pending'
             && request.resource.data.createdBy == request.auth.uid
             && request.resource.data.createdByEmail == userEmail()
-            && hasCollaboratorDocByEmail(projectId, request.resource.data.toUserEmail)
-            && collaboratorDocByEmail(projectId, request.resource.data.toUserEmail).role in ['jefe_produccion', 'jefe_area']
+            && (
+              (
+                hasCollaboratorDocByEmail(projectId, request.resource.data.toUserEmail)
+                && collaboratorDocByEmail(projectId, request.resource.data.toUserEmail).role in ['admin', 'jefe_produccion', 'jefe_area']
+              )
+              || (
+                request.resource.data.keys().hasAll(['toUserId'])
+                && isAppAdminRecipient(request.resource.data.toUserId, request.resource.data.toUserEmail)
+              )
+              || isAppAdminRecipient('', request.resource.data.toUserEmail)
+            )
           )
           || (
             isProjectProductionLead(projectId)
