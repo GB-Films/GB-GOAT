@@ -131,7 +131,7 @@ service firebase.storage {
           || publicInvoiceUploadInviteIsPending(projectId)
         )
         && request.resource.size <= 2 * 1024 * 1024
-        && request.resource.contentType == 'application/pdf';
+        && request.resource.contentType in ['application/pdf', 'image/jpeg', 'image/png'];
       allow delete: if isProjectAdmin(projectId);
     }
 

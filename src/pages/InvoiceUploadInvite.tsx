@@ -18,7 +18,27 @@ const sanitizeFileName = (fileName: string) => (
 
 const buildInvoiceFileName = (token: string, file: File) => {
   const cleanBase = sanitizeFileName(file.name.replace(/\.[^.]+$/, '') || 'factura').slice(0, 70) || 'factura';
-  return `factura-proveedor-${token.slice(0, 8)}-${cleanBase}.pdf`;
+  const extension = sanitizeFileName(file.name.split('.').pop() || '').toLowerCase();
+  const safeExtension = extension === 'jpg' || extension === 'jpeg' || extension === 'png' || extension === 'pdf'
+    ? extension
+    : file.type === 'image/jpeg'
+      ? 'jpg'
+      : file.type === 'image/png'
+        ? 'png'
+        : 'pdf';
+  return `factura-proveedor-${token.slice(0, 8)}-${cleanBase}.${safeExtension}`;
+};
+
+const ALLOWED_INVOICE_TYPES = ['application/pdf', 'image/jpeg', 'image/png'];
+const INVOICE_ACCEPT = 'application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png';
+const INVOICE_LABEL = 'PDF, JPG o PNG';
+
+const getInvoiceContentType = (file: File) => {
+  if (ALLOWED_INVOICE_TYPES.includes(file.type)) return file.type;
+  const extension = sanitizeFileName(file.name.split('.').pop() || '').toLowerCase();
+  if (extension === 'jpg' || extension === 'jpeg') return 'image/jpeg';
+  if (extension === 'png') return 'image/png';
+  return 'application/pdf';
 };
 
 export default function InvoiceUploadInvite() {
@@ -61,11 +81,13 @@ export default function InvoiceUploadInvite() {
   }, [token]);
 
   const validateFile = (file?: File | null) => {
-    if (!file) return 'Selecciona una factura en PDF.';
-    if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
-      return 'La factura debe ser un archivo PDF.';
+    if (!file) return `Selecciona una factura en ${INVOICE_LABEL}.`;
+    const isAllowedByType = ALLOWED_INVOICE_TYPES.includes(file.type);
+    const isAllowedByName = /\.(pdf|jpe?g|png)$/i.test(file.name);
+    if (!isAllowedByType && !isAllowedByName) {
+      return `La factura debe ser ${INVOICE_LABEL}.`;
     }
-    return validateMaxUploadSize(file, 'PDF');
+    return validateMaxUploadSize(file, 'factura');
   };
 
   const submitInvoice = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -85,9 +107,10 @@ export default function InvoiceUploadInvite() {
       const areaFolder = sanitizeFileName(invite.area || 'sin-area') || 'sin-area';
       const path = `projects/${invite.projectId}/areas/${areaFolder}/facturas/${fileName}`;
       const storageRef = ref(storage, path);
+      const contentType = getInvoiceContentType(file!);
 
       await uploadBytes(storageRef, file!, {
-        contentType: 'application/pdf',
+        contentType,
         customMetadata: {
           token,
           projectId: invite.projectId,
@@ -106,7 +129,7 @@ export default function InvoiceUploadInvite() {
         originalFileName: file!.name,
         url,
         path,
-        contentType: 'application/pdf',
+        contentType,
         size: file!.size,
         uploadedAt: serverTimestamp(),
         uploadedBy: 'provider_public_link',
@@ -186,11 +209,11 @@ export default function InvoiceUploadInvite() {
 
             <label className="flex cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center hover:border-black">
               <Upload className="mb-3 h-8 w-8 text-slate-300" />
-              <span className="text-sm font-black text-slate-900">{selectedFile ? selectedFile.name : 'Seleccionar factura PDF'}</span>
+              <span className="text-sm font-black text-slate-900">{selectedFile ? selectedFile.name : `Seleccionar factura ${INVOICE_LABEL}`}</span>
               <span className="mt-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">Maximo {MAX_UPLOAD_SIZE_LABEL}</span>
               <input
                 type="file"
-                accept="application/pdf,.pdf"
+                accept={INVOICE_ACCEPT}
                 className="hidden"
                 onChange={(event) => {
                   const file = event.target.files?.[0] || null;

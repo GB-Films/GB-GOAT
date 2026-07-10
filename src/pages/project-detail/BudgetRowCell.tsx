@@ -106,6 +106,9 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
   const providerCbu = provider?.bankAccount_cbu || provider?.bankAccount || '';
   const providerAlias = provider?.bankAccount_alias || '';
   const canShowProviderInfo = Boolean(canCopyProviderInfo && provider && (providerCuit || providerCbu || providerAlias));
+  const pendingProviderInvite = !item.providerId && !item.providerName && item.providerInviteLink?.status === 'pending'
+    ? item.providerInviteLink
+    : null;
 
   const copyProviderValue = async (label: string, value: string) => {
     if (!value) return;
@@ -177,14 +180,25 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
           disabled ? (
             <span className="text-slate-300 font-bold uppercase text-[9px] tracking-widest">Sin proveedor</span>
           ) : (
-            <button 
-              type="button"
-              onClick={() => setIsEditingProvider(true)}
-              className="text-red-500 hover:text-red-700 font-bold uppercase text-[9px] tracking-widest flex items-center gap-1"
-              title="Asignar proveedor"
-            >
-              <Plus className="w-3 h-3" /> Asignar Proveedor
-            </button>
+            <div className="flex flex-col items-start gap-1">
+              <button 
+                type="button"
+                onClick={() => setIsEditingProvider(true)}
+                className={cn(
+                  "font-bold uppercase text-[9px] tracking-widest flex items-center gap-1",
+                  pendingProviderInvite ? "text-blue-600 hover:text-blue-800" : "text-red-500 hover:text-red-700"
+                )}
+                title={pendingProviderInvite ? "Hay un link de alta pendiente" : "Asignar proveedor"}
+              >
+                {pendingProviderInvite ? <Link2 className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
+                {pendingProviderInvite ? 'Link pendiente' : 'Asignar Proveedor'}
+              </button>
+              {pendingProviderInvite && (
+                <span className="rounded-full border border-blue-100 bg-blue-50 px-1.5 py-0.5 text-[7px] font-black uppercase tracking-widest text-blue-700">
+                  Alta enviada
+                </span>
+              )}
+            </div>
           )
         )}
 
@@ -259,17 +273,20 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
                       setIsEditingProvider(false);
                       setProviderSearch('');
                     }}
-                    className="mb-1 flex w-full items-center gap-2 rounded px-3 py-2 text-left text-[10px] font-bold uppercase text-blue-600 transition-colors hover:bg-blue-50 disabled:text-slate-300"
+                    className={cn(
+                      "mb-1 flex w-full items-center gap-2 rounded px-3 py-2 text-left text-[10px] font-bold uppercase transition-colors hover:bg-blue-50 disabled:text-slate-300",
+                      pendingProviderInvite ? "text-blue-700 bg-blue-50" : "text-blue-600"
+                    )}
                   >
-                    <Link2 className="h-3 w-3" />
-                    {creatingProviderInvite ? 'Generando link...' : 'Generar link alta proveedor'}
+                    {pendingProviderInvite ? <Copy className="h-3 w-3" /> : <Link2 className="h-3 w-3" />}
+                    {creatingProviderInvite ? 'Generando link...' : pendingProviderInvite ? 'Copiar link pendiente' : 'Generar link alta proveedor'}
                   </button>
                 )}
                 {providers?.filter(p => providerMatchesSearch(p, providerSearch)).slice(0, 40).map(p => (
                   <button
                     key={p.id}
                     onClick={() => {
-                      onUpdate(item.id, { providerId: p.id, providerName: providerDisplayName(p) });
+                      onUpdate(item.id, { providerId: p.id, providerName: providerDisplayName(p), providerInviteLink: null });
                       setIsEditingProvider(false);
                       setProviderSearch('');
                     }}

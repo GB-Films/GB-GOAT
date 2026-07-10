@@ -34,7 +34,8 @@ import {
   X,
   Truck,
   CheckCircle2,
-  Clock3
+  Clock3,
+  Copy
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
@@ -366,13 +367,34 @@ const sanitizeFileName = (fileName: string) => {
 };
 
 const buildInvoiceFileName = (expense: any) => {
+  const extension = sanitizeFileName(String(expense.__invoiceFileExtension || 'pdf')).toLowerCase() || 'pdf';
   const baseName = sanitizeFileName(
     expense.providerName || expense.description || expense.area || 'factura'
   )
     .replace(/\.[^.]+$/, '')
     .slice(0, 70) || 'factura';
   const shortId = String(expense.id || 'gasto').slice(0, 8);
-  return `factura-${baseName}-${shortId}.pdf`;
+  return `factura-${baseName}-${shortId}.${extension}`;
+};
+
+const INVOICE_FILE_TYPES = ['application/pdf', 'image/jpeg', 'image/png'];
+const INVOICE_FILE_ACCEPT = 'application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png';
+const INVOICE_FILE_LABEL = 'PDF, JPG o PNG';
+
+const getInvoiceFileExtension = (file: File) => {
+  const extension = sanitizeFileName(file.name.split('.').pop() || '').toLowerCase();
+  if (extension === 'jpg' || extension === 'jpeg' || extension === 'png' || extension === 'pdf') return extension;
+  if (file.type === 'image/jpeg') return 'jpg';
+  if (file.type === 'image/png') return 'png';
+  return 'pdf';
+};
+
+const getInvoiceContentType = (file: File) => {
+  if (INVOICE_FILE_TYPES.includes(file.type)) return file.type;
+  const extension = getInvoiceFileExtension(file);
+  if (extension === 'jpg' || extension === 'jpeg') return 'image/jpeg';
+  if (extension === 'png') return 'image/png';
+  return 'application/pdf';
 };
 
 const buildOtherReceiptFileName = (expense: any, file: File, receiptId: string) => {
@@ -416,6 +438,16 @@ const validateProjectDocumentFile = (file?: File | null) => {
     return 'El documento debe ser PDF, JPG, PNG o WEBP.';
   }
   return validateMaxUploadSize(file, 'documento');
+};
+
+const validateInvoiceFile = (file?: File | null) => {
+  if (!file) return `Selecciona una factura en ${INVOICE_FILE_LABEL}.`;
+  const isAllowedByType = INVOICE_FILE_TYPES.includes(file.type);
+  const isAllowedByName = /\.(pdf|jpe?g|png)$/i.test(file.name);
+  if (!isAllowedByType && !isAllowedByName) {
+    return `La factura debe ser ${INVOICE_FILE_LABEL}.`;
+  }
+  return validateMaxUploadSize(file, 'factura');
 };
 
 const normalizeEmail = (email?: string | null) => (email || '').trim().toLowerCase();
@@ -966,15 +998,46 @@ export default function ProjectDetail() {
     }, 2200);
   };
 
+  const getPendingProviderInviteLink = (item: any) => (
+    item?.providerInviteLink?.status === 'pending' && item.providerInviteLink.token
+      ? item.providerInviteLink
+      : null
+  );
+
+  const cancelPendingProviderInviteIfAssigning = async (item: any, updates: any) => {
+    const isAssigningExistingProvider = updates.providerId && updates.providerName;
+    const pendingInvite = isAssigningExistingProvider ? getPendingProviderInviteLink(item) : null;
+    if (!pendingInvite) return updates;
+
+    try {
+      await updateDoc(doc(db, 'providerInvites', pendingInvite.token), {
+        status: 'cancelled',
+        cancelledAt: serverTimestamp(),
+        cancelledBy: user?.uid || '',
+        cancelledByEmail: currentUserEmail,
+        updatedAt: serverTimestamp(),
+      });
+    } catch (error) {
+      console.error('Error cancelling pending provider invite:', error);
+    }
+
+    return {
+      ...updates,
+      providerInviteLink: null,
+    };
+  };
+
   const updateBudgetItem = async (itemId: string, updates: any) => {
     if (!id || !canEditMainBudget) return;
     try {
+      const currentItem = budgetItems.find((item) => item.id === itemId);
+      const nextUpdates = await cancelPendingProviderInviteIfAssigning(currentItem, updates);
       const itemRef = doc(db, 'projects', id, 'budgetItems', itemId);
       await updateDoc(itemRef, {
-        ...updates,
+        ...nextUpdates,
         updatedAt: serverTimestamp()
       });
-      setBudgetItems(items => items.map(i => i.id === itemId ? { ...i, ...updates } : i));
+      setBudgetItems(items => items.map(i => i.id === itemId ? { ...i, ...nextUpdates } : i));
     } catch (e) {
       console.error("Error updating budget item:", e);
     }
@@ -1289,10 +1352,11 @@ export default function ProjectDetail() {
       if (!canEditAreaExpense(currentExpense) || !canEditAreaSubcategory(nextArea, nextSubcategory)) return;
       const nextTotal = updates.total !== undefined ? Number(updates.total) : Number(currentExpense.total) || 0;
       const budgetWarning = getAreaExpenseBudgetWarning(nextArea, nextTotal, expenseId);
+      const nextUpdates = await cancelPendingProviderInviteIfAssigning(currentExpense, updates);
 
       const docRef = doc(db, 'projects', id, 'areaExpenses', expenseId);
-      await updateDoc(docRef, { ...updates, updatedAt: serverTimestamp() });
-      setAreaExpenses(areaExpenses.map(e => e.id === expenseId ? { ...e, ...updates } : e));
+      await updateDoc(docRef, { ...nextUpdates, updatedAt: serverTimestamp() });
+      setAreaExpenses(areaExpenses.map(e => e.id === expenseId ? { ...e, ...nextUpdates } : e));
       if (budgetWarning) showExpenseConfirmation(budgetWarning, 'warning');
     } catch (e) {
       console.error("Error updating area expense:", e);
@@ -1741,14 +1805,9 @@ export default function ProjectDetail() {
       return;
     }
 
-    if (file.type !== 'application/pdf') {
-      alert('Por ahora sólo se pueden adjuntar facturas en PDF.');
-      return;
-    }
-
-    const sizeError = validateMaxUploadSize(file, 'PDF');
-    if (sizeError) {
-      alert(sizeError);
+    const fileError = validateInvoiceFile(file);
+    if (fileError) {
+      alert(fileError);
       return;
     }
 
@@ -1757,12 +1816,13 @@ export default function ProjectDetail() {
 
     try {
       const areaFolder = sanitizeFileName(expense.area || 'sin-area') || 'sin-area';
-      const fileName = buildInvoiceFileName(expense);
+      const fileName = buildInvoiceFileName({ ...expense, __invoiceFileExtension: getInvoiceFileExtension(file) });
       const path = `projects/${id}/areas/${areaFolder}/facturas/${fileName}`;
       const storageRef = ref(storage, path);
+      const contentType = getInvoiceContentType(file);
 
       await uploadBytes(storageRef, file, {
-        contentType: file.type,
+        contentType,
         customMetadata: {
           projectId: id,
           expenseId: expense.id,
@@ -1779,7 +1839,7 @@ export default function ProjectDetail() {
         originalFileName: file.name,
         url,
         path,
-        contentType: file.type,
+        contentType,
         size: file.size,
         uploadedAt: serverTimestamp(),
         uploadedBy: user?.email || user?.uid || '',
@@ -1798,7 +1858,7 @@ export default function ProjectDetail() {
     } catch (error: any) {
       console.error('Error uploading invoice:', error);
       handleFirestoreError(error, 'update', `projects/${id}/${collectionName}/${expense.id}`);
-      alert('No se pudo subir la factura. Revisá que Firebase Storage esté activado y que las reglas permitan PDFs.');
+      alert('No se pudo subir la factura. Revisá que Firebase Storage esté activado y que las reglas permitan este tipo de archivo.');
     } finally {
       setUploadingInvoices(prev => ({ ...prev, [uploadKey]: false }));
     }
@@ -1878,11 +1938,24 @@ export default function ProjectDetail() {
   const createProviderInviteForItem = async (item: any, collectionName: PaymentCollection) => {
     if (!id || !item?.id) return;
     if (!canManagePaymentForItem(item, collectionName)) return;
+    if (item.providerId || item.providerName) {
+      alert('Esta fila ya tiene un proveedor asignado.');
+      return;
+    }
+
+    const existingInvite = getPendingProviderInviteLink(item);
+    if (existingInvite?.link || existingInvite?.token) {
+      const existingLink = existingInvite.link || getPublicProviderInviteLink(existingInvite.token);
+      await navigator.clipboard?.writeText(existingLink);
+      alert(`Link de alta de proveedor pendiente copiado al portapapeles:\n\n${existingLink}`);
+      return;
+    }
 
     const days = 7;
     const token = generateInvoiceUploadToken();
     const link = getPublicProviderInviteLink(token);
     const loadingKey = `${collectionName}-${item.id}`;
+    const expiresAt = Timestamp.fromDate(buildProviderInviteExpiration(days));
 
     setGeneratingProviderInviteLinks(prev => ({ ...prev, [loadingKey]: true }));
     try {
@@ -1898,7 +1971,7 @@ export default function ProjectDetail() {
         area: item.area || '',
         subcategory: cleanAreaExpenseSubcategory(item.subcategory),
         description: item.description || '',
-        expiresAt: Timestamp.fromDate(buildProviderInviteExpiration(days)),
+        expiresAt,
         expiresInDays: days,
         createdBy: user?.uid || '',
         createdByEmail: currentUserEmail,
@@ -1906,8 +1979,28 @@ export default function ProjectDetail() {
         updatedAt: serverTimestamp(),
       });
 
+      const providerInviteLink = {
+        token,
+        link,
+        status: 'pending',
+        createdBy: user?.uid || '',
+        createdByEmail: currentUserEmail,
+        createdAt: new Date(),
+        expiresAt: expiresAt.toDate(),
+      };
+
+      await updateDoc(doc(db, 'projects', id, collectionName, item.id), {
+        providerInviteLink: {
+          ...providerInviteLink,
+          createdAt: serverTimestamp(),
+          expiresAt,
+        },
+        updatedAt: serverTimestamp(),
+      });
+      updateItemCollectionState(collectionName, item.id, { providerInviteLink });
+
       await navigator.clipboard?.writeText(link);
-      alert(`Link de alta de proveedor copiado al portapapeles:\n\n${link}\n\nEs de un solo uso, vence en ${days} dias y se asignara automaticamente a este gasto.`);
+      alert(`Link de alta de proveedor creado y copiado al portapapeles:\n\n${link}\n\nEs de un solo uso, vence en ${days} dias y se asignara automaticamente a este gasto.`);
     } catch (error) {
       console.error('Error creating provider invite for item:', error);
       alert('No se pudo generar el link de alta de proveedor.');
@@ -2099,14 +2192,14 @@ export default function ProjectDetail() {
       const file = event.dataTransfer.files.item(index);
       if (file) files.push(file);
     }
-    const pdfFile = files.find(file => file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf'));
+    const invoiceFile = files.find(file => !validateInvoiceFile(file));
 
-    if (!pdfFile) {
-      alert('Soltá un archivo PDF para adjuntarlo como factura.');
+    if (!invoiceFile) {
+      alert(`Soltá un archivo ${INVOICE_FILE_LABEL} para adjuntarlo como factura.`);
       return;
     }
 
-    await uploadInvoiceForExpense(expense, pdfFile, collectionName);
+    await uploadInvoiceForExpense(expense, invoiceFile, collectionName);
   };
 
   const renameCategory = async (oldName: string) => {
@@ -3157,6 +3250,15 @@ export default function ProjectDetail() {
     };
   }, [paymentScheduleCalendarDays, paymentScheduleLines]);
 
+  const paymentScheduleMaxDayTotal = React.useMemo(() => (
+    Math.max(
+      0,
+      ...paymentScheduleCalendarDays
+        .filter((bucket) => bucket.isCurrentMonth && bucket.total > 0)
+        .map((bucket) => bucket.total)
+    )
+  ), [paymentScheduleCalendarDays]);
+
   const projectDocuments = React.useMemo(() => {
     const docs: Array<{
       id: string;
@@ -3607,12 +3709,13 @@ export default function ProjectDetail() {
     : 0;
   const summaryBudgetItemCount = isProjectAdmin
     ? budgetItems.length
-    : budgetItems.filter((item) => safeArray(userPermissions?.allowedCategories).includes(item.area)).length;
+    : budgetItems.filter((item) => safeArray(userPermissions?.allowedCategories).includes(item.area)).length
+      + userAllowedSubcategories.length;
   const summaryAreaExpenseCount = isProjectAdmin
     ? areaExpenses.length
     : areaExpenses.filter((item) => (
         safeArray(userPermissions?.allowedCategories).includes(item.area)
-        || userAllowedSubcategories.includes(areaSubcategoryKey(item.area, item.subcategory))
+        || userAllowedSubcategories.includes(areaSubcategoryKey(item.area, cleanAreaExpenseSubcategory(item.subcategory)))
       )).length;
   const locationValue = locationDraft || project?.location || '';
   const mapsSearchUrl = buildGoogleMapsLink(locationValue);
@@ -4217,7 +4320,7 @@ export default function ProjectDetail() {
           </div>
         </header>
 
-        <nav className="flex gap-1 px-2 py-1.5 text-[9px] font-bold border-t border-slate-200 bg-slate-100/90 overflow-x-auto scrollbar-hide shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] sm:gap-1.5 sm:px-4 sm:py-2 sm:text-xs">
+        <nav className="flex gap-1 px-2 py-1.5 text-[9px] font-bold border-t border-slate-200 bg-slate-100/95 overflow-x-auto scrollbar-hide shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] backdrop-blur sm:gap-1.5 sm:px-4 sm:py-2 sm:text-xs lg:sticky lg:top-0 lg:z-[120]">
           {visibleTabs.map((tab) => (
             <button
               key={tab.id}
@@ -4838,11 +4941,11 @@ export default function ProjectDetail() {
                                                                 </>
                                                               ) : (
                                                                 <>
-                                                                  <label className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded border border-slate-200 bg-white text-slate-400 hover:border-black hover:text-black" title="Adjuntar factura PDF">
+                                                                  <label className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded border border-slate-200 bg-white text-slate-400 hover:border-black hover:text-black" title="Adjuntar factura PDF/JPG/PNG">
                                                                     <Paperclip className="h-3.5 w-3.5" />
                                                                     <input
                                                                       type="file"
-                                                                      accept="application/pdf,.pdf"
+                                                                      accept={INVOICE_FILE_ACCEPT}
                                                                       className="hidden"
                                                                       disabled={!!uploadingInvoices[`budgetItems-${item.id}`]}
                                                                       onChange={(event) => {
@@ -5360,7 +5463,7 @@ export default function ProjectDetail() {
                                             Factura
                                             <input
                                               type="file"
-                                              accept="application/pdf,.pdf"
+                                              accept={INVOICE_FILE_ACCEPT}
                                               className="hidden"
                                               disabled={!!uploadingInvoices[`areaExpenses-${item.id}`]}
                                               onChange={(event) => {
@@ -5659,7 +5762,7 @@ export default function ProjectDetail() {
                               <div className="absolute inset-0 z-20 bg-emerald-50/90 border border-emerald-200 flex items-center justify-center pointer-events-none">
                                 <div className="px-4 py-2 rounded bg-white border border-emerald-100 shadow-sm text-[10px] font-black uppercase tracking-widest text-emerald-700 flex items-center gap-2">
                                   <Paperclip className="w-3.5 h-3.5" />
-                                  Soltar PDF para adjuntar factura
+                                  Soltar factura PDF/JPG/PNG
                                 </div>
                               </div>
                             )}
@@ -5735,12 +5838,12 @@ export default function ProjectDetail() {
                                             ? "bg-slate-100 border-slate-200 text-slate-300 cursor-wait"
                                             : "bg-white border-slate-200 text-slate-400 hover:text-black hover:border-black"
                                         )}
-                                        title="Adjuntar factura PDF"
+                                        title="Adjuntar factura PDF/JPG/PNG"
                                       >
                                         <Paperclip className="w-3.5 h-3.5" />
                                         <input
                                           type="file"
-                                          accept="application/pdf,.pdf"
+                                          accept={INVOICE_FILE_ACCEPT}
                                           className="hidden"
                                           disabled={!!uploadingInvoices[`areaExpenses-${item.id}`]}
                                           onChange={(event) => {
@@ -5761,7 +5864,7 @@ export default function ProjectDetail() {
                                       </button>
                                     </>
                                   ) : (
-                                    <span className="text-[9px] font-bold uppercase tracking-widest text-slate-300">Sin PDF</span>
+                                    <span className="text-[9px] font-bold uppercase tracking-widest text-slate-300">Sin factura</span>
                                   )
                                 )}
                               </div>
@@ -6522,7 +6625,7 @@ export default function ProjectDetail() {
                       {paymentScheduleCalendarDays.map((day) => {
                         const isSelected = selectedPaymentBucket?.key === day.key;
                         const hasPayments = day.count > 0;
-                        const isHeavy = day.total >= paymentScheduleStats.periodDebt / 4 && paymentScheduleStats.periodDebt > 0;
+                        const isHeavy = day.total >= paymentScheduleMaxDayTotal * 0.66 && paymentScheduleMaxDayTotal > 0;
                         return (
                           <button
                             key={day.key}
@@ -6554,7 +6657,7 @@ export default function ProjectDetail() {
                                 <div className="mt-1 h-1.5 rounded-full bg-white/80 overflow-hidden">
                                   <div
                                     className={cn("h-full rounded-full", isHeavy ? "bg-rose-500" : "bg-amber-500")}
-                                    style={{ width: `${Math.min(100, Math.max(12, (day.total / Math.max(paymentScheduleStats.periodDebt, 1)) * 100))}%` }}
+                                    style={{ width: `${Math.min(100, Math.max(14, (day.total / Math.max(paymentScheduleMaxDayTotal, 1)) * 100))}%` }}
                                   />
                                 </div>
                               </div>

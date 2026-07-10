@@ -417,7 +417,7 @@ service cloud.firestore {
         && request.resource.data.invoice.originalFileName is string
         && request.resource.data.invoice.url is string
         && request.resource.data.invoice.path is string
-        && request.resource.data.invoice.contentType == 'application/pdf'
+        && request.resource.data.invoice.contentType in ['application/pdf', 'image/jpeg', 'image/png']
         && request.resource.data.invoice.size is number
         && request.resource.data.invoice.size <= 2 * 1024 * 1024
         && request.resource.data.invoice.uploadedBy == 'provider_public_link'
@@ -463,6 +463,23 @@ service cloud.firestore {
           || (
             request.resource.data.collectionName == 'budgetItems'
             && isProjectAdmin(request.resource.data.projectId)
+          )
+        );
+    }
+
+    function canCancelLinkedProviderInvite() {
+      return isSignedIn()
+        && resource.data.projectId is string
+        && resource.data.collectionName in ['budgetItems', 'areaExpenses']
+        && resource.data.area is string
+        && (
+          (
+            resource.data.collectionName == 'areaExpenses'
+            && canWriteAreaExpense(resource.data.projectId, resource.data.area, resource.data.subcategory)
+          )
+          || (
+            resource.data.collectionName == 'budgetItems'
+            && isProjectAdmin(resource.data.projectId)
           )
         );
     }
@@ -669,7 +686,7 @@ service cloud.firestore {
         && validProviderInviteExpiration();
       allow update: if isAppAdmin()
         || (
-          canCreateGlobalProvider()
+          (canCreateGlobalProvider() || canCancelLinkedProviderInvite())
           && resource.data.used == false
           && resource.data.status == 'pending'
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'cancelledAt', 'cancelledBy', 'cancelledByEmail', 'updatedAt'])
