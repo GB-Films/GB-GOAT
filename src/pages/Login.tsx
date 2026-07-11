@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { getRedirectResult, signInWithPopup, signInWithRedirect } from 'firebase/auth';
+import { signInWithPopup } from 'firebase/auth';
 import { auth, googleProvider } from '../lib/firebase';
 import { Navigate, useLocation } from 'react-router-dom';
 import { USER_INVITE_TOKEN_KEY, useAuth } from '../context/AuthContext';
@@ -12,13 +12,6 @@ export default function Login() {
   const [loginError, setLoginError] = useState('');
   const [hasInviteLink, setHasInviteLink] = useState(false);
   const logoSrc = `${(import.meta as any).env.BASE_URL}gb-films-logo.png`;
-
-  useEffect(() => {
-    getRedirectResult(auth).catch((error) => {
-      console.error('Error completing Google sign in:', error);
-      setLoginError('No pudimos completar el inicio con Google. Probá de nuevo.');
-    });
-  }, []);
 
   useEffect(() => {
     const inviteToken = new URLSearchParams(location.search).get('invite');
@@ -54,16 +47,24 @@ export default function Login() {
     setLoginError('');
 
     try {
-      await signInWithPopup(auth, googleProvider);
+      await Promise.race([
+        signInWithPopup(auth, googleProvider),
+        new Promise((_, reject) => {
+          window.setTimeout(() => reject(new Error('AUTH_POPUP_TIMEOUT')), 45000);
+        }),
+      ]);
     } catch (error: any) {
       console.error('Error signing in:', error);
-
-      if (error?.code === 'auth/popup-blocked' || error?.code === 'auth/cancelled-popup-request') {
-        await signInWithRedirect(auth, googleProvider);
-        return;
-      }
-
-      setLoginError('No pudimos iniciar sesión con Google. Revisá que el popup no esté bloqueado y probá de nuevo.');
+      const errorCode = error?.code || error?.message;
+      const errorMessages: Record<string, string> = {
+        'auth/popup-blocked': 'El navegador bloqueó la ventana de Google. Habilitá las ventanas emergentes y probá de nuevo.',
+        'auth/popup-closed-by-user': 'Se cerró la ventana de Google antes de completar el ingreso.',
+        'auth/cancelled-popup-request': 'Ya hay un inicio de sesión en curso. Cerralo y probá de nuevo.',
+        'auth/operation-not-supported-in-this-environment': 'Abrí GB GOAT directamente en Chrome o Safari para iniciar sesión.',
+        'auth/web-storage-unsupported': 'El navegador no permite guardar la sesión. Abrí GB GOAT en Chrome o Safari fuera del modo privado.',
+        AUTH_POPUP_TIMEOUT: 'La ventana de Google no respondió. Cerrala, verificá que los popups estén permitidos y probá de nuevo.',
+      };
+      setLoginError(errorMessages[errorCode] || 'No pudimos iniciar sesión con Google. Abrí GB GOAT en Chrome o Safari y probá de nuevo.');
       setIsSigningIn(false);
     }
   };

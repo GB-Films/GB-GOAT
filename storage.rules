@@ -82,6 +82,23 @@ service firebase.storage {
         );
     }
 
+    function areaSubcategoryKey(area, subcategory) {
+      return area + '||' + subcategory;
+    }
+
+    function canWriteAreaExpense(projectId, area, subcategory) {
+      return canWriteArea(projectId, area)
+        || (
+          hasCollaboratorDoc(projectId)
+          && collaboratorDoc(projectId).canEditBudgetAreas == true
+          && 'areas' in collaboratorDoc(projectId).allowedTabs
+          && subcategory is string
+          && subcategory != ''
+          && 'allowedSubcategories' in collaboratorDoc(projectId)
+          && areaSubcategoryKey(area, subcategory) in collaboratorDoc(projectId).allowedSubcategories
+        );
+    }
+
     function canWritePaymentReceipt(projectId, collectionName, itemId) {
       return isProjectAdmin(projectId)
         || (
@@ -92,7 +109,11 @@ service firebase.storage {
         || (
           collectionName == 'areaExpenses'
           && firestore.exists(/databases/(default)/documents/projects/$(projectId)/areaExpenses/$(itemId))
-          && canWriteArea(projectId, firestore.get(/databases/(default)/documents/projects/$(projectId)/areaExpenses/$(itemId)).data.area)
+          && canWriteAreaExpense(
+            projectId,
+            firestore.get(/databases/(default)/documents/projects/$(projectId)/areaExpenses/$(itemId)).data.area,
+            firestore.get(/databases/(default)/documents/projects/$(projectId)/areaExpenses/$(itemId)).data.subcategory
+          )
         );
     }
 

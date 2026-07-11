@@ -4172,7 +4172,7 @@ export default function ProjectDetail() {
         )}
       </AnimatePresence>
 
-      <div className="mb-2 overflow-hidden rounded-xl border border-slate-200 bg-white/95 shadow-[0_10px_28px_rgba(15,23,42,0.10)] ring-1 ring-white backdrop-blur-sm sm:mb-4 sm:rounded-2xl sm:shadow-[0_16px_45px_rgba(15,23,42,0.12)]">
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white/95 shadow-[0_10px_28px_rgba(15,23,42,0.10)] ring-1 ring-white backdrop-blur-sm sm:rounded-2xl sm:shadow-[0_16px_45px_rgba(15,23,42,0.12)]">
         <header className="px-3 py-2.5 md:px-5 md:py-4">
           <div className="flex flex-col gap-2.5 lg:flex-row lg:items-start lg:justify-between">
             <div className="min-w-0">
@@ -4320,24 +4320,25 @@ export default function ProjectDetail() {
           </div>
         </header>
 
-        <nav className="flex gap-1 px-2 py-1.5 text-[9px] font-bold border-t border-slate-200 bg-slate-100/95 overflow-x-auto scrollbar-hide shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] backdrop-blur sm:gap-1.5 sm:px-4 sm:py-2 sm:text-xs lg:sticky lg:top-0 lg:z-[120]">
-          {visibleTabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={cn(
-                "flex items-center gap-1 rounded-lg border px-2 py-1.5 whitespace-nowrap transition-all sm:gap-1.5 sm:px-3 sm:py-2",
-                activeTab === tab.id 
-                  ? "bg-white border-blue-200 text-blue-700 shadow-lg shadow-slate-300/50" 
-                  : "border-transparent text-slate-600 hover:text-slate-950 hover:bg-white/70"
-              )}
-            >
-              <tab.icon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-              {tab.label}
-            </button>
-          ))}
-        </nav>
       </div>
+
+      <nav className="relative z-[120] mb-2 mt-2 flex gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-slate-100/95 px-2 py-1.5 text-[9px] font-bold shadow-md backdrop-blur scrollbar-hide sm:mb-4 sm:gap-1.5 sm:px-4 sm:py-2 sm:text-xs lg:sticky lg:top-0">
+        {visibleTabs.map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={cn(
+              "flex items-center gap-1 rounded-lg border px-2 py-1.5 whitespace-nowrap transition-all sm:gap-1.5 sm:px-3 sm:py-2",
+              activeTab === tab.id
+                ? "bg-white border-blue-200 text-blue-700 shadow-lg shadow-slate-300/50"
+                : "border-transparent text-slate-600 hover:text-slate-950 hover:bg-white/70"
+            )}
+          >
+            <tab.icon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+            {tab.label}
+          </button>
+        ))}
+      </nav>
 
       {pendingCashDeliveries.length > 0 && activeTab !== 'cajas' && (
         <section className="mb-4 overflow-hidden rounded-xl border-2 border-amber-300 bg-amber-50 shadow-lg shadow-amber-100">
