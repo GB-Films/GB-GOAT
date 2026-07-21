@@ -31,8 +31,17 @@ const emptyForm = {
   dietaryRestriction: '',
 };
 
+type ProviderForm = typeof emptyForm;
+type FormErrorKey = keyof ProviderForm | 'bankAccount';
+type FormErrors = Partial<Record<FormErrorKey, string>>;
+
 const inputClass = 'w-full px-4 py-3 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-black transition-all disabled:bg-slate-50 disabled:text-slate-400';
+const invalidInputClass = '!border-red-400 !bg-red-50 text-red-950 focus:!border-red-500 focus:ring-2 focus:ring-red-100';
 const labelClass = 'block text-[10px] font-bold uppercase text-slate-500 mb-2 tracking-widest';
+
+const withFieldError = (error?: string, extraClass = '') => (
+  `${inputClass} ${error ? invalidInputClass : ''} ${extraClass}`.trim()
+);
 
 const formatDate = (dateValue: string) => {
   if (!dateValue) return 'dd/mm/aaaa';
@@ -265,11 +274,17 @@ function RequiredMark() {
   return <span className="text-red-500 ml-1">*</span>;
 }
 
-function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) {
+function Field({ label, required, error, children }: { label: string; required?: boolean; error?: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className={labelClass}>{label}{required && <RequiredMark />}</label>
+      <label className={`${labelClass} ${error ? 'text-red-600' : ''}`}>{label}{required && <RequiredMark />}</label>
       {children}
+      {error && (
+        <p className="mt-2 flex items-start gap-1.5 text-xs font-bold text-red-600" role="alert">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          {error}
+        </p>
+      )}
     </div>
   );
 }
@@ -284,13 +299,27 @@ export default function ProviderInvite() {
   const [error, setError] = useState('');
   const [duplicates, setDuplicates] = useState<DuplicateState>({});
   const [form, setForm] = useState(emptyForm);
+  const [fieldErrors, setFieldErrors] = useState<FormErrors>({});
+  const [showFieldErrors, setShowFieldErrors] = useState(false);
 
   const dniNormalized = useMemo(() => normalizeDigits(form.dni), [form.dni]);
   const cuitNormalized = useMemo(() => normalizeDigits(form.cuit), [form.cuit]);
   const categories = form.type === 'empresa' ? COMPANY_PROVIDER_CATEGORIES : PRODUCTION_AREA_CATEGORIES;
+  const dniError = duplicates.dni ? 'Ya existe una persona registrada con este DNI.' : fieldErrors.dni;
+  const cuitError = duplicates.cuit
+    ? form.type === 'empresa'
+      ? 'Ya existe una empresa/proveedor registrado con este CUIT.'
+      : 'Ya existe un proveedor registrado con este CUIT/CUIL.'
+    : fieldErrors.cuit;
 
   useEffect(() => {
     const loadInvite = async () => {
+      const isLocalPreview = Boolean((import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV) && token === 'preview';
+      if (isLocalPreview) {
+        setInvite({ id: 'preview', status: 'pending', mode: 'single_use' });
+        setLoading(false);
+        return;
+      }
       try {
         const inviteRef = doc(db, 'providerInvites', token);
         const snap = await getDoc(inviteRef);
@@ -365,48 +394,75 @@ export default function ProviderInvite() {
     };
   }, [form.type, dniNormalized, cuitNormalized]);
 
-  const updateField = (field: keyof typeof emptyForm, value: string) => {
-    setForm((current) => ({ ...current, [field]: value }));
+  function validateForm(values: ProviderForm = form, duplicateState: DuplicateState = duplicates): FormErrors {
+    const nextErrors: FormErrors = {};
+    const requiredMessage = 'Falta completar este campo obligatorio.';
+    const normalizedDni = normalizeDigits(values.dni);
+    const normalizedCuit = normalizeDigits(values.cuit);
+
+    if (!values.type) nextErrors.type = 'Elegí si el alta corresponde a Persona física o Empresa.';
+    if (values.type === 'persona') {
+      if (!values.name.trim()) nextErrors.name = requiredMessage;
+      if (!values.lastName.trim()) nextErrors.lastName = requiredMessage;
+      if (!normalizedDni) nextErrors.dni = requiredMessage;
+      else if (normalizedDni.length < 7) nextErrors.dni = 'Ingresá un DNI válido.';
+      else if (duplicateState.dni) nextErrors.dni = 'Ya existe una persona registrada con este DNI.';
+    }
+    if (values.type === 'empresa' && !values.businessName.trim()) nextErrors.businessName = requiredMessage;
+
+    if (!normalizedCuit) nextErrors.cuit = requiredMessage;
+    else if (normalizedCuit.length < 10) nextErrors.cuit = 'Ingresá un CUIT/CUIL válido.';
+    else if (duplicateState.cuit) nextErrors.cuit = 'Ya existe un proveedor registrado con este CUIT/CUIL.';
+
+    if (!values.email.trim()) nextErrors.email = requiredMessage;
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(values.email.trim())) nextErrors.email = 'Ingresá un email válido.';
+    if (!values.phone.trim()) nextErrors.phone = requiredMessage;
+    if (!values.address.trim()) nextErrors.address = requiredMessage;
+    if (!values.category) nextErrors.category = requiredMessage;
+    if (values.category === 'Otra' && !values.categoryOther.trim()) nextErrors.categoryOther = requiredMessage;
+
+    if (!values.bankAccount_cbu.trim() && !values.bankAccount_alias.trim()) {
+      nextErrors.bankAccount = 'Completá al menos un CBU o un Alias.';
+    } else if (values.bankAccount_cbu.trim() && !isValidCbu(values.bankAccount_cbu)) {
+      nextErrors.bankAccount_cbu = 'El CBU debe tener exactamente 22 números consecutivos.';
+    }
+
+    return nextErrors;
+  }
+
+  const updateField = (field: keyof ProviderForm, value: string) => {
+    const nextForm = { ...form, [field]: value };
+    setForm(nextForm);
+    if (field === 'dni') setDuplicates((current) => ({ ...current, dni: undefined }));
+    if (field === 'cuit') setDuplicates((current) => ({ ...current, cuit: undefined }));
+    if (showFieldErrors) setFieldErrors(validateForm(nextForm));
     setError('');
   };
 
   const selectType = (type: ProviderType) => {
     setForm({ ...emptyForm, type });
     setDuplicates({});
+    setFieldErrors({});
+    setShowFieldErrors(false);
     setError('');
   };
 
-  const validateForm = () => {
-    if (!form.type) return 'Elegí si el alta corresponde a Persona física o Empresa.';
-    if (!form.category) return 'Seleccioná una categoría.';
-    if (form.category === 'Otra' && !form.categoryOther.trim()) return 'Completá el comentario de la categoría Otra.';
-    if (!form.email.trim()) return 'Completá el email.';
-    if (!form.phone.trim()) return 'Completá el teléfono.';
-    if (!form.address.trim()) return 'Completá la dirección.';
-    if (!form.bankAccount_cbu.trim() && !form.bankAccount_alias.trim()) return 'Completá el CBU o el Alias.';
-    if (form.bankAccount_cbu.trim() && !isValidCbu(form.bankAccount_cbu)) return 'El CBU debe tener exactamente 22 números consecutivos.';
-    if (!cuitNormalized || cuitNormalized.length < 10) return 'Completá un CUIT/CUIL válido.';
-    if (duplicates.cuit) return 'Ya existe un proveedor registrado con este CUIT/CUIL.';
-
-    if (form.type === 'persona') {
-      if (!form.name.trim()) return 'Completá el nombre.';
-      if (!form.lastName.trim()) return 'Completá el apellido.';
-      if (!dniNormalized || dniNormalized.length < 7) return 'Completá un DNI válido.';
-      if (duplicates.dni) return 'Ya existe una persona registrada con este DNI.';
-    }
-
-    if (form.type === 'empresa') {
-      if (!form.businessName.trim()) return 'Completá la razón social.';
-    }
-
-    return '';
-  };
+  useEffect(() => {
+    if (showFieldErrors) setFieldErrors(validateForm(form, duplicates));
+  }, [duplicates, showFieldErrors]);
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    const validationError = validateForm();
-    if (validationError) {
-      setError(validationError);
+    const validationErrors = validateForm();
+    if (Object.keys(validationErrors).length > 0) {
+      setShowFieldErrors(true);
+      setFieldErrors(validationErrors);
+      setError('Revisá los campos marcados en rojo antes de enviar el formulario.');
+      window.requestAnimationFrame(() => {
+        const firstInvalidField = document.querySelector<HTMLElement>('[data-provider-form] [aria-invalid="true"]');
+        firstInvalidField?.focus();
+        firstInvalidField?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      });
       return;
     }
 
@@ -540,7 +596,18 @@ export default function ProviderInvite() {
         DNI_EXISTS: 'Ya existe una persona registrada con este DNI.',
         CUIT_EXISTS: 'Ya existe un proveedor registrado con este CUIT/CUIL.',
       };
-      setError(messageByCode[err?.message] || 'No se pudo enviar el alta. Revisá los datos e intentá de nuevo.');
+      const submitError = messageByCode[err?.message] || 'No se pudo enviar el alta. Revisá los datos e intentá de nuevo.';
+      if (err?.message === 'DNI_EXISTS' || err?.message === 'CUIT_EXISTS') {
+        const field = err.message === 'DNI_EXISTS' ? 'dni' : 'cuit';
+        setShowFieldErrors(true);
+        setFieldErrors((current) => ({ ...current, [field]: submitError }));
+        window.requestAnimationFrame(() => {
+          const firstInvalidField = document.querySelector<HTMLElement>('[data-provider-form] [aria-invalid="true"]');
+          firstInvalidField?.focus();
+          firstInvalidField?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        });
+      }
+      setError(submitError);
     } finally {
       setSubmitLoading(false);
     }
@@ -618,22 +685,20 @@ export default function ProviderInvite() {
           </div>
 
           {form.type && (
-            <form onSubmit={handleSubmit} className="space-y-6">
+            <form onSubmit={handleSubmit} noValidate data-provider-form className="space-y-6">
               {form.type === 'persona' ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <Field label="Nombre" required>
-                    <input value={form.name} onChange={(e) => updateField('name', e.target.value)} required className={inputClass} />
+                  <Field label="Nombre" required error={fieldErrors.name}>
+                    <input aria-label="Nombre" autoComplete="given-name" value={form.name} onChange={(e) => updateField('name', e.target.value)} required aria-invalid={Boolean(fieldErrors.name)} className={withFieldError(fieldErrors.name)} />
                   </Field>
-                  <Field label="Apellido" required>
-                    <input value={form.lastName} onChange={(e) => updateField('lastName', e.target.value)} required className={inputClass} />
+                  <Field label="Apellido" required error={fieldErrors.lastName}>
+                    <input aria-label="Apellido" autoComplete="family-name" value={form.lastName} onChange={(e) => updateField('lastName', e.target.value)} required aria-invalid={Boolean(fieldErrors.lastName)} className={withFieldError(fieldErrors.lastName)} />
                   </Field>
-                  <Field label="DNI" required>
-                    <input value={form.dni} onChange={(e) => updateField('dni', e.target.value)} required className={`${inputClass} ${duplicates.dni ? 'border-red-400 bg-red-50' : ''}`} />
-                    {duplicates.dni && <p className="text-xs text-red-500 mt-2 font-bold">Ya existe una persona registrada con este DNI.</p>}
+                  <Field label="DNI" required error={dniError}>
+                    <input aria-label="DNI" inputMode="numeric" value={form.dni} onChange={(e) => updateField('dni', e.target.value)} required aria-invalid={Boolean(dniError)} className={withFieldError(dniError)} />
                   </Field>
-                  <Field label="CUIT / CUIL" required>
-                    <input value={form.cuit} onChange={(e) => updateField('cuit', e.target.value)} required className={`${inputClass} ${duplicates.cuit ? 'border-red-400 bg-red-50' : ''}`} />
-                    {duplicates.cuit && <p className="text-xs text-red-500 mt-2 font-bold">Ya existe un proveedor registrado con este CUIT/CUIL.</p>}
+                  <Field label="CUIT / CUIL" required error={cuitError}>
+                    <input aria-label="CUIT / CUIL" inputMode="numeric" value={form.cuit} onChange={(e) => updateField('cuit', e.target.value)} required aria-invalid={Boolean(cuitError)} className={withFieldError(cuitError)} />
                   </Field>
                   <Field label="Fecha de nacimiento">
                     <InlineDatePicker value={form.birthDate} onChange={(value) => updateField('birthDate', value)} />
@@ -645,63 +710,78 @@ export default function ProviderInvite() {
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="md:col-span-2">
-                    <Field label="Razón social" required>
-                      <input value={form.businessName} onChange={(e) => updateField('businessName', e.target.value)} required className={inputClass} />
+                    <Field label="Razón social" required error={fieldErrors.businessName}>
+                      <input aria-label="Razón social" autoComplete="organization" value={form.businessName} onChange={(e) => updateField('businessName', e.target.value)} required aria-invalid={Boolean(fieldErrors.businessName)} className={withFieldError(fieldErrors.businessName)} />
                     </Field>
                   </div>
-                  <Field label="CUIT" required>
-                    <input value={form.cuit} onChange={(e) => updateField('cuit', e.target.value)} required className={`${inputClass} ${duplicates.cuit ? 'border-red-400 bg-red-50' : ''}`} />
-                    {duplicates.cuit && <p className="text-xs text-red-500 mt-2 font-bold">Ya existe una empresa/proveedor registrado con este CUIT.</p>}
+                  <Field label="CUIT" required error={cuitError}>
+                    <input aria-label="CUIT" inputMode="numeric" value={form.cuit} onChange={(e) => updateField('cuit', e.target.value)} required aria-invalid={Boolean(cuitError)} className={withFieldError(cuitError)} />
                   </Field>
                 </div>
               )}
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Field label="Email" required>
-                  <input type="email" value={form.email} onChange={(e) => updateField('email', e.target.value)} required className={inputClass} />
+                <Field label="Email" required error={fieldErrors.email}>
+                  <input aria-label="Email" autoComplete="email" type="email" value={form.email} onChange={(e) => updateField('email', e.target.value)} required aria-invalid={Boolean(fieldErrors.email)} className={withFieldError(fieldErrors.email)} />
                 </Field>
-                <Field label="Teléfono" required>
-                  <input value={form.phone} onChange={(e) => updateField('phone', e.target.value)} required className={inputClass} />
+                <Field label="Teléfono" required error={fieldErrors.phone}>
+                  <input aria-label="Teléfono" autoComplete="tel" value={form.phone} onChange={(e) => updateField('phone', e.target.value)} required aria-invalid={Boolean(fieldErrors.phone)} className={withFieldError(fieldErrors.phone)} />
                 </Field>
               </div>
 
-              <Field label="Domicilio" required>
-                <input value={form.address} onChange={(e) => updateField('address', e.target.value)} required className={inputClass} />
+              <Field label="Domicilio" required error={fieldErrors.address}>
+                <input aria-label="Domicilio" autoComplete="street-address" value={form.address} onChange={(e) => updateField('address', e.target.value)} required aria-invalid={Boolean(fieldErrors.address)} className={withFieldError(fieldErrors.address)} />
               </Field>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Field label="Categoría" required>
-                  <select value={form.category} onChange={(e) => updateField('category', e.target.value)} required className={inputClass}>
+                <Field label="Categoría" required error={fieldErrors.category}>
+                  <select aria-label="Categoría" value={form.category} onChange={(e) => updateField('category', e.target.value)} required aria-invalid={Boolean(fieldErrors.category)} className={withFieldError(fieldErrors.category)}>
                     <option value="">Seleccionar...</option>
                     {categories.map((item) => <option key={item} value={item}>{item}</option>)}
                   </select>
                 </Field>
                 {form.category === 'Otra' && (
-                  <Field label="Comentario categoría" required>
-                    <input value={form.categoryOther} onChange={(e) => updateField('categoryOther', e.target.value)} required className={inputClass} placeholder="Indicar rubro/categoría..." />
+                  <Field label="Comentario categoría" required error={fieldErrors.categoryOther}>
+                    <input aria-label="Comentario categoría" value={form.categoryOther} onChange={(e) => updateField('categoryOther', e.target.value)} required aria-invalid={Boolean(fieldErrors.categoryOther)} className={withFieldError(fieldErrors.categoryOther)} placeholder="Indicar rubro/categoría..." />
                   </Field>
                 )}
               </div>
 
               <div>
-                <div className={labelClass}>Datos bancarios<RequiredMark /></div>
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                  <Field label="CBU">
+                <div className={`${labelClass} ${fieldErrors.bankAccount ? 'text-red-600' : ''}`}>Datos bancarios<RequiredMark /></div>
+                <div className={`grid grid-cols-1 gap-4 rounded-xl md:grid-cols-2 ${fieldErrors.bankAccount ? 'border border-red-200 bg-red-50/50 p-3' : ''}`}>
+                  <Field label="CBU" error={fieldErrors.bankAccount_cbu}>
                     <input
                       value={form.bankAccount_cbu}
+                      aria-label="CBU"
                       onChange={(e) => updateField('bankAccount_cbu', e.target.value)}
                       inputMode="numeric"
                       pattern="[0-9]{22}"
                       maxLength={22}
                       placeholder="22 números sin espacios"
-                      className={`${inputClass} font-mono`}
+                      aria-invalid={Boolean(fieldErrors.bankAccount || fieldErrors.bankAccount_cbu)}
+                      className={withFieldError(fieldErrors.bankAccount || fieldErrors.bankAccount_cbu, 'font-mono')}
                     />
                   </Field>
                   <Field label="Alias">
-                    <input value={form.bankAccount_alias} onChange={(e) => updateField('bankAccount_alias', e.target.value)} className={inputClass} placeholder="Alias de la cuenta" />
+                    <input
+                      value={form.bankAccount_alias}
+                      aria-label="Alias"
+                      onChange={(e) => updateField('bankAccount_alias', e.target.value)}
+                      aria-invalid={Boolean(fieldErrors.bankAccount)}
+                      className={withFieldError(fieldErrors.bankAccount)}
+                      placeholder="Alias de la cuenta"
+                    />
                   </Field>
                 </div>
-                <p className="mt-2 text-xs text-slate-400">Completá al menos uno de los dos datos bancarios.</p>
+                {fieldErrors.bankAccount ? (
+                  <p className="mt-2 flex items-start gap-1.5 text-xs font-bold text-red-600" role="alert">
+                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    {fieldErrors.bankAccount}
+                  </p>
+                ) : (
+                  <p className="mt-2 text-xs text-slate-400">Completá al menos uno de los dos datos bancarios.</p>
+                )}
               </div>
 
               {checkingDuplicates && <p className="text-xs text-slate-400 font-bold uppercase tracking-widest">Revisando duplicados...</p>}
