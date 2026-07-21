@@ -46,6 +46,7 @@ import { validateMaxUploadSize } from '../lib/uploadLimits';
 import { buildPaymentCalendarDays, formatDateKey, formatPeriodLabel, getOverdueLines, getTodayLines, getUnscheduledLines, sumDebt, type PaymentScheduleLine } from '../lib/paymentSchedule';
 import { BudgetRowCell } from './project-detail/BudgetRowCell';
 import { PaymentModal } from './project-detail/PaymentModal';
+import { ExpenseInvoiceCell, ExpenseReceiptsCell, InvoiceDropOverlay } from './project-detail/ExpenseFileCells';
 import type { AreaExpense, BudgetItem, CashMovement, Collaborator, Payment, PaymentCollection } from './project-detail/types';
 import { formatIdentifier, inferLegacyIdentifiers, normalizeDigits, providerDisplayName } from '../lib/providerConstants';
 
@@ -82,6 +83,10 @@ const MANUAL_DOCUMENT_FAMILIES = DOCUMENT_FAMILIES.filter((family) => family.id 
 
 const DEFAULT_AREA_EXPENSE_SUBCATEGORY = 'Sin subcategoria';
 const AREA_EXPENSE_DRAG_TYPE = 'application/gb-goat-area-expense';
+
+const isFileDrag = (event: React.DragEvent<HTMLElement>) => (
+  Array.from(event.dataTransfer.types || []).includes('Files')
+);
 
 type AreaExpenseSortKey = 'manual' | 'updated' | 'provider' | 'paymentDate' | 'amountDesc' | 'amountAsc' | 'created';
 type ProjectPaymentScheduleLine = PaymentScheduleLine & {
@@ -2837,6 +2842,149 @@ export default function ProjectDetail() {
     if (userPermissions?.role === 'jefe_produccion') return receipt.uploadedByRole === 'jefe_area';
     return false;
   };
+  const renderExpenseInvoiceCell = (item: any, collectionName: PaymentCollection) => (
+    <ExpenseInvoiceCell
+      item={item}
+      canManage={canManageItemFiles(item, collectionName)}
+      uploadingInvoice={!!uploadingInvoices[`${collectionName}-${item.id}`]}
+      generatingLink={!!generatingInvoiceLinks[`${collectionName}-${item.id}`]}
+      onUploadInvoice={(file) => uploadInvoiceForExpense(item, file, collectionName)}
+      onRemoveInvoice={() => removeInvoiceFromExpense(item, collectionName)}
+      onCreateInvoiceLink={() => createInvoiceUploadLink(item, collectionName)}
+    />
+  );
+  const renderExpenseReceiptsCell = (item: any, collectionName: PaymentCollection) => (
+    <ExpenseReceiptsCell
+      item={item}
+      canManage={canManageItemFiles(item, collectionName)}
+      uploadingReceipt={!!uploadingInvoices[`other-${collectionName}-${item.id}`]}
+      onUploadReceipt={(file) => uploadOtherReceiptForExpense(item, file, collectionName)}
+      onRemoveReceipt={(receipt) => removeOtherReceiptFromExpense(item, receipt, collectionName)}
+      canRemoveReceipt={canDeleteOtherReceipt}
+    />
+  );
+  const renderMobileExpenseCard = ({
+    item,
+    collectionName,
+    onUpdate,
+    onDelete,
+    canEdit,
+    canDelete,
+    canCopyProviderInfo,
+  }: {
+    item: any;
+    collectionName: PaymentCollection;
+    onUpdate: (itemId: string, updates: any) => Promise<void>;
+    onDelete: (itemId: string) => Promise<void>;
+    canEdit: boolean;
+    canDelete: boolean;
+    canCopyProviderInfo: boolean;
+  }) => (
+    <div
+      key={`mobile-${collectionName}-${item.id}`}
+      onDragEnter={(event) => {
+        if (!isFileDrag(event) || !canManageItemFiles(item, collectionName)) return;
+        event.preventDefault();
+        setDragOverExpenseId(item.id);
+      }}
+      onDragOver={(event) => {
+        if (!isFileDrag(event)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = canManageItemFiles(item, collectionName) ? 'copy' : 'none';
+        if (canManageItemFiles(item, collectionName)) setDragOverExpenseId(item.id);
+      }}
+      onDragLeave={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragOverExpenseId(null);
+      }}
+      onDrop={(event) => {
+        if (isFileDrag(event) && canManageItemFiles(item, collectionName)) {
+          handleInvoiceDrop(event, item, collectionName);
+        }
+      }}
+      className={cn(
+        'relative rounded-lg border bg-white p-2 shadow-sm transition-colors',
+        dragOverExpenseId === item.id
+          ? 'border-emerald-400 bg-emerald-50 ring-2 ring-emerald-300'
+          : 'border-slate-300',
+      )}
+    >
+      {dragOverExpenseId === item.id && <InvoiceDropOverlay />}
+      <div className="flex items-start justify-between gap-1.5">
+        <div className="min-w-0 flex-1">
+          <BudgetRowCell
+            item={item}
+            providers={providers}
+            onUpdate={onUpdate}
+            onDelete={onDelete}
+            type="provider"
+            canCopyProviderInfo={canCopyProviderInfo}
+            onCreateProviderInvite={(row) => createProviderInviteForItem(row, collectionName)}
+            creatingProviderInvite={!!generatingProviderInviteLinks[`${collectionName}-${item.id}`]}
+            disabled={!canEdit}
+          />
+          <div className="mt-0.5">
+            <BudgetRowCell item={item} onUpdate={onUpdate} type="description" disabled={!canEdit} />
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => setExpandedMobileExpenseId((current) => current === item.id ? null : item.id)}
+          className="shrink-0 rounded border border-slate-100 bg-slate-50 px-1.5 py-0.5 text-right transition-colors hover:border-slate-300"
+          title="Ver detalle de precio unitario y cantidad"
+        >
+          <span className="flex items-center justify-end gap-1 text-[8px] font-black uppercase tracking-widest text-slate-300">
+            Total
+            {expandedMobileExpenseId === item.id ? <ChevronDown className="h-2.5 w-2.5" /> : <ChevronRight className="h-2.5 w-2.5" />}
+          </span>
+          <span className="block font-mono text-[11px] font-black text-slate-900">${item.total?.toLocaleString()}</span>
+        </button>
+      </div>
+
+      {expandedMobileExpenseId === item.id && (
+        <div className="mt-1 grid grid-cols-2 gap-1 rounded border border-slate-100 bg-slate-50 px-1.5 py-1">
+          <div className="min-w-0">
+            <div className="text-[7px] font-black uppercase tracking-widest text-slate-300">P. unitario</div>
+            <BudgetRowCell item={item} onUpdate={onUpdate} type="price" disabled={!canEdit} />
+          </div>
+          <div className="min-w-0 text-right">
+            <div className="text-[7px] font-black uppercase tracking-widest text-slate-300">Cant.</div>
+            <BudgetRowCell item={item} onUpdate={onUpdate} type="quantity" disabled={!canEdit} />
+          </div>
+        </div>
+      )}
+
+      <div className="mt-1.5 flex flex-wrap items-center gap-1">
+        <div className="w-[78px] rounded border border-slate-100 bg-slate-50 px-1 py-0.5 [&_button]:h-7 [&_button]:px-1 [&_button]:py-0 [&_button]:text-[8px]">
+          {renderPaymentScheduleCell(item, collectionName, !canEditPaymentDateForItem(item, collectionName))}
+        </div>
+        <div className="rounded border border-slate-100 bg-slate-50 p-0.5">
+          {renderExpenseInvoiceCell(item, collectionName)}
+        </div>
+        <div className="rounded border border-slate-100 bg-slate-50 p-0.5">
+          {renderExpenseReceiptsCell(item, collectionName)}
+        </div>
+        <button
+          type="button"
+          disabled={!canManagePaymentForItem(item, collectionName)}
+          onClick={() => openPaymentModal(item, collectionName)}
+          className="ml-auto inline-flex h-7 items-center gap-1 rounded border border-slate-900 bg-slate-900 px-1.5 text-[8px] font-black uppercase tracking-widest text-white disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-300"
+        >
+          <Wallet className="h-3 w-3" />
+          Pago
+        </button>
+        {canDelete && (
+          <button
+            type="button"
+            onClick={() => onDelete(item.id)}
+            className="inline-flex h-7 w-7 items-center justify-center rounded border border-red-100 bg-red-50 text-red-600"
+            title="Eliminar gasto"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
+    </div>
+  );
   const collaboratorEmails = collaborators.map((col) => normalizeEmail(col.email));
   const visiblePermissionCollaborators = isProjectAdmin
     ? collaborators
@@ -4758,19 +4906,91 @@ export default function ProjectDetail() {
               </div>
             </header>
 
-            <div className="bg-white border border-slate-200 rounded-xl shadow-sm">
-              <div className="min-w-[1200px]">
+            <div className="space-y-3 md:hidden">
+              {visibleCategories.map((area) => {
+                const areaItems = visibleBudgetItems
+                  .filter((item) => item.area === area)
+                  .sort((a, b) => (a.order || 0) - (b.order || 0));
+                const isCollapsed = collapsedCategories[area];
+                const areaTotal = areaItems.reduce((total, item) => total + (item.total || 0), 0);
+
+                return (
+                  <section key={`mobile-budget-${area}`} className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+                    <div className="flex items-center gap-2 border-l-4 border-emerald-400 bg-slate-900 px-3 py-2.5 text-white">
+                      <button
+                        type="button"
+                        onClick={() => toggleCategory(area)}
+                        className="p-1 text-slate-300 hover:text-white"
+                        title={isCollapsed ? 'Expandir categoría' : 'Colapsar categoría'}
+                      >
+                        {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                      </button>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-[10px] font-black uppercase tracking-widest">{area}</div>
+                        <div className="text-[8px] font-bold uppercase tracking-widest text-slate-400">{areaItems.length} gastos</div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-[7px] font-black uppercase tracking-widest text-slate-400">Subtotal</div>
+                        <div className="font-mono text-[11px] font-black text-emerald-300">${areaTotal.toLocaleString()}</div>
+                      </div>
+                      {canEditMainBudget && (
+                        <button
+                          type="button"
+                          onClick={() => addEmptyRow(area)}
+                          className="rounded border border-white/20 bg-white p-1.5 text-slate-800"
+                          title="Agregar gasto"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+                    {!isCollapsed && (
+                      <div className="space-y-2 bg-slate-100/80 p-2">
+                        {areaItems.map((item) => renderMobileExpenseCard({
+                          item,
+                          collectionName: 'budgetItems',
+                          onUpdate: updateBudgetItem,
+                          onDelete: deleteBudgetItem,
+                          canEdit: canEditMainBudget,
+                          canDelete: canEditMainBudget,
+                          canCopyProviderInfo: isProjectAdmin || isProductionLead,
+                        }))}
+                        {canEditMainBudget && (
+                          <button
+                            type="button"
+                            onClick={() => addEmptyRow(area)}
+                            className="flex h-8 w-full items-center justify-center gap-1.5 rounded border border-dashed border-slate-200 bg-white text-[9px] font-black uppercase tracking-widest text-slate-300 transition-colors hover:border-slate-300 hover:bg-slate-50 hover:text-slate-600"
+                          >
+                            <Plus className="h-3 w-3" />
+                            Nuevo Gasto
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </section>
+                );
+              })}
+              <div className="rounded-xl bg-slate-900 px-4 py-3 text-right text-white">
+                <div className="text-[8px] font-bold uppercase tracking-widest text-slate-400">Total presupuesto del proyecto</div>
+                <div className="font-mono text-lg font-black">${visibleBudgetItems.reduce((total, item) => total + (item.total || 0), 0).toLocaleString()}</div>
+              </div>
+            </div>
+
+            <div className="hidden overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm md:block">
+              <div className="overflow-x-auto">
+              <div className="min-w-[1360px]">
                 {/* Header Row */}
-                <div className="grid grid-cols-12 bg-slate-50 border-b border-slate-200 px-4 py-3 gap-2">
-                  <div className="col-span-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">Proveedor / Profesional</div>
-                  <div className="col-span-3 text-[10px] font-bold uppercase tracking-widest text-slate-400">Descripción / Tarea</div>
-                  <div className="col-span-1 text-[10px] font-bold uppercase tracking-widest text-slate-400">P. Unitario</div>
-                  <div className="col-span-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Cant.</div>
-                  <div className="col-span-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Total</div>
-                  <div className="col-span-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Fecha Pago</div>
-                  <div className="col-span-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Rodaje → Pago</div>
-                  <div className="col-span-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Pagado</div>
-                  <div className="col-span-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Docs</div>
+                <div className="grid grid-cols-[minmax(160px,1.45fr)_minmax(180px,1.6fr)_78px_100px_76px_92px_96px_104px_150px_78px] gap-2 border-b border-slate-200 bg-slate-50 px-6 py-3">
+                  <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Proveedor / Concepto</div>
+                  <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Descripción Detallada</div>
+                  <div className="text-center text-[10px] font-bold uppercase tracking-widest text-slate-400">Factura</div>
+                  <div className="text-center text-[10px] font-bold uppercase tracking-widest text-slate-400">P. Unitario</div>
+                  <div className="text-center text-[10px] font-bold uppercase tracking-widest text-slate-400">Cant.</div>
+                  <div className="text-right text-[10px] font-bold uppercase tracking-widest text-slate-400">Total</div>
+                  <div className="text-center text-[10px] font-bold uppercase tracking-widest text-slate-400">Fecha Pago</div>
+                  <div className="text-center text-[10px] font-bold uppercase tracking-widest text-slate-400">Rodaje a Pago</div>
+                  <div className="text-center text-[10px] font-bold uppercase tracking-widest text-slate-400">Otros comprobantes</div>
+                  <div className="text-center text-[10px] font-bold uppercase tracking-widest text-slate-400">Pagado</div>
                 </div>
 
                 <DragDropContext onDragEnd={canEditMainBudget ? onDragEnd : () => {}}>
@@ -4862,17 +5082,40 @@ export default function ProjectDetail() {
                                                   <div
                                                     ref={provided.innerRef}
                                                     {...provided.draggableProps}
+                                                    onDragEnter={(event) => {
+                                                      if (!isFileDrag(event) || !canManageItemFiles(item, 'budgetItems')) return;
+                                                      event.preventDefault();
+                                                      setDragOverExpenseId(item.id);
+                                                    }}
+                                                    onDragOver={(event) => {
+                                                      if (!isFileDrag(event)) return;
+                                                      event.preventDefault();
+                                                      event.dataTransfer.dropEffect = canManageItemFiles(item, 'budgetItems') ? 'copy' : 'none';
+                                                      if (canManageItemFiles(item, 'budgetItems')) setDragOverExpenseId(item.id);
+                                                    }}
+                                                    onDragLeave={(event) => {
+                                                      if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragOverExpenseId(null);
+                                                    }}
+                                                    onDrop={(event) => {
+                                                      if (isFileDrag(event) && canManageItemFiles(item, 'budgetItems')) {
+                                                        handleInvoiceDrop(event, item, 'budgetItems');
+                                                      }
+                                                    }}
                                                     className={cn(
-                                                      "group grid grid-cols-12 px-4 py-2 items-center border-b border-slate-50 last:border-0 hover:bg-slate-50 transition-colors",
-                                                      snapshot.isDragging && "bg-slate-50 shadow-xl border-y border-slate-200 rounded-lg relative z-50"
+                                                      "group relative flex items-center border-b border-slate-50 px-6 py-3 transition-colors last:border-0",
+                                                      dragOverExpenseId === item.id
+                                                        ? "bg-emerald-50 ring-2 ring-inset ring-emerald-400"
+                                                        : "bg-white hover:bg-slate-50",
+                                                      snapshot.isDragging && "z-50 rounded-lg border-y border-slate-200 bg-slate-50 shadow-xl"
                                                     )}
                                                   >
-                                                    <div className="col-span-12 flex items-center">
+                                                    {dragOverExpenseId === item.id && <InvoiceDropOverlay />}
+                                                    <div className="flex w-full items-center">
                                                       <div {...provided.dragHandleProps} className={cn("mr-2 text-slate-300", canEditMainBudget ? "hover:text-slate-500 cursor-grab active:cursor-grabbing" : "opacity-30")}>
                                                         <GripVertical className="w-4 h-4" />
                                                       </div>
-                                                      <div className="grid grid-cols-12 w-full items-center gap-2">
-                                                        <div className="col-span-2">
+                                                      <div className="grid w-full grid-cols-[minmax(142px,1.45fr)_minmax(180px,1.6fr)_78px_100px_76px_92px_96px_104px_150px_78px] items-center gap-2">
+                                                        <div>
                                                           <BudgetRowCell 
                                                             item={item} 
                                                             providers={providers} 
@@ -4885,7 +5128,7 @@ export default function ProjectDetail() {
                                                             disabled={!canEditMainBudget}
                                                           />
                                                         </div>
-                                                        <div className="col-span-3">
+                                                        <div>
                                                           <BudgetRowCell 
                                                             item={item} 
                                                             onUpdate={updateBudgetItem} 
@@ -4893,7 +5136,8 @@ export default function ProjectDetail() {
                                                             disabled={!canEditMainBudget}
                                                           />
                                                         </div>
-                                                        <div className="col-span-1">
+                                                        <div>{renderExpenseInvoiceCell(item, 'budgetItems')}</div>
+                                                        <div>
                                                           <BudgetRowCell 
                                                             item={item} 
                                                             onUpdate={updateBudgetItem} 
@@ -4901,7 +5145,7 @@ export default function ProjectDetail() {
                                                             disabled={!canEditMainBudget}
                                                           />
                                                         </div>
-                                                        <div className="col-span-1 text-center font-mono">
+                                                        <div className="text-center font-mono">
                                                           <BudgetRowCell 
                                                             item={item} 
                                                             onUpdate={updateBudgetItem} 
@@ -4909,16 +5153,17 @@ export default function ProjectDetail() {
                                                             disabled={!canEditMainBudget}
                                                           />
                                                         </div>
-                                                        <div className="col-span-1 text-right font-bold text-slate-900 text-xs">
+                                                        <div className="text-right text-xs font-bold text-slate-900">
                                                           ${item.total?.toLocaleString()}
                                                         </div>
-                                                        <div className="col-span-1">
+                                                        <div>
                                                           {renderPaymentScheduleCell(item, 'budgetItems', !canEditPaymentDateForItem(item, 'budgetItems'))}
                                                         </div>
-                                                        <div className="col-span-1">
+                                                        <div>
                                                           {renderPaymentLeadTimeCell(item)}
                                                         </div>
-                                                        <div className="col-span-1">
+                                                        <div>{renderExpenseReceiptsCell(item, 'budgetItems')}</div>
+                                                        <div className="flex items-center justify-center gap-2">
                                                           <BudgetRowCell 
                                                             item={item} 
                                                             onUpdate={updateBudgetItem} 
@@ -4927,59 +5172,6 @@ export default function ProjectDetail() {
                                                             onManagePayment={(item) => openPaymentModal(item, 'budgetItems')}
                                                             disabled={!canEditMainBudget}
                                                           />
-                                                        </div>
-                                                        <div className="col-span-1 flex flex-wrap items-center justify-end gap-1">
-                                                          {!activeAreas.includes(item.area) && (
-                                                            <>
-                                                              {item.invoice?.url ? (
-                                                                <>
-                                                                  <a href={item.invoice.url} target="_blank" rel="noreferrer" className="inline-flex h-7 w-7 items-center justify-center rounded border border-emerald-100 bg-emerald-50 text-emerald-600" title="Ver factura">
-                                                                    <FileText className="h-3.5 w-3.5" />
-                                                                  </a>
-                                                                  <button type="button" onClick={() => removeInvoiceFromExpense(item, 'budgetItems')} className="inline-flex h-7 w-7 items-center justify-center rounded border border-slate-100 text-slate-300 hover:text-red-500" title="Quitar factura">
-                                                                    <X className="h-3.5 w-3.5" />
-                                                                  </button>
-                                                                </>
-                                                              ) : (
-                                                                <>
-                                                                  <label className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded border border-slate-200 bg-white text-slate-400 hover:border-black hover:text-black" title="Adjuntar factura PDF/JPG/PNG">
-                                                                    <Paperclip className="h-3.5 w-3.5" />
-                                                                    <input
-                                                                      type="file"
-                                                                      accept={INVOICE_FILE_ACCEPT}
-                                                                      className="hidden"
-                                                                      disabled={!!uploadingInvoices[`budgetItems-${item.id}`]}
-                                                                      onChange={(event) => {
-                                                                        uploadInvoiceForExpense(item, event.target.files?.[0], 'budgetItems');
-                                                                        event.target.value = '';
-                                                                      }}
-                                                                    />
-                                                                  </label>
-                                                                  <button type="button" disabled={!!generatingInvoiceLinks[`budgetItems-${item.id}`]} onClick={() => createInvoiceUploadLink(item, 'budgetItems')} className="inline-flex h-7 w-7 items-center justify-center rounded border border-blue-100 bg-blue-50 text-blue-600 disabled:text-slate-300" title="Generar link para cargar factura">
-                                                                    <LinkIcon className="h-3.5 w-3.5" />
-                                                                  </button>
-                                                                </>
-                                                              )}
-                                                              <label className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded border border-sky-100 bg-sky-50 text-sky-600" title="Adjuntar otro comprobante">
-                                                                <Plus className="h-3.5 w-3.5" />
-                                                                <input
-                                                                  type="file"
-                                                                  accept="application/pdf,image/jpeg,image/png,image/webp,.pdf,.jpg,.jpeg,.png,.webp"
-                                                                  className="hidden"
-                                                                  disabled={!!uploadingInvoices[`other-budgetItems-${item.id}`]}
-                                                                  onChange={(event) => {
-                                                                    uploadOtherReceiptForExpense(item, event.target.files?.[0], 'budgetItems');
-                                                                    event.target.value = '';
-                                                                  }}
-                                                                />
-                                                              </label>
-                                                              {(item.otherReceipts || []).slice(0, 2).map((receipt: any, receiptIndex: number) => (
-                                                                <a key={receipt.id || receipt.path || receiptIndex} href={receipt.url} target="_blank" rel="noreferrer" className="inline-flex h-7 min-w-7 items-center justify-center rounded border border-sky-100 bg-white px-1 text-[8px] font-black text-sky-700" title={receipt.originalFileName || 'Ver comprobante'}>
-                                                                  C{receiptIndex + 1}
-                                                                </a>
-                                                              ))}
-                                                            </>
-                                                          )}
                                                           {canEditMainBudget && (
                                                             <button
                                                               type="button"
@@ -5035,6 +5227,7 @@ export default function ProjectDetail() {
                   </div>
                   <div className="col-span-1"></div>
                 </div>
+              </div>
               </div>
             </div>
           </div>
@@ -5719,6 +5912,7 @@ export default function ProjectDetail() {
                                 setDragOverAreaTarget(`item:${item.id}`);
                                 return;
                               }
+                              if (!isFileDrag(event)) return;
                               event.preventDefault();
                               if (canUploadAreaFiles(item.area, item.subcategory)) setDragOverExpenseId(item.id);
                             }}
@@ -5730,6 +5924,7 @@ export default function ProjectDetail() {
                                 setDragOverAreaTarget(`item:${item.id}`);
                                 return;
                               }
+                              if (!isFileDrag(event)) return;
                               event.preventDefault();
                               event.dataTransfer.dropEffect = canUploadAreaFiles(item.area, item.subcategory) ? 'copy' : 'none';
                               if (canUploadAreaFiles(item.area, item.subcategory)) setDragOverExpenseId(item.id);
@@ -5746,7 +5941,7 @@ export default function ProjectDetail() {
                                 finishAreaExpenseDrop(item.area, item.subcategory, item.id);
                                 return;
                               }
-                              canUploadAreaFiles(item.area, item.subcategory) && handleInvoiceDrop(event, item);
+                              if (isFileDrag(event) && canUploadAreaFiles(item.area, item.subcategory)) handleInvoiceDrop(event, item);
                             }}
                             className={cn(
                               "relative grid min-w-[1360px] grid-cols-[minmax(160px,1.45fr)_minmax(180px,1.6fr)_78px_100px_76px_92px_96px_104px_150px_78px] px-6 py-3 items-center gap-2 transition-colors group",
@@ -5759,14 +5954,7 @@ export default function ProjectDetail() {
                                 : "bg-white hover:bg-slate-50"
                             )}
                           >
-                            {dragOverExpenseId === item.id && (
-                              <div className="absolute inset-0 z-20 bg-emerald-50/90 border border-emerald-200 flex items-center justify-center pointer-events-none">
-                                <div className="px-4 py-2 rounded bg-white border border-emerald-100 shadow-sm text-[10px] font-black uppercase tracking-widest text-emerald-700 flex items-center gap-2">
-                                  <Paperclip className="w-3.5 h-3.5" />
-                                  Soltar factura PDF/JPG/PNG
-                                </div>
-                              </div>
-                            )}
+                            {dragOverExpenseId === item.id && <InvoiceDropOverlay />}
                             <div>
                               <div className="flex items-start gap-2">
                                 {canEditAreaExpense(item) && (
@@ -5804,72 +5992,7 @@ export default function ProjectDetail() {
                                 disabled={!canEditAreaExpense(item)}
                               />
                             </div>
-                            <div className="flex justify-center">
-                              <div className="flex items-center justify-center gap-1">
-                                {item.invoice?.url ? (
-                                  <>
-                                    <a
-                                      href={item.invoice.url}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                      className="w-7 h-7 rounded border border-emerald-100 bg-emerald-50 text-emerald-600 hover:bg-emerald-600 hover:text-white transition-all flex items-center justify-center"
-                                      title={item.invoice.fileName || 'Ver factura'}
-                                    >
-                                      <FileText className="w-3.5 h-3.5" />
-                                    </a>
-                                    {canUploadAreaFiles(item.area, item.subcategory) && (
-                                      <button
-                                        type="button"
-                                        disabled={!!uploadingInvoices[`areaExpenses-${item.id}`]}
-                                        onClick={() => removeInvoiceFromExpense(item)}
-                                        className="w-7 h-7 rounded border border-slate-100 bg-white text-slate-300 hover:text-red-500 hover:border-red-100 transition-all flex items-center justify-center"
-                                        title="Quitar factura"
-                                      >
-                                        <X className="w-3.5 h-3.5" />
-                                      </button>
-                                    )}
-                                  </>
-                                ) : (
-                                  canUploadAreaFiles(item.area, item.subcategory) ? (
-                                    <>
-                                      <label
-                                        className={cn(
-                                          "w-7 h-7 rounded border transition-all flex items-center justify-center cursor-pointer",
-                                          uploadingInvoices[`areaExpenses-${item.id}`]
-                                            ? "bg-slate-100 border-slate-200 text-slate-300 cursor-wait"
-                                            : "bg-white border-slate-200 text-slate-400 hover:text-black hover:border-black"
-                                        )}
-                                        title="Adjuntar factura PDF/JPG/PNG"
-                                      >
-                                        <Paperclip className="w-3.5 h-3.5" />
-                                        <input
-                                          type="file"
-                                          accept={INVOICE_FILE_ACCEPT}
-                                          className="hidden"
-                                          disabled={!!uploadingInvoices[`areaExpenses-${item.id}`]}
-                                          onChange={(event) => {
-                                            const file = event.target.files?.[0];
-                                            uploadInvoiceForExpense(item, file);
-                                            event.target.value = '';
-                                          }}
-                                        />
-                                      </label>
-                                      <button
-                                        type="button"
-                                        disabled={!!generatingInvoiceLinks[`areaExpenses-${item.id}`]}
-                                        onClick={() => createInvoiceUploadLink(item)}
-                                        className="w-7 h-7 rounded border border-blue-100 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white transition-all flex items-center justify-center disabled:bg-slate-100 disabled:text-slate-300"
-                                        title="Copiar link para que el proveedor cargue su factura"
-                                      >
-                                        <LinkIcon className="w-3.5 h-3.5" />
-                                      </button>
-                                    </>
-                                  ) : (
-                                    <span className="text-[9px] font-bold uppercase tracking-widest text-slate-300">Sin factura</span>
-                                  )
-                                )}
-                              </div>
-                            </div>
+                            <div>{renderExpenseInvoiceCell(item, 'areaExpenses')}</div>
                             <div>
                               <BudgetRowCell 
                                 item={item} 
@@ -5895,58 +6018,7 @@ export default function ProjectDetail() {
                             <div>
                               {renderPaymentLeadTimeCell(item)}
                             </div>
-                            <div>
-                              <div className="flex flex-wrap items-center justify-center gap-1">
-                                {(Array.isArray(item.otherReceipts) ? item.otherReceipts : []).map((receipt: any) => (
-                                  <div key={receipt.id || receipt.path} className="flex items-center">
-                                    <a
-                                      href={receipt.url}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                      className="w-7 h-7 rounded-l border border-blue-100 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white transition-all flex items-center justify-center"
-                                      title={receipt.originalFileName || receipt.fileName || 'Ver comprobante'}
-                                    >
-                                      <Paperclip className="w-3.5 h-3.5" />
-                                    </a>
-                                    {canDeleteOtherReceipt(receipt) && (
-                                      <button
-                                        type="button"
-                                        disabled={!!uploadingInvoices[`other-areaExpenses-${item.id}`]}
-                                        onClick={() => removeOtherReceiptFromExpense(item, receipt)}
-                                        className="w-6 h-7 rounded-r border-y border-r border-blue-100 bg-white text-slate-300 hover:text-red-500 hover:border-red-100 transition-all flex items-center justify-center"
-                                        title="Quitar comprobante"
-                                      >
-                                        <X className="w-3 h-3" />
-                                      </button>
-                                    )}
-                                  </div>
-                                ))}
-                                {canUploadAreaFiles(item.area, item.subcategory) && (
-                                  <label
-                                    className={cn(
-                                      "w-7 h-7 rounded border transition-all flex items-center justify-center cursor-pointer",
-                                      uploadingInvoices[`other-areaExpenses-${item.id}`]
-                                        ? "bg-slate-100 border-slate-200 text-slate-300 cursor-wait"
-                                        : "bg-white border-slate-200 text-slate-400 hover:text-black hover:border-black"
-                                    )}
-                                    title="Adjuntar otro comprobante"
-                                  >
-                                    <Plus className="w-3.5 h-3.5" />
-                                    <input
-                                      type="file"
-                                      accept="application/pdf,image/jpeg,image/png,image/webp,.pdf,.jpg,.jpeg,.png,.webp"
-                                      className="hidden"
-                                      disabled={!!uploadingInvoices[`other-areaExpenses-${item.id}`]}
-                                      onChange={(event) => {
-                                        const file = event.target.files?.[0];
-                                        uploadOtherReceiptForExpense(item, file);
-                                        event.target.value = '';
-                                      }}
-                                    />
-                                  </label>
-                                )}
-                              </div>
-                            </div>
+                            <div>{renderExpenseReceiptsCell(item, 'areaExpenses')}</div>
                             <div className="flex items-center justify-center gap-2">
                                <BudgetRowCell 
                                  item={item} 
