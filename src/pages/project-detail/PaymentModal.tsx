@@ -7,6 +7,7 @@ import { db, storage } from '../../lib/firebase';
 import { handleFirestoreError } from '../../lib/firestoreUtils';
 import { cn } from '../../lib/utils';
 import { validateMaxUploadSize } from '../../lib/uploadLimits';
+import { getFileExtension, sanitizeFileName } from '../../lib/files';
 import type { Payment, PaymentCollection } from './types';
 
 const formatDate = (dateString: string | any) => {
@@ -34,19 +35,9 @@ const toDateInputValue = (dateValue: any = new Date()) => {
   return `${year}-${month}-${day}`;
 };
 
-const sanitizeFileName = (fileName: string) => {
-  return fileName
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-zA-Z0-9._-]/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '')
-    .slice(0, 120);
-};
-
 const buildReceiptFileName = (paymentId: string, file: File) => {
   const cleanBase = sanitizeFileName(file.name.replace(/\.[^.]+$/, '') || 'comprobante').slice(0, 70);
-  const ext = sanitizeFileName(file.name.split('.').pop() || 'pdf').toLowerCase();
+  const ext = getFileExtension(file.name) || 'pdf';
   return `comprobante-${paymentId}-${cleanBase}.${ext}`;
 };
 

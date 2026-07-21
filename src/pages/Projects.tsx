@@ -7,8 +7,8 @@ import { cn } from '../lib/utils';
 import { Plus, Search, ExternalLink, Star } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
-
-const normalizeEmail = (email?: string | null) => (email || '').trim().toLowerCase();
+import { normalizeEmail } from '../lib/identity';
+import { PageHeader } from '../components/PageHeader';
 
 const statusColors: Record<string, string> = {
   'Presupuesto': 'bg-slate-100 text-slate-700',
@@ -145,12 +145,11 @@ export default function Projects() {
 
   return (
     <div className="max-w-full mx-auto space-y-3 sm:space-y-6">
-      <header className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between border-b border-slate-200 pb-4 sm:gap-4 sm:pb-6">
-        <div>
-          <div className="text-[10px] text-slate-400 uppercase tracking-widest font-bold mb-1">GB GOAT / Catálogo</div>
-          <h1 className="text-xl font-bold text-black leading-none sm:text-2xl">Histórico y activas</h1>
-        </div>
-        {isAppAdmin && (
+      <PageHeader
+        eyebrow="GB GOAT / Catálogo"
+        title="Histórico y activas"
+        className="gap-3 pb-4 sm:gap-4 sm:pb-6"
+        actions={isAppAdmin ? (
           <button 
             onClick={() => setShowNewModal(true)}
             className="px-3 py-1.5 bg-black text-white rounded text-[10px] font-bold hover:bg-slate-800 transition-all active:scale-[0.98] uppercase tracking-widest flex items-center gap-2"
@@ -158,8 +157,8 @@ export default function Projects() {
             <Plus className="w-3 h-3" />
             Nuevo Proyecto
           </button>
-        )}
-      </header>
+        ) : null}
+      />
 
       <div className="flex gap-4">
         <div className="relative flex-1">

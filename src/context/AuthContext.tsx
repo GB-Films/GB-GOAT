@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { User, onAuthStateChanged, signOut } from 'firebase/auth';
 import { doc, getDoc, runTransaction, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
+import { normalizeEmail } from '../lib/identity';
 
 interface AuthContextType {
   user: User | null;
@@ -14,8 +15,6 @@ interface AuthContextType {
 
 export const APP_OWNER_EMAIL = 'info@granbertafilms.com';
 export const USER_INVITE_TOKEN_KEY = 'gb_goat_invite_token';
-
-const normalizeEmail = (email?: string | null) => (email || '').trim().toLowerCase();
 
 const AuthContext = createContext<AuthContextType>({
   user: null,

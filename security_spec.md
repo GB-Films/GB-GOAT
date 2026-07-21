@@ -1,39 +1,59 @@
-# Security Specification - GB GOAT
+# Especificación de seguridad - GB GOAT
 
-## 1. Data Invariants
-- A **Project** must always have a `createdBy` field matching the UID of the creator.
-- **BudgetItems** must belong to a valid `projectId`.
-- **CollaboratorPermissions** (subcollection of Project) must be identified by the collaborator's email.
-- Access to any sub-resource of a Project is strictly gated by the Project's `createdBy` or `collaboratorEmails` fields.
+## Principios
 
-## 2. The "Dirty Dozen" Payloads (Attack Vectors)
+1. Las reglas de Firebase son la autoridad; la UI sólo refleja permisos.
+2. Los roles globales (`users/{uid}.role`) y los roles de proyecto (`projects/{id}/collaborators/{email}.role`) son independientes.
+3. Ser miembro permite leer el contexto del proyecto. La edición se limita por rol, pestaña, área y subcategoría.
+4. El historial financiero es append-only para colaboradores. Sólo un administrador del proyecto puede corregir o borrar registros existentes.
+5. Facturas y comprobantes se autorizan contra el proyecto, la colección y la fila a la que pertenecen.
 
-| ID | Attack Description | Expected Result |
-|----|--------------------|-----------------|
-| 1  | Read project without being owner or listed collaborator | PERMISSION_DENIED |
-| 2  | Create project with `createdBy` NOT matching current UID | PERMISSION_DENIED |
-| 3  | Update project's `createdBy` field (Identity Spoofing) | PERMISSION_DENIED |
-| 4  | Add self to `collaboratorEmails` without being project owner | PERMISSION_DENIED |
-| 5  | Read `budgetItems` of a project the user doesn't have access to | PERMISSION_DENIED |
-| 6  | Update `budgetItems` in a project as a non-owner/non-collaborator | PERMISSION_DENIED |
-| 7  | Delete a project as a collaborator (not owner) | PERMISSION_DENIED |
-| 8  | Assign permissions to a collaborator as another collaborator | PERMISSION_DENIED |
-| 9  | Inject 1MB string into `projectId` or `email` path | PERMISSION_DENIED (via isValidId) |
-| 10 | Update `createdAt` timestamp (Temporal Integrity) | PERMISSION_DENIED |
-| 11 | List projects without filtering by owner/collaborator | PERMISSION_DENIED (Secure List Queries) |
-| 12 | Read user profile of another user without being signed in | PERMISSION_DENIED |
+## Matriz resumida
 
-## 3. Implementation Verification
-The `firestore.rules` file implements these gates through:
-- **Master Gate Pattern**: `hasProjectAccess(projectId)` helper used for all project sub-resources.
-- **Secure List Queries**: `allow list` explicitly evaluates `resource.data` against `request.auth.uid` and `request.auth.token.email`.
-- **Validation Blueprints**: `isValidProject`, `isValidBudgetItem`, etc., enforce schema and identity integrity.
+| Acción | Admin app/proyecto | Jefe de producción | Jefe de área |
+| --- | --- | --- | --- |
+| Leer proyecto asignado | Sí | Sí | Sí |
+| Editar Presu Ppal | Sí | No | No |
+| Crear/editar gasto de Área | Sí | Sólo alcance asignado | Sólo alcance asignado |
+| Anexar pago/comprobante | Sí | Sólo alcance asignado | Sólo alcance asignado |
+| Editar/borrar historial financiero | Sí | No | No |
+| Editar fechas y locación del proyecto | Sí | Sí | No |
+| Administrar roles de proyecto | Sí | No | No |
+| Delegar áreas | Sí | Sólo áreas propias | No |
+| Administrar documentos de proyecto | Sí | Si tiene pestaña Documentos | No |
+| Ver reportes globales | Admin app | No | No |
 
-## 4. Conflict Report
+Un jefe de producción sólo puede delegar subcategorías que le hayan sido asignadas explícitamente. Si posee el área completa, puede delegar el área completa; la delegación fina fuera de su lista explícita queda reservada al administrador.
 
-| Collection | Identity Spoofing | State Shortcutting | Resource Poisoning |
-|------------|-------------------|--------------------|--------------------|
-| projects | Protected (createdBy check) | Protected (status enum) | Protected (isValidId) |
-| budgetItems| Protected (hasProjectAccess)| N/A | Protected (isValidId) |
-| users | Protected (uid check) | N/A | Protected (isValidId) |
-| collaborators| Protected (isProjectOwner) | N/A | Protected (isValidId) |
+## Invariantes financieras
+
+- Los pagos nuevos deben tener importe mayor que cero y autor/autora iguales a la sesión autenticada.
+- Un colaborador sólo puede anexar un pago; no puede reescribir ni acortar `paymentHistory`.
+- Un gasto con pagos sólo puede eliminarlo un administrador del proyecto.
+- Los movimientos de caja asociados a pagos sólo pueden corregirse o eliminarse administrativamente.
+- Un comprobante adicional de colaborador sólo puede agregarse al final y debe registrar su email.
+
+## Invariantes de archivos
+
+- Tamaño máximo: 2 MB.
+- Facturas: PDF, JPG o PNG.
+- Comprobantes y documentos: PDF, JPG, PNG o WEBP según el flujo.
+- La metadata de una factura autenticada debe coincidir con `projectId`, colección, fila y área.
+- Los colaboradores pueden crear archivos dentro de su alcance, pero sólo un administrador puede reemplazar o borrar comprobantes financieros existentes.
+
+## Casos negativos mínimos
+
+- Usuario ajeno leyendo o escribiendo un proyecto.
+- Colaborador editando Presu Ppal.
+- Jefe de área escribiendo fuera de su área/subcategoría.
+- Colaborador cambiando o eliminando un pago ya registrado.
+- Jefe de producción delegando un área o subcategoría que no posee.
+- Carga de factura cuya metadata apunta a otra fila o proyecto.
+- Invitación pública usada, vencida o destinada a otra fila.
+- Cambio de rol global provocado por una asignación dentro de un proyecto.
+
+La sintaxis se valida localmente con `npm run lint:rules`. La validación funcional completa debe ejecutarse contra Firebase Emulator Suite antes de desplegar reglas.
+
+## Riesgo de dependencia pendiente
+
+La versión de `xlsx` publicada en npm mantiene avisos de seguridad sin corrección disponible en ese registro. Las importaciones quedaron limitadas por tipo y a 5 MB para reducir exposición, pero esto no elimina el riesgo de un archivo malicioso. La actualización recomendada por SheetJS se distribuye fuera de npm y requiere aprobación explícita del origen, o bien reemplazar el parser en una migración dedicada.

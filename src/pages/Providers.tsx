@@ -18,6 +18,9 @@ import {
 import { db } from '../lib/firebase';
 import { handleFirestoreError } from '../lib/firestoreUtils';
 import { useAuth } from '../context/AuthContext';
+import { getPaymentTotal } from '../lib/projectFinance';
+import { PageHeader } from '../components/PageHeader';
+import { validateSpreadsheetImport } from '../lib/files';
 import { Plus, Search, Truck, X, Upload, Download, Pencil, Trash2, Link2, Copy, CheckCircle2, FileText, Paperclip, CalendarDays } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import * as XLSX from 'xlsx';
@@ -32,7 +35,7 @@ import {
   providerSearchText,
   inferLegacyIdentifiers,
 } from '../lib/providerConstants';
-import { PROVIDER_CREATE_ROLES, PROVIDER_UPDATE_ROLES } from '../lib/roles';
+import { hasGlobalRole, PROVIDER_CREATE_ROLES, PROVIDER_UPDATE_ROLES } from '../lib/roles';
 
 const inputClass = 'w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all';
 const labelClass = 'block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest';
@@ -124,8 +127,8 @@ export default function Providers() {
   const [searchTerm, setSearchTerm] = useState('');
   const canImportProviders = profile?.role === 'admin';
   const canDeleteProviders = profile?.role === 'admin';
-  const canEditProviders = PROVIDER_UPDATE_ROLES.includes(profile?.role);
-  const canCreateProviders = PROVIDER_CREATE_ROLES.includes(profile?.role);
+  const canEditProviders = hasGlobalRole(profile?.role, PROVIDER_UPDATE_ROLES);
+  const canCreateProviders = hasGlobalRole(profile?.role, PROVIDER_CREATE_ROLES);
 
   const filteredProviders = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
@@ -298,6 +301,12 @@ export default function Providers() {
     if (!canImportProviders) return;
     const file = event.target.files?.[0];
     if (!file) return;
+    const fileError = validateSpreadsheetImport(file);
+    if (fileError) {
+      alert(fileError);
+      event.target.value = '';
+      return;
+    }
 
     const reader = new FileReader();
     reader.onload = async (e) => {
@@ -713,9 +722,7 @@ export default function Providers() {
         const pushLine = (item: any, source: 'Presupuesto Principal' | 'Gestion por Areas') => {
           if (item.providerId !== provider.id) return;
           if (source === 'Presupuesto Principal' && activeAreas.includes(item.area)) return;
-          const paid = Array.isArray(item.paymentHistory)
-            ? item.paymentHistory.reduce((acc: number, payment: any) => acc + (Number(payment.amount) || 0), 0)
-            : 0;
+          const paid = getPaymentTotal(item);
           const payments = Array.isArray(item.paymentHistory)
             ? item.paymentHistory.map((payment: any, index: number) => ({
                 id: payment.id || index,
@@ -798,12 +805,10 @@ export default function Providers() {
 
   return (
     <div className="max-w-full mx-auto space-y-6">
-      <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between border-b border-slate-200 pb-6">
-        <div>
-          <div className="text-[10px] text-slate-400 uppercase tracking-widest font-bold mb-1">GB GOAT / Recursos</div>
-          <h1 className="text-2xl font-bold text-black leading-none">Base de contactos</h1>
-        </div>
-        <div className="flex flex-wrap gap-2">
+      <PageHeader
+        eyebrow="GB GOAT / Recursos"
+        title="Base de contactos"
+        actions={<>
           {canImportProviders && (
             <>
               <button onClick={downloadTemplate} className="px-4 py-2 bg-white border border-slate-200 text-[10px] font-bold uppercase tracking-widest rounded hover:bg-slate-50 transition-colors flex items-center gap-2">
@@ -832,8 +837,8 @@ export default function Providers() {
               </button>
             </>
           )}
-        </div>
-      </header>
+        </>}
+      />
 
       {false && generatedInviteLink && (
         <div className="bg-white rounded-xl border border-emerald-200 p-5 shadow-sm flex flex-col lg:flex-row gap-4 lg:items-center justify-between">

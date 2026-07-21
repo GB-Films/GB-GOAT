@@ -1,12 +1,12 @@
 import { useState, useEffect, useMemo } from 'react';
 import type { FormEvent } from 'react';
-import { collection, collectionGroup, getDocs, doc, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore';
+import { collection, getDocs, doc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { Users, Mail, Shield, ShieldCheck, MoreVertical, Lock, Link2, Copy, CheckCircle2, Search } from 'lucide-react';
 import { useAuth, APP_OWNER_EMAIL } from '../context/AuthContext';
 import { roleSearchText } from '../lib/roles';
-
-const normalizeEmail = (email?: string | null) => (email || '').trim().toLowerCase();
+import { normalizeEmail } from '../lib/identity';
+import { PageHeader } from '../components/PageHeader';
 
 const generateInviteToken = () => {
   const bytes = new Uint8Array(20);
@@ -48,33 +48,7 @@ export default function Team() {
     const fetchUsers = async () => {
       try {
         const querySnapshot = await getDocs(collection(db, 'users'));
-        const userItems = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
-        setUsers(userItems);
-
-        try {
-          const productionLeadSnapshot = await getDocs(query(
-            collectionGroup(db, 'collaborators'),
-            where('role', '==', 'jefe_produccion')
-          ));
-          const productionLeadEmails = new Set(
-            productionLeadSnapshot.docs
-              .map((item) => normalizeEmail(item.data().email || item.id))
-              .filter(Boolean)
-          );
-          const syncedUsers = userItems.map((item) => {
-            const shouldPromote = productionLeadEmails.has(normalizeEmail(item.email))
-              && !['admin', 'jefe_produccion', 'ayudante_admin'].includes(item.role);
-            return shouldPromote ? { ...item, role: 'jefe_produccion' } : item;
-          });
-
-          setUsers(syncedUsers);
-
-          await Promise.all(syncedUsers
-            .filter((item, index) => item.role !== userItems[index].role)
-            .map((item) => updateDoc(doc(db, 'users', item.id), { role: 'jefe_produccion' })));
-        } catch (syncError) {
-          console.warn('No se pudo sincronizar jefes de produccion globales:', syncError);
-        }
+        setUsers(querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any)));
       } catch (error) {
         console.error("Error fetching users:", error);
       } finally {
@@ -162,12 +136,7 @@ export default function Team() {
 
   return (
     <div className="max-w-full mx-auto space-y-6">
-      <header className="mb-8 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between border-b border-slate-200 pb-6">
-        <div>
-          <div className="text-[10px] text-slate-400 uppercase tracking-widest font-bold mb-1">GB GOAT / Accesos</div>
-          <h1 className="text-2xl font-bold text-black leading-none">Usuarios y permisos</h1>
-        </div>
-      </header>
+      <PageHeader eyebrow="GB GOAT / Accesos" title="Usuarios y permisos" className="mb-8" />
 
       {isAdmin && (
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">

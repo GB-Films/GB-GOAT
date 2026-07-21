@@ -14,7 +14,8 @@ import { collection, getDocs, or, query, where } from 'firebase/firestore';
 import { cn } from '../lib/utils';
 import { auth, db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
-import { PROVIDER_ACCESS_ROLES } from '../lib/roles';
+import { hasGlobalRole, PROVIDER_ACCESS_ROLES } from '../lib/roles';
+import { normalizeEmail } from '../lib/identity';
 
 const menuItems = [
   { icon: LayoutDashboard, label: 'Dashboard', path: '/', adminOnly: false },
@@ -33,8 +34,6 @@ const roleLabels: Record<string, string> = {
   colaborador: 'Colaborador',
 };
 
-const normalizeEmail = (email?: string | null) => (email || '').trim().toLowerCase();
-
 export default function Sidebar() {
   const { profile } = useAuth();
   const [pinnedProjectIds, setPinnedProjectIds] = useState<string[]>([]);
@@ -44,7 +43,7 @@ export default function Sidebar() {
   const filteredMenuItems = menuItems.filter(item => (
     profile?.role === 'admin'
     || !item.adminOnly
-    || (item.productionLead && PROVIDER_ACCESS_ROLES.includes(profile?.role))
+    || (item.productionLead && hasGlobalRole(profile?.role, PROVIDER_ACCESS_ROLES))
   ));
 
   useEffect(() => {

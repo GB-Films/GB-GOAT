@@ -5,20 +5,11 @@ import { useParams } from 'react-router-dom';
 import { AlertTriangle, CheckCircle2, FileText, Loader2, Upload } from 'lucide-react';
 import { db, storage } from '../lib/firebase';
 import { MAX_UPLOAD_SIZE_LABEL, validateMaxUploadSize } from '../lib/uploadLimits';
-
-const sanitizeFileName = (fileName: string) => (
-  fileName
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-zA-Z0-9._-]/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '')
-    .slice(0, 120)
-);
+import { getFileExtension, sanitizeFileName } from '../lib/files';
 
 const buildInvoiceFileName = (token: string, file: File) => {
   const cleanBase = sanitizeFileName(file.name.replace(/\.[^.]+$/, '') || 'factura').slice(0, 70) || 'factura';
-  const extension = sanitizeFileName(file.name.split('.').pop() || '').toLowerCase();
+  const extension = getFileExtension(file.name);
   const safeExtension = extension === 'jpg' || extension === 'jpeg' || extension === 'png' || extension === 'pdf'
     ? extension
     : file.type === 'image/jpeg'
@@ -35,7 +26,7 @@ const INVOICE_LABEL = 'PDF, JPG o PNG';
 
 const getInvoiceContentType = (file: File) => {
   if (ALLOWED_INVOICE_TYPES.includes(file.type)) return file.type;
-  const extension = sanitizeFileName(file.name.split('.').pop() || '').toLowerCase();
+  const extension = getFileExtension(file.name);
   if (extension === 'jpg' || extension === 'jpeg') return 'image/jpeg';
   if (extension === 'png') return 'image/png';
   return 'application/pdf';

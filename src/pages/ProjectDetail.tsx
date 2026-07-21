@@ -49,6 +49,21 @@ import { PaymentModal } from './project-detail/PaymentModal';
 import { ExpenseInvoiceCell, ExpenseReceiptsCell, InvoiceDropOverlay } from './project-detail/ExpenseFileCells';
 import type { AreaExpense, BudgetItem, CashMovement, Collaborator, Payment, PaymentCollection } from './project-detail/types';
 import { formatIdentifier, inferLegacyIdentifiers, normalizeDigits, providerDisplayName } from '../lib/providerConstants';
+import { normalizeEmail, normalizeSearchText } from '../lib/identity';
+import {
+  DEFAULT_AREA_LEAD_TABS,
+  DEFAULT_PRODUCTION_LEAD_TABS,
+  PROJECT_TAB_IDS,
+  canEditExistingPayment,
+  canEditProjectArea,
+  canEditProjectSubcategory,
+  getDefaultCollaboratorPermissions,
+  normalizeAllowedTabs,
+  normalizeProjectRole,
+} from '../lib/projectAccess';
+import { getPaymentTotal } from '../lib/projectFinance';
+import { getFileExtension, sanitizeFileName, validateSpreadsheetImport } from '../lib/files';
+import { PROJECT_STATUSES } from '../lib/projects';
 
 const tabs = [
   { id: 'resumen', label: 'Resumen', icon: Info },
@@ -139,68 +154,9 @@ const roleLabels: Record<Collaborator['role'], string> = {
   jefe_area: 'Jefe de Área',
 };
 
-const PROJECT_TAB_IDS = tabs.map(tab => tab.id);
-const DEFAULT_AREA_LEAD_TABS = ['resumen', 'areas', 'cajas', 'saldos', 'documentos', 'proveedores'];
-const DEFAULT_PRODUCTION_LEAD_TABS = ['resumen', 'areas', 'cajas', 'saldos', 'documentos', 'proveedores', 'permisos'];
 const PROJECT_ADMIN_ROLE_OPTIONS: Collaborator['role'][] = ['admin', 'jefe_produccion', 'jefe_area'];
 const PRODUCTION_LEAD_ROLE_OPTIONS: Collaborator['role'][] = ['jefe_produccion', 'jefe_area'];
 const safeArray = (value: any): string[] => Array.isArray(value) ? value : [];
-const normalizeProjectRole = (role: unknown): Collaborator['role'] => {
-  if (role === 'admin' || role === 'jefe_produccion' || role === 'jefe_area') return role;
-  return 'jefe_area';
-};
-
-const normalizeAllowedTabs = (allowedTabs: any, role?: Collaborator['role'] | string) => {
-  const normalizedRole = normalizeProjectRole(role);
-  const normalized = safeArray(allowedTabs).filter(tabId => PROJECT_TAB_IDS.includes(tabId));
-  if (normalizedRole === 'admin') return normalized.length ? normalized : PROJECT_TAB_IDS;
-  if (normalizedRole === 'jefe_produccion' && normalized.length === 0) return DEFAULT_PRODUCTION_LEAD_TABS;
-
-  const looksLikeLegacyDefault = normalized.includes('presupuesto') && !normalized.includes('saldos');
-  if (looksLikeLegacyDefault) {
-    return Array.from(new Set([...normalized.filter(tabId => tabId !== 'presupuesto'), 'saldos', 'documentos', 'proveedores']));
-  }
-
-  const looksLikeCurrentDefault = normalized.includes('areas') && normalized.includes('saldos') && !normalized.includes('presupuesto');
-  if (looksLikeCurrentDefault && (!normalized.includes('proveedores') || !normalized.includes('documentos'))) {
-    return Array.from(new Set([...normalized, 'documentos', 'proveedores']));
-  }
-
-  if (looksLikeCurrentDefault && !normalized.includes('cajas')) {
-    return Array.from(new Set([...normalized, 'cajas']));
-  }
-
-  return normalized.length ? normalized : DEFAULT_AREA_LEAD_TABS;
-};
-
-const getDefaultCollaboratorPermissions = (role: Collaborator['role'], categories: string[], selectedCategories?: string[]) => {
-  const chosenCategories = selectedCategories?.length ? selectedCategories : categories.slice(0, 1);
-
-  if (role === 'admin') {
-    return {
-      allowedTabs: PROJECT_TAB_IDS,
-      allowedCategories: categories,
-      canEditBudgetAreas: true,
-      canViewBudgetTotals: true,
-    };
-  }
-
-  if (role === 'jefe_produccion') {
-    return {
-      allowedTabs: DEFAULT_PRODUCTION_LEAD_TABS,
-      allowedCategories: chosenCategories,
-      canEditBudgetAreas: true,
-      canViewBudgetTotals: false,
-    };
-  }
-
-  return {
-    allowedTabs: DEFAULT_AREA_LEAD_TABS,
-    allowedCategories: chosenCategories,
-    canEditBudgetAreas: true,
-    canViewBudgetTotals: false,
-  };
-};
 
 const formatDate = (dateString: string | any) => {
   if (!dateString) return 'Sin fecha';
@@ -362,15 +318,6 @@ const getPaymentLeadTimeLabel = (paymentDate: any, shootingDate: any) => {
   return diffDays > 0 ? `${absDays} ${suffix} después` : `${absDays} ${suffix} antes`;
 };
 
-const sanitizeFileName = (fileName: string) => {
-  return fileName
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-zA-Z0-9._-]/g, '-')
-    .replace(/-+/g, '-')
-    .slice(0, 120);
-};
-
 const buildInvoiceFileName = (expense: any) => {
   const extension = sanitizeFileName(String(expense.__invoiceFileExtension || 'pdf')).toLowerCase() || 'pdf';
   const baseName = sanitizeFileName(
@@ -387,7 +334,7 @@ const INVOICE_FILE_ACCEPT = 'application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpe
 const INVOICE_FILE_LABEL = 'PDF, JPG o PNG';
 
 const getInvoiceFileExtension = (file: File) => {
-  const extension = sanitizeFileName(file.name.split('.').pop() || '').toLowerCase();
+  const extension = getFileExtension(file.name);
   if (extension === 'jpg' || extension === 'jpeg' || extension === 'png' || extension === 'pdf') return extension;
   if (file.type === 'image/jpeg') return 'jpg';
   if (file.type === 'image/png') return 'png';
@@ -455,11 +402,7 @@ const validateInvoiceFile = (file?: File | null) => {
   return validateMaxUploadSize(file, 'factura');
 };
 
-const normalizeEmail = (email?: string | null) => (email || '').trim().toLowerCase();
-const normalizeText = (value: unknown) => String(value || '')
-  .normalize('NFD')
-  .replace(/[\u0300-\u036f]/g, '')
-  .toLowerCase();
+const normalizeText = normalizeSearchText;
 
 const isProductionArea = (area: unknown) => normalizeText(area).includes('producci');
 const isExecutiveArea = (area: unknown) => normalizeText(area).includes('ejecutiv');
@@ -1789,7 +1732,7 @@ export default function ProjectDetail() {
     const itemTotal = Number(currentExpense?.total) || 0;
     if (!id || !currentExpense || !canDeleteAreaExpense(currentExpense)) {
       if (currentExpense && !isProjectAdmin) {
-        alert('Este gasto recibió un pago. Sólo puede eliminarlo un administrador o la persona que cargó tanto el gasto como todos sus pagos.');
+        alert('Este gasto recibió un pago y forma parte del historial financiero. Sólo puede eliminarlo un administrador del proyecto.');
       }
       return;
     }
@@ -1870,7 +1813,7 @@ export default function ProjectDetail() {
   };
 
   const removeInvoiceFromExpense = async (expense: any, collectionName: PaymentCollection = 'areaExpenses') => {
-    if (!id || !expense.invoice || !canManageItemFiles(expense, collectionName)) return;
+    if (!id || !expense.invoice || !isProjectAdmin) return;
     if (!confirm('¿Quitar la factura adjunta de este gasto?')) return;
 
     const uploadKey = `${collectionName}-${expense.id}`;
@@ -1919,6 +1862,7 @@ export default function ProjectDetail() {
         expenseId: expense.id,
         collectionName,
         area: expense.area || '',
+        subcategory: cleanAreaExpenseSubcategory(expense.subcategory),
         providerId: expense.providerId || '',
         providerName: expense.providerName || '',
         description: expense.description || '',
@@ -2298,7 +2242,7 @@ export default function ProjectDetail() {
         return index !== paymentIndex;
       });
 
-      const totalPaid = updatedHistory.reduce((acc: number, p: any) => acc + (Number(p.amount) || 0), 0);
+      const totalPaid = getPaymentTotal({ paymentHistory: updatedHistory });
       const itemTotal = Number(selectedItemForPayment.total) || 0;
       const isFullyPaid = totalPaid >= (itemTotal - 0.01);
 
@@ -2367,6 +2311,12 @@ export default function ProjectDetail() {
     if (!canEditMainBudget) return;
     const file = event.target.files?.[0];
     if (!file || !id) return;
+    const fileError = validateSpreadsheetImport(file);
+    if (fileError) {
+      alert(fileError);
+      event.target.value = '';
+      return;
+    }
 
     const reader = new FileReader();
     reader.onload = async (e) => {
@@ -2772,26 +2722,10 @@ export default function ProjectDetail() {
   const currentUserName = profile?.displayName || user?.displayName || currentUserEmail;
   const currentProjectRole = isProjectAdmin ? 'admin' : userPermissions?.role || profile?.role || 'colaborador';
   const canEditMainBudget = isProjectAdmin;
-  const canEditArea = (area?: string | null) => {
-    if (!area) return false;
-    if (isProjectAdmin) return true;
-    return Boolean(
-      userPermissions?.canEditBudgetAreas
-      && safeArray(userPermissions.allowedCategories).includes(area)
-      && safeArray(userPermissions.allowedTabs).includes('areas')
-    );
-  };
-  const canEditAreaSubcategory = (area?: string | null, subcategory?: string | null) => {
-    if (canEditArea(area)) return true;
-    const normalizedSubcategory = cleanAreaExpenseSubcategory(subcategory);
-    return Boolean(
-      area
-      && normalizedSubcategory
-      && userPermissions?.canEditBudgetAreas
-      && safeArray(userPermissions.allowedTabs).includes('areas')
-      && safeArray(userPermissions.allowedSubcategories).includes(areaSubcategoryKey(area, normalizedSubcategory))
-    );
-  };
+  const canEditArea = (area?: string | null) => canEditProjectArea(isProjectAdmin, userPermissions, area);
+  const canEditAreaSubcategory = (area?: string | null, subcategory?: string | null) => (
+    canEditProjectSubcategory(isProjectAdmin, userPermissions, area, cleanAreaExpenseSubcategory(subcategory))
+  );
   const canManageSubcategoryBudget = (area?: string | null) => (
     Boolean(area)
     && (isProjectAdmin || isProductionLead)
@@ -2802,16 +2736,7 @@ export default function ProjectDetail() {
     if (!expense || !canEditAreaExpense(expense)) return false;
     if (isProjectAdmin) return true;
     const hasReceivedPayment = expense.paymentLocked === true || safeArray(expense.paymentHistory).length > 0;
-    if (!hasReceivedPayment) return true;
-    const isExpenseAuthor = expense.createdBy === user?.uid
-      || normalizeEmail(expense.createdByEmail) === currentUserEmail;
-    const paymentAuthorIds = safeArray(expense.paymentAuthorIds).filter(Boolean);
-    return Boolean(
-      isExpenseAuthor
-      && user?.uid
-      && paymentAuthorIds.length > 0
-      && paymentAuthorIds.every((authorId) => authorId === user.uid)
-    );
+    return !hasReceivedPayment;
   };
   const canEditPaymentDateForItem = (item?: any | null, collectionName?: PaymentCollection) => {
     if (!item || !collectionName) return false;
@@ -2826,26 +2751,17 @@ export default function ProjectDetail() {
   };
   const canEditPaymentRecord = (payment?: Payment | null) => {
     if (!payment) return false;
-    if (isProjectAdmin) return true;
-    const authorEmail = normalizeEmail(payment.createdByEmail || payment.paidByEmail);
-    const authorRole = String(payment.createdByRole || '').toLowerCase();
-    if (!authorEmail || authorEmail !== currentUserEmail) return false;
-    if (authorRole === 'admin' || authorRole === 'ayudante_admin') return false;
-    return true;
+    return canEditExistingPayment(isProjectAdmin);
   };
   const canUploadAreaFiles = (area?: string | null, subcategory?: string | null) => canEditAreaSubcategory(area, subcategory);
   const canDeleteOtherReceipt = (receipt?: any | null) => {
-    if (!receipt) return false;
-    if (isProjectAdmin) return true;
-    const uploaderEmail = normalizeEmail(receipt.uploadedByEmail || receipt.uploadedBy);
-    if (uploaderEmail && uploaderEmail === currentUserEmail) return true;
-    if (userPermissions?.role === 'jefe_produccion') return receipt.uploadedByRole === 'jefe_area';
-    return false;
+    return Boolean(receipt && isProjectAdmin);
   };
   const renderExpenseInvoiceCell = (item: any, collectionName: PaymentCollection) => (
     <ExpenseInvoiceCell
       item={item}
       canManage={canManageItemFiles(item, collectionName)}
+      canRemove={isProjectAdmin}
       uploadingInvoice={!!uploadingInvoices[`${collectionName}-${item.id}`]}
       generatingLink={!!generatingInvoiceLinks[`${collectionName}-${item.id}`]}
       onUploadInvoice={(file) => uploadInvoiceForExpense(item, file, collectionName)}
@@ -3002,6 +2918,7 @@ export default function ProjectDetail() {
 
   const assignableSubcategoryOptions = React.useMemo(() => {
     const allowedParentAreas = isProjectAdmin ? categories : safeArray(userPermissions?.allowedCategories);
+    const delegatedSubcategories = safeArray(userPermissions?.allowedSubcategories);
 
     const options = activeAreas.flatMap((area) => (
       (areaExpenseSubcategoriesByArea[area] || [])
@@ -3015,7 +2932,11 @@ export default function ProjectDetail() {
         }))
     ));
     return Array.from(new Map(options.map((item) => [item.key, item])).values())
-      .filter((item: any) => allowedParentAreas.includes(item.area))
+      .filter((item: any) => (
+        isProjectAdmin
+          ? allowedParentAreas.includes(item.area)
+          : delegatedSubcategories.includes(item.key)
+      ))
       .sort((a: any, b: any) => `${a.area} ${a.subcategory}`.localeCompare(`${b.area} ${b.subcategory}`, 'es'));
   }, [activeAreas, areaExpenseSubcategoriesByArea, categories, isProjectAdmin, project?.areaExpenseSubcategoryBudgets, userPermissions]);
 
@@ -3058,7 +2979,7 @@ export default function ProjectDetail() {
           email,
           displayName: candidate.displayName || candidate.email,
           role: 'admin',
-          allowedTabs: PROJECT_TAB_IDS,
+          allowedTabs: [...PROJECT_TAB_IDS],
           allowedCategories: categories,
         });
       });
@@ -3232,7 +3153,7 @@ export default function ProjectDetail() {
 
       if (!activeAreas.includes(item.area)) {
         s.spent += item.total || 0;
-        const itemPaid = (item.paymentHistory || []).reduce((acc: number, p: any) => acc + (Number(p.amount) || 0), 0);
+        const itemPaid = getPaymentTotal(item);
         s.paid += itemPaid;
         s.entries.push({
           id: item.id,
@@ -3252,7 +3173,7 @@ export default function ProjectDetail() {
       const s = ensureSaldo(item.area || 'Sin area', item.providerId, item.providerName);
       s.spent += item.total || 0;
       
-      const itemPaid = (item.paymentHistory || []).reduce((acc: number, p: any) => acc + (Number(p.amount) || 0), 0);
+      const itemPaid = getPaymentTotal(item);
       s.paid += itemPaid;
       s.entries.push({
         id: item.id,
@@ -3674,7 +3595,7 @@ export default function ProjectDetail() {
 
   const exportAreaBudget = (format: 'xlsx' | 'csv') => {
     const rows = areaExpenses.map(item => {
-      const paid = (item.paymentHistory || []).reduce((acc: number, payment: any) => acc + (Number(payment.amount) || 0), 0);
+      const paid = getPaymentTotal(item);
       return {
         Area: item.area || '',
         Subcategoria: cleanAreaExpenseSubcategory(item.subcategory),
@@ -4041,20 +3962,6 @@ export default function ProjectDetail() {
     event.currentTarget.reset();
   };
 
-  const ensureGlobalProductionLeadRole = async (targetUser: any) => {
-    const userId = targetUser?.uid || targetUser?.id;
-    if (!userId || ['admin', 'jefe_produccion'].includes(targetUser?.role)) return;
-
-    try {
-      await updateDoc(doc(db, 'users', userId), { role: 'jefe_produccion' });
-      setAvailableUsers((current) => current.map((item) => (
-        (item.uid || item.id) === userId ? { ...item, role: 'jefe_produccion' } : item
-      )));
-    } catch (error) {
-      console.warn('No se pudo sincronizar el rol global de jefe de produccion:', error);
-    }
-  };
-
   const addCollaborator = async (selectedUser: any) => {
     if (!id || !selectedUser?.email || !canManageProjectAccess) return;
     if (!isProjectAdmin && newCollaboratorRole === 'admin') return;
@@ -4080,15 +3987,14 @@ export default function ProjectDetail() {
     };
 
     try {
-      await setDoc(doc(db, 'projects', id, 'collaborators', email), newCol);
       const newEmails = Array.from(new Set([...(project?.collaboratorEmails || []), email].map(normalizeEmail).filter(Boolean)));
-      await updateDoc(doc(db, 'projects', id), {
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'projects', id, 'collaborators', email), newCol);
+      batch.update(doc(db, 'projects', id), {
         collaboratorEmails: newEmails,
         updatedAt: serverTimestamp(),
       });
-      if (newCollaboratorRole === 'jefe_produccion') {
-        await ensureGlobalProductionLeadRole(selectedUser);
-      }
+      await batch.commit();
 
       setCollaborators([...collaborators, { ...newCol, createdAt: new Date(), updatedAt: new Date() }]);
       setProject({ ...project, collaboratorEmails: newEmails });
@@ -4103,8 +4009,7 @@ export default function ProjectDetail() {
   };
 
   const updateCollaboratorRole = async (col: Collaborator, role: Collaborator['role']) => {
-    if (!id || !canManageProjectAccess) return;
-    if (!isProjectAdmin && (role === 'admin' || col.role === 'admin')) return;
+    if (!id || !isProjectAdmin) return;
 
     const defaults = getDefaultCollaboratorPermissions(
       role,
@@ -4122,9 +4027,6 @@ export default function ProjectDetail() {
 
     try {
       await updateDoc(doc(db, 'projects', id, 'collaborators', normalizeEmail(col.email)), updates);
-      if (role === 'jefe_produccion') {
-        await ensureGlobalProductionLeadRole(col);
-      }
       setCollaborators(collaborators.map(c => normalizeEmail(c.email) === normalizeEmail(col.email) ? { ...c, ...updates, updatedAt: new Date() } : c));
     } catch (error) {
       console.error('Error updating collaborator role:', error);
@@ -4351,7 +4253,7 @@ export default function ProjectDetail() {
                               statusColors[project.status || 'Presupuesto'] || 'bg-emerald-100 text-emerald-700 border-emerald-200'
                             )}
                           >
-                            {['Presupuesto', 'Pre Producción', 'Rodaje', 'Post', 'Aprobado'].map(status => (
+                            {PROJECT_STATUSES.map(status => (
                               <option key={status} value={status} className="bg-white text-slate-900">{status}</option>
                             ))}
                           </select>
@@ -5637,7 +5539,7 @@ export default function ProjectDetail() {
                                           <FileText className="h-3 w-3" />
                                           Factura
                                         </a>
-                                        {canUploadAreaFiles(item.area, item.subcategory) && (
+                                        {isProjectAdmin && (
                                           <button
                                             type="button"
                                             disabled={!!uploadingInvoices[`areaExpenses-${item.id}`]}
@@ -7433,19 +7335,6 @@ export default function ProjectDetail() {
                   </div>
                 ))}
 
-                {/* Tomas @ Gran Berta fallback */}
-                {!collaborators.find(c => c.email === 'tomas@granberta.com') && project.createdByEmail !== 'tomas@granberta.com' && (
-                  <div className="bg-slate-50 border border-dashed border-slate-200 p-5 rounded-xl flex items-center justify-between opacity-50">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-slate-200 text-slate-400 rounded-full flex items-center justify-center font-bold text-xs uppercase">T</div>
-                      <div>
-                        <div className="text-xs font-bold text-slate-400 truncate">tomas@granberta.com</div>
-                        <div className="text-[9px] font-bold text-slate-300 uppercase tracking-widest italic">Por invitar</div>
-                      </div>
-                    </div>
-                    <UserPlus className="w-4 h-4 text-slate-200" />
-                  </div>
-                )}
               </div>
             </section>
 
@@ -7642,7 +7531,7 @@ export default function ProjectDetail() {
                           </div>
 
                           <div className="flex flex-wrap gap-2 items-center justify-end">
-                            {canManageProjectAccess && (
+                            {canManageProjectRoles && (
                             <div className="flex gap-1 bg-white p-1 rounded border border-slate-200">
                               {roleOptionsForCurrentUser.map((role) => (
                                 <button
@@ -7760,7 +7649,7 @@ export default function ProjectDetail() {
                               </div>
                             )}
 
-                            {canManageProjectAccess && (
+                            {canManageProjectRoles && (
                             <div className="lg:col-span-2 flex flex-wrap gap-2 pt-2">
                               <button
                                 onClick={() => updateCollaboratorPermissions(col, { canEditBudgetAreas: !col.canEditBudgetAreas })}
@@ -8100,7 +7989,7 @@ export default function ProjectDetail() {
           cashOwnerName={currentUserName}
           paymentType={paymentType}
           isDeletingPayment={isDeletingPayment}
-          canEditExistingPayments={isProjectAdmin || isProductionLead}
+          canEditExistingPayments={isProjectAdmin}
           currentUserEmail={currentUserEmail}
           currentUserId={user?.uid || ''}
           currentUserName={currentUserName}

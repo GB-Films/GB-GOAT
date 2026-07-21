@@ -123,8 +123,30 @@ service cloud.firestore {
         && request.resource.data.allowedCategories.hasOnly(collaboratorDoc(projectId).allowedCategories)
         && (
           !request.resource.data.diff(resource.data).affectedKeys().hasAny(['allowedSubcategories'])
-          || request.resource.data.allowedSubcategories is list
+          || (
+            request.resource.data.allowedSubcategories is list
+            && 'allowedSubcategories' in collaboratorDoc(projectId)
+            && collaboratorDoc(projectId).allowedSubcategories is list
+            && request.resource.data.allowedSubcategories.hasOnly(collaboratorDoc(projectId).allowedSubcategories)
+          )
         );
+    }
+
+    function canAppendCollaboratorEmailAsProductionLead(projectId) {
+      let oldCount = resource.data.collaboratorEmails.size();
+      let newEmail = request.resource.data.collaboratorEmails[oldCount];
+      let newCollaboratorPath = /databases/$(database)/documents/projects/$(projectId)/collaborators/$(newEmail);
+      return isProjectProductionLead(projectId)
+        && resource.data.collaboratorEmails is list
+        && request.resource.data.collaboratorEmails is list
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['collaboratorEmails', 'updatedAt'])
+        && request.resource.data.collaboratorEmails.size() == oldCount + 1
+        && request.resource.data.collaboratorEmails.hasAll(resource.data.collaboratorEmails)
+        && newEmail is string
+        && existsAfter(newCollaboratorPath)
+        && getAfter(newCollaboratorPath).data.role in ['jefe_produccion', 'jefe_area']
+        && getAfter(newCollaboratorPath).data.allowedCategories is list
+        && getAfter(newCollaboratorPath).data.allowedCategories.hasOnly(collaboratorDoc(projectId).allowedCategories);
     }
 
     function canUpdateProjectOperations(projectId) {
@@ -139,7 +161,7 @@ service cloud.firestore {
     }
 
     function canUpdateAreaExpenseSubcategories(projectId) {
-      return hasCollaboratorDoc(projectId)
+      return isProjectProductionLead(projectId)
         && collaboratorDoc(projectId).canEditBudgetAreas == true
         && 'areas' in collaboratorDoc(projectId).allowedTabs
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
@@ -156,14 +178,20 @@ service cloud.firestore {
         && request.resource.data.allowedCategories.hasOnly(collaboratorDoc(projectId).allowedCategories)
         && (
           !request.resource.data.keys().hasAny(['allowedSubcategories'])
-          || request.resource.data.allowedSubcategories is list
+          || (
+            request.resource.data.allowedSubcategories is list
+            && 'allowedSubcategories' in collaboratorDoc(projectId)
+            && collaboratorDoc(projectId).allowedSubcategories is list
+            && request.resource.data.allowedSubcategories.hasOnly(collaboratorDoc(projectId).allowedSubcategories)
+          )
         );
     }
 
-    function canDeleteCollaboratorAsProductionLead(projectId) {
-      return isProjectProductionLead(projectId)
-        && resource.data.role in ['jefe_produccion', 'jefe_area']
-        && resource.data.allowedCategories.hasOnly(collaboratorDoc(projectId).allowedCategories);
+    function collaboratorIdentityIsValid(email) {
+      return request.resource.data.email == email
+        && request.resource.data.uid is string
+        && exists(/databases/$(database)/documents/users/$(request.resource.data.uid))
+        && get(/databases/$(database)/documents/users/$(request.resource.data.uid)).data.email == email;
     }
 
     function canWriteProjectDocument(projectId) {
@@ -194,11 +222,6 @@ service cloud.firestore {
       return isAppAdmin() || isAppAdminAssistant();
     }
 
-    function canUpdatePaymentFields(projectId, area) {
-      return canWriteArea(projectId, area)
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['paymentHistory', 'paid', 'paymentDate', 'updatedAt']);
-    }
-
     function storedPaymentCount() {
       return resource.data.keys().hasAny(['paymentHistory'])
         && resource.data.paymentHistory is list
@@ -222,6 +245,9 @@ service cloud.firestore {
         && request.resource.data.paymentHistory.size() == oldCount + 1
         && (oldCount == 0 || request.resource.data.paymentHistory.hasAll(resource.data.paymentHistory))
         && request.resource.data.paymentHistory[oldCount].createdBy == request.auth.uid
+        && request.resource.data.paymentHistory[oldCount].createdByEmail == userEmail()
+        && request.resource.data.paymentHistory[oldCount].amount is number
+        && request.resource.data.paymentHistory[oldCount].amount > 0
         && (
           (hadAudit && request.resource.data.paymentAuthorIds == resource.data.paymentAuthorIds.concat([request.auth.uid]))
           || (!hadAudit && oldCount == 0 && request.resource.data.paymentAuthorIds == [request.auth.uid])
@@ -232,23 +258,34 @@ service cloud.firestore {
       let changed = request.resource.data.diff(resource.data).affectedKeys();
       return !changed.hasAny(['createdBy', 'createdByEmail'])
         && (
-          !changed.hasAny(['paymentLocked'])
-          || (
-            (!resource.data.keys().hasAny(['paymentLocked']) || resource.data.paymentLocked == false)
-            && validPaymentAuditAppend()
-          )
-        )
-        && (
-          !changed.hasAny(['paymentAuthorIds'])
+          !changed.hasAny(['paymentHistory', 'paymentLocked', 'paymentAuthorIds'])
           || validPaymentAuditAppend()
-        )
-        && (
-          !changed.hasAny(['paymentHistory'])
-          || (
-            resource.data.keys().hasAny(['paymentLocked'])
-            && resource.data.paymentLocked == true
-          )
-          || request.resource.data.paymentHistory.size() >= storedPaymentCount()
+        );
+    }
+
+    function preservesExpenseReceipts() {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      let oldReceipts = resource.data.keys().hasAny(['otherReceipts'])
+        && resource.data.otherReceipts is list
+        ? resource.data.otherReceipts
+        : [];
+      return !changed.hasAny(['otherReceipts'])
+        || (
+          request.resource.data.otherReceipts is list
+          && request.resource.data.otherReceipts.size() == oldReceipts.size() + 1
+          && request.resource.data.otherReceipts.hasAll(oldReceipts)
+          && request.resource.data.otherReceipts[oldReceipts.size()].uploadedByEmail == userEmail()
+        );
+    }
+
+    function preservesExistingExpenseInvoice() {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      let hadInvoice = resource.data.keys().hasAny(['invoice']) && resource.data.invoice != null;
+      return !changed.hasAny(['invoice', 'invoiceStatus'])
+        || (
+          !hadInvoice
+          && request.resource.data.invoice is map
+          && request.resource.data.invoiceStatus == 'pendiente'
         );
     }
 
@@ -257,13 +294,6 @@ service cloud.firestore {
         && (
           !hasReceivedPayment()
           || isProjectAdmin(projectId)
-          || (
-            resource.data.createdBy == request.auth.uid
-            && resource.data.keys().hasAny(['paymentAuthorIds'])
-            && resource.data.paymentAuthorIds is list
-            && resource.data.paymentAuthorIds.size() > 0
-            && resource.data.paymentAuthorIds.hasOnly([request.auth.uid])
-          )
         );
     }
 
@@ -312,12 +342,7 @@ service cloud.firestore {
     }
 
     function canDeleteCashMovement(projectId) {
-      return isProjectAdmin(projectId)
-        || (
-          resource.data.type == 'pago'
-          && resource.data.fromUserEmail == userEmail()
-          && canWriteAreaExpense(projectId, resource.data.area, resource.data.subcategory)
-        );
+      return isProjectAdmin(projectId);
     }
 
     function canUpdateCashMovement(projectId) {
@@ -354,7 +379,7 @@ service cloud.firestore {
           || (
             resource.data.type == 'pago'
             && request.resource.data.type == resource.data.type
-            && (isProjectAdmin(projectId) || resource.data.fromUserEmail == userEmail())
+            && isProjectAdmin(projectId)
             && request.resource.data.fromUserEmail == resource.data.fromUserEmail
             && request.resource.data.collectionName == resource.data.collectionName
             && request.resource.data.itemId == resource.data.itemId
@@ -587,14 +612,16 @@ service cloud.firestore {
       allow get: if hasProjectAccess(projectId);
       allow create: if isAppAdmin() && request.resource.data.createdBy == request.auth.uid;
       allow update: if isProjectAdmin(projectId)
+        || canAppendCollaboratorEmailAsProductionLead(projectId)
         || canUpdateProjectOperations(projectId)
         || canUpdateAreaExpenseSubcategories(projectId);
       allow delete: if isAppAdmin();
 
       match /collaborators/{email} {
         allow read: if hasProjectAccess(projectId);
-        allow create: if isProjectAdmin(projectId) || canCreateCollaboratorAsProductionLead(projectId);
-        allow delete: if isProjectAdmin(projectId) || canDeleteCollaboratorAsProductionLead(projectId);
+        allow create: if collaboratorIdentityIsValid(email)
+          && (isProjectAdmin(projectId) || canCreateCollaboratorAsProductionLead(projectId));
+        allow delete: if isProjectAdmin(projectId);
         allow update: if isProjectAdmin(projectId) || canAssignAreasAsProductionLead(projectId);
       }
 
@@ -603,11 +630,7 @@ service cloud.firestore {
         allow create, delete: if isProjectAdmin(projectId);
         allow update: if isProjectAdmin(projectId)
           || canPublicAssignProviderFromInvite(projectId, 'budgetItems', itemId)
-          || canPublicUploadInvoice(projectId, 'budgetItems', itemId)
-          || (
-            canUpdatePaymentFields(projectId, resource.data.area)
-            && request.resource.data.area == resource.data.area
-          );
+          || canPublicUploadInvoice(projectId, 'budgetItems', itemId);
       }
 
       match /areaExpenses/{expenseId} {
@@ -625,30 +648,35 @@ service cloud.firestore {
           || ((
             canWriteAreaExpense(projectId, resource.data.area, resource.data.subcategory)
             && canWriteAreaExpense(projectId, request.resource.data.area, request.resource.data.subcategory)
-          ) && preservesExpensePaymentAudit())
+          ) && preservesExpensePaymentAudit() && preservesExpenseReceipts() && preservesExistingExpenseInvoice())
           || canPublicAssignProviderFromInvite(projectId, 'areaExpenses', expenseId)
           || canPublicUploadInvoice(projectId, 'areaExpenses', expenseId);
         allow delete: if canDeleteAreaExpenseWithPayment(projectId);
       }
 
       match /expenses/{expenseId} {
-        allow read, write: if hasProjectAccess(projectId);
+        allow read: if hasProjectAccess(projectId);
+        allow write: if isProjectAdmin(projectId);
       }
 
       match /milestones/{milestoneId} {
-        allow read, write: if hasProjectAccess(projectId);
+        allow read: if hasProjectAccess(projectId);
+        allow write: if isProjectAdmin(projectId);
       }
 
       match /teamMembers/{memberId} {
-        allow read, write: if hasProjectAccess(projectId);
+        allow read: if hasProjectAccess(projectId);
+        allow write: if isProjectAdmin(projectId);
       }
 
       match /payments/{paymentId} {
-        allow read, write: if hasProjectAccess(projectId);
+        allow read: if hasProjectAccess(projectId);
+        allow write: if isProjectAdmin(projectId);
       }
 
       match /invoices/{invoiceId} {
-        allow read, write: if hasProjectAccess(projectId);
+        allow read: if hasProjectAccess(projectId);
+        allow write: if isProjectAdmin(projectId);
       }
 
       match /projectDocuments/{documentId} {
@@ -744,7 +772,20 @@ service cloud.firestore {
         && request.resource.data.expenseId is string
         && request.resource.data.collectionName in ['budgetItems', 'areaExpenses']
         && request.resource.data.area is string
-        && canWriteArea(request.resource.data.projectId, request.resource.data.area);
+        && (
+          (
+            request.resource.data.collectionName == 'areaExpenses'
+            && canWriteAreaExpense(
+              request.resource.data.projectId,
+              request.resource.data.area,
+              request.resource.data.subcategory
+            )
+          )
+          || (
+            request.resource.data.collectionName == 'budgetItems'
+            && isProjectAdmin(request.resource.data.projectId)
+          )
+        );
       allow update: if isAppAdmin()
         || (
           request.auth == null

@@ -10,6 +10,8 @@ import { buildPaymentCalendarDays, formatDateKey, formatPeriodLabel, formatSched
 import { formatIdentifier, inferLegacyIdentifiers, normalizeProviderText, providerDisplayName, providerMatchesSearch } from '../lib/providerConstants';
 import { PaymentModal } from './project-detail/PaymentModal';
 import type { Payment, PaymentCollection } from './project-detail/types';
+import { calculateProjectFinance, getItemTotal, getPaymentTotal, getStandaloneBudgetItems } from '../lib/projectFinance';
+import { PageHeader } from '../components/PageHeader';
 
 type ReportView = 'resumen' | 'proyectos' | 'proveedores' | 'areas' | 'pagos';
 
@@ -89,13 +91,6 @@ const formatCurrency = (value: number) => `$${Math.round(value || 0).toLocaleStr
 
 const formatPercent = (value: number) => `${Math.round(value || 0)}%`;
 
-const getPaymentTotal = (item: any) => {
-  const history = Array.isArray(item.paymentHistory) ? item.paymentHistory : [];
-  return history.reduce((acc: number, payment: any) => acc + (Number(payment.amount) || 0), 0);
-};
-
-const getItemTotal = (item: any) => Number(item.total) || 0;
-
 const findProviderForLine = (item: any, providerById: Map<string, any>, providers: any[]) => {
   if (item.providerId && providerById.has(item.providerId)) return providerById.get(item.providerId);
   const providerName = normalizeProviderText(item.providerName);
@@ -146,10 +141,8 @@ const buildProjectReport = (
   providerById: Map<string, any>,
   providers: any[],
 ): ProjectReport => {
-  const activeAreas = Array.isArray(project.activeAreas) ? project.activeAreas : [];
-  const standaloneBudgetItems = budgetItems.filter((item) => !activeAreas.includes(item.area));
-  const committedBudget = budgetItems.reduce((acc, item) => acc + getItemTotal(item), 0);
-  const budgetTotal = Number(project.budgetTotal) || committedBudget;
+  const standaloneBudgetItems = getStandaloneBudgetItems(project, budgetItems);
+  const finance = calculateProjectFinance(project, budgetItems, areaExpenses);
   const areaBudgets = budgetItems.reduce((acc: Record<string, number>, item) => {
     const area = item.area || 'Sin area';
     acc[area] = (acc[area] || 0) + getItemTotal(item);
@@ -208,24 +201,19 @@ const buildProjectReport = (
     }),
   ];
 
-  const spent = payableLines.reduce((acc, line) => acc + line.total, 0);
-  const paid = payableLines.reduce((acc, line) => acc + line.paid, 0);
-  const debt = payableLines.reduce((acc, line) => acc + line.debt, 0);
-  const usagePercent = budgetTotal > 0 ? (spent / budgetTotal) * 100 : 0;
-
   return {
     id: project.id,
     name: project.name || 'Sin nombre',
     status: project.status || 'Presupuesto',
     clientName: project.clientName,
-    budgetTotal,
-    committedBudget,
-    spent,
-    paid,
-    debt,
-    usagePercent,
-    overBudget: Math.max(0, spent - budgetTotal),
-    unpaidLines: payableLines.filter((line) => line.debt > 0.01).length,
+    budgetTotal: finance.budgetTotal,
+    committedBudget: finance.committedBudget,
+    spent: finance.spent,
+    paid: finance.paid,
+    debt: finance.debt,
+    usagePercent: finance.usagePercent,
+    overBudget: finance.overBudget,
+    unpaidLines: finance.unpaidLines,
     payableLines,
     areaBudgets,
   };
@@ -508,7 +496,7 @@ export default function Reports() {
     });
   };
 
-  const canEditPaymentRecord = () => true;
+  const canEditPaymentRecord = () => profile?.role === 'admin';
 
   const deletePaymentFromSelectedLine = async (paymentIndex: number) => {
     if (!selectedPaymentLine?.projectId || !selectedPaymentLine.item?.id) return;
@@ -605,12 +593,10 @@ export default function Reports() {
 
   return (
     <div className="max-w-full mx-auto space-y-6">
-      <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between border-b border-slate-200 pb-6">
-        <div>
-          <div className="text-[10px] text-slate-400 uppercase tracking-widest font-bold mb-1">GB GOAT / Reportes</div>
-          <h1 className="text-2xl font-bold text-black leading-none">Finanzas y producción</h1>
-        </div>
-        <div className="flex flex-wrap gap-2">
+      <PageHeader
+        eyebrow="GB GOAT / Reportes"
+        title="Finanzas y producción"
+        actions={<>
           <button onClick={exportProjects} className="px-3 py-2 bg-black text-white text-[10px] font-bold uppercase tracking-widest rounded flex items-center gap-2">
             <Download className="w-3 h-3" />
             Proyectos CSV
@@ -627,8 +613,8 @@ export default function Reports() {
             <Download className="w-3 h-3" />
             Pagos CSV
           </button>
-        </div>
-      </header>
+        </>}
+      />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
         {[
@@ -1078,11 +1064,11 @@ export default function Reports() {
         cashBoxBalance={0}
         paymentType={selectedPaymentLine?.collectionName || 'areaExpenses'}
         isDeletingPayment={isDeletingPayment}
-        canEditExistingPayments
+        canEditExistingPayments={profile?.role === 'admin'}
         currentUserEmail={currentUserEmail}
         currentUserId={user?.uid || ''}
         currentUserName={currentUserName}
-        currentUserRole="admin"
+        currentUserRole={profile?.role || 'colaborador'}
         canEditPaymentRecord={canEditPaymentRecord}
         onClose={() => setSelectedPaymentLine(null)}
         onPaymentStateChange={updatePaymentState}

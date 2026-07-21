@@ -8,11 +8,13 @@ import { Link, Navigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
 import { useAuth } from '../context/AuthContext';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
+import { normalizeEmail } from '../lib/identity';
+import { calculateProjectFinance, getItemTotal, getPaymentTotal, getStandaloneBudgetItems } from '../lib/projectFinance';
+import { PROJECT_STATUSES } from '../lib/projects';
+import { PageHeader } from '../components/PageHeader';
 
 const DraggableComponent = Draggable as any;
 const DroppableComponent = Droppable as any;
-
-const PROJECT_STATUSES = ['Presupuesto', 'Pre Producción', 'Rodaje', 'Post', 'Aprobado'];
 
 interface PayableLine {
   id: string;
@@ -102,18 +104,9 @@ const getOperationalFlags = (project: ProjectFinance) => {
   return flags;
 };
 
-const getPaymentTotal = (item: any) => {
-  const history = Array.isArray(item.paymentHistory) ? item.paymentHistory : [];
-  return history.reduce((acc: number, payment: any) => acc + (Number(payment.amount) || 0), 0);
-};
-
-const getItemTotal = (item: any) => Number(item.total) || 0;
-
 const buildProjectFinance = (project: any, budgetItems: any[], areaExpenses: any[]): ProjectFinance => {
-  const activeAreas = Array.isArray(project.activeAreas) ? project.activeAreas : [];
-  const standaloneBudgetItems = budgetItems.filter((item) => !activeAreas.includes(item.area));
-  const committedBudget = budgetItems.reduce((acc, item) => acc + getItemTotal(item), 0);
-  const budgetTotal = Number(project.budgetTotal) || committedBudget;
+  const standaloneBudgetItems = getStandaloneBudgetItems(project, budgetItems);
+  const finance = calculateProjectFinance(project, budgetItems, areaExpenses);
 
   const payableLines: PayableLine[] = [
     ...areaExpenses.map((item) => {
@@ -154,24 +147,19 @@ const buildProjectFinance = (project: any, budgetItems: any[], areaExpenses: any
     }),
   ];
 
-  const spent = payableLines.reduce((acc, item) => acc + item.total, 0);
-  const paid = payableLines.reduce((acc, item) => acc + item.paid, 0);
-  const debt = payableLines.reduce((acc, item) => acc + item.debt, 0);
-  const usagePercent = budgetTotal > 0 ? Math.round((spent / budgetTotal) * 100) : 0;
-
   return {
     id: project.id,
     name: project.name || 'Sin nombre',
     status: project.status || 'Presupuesto',
     clientName: project.clientName,
-    budgetTotal,
-    committedBudget,
-    spent,
-    paid,
-    debt,
-    usagePercent,
-    overBudget: Math.max(0, spent - budgetTotal),
-    unpaidLines: payableLines.filter((item) => item.debt > 0.01).length,
+    budgetTotal: finance.budgetTotal,
+    committedBudget: finance.committedBudget,
+    spent: finance.spent,
+    paid: finance.paid,
+    debt: finance.debt,
+    usagePercent: Math.round(finance.usagePercent),
+    overBudget: finance.overBudget,
+    unpaidLines: finance.unpaidLines,
     payableLines,
     createdAt: project.createdAt,
     shootingDate: project.shootingDate,
@@ -205,7 +193,7 @@ export default function Dashboard() {
               collection(db, 'projects'),
               or(
                 where('createdBy', '==', profile.uid),
-                where('collaboratorEmails', 'array-contains', profile.email)
+                where('collaboratorEmails', 'array-contains', normalizeEmail(profile.email))
               ),
               orderBy('createdAt', 'desc')
             );
@@ -313,15 +301,13 @@ export default function Dashboard() {
 
   return (
     <div className="max-w-full mx-auto space-y-5">
-      <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between border-b border-slate-200 pb-6">
-        <div>
-          <div className="text-[10px] text-slate-400 uppercase tracking-widest font-bold mb-1">GB GOAT / Inicio</div>
-          <h1 className="text-2xl font-bold text-black leading-none">Estado de producciones</h1>
-        </div>
-        <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+      <PageHeader
+        eyebrow="GB GOAT / Inicio"
+        title="Estado de producciones"
+        actions={<div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
           {profile?.role === 'admin' ? 'Vista administracion' : 'Vista colaborador'}
-        </div>
-      </header>
+        </div>}
+      />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
         {[

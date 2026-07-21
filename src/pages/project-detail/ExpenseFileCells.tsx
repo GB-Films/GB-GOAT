@@ -8,6 +8,7 @@ export const RECEIPT_INPUT_ACCEPT = 'application/pdf,image/jpeg,image/png,image/
 type ExpenseInvoiceCellProps = {
   item: any;
   canManage: boolean;
+  canRemove: boolean;
   uploadingInvoice: boolean;
   generatingLink: boolean;
   onUploadInvoice: (file?: File | null) => void;
@@ -27,6 +28,7 @@ type ExpenseReceiptsCellProps = {
 export function ExpenseInvoiceCell({
   item,
   canManage,
+  canRemove,
   uploadingInvoice,
   generatingLink,
   onUploadInvoice,
@@ -46,7 +48,7 @@ export function ExpenseInvoiceCell({
           >
             <FileText className="h-3.5 w-3.5" />
           </a>
-          {canManage && (
+          {canRemove && (
             <button
               type="button"
               disabled={uploadingInvoice}

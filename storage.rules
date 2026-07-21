@@ -43,7 +43,11 @@ service firebase.storage {
     }
 
     function isProjectCollaborator(projectId) {
-      return isSignedIn() && userEmail() in projectDoc(projectId).collaboratorEmails;
+      return isSignedIn()
+        && (
+          hasCollaboratorDoc(projectId)
+          || userEmail() in projectDoc(projectId).collaboratorEmails
+        );
     }
 
     function isProjectAdmin(projectId) {
@@ -102,11 +106,6 @@ service firebase.storage {
     function canWritePaymentReceipt(projectId, collectionName, itemId) {
       return isProjectAdmin(projectId)
         || (
-          collectionName == 'budgetItems'
-          && firestore.exists(/databases/(default)/documents/projects/$(projectId)/budgetItems/$(itemId))
-          && canWriteArea(projectId, firestore.get(/databases/(default)/documents/projects/$(projectId)/budgetItems/$(itemId)).data.area)
-        )
-        || (
           collectionName == 'areaExpenses'
           && firestore.exists(/databases/(default)/documents/projects/$(projectId)/areaExpenses/$(itemId))
           && canWriteAreaExpense(
@@ -114,6 +113,19 @@ service firebase.storage {
             firestore.get(/databases/(default)/documents/projects/$(projectId)/areaExpenses/$(itemId)).data.area,
             firestore.get(/databases/(default)/documents/projects/$(projectId)/areaExpenses/$(itemId)).data.subcategory
           )
+        );
+    }
+
+    function canWriteInvoiceFromRequest(projectId, area) {
+      return isSignedIn()
+        && request.resource.metadata.projectId == projectId
+        && request.resource.metadata.area == area
+        && request.resource.metadata.collectionName in ['budgetItems', 'areaExpenses']
+        && request.resource.metadata.expenseId is string
+        && canWritePaymentReceipt(
+          projectId,
+          request.resource.metadata.collectionName,
+          request.resource.metadata.expenseId
         );
     }
 
@@ -147,18 +159,18 @@ service firebase.storage {
 
     match /projects/{projectId}/areas/{area}/facturas/{fileName} {
       allow read: if hasProjectAccess(projectId) || publicInvoiceUploadInviteCanRead(projectId);
-      allow create, update: if (
-          hasProjectAccess(projectId)
+      allow create: if (
+          canWriteInvoiceFromRequest(projectId, area)
           || publicInvoiceUploadInviteIsPending(projectId)
         )
         && request.resource.size <= 2 * 1024 * 1024
         && request.resource.contentType in ['application/pdf', 'image/jpeg', 'image/png'];
-      allow delete: if isProjectAdmin(projectId);
+      allow update, delete: if isProjectAdmin(projectId);
     }
 
     match /projects/{projectId}/{collectionName}/{itemId}/comprobantes/{fileName} {
       allow read: if hasProjectAccess(projectId);
-      allow create, update: if canWritePaymentReceipt(projectId, collectionName, itemId)
+      allow create: if canWritePaymentReceipt(projectId, collectionName, itemId)
         && collectionName in ['budgetItems', 'areaExpenses']
         && request.resource.size <= 2 * 1024 * 1024
         && (
@@ -167,12 +179,12 @@ service firebase.storage {
           || request.resource.contentType == 'image/png'
           || request.resource.contentType == 'image/webp'
         );
-      allow delete: if canWritePaymentReceipt(projectId, collectionName, itemId);
+      allow update, delete: if isProjectAdmin(projectId);
     }
 
     match /projects/{projectId}/areaExpenses/{expenseId}/otros-comprobantes/{fileName} {
       allow read: if hasProjectAccess(projectId);
-      allow create, update: if canWritePaymentReceipt(projectId, 'areaExpenses', expenseId)
+      allow create: if canWritePaymentReceipt(projectId, 'areaExpenses', expenseId)
         && request.resource.size <= 2 * 1024 * 1024
         && (
           request.resource.contentType == 'application/pdf'
@@ -180,7 +192,7 @@ service firebase.storage {
           || request.resource.contentType == 'image/png'
           || request.resource.contentType == 'image/webp'
         );
-      allow delete: if canWritePaymentReceipt(projectId, 'areaExpenses', expenseId);
+      allow update, delete: if isProjectAdmin(projectId);
     }
 
     match /projects/{projectId}/documents/{documentId}/{fileName} {
@@ -199,7 +211,7 @@ service firebase.storage {
     // Legacy path kept so previously uploaded invoices can still be managed.
     match /projects/{projectId}/areaExpenses/{expenseId}/{fileName} {
       allow read: if hasProjectAccess(projectId);
-      allow create, update: if hasProjectAccess(projectId)
+      allow create, update: if canWritePaymentReceipt(projectId, 'areaExpenses', expenseId)
         && request.resource.size <= 2 * 1024 * 1024
         && request.resource.contentType == 'application/pdf';
       allow delete: if isProjectAdmin(projectId);
