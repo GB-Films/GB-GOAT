@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { doc, getDoc, collection, query, getDocs, addDoc, serverTimestamp, deleteDoc, updateDoc, setDoc, writeBatch, Timestamp } from 'firebase/firestore';
+import { doc, getDoc, collection, query, getDocs, addDoc, serverTimestamp, deleteDoc, updateDoc, setDoc, writeBatch, runTransaction, Timestamp } from 'firebase/firestore';
 import { deleteObject, getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { db, storage } from '../lib/firebase';
 import { handleFirestoreError } from '../lib/firestoreUtils';
@@ -64,6 +64,7 @@ import {
 import { getPaymentTotal } from '../lib/projectFinance';
 import { getFileExtension, sanitizeFileName, validateSpreadsheetImport } from '../lib/files';
 import { PROJECT_STATUSES } from '../lib/projects';
+import { getExpenseInvoices, getInvoiceDocumentKey, type ExpenseInvoiceDocument } from '../lib/invoices';
 
 const tabs = [
   { id: 'resumen', label: 'Resumen', icon: Info },
@@ -326,11 +327,11 @@ const buildInvoiceFileName = (expense: any) => {
     .replace(/\.[^.]+$/, '')
     .slice(0, 70) || 'factura';
   const shortId = String(expense.id || 'gasto').slice(0, 8);
-  return `factura-${baseName}-${shortId}.${extension}`;
+  const documentId = sanitizeFileName(String(expense.__invoiceDocumentId || Date.now())).slice(0, 12);
+  return `factura-${baseName}-${shortId}-${documentId}.${extension}`;
 };
 
 const INVOICE_FILE_TYPES = ['application/pdf', 'image/jpeg', 'image/png'];
-const INVOICE_FILE_ACCEPT = 'application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png';
 const INVOICE_FILE_LABEL = 'PDF, JPG o PNG';
 
 const getInvoiceFileExtension = (file: File) => {
@@ -1164,6 +1165,7 @@ export default function ProjectDetail() {
           total: Number(item.total) || 0,
           order: Number(item.order) || index,
           invoice: item.invoice || null,
+          invoices: getExpenseInvoices(item),
           invoiceStatus: item.invoiceStatus || null,
           otherReceipts: Array.isArray(item.otherReceipts) ? item.otherReceipts : [],
           paymentHistory,
@@ -1748,11 +1750,6 @@ export default function ProjectDetail() {
   const uploadInvoiceForExpense = async (expense: any, file?: File | null, collectionName: PaymentCollection = 'areaExpenses') => {
     if (!id || !file || !canManageItemFiles(expense, collectionName)) return;
 
-    if (expense.invoice?.url) {
-      alert('Para cambiar la factura, primero elimina la factura actual y luego carga otra.');
-      return;
-    }
-
     const fileError = validateInvoiceFile(file);
     if (fileError) {
       alert(fileError);
@@ -1764,7 +1761,12 @@ export default function ProjectDetail() {
 
     try {
       const areaFolder = sanitizeFileName(expense.area || 'sin-area') || 'sin-area';
-      const fileName = buildInvoiceFileName({ ...expense, __invoiceFileExtension: getInvoiceFileExtension(file) });
+      const invoiceId = globalThis.crypto?.randomUUID?.() || generateInvoiceUploadToken();
+      const fileName = buildInvoiceFileName({
+        ...expense,
+        __invoiceDocumentId: invoiceId,
+        __invoiceFileExtension: getInvoiceFileExtension(file),
+      });
       const path = `projects/${id}/areas/${areaFolder}/facturas/${fileName}`;
       const storageRef = ref(storage, path);
       const contentType = getInvoiceContentType(file);
@@ -1784,24 +1786,37 @@ export default function ProjectDetail() {
 
       const url = await getDownloadURL(storageRef);
       const invoice = {
+        id: invoiceId,
         fileName,
         originalFileName: file.name,
         url,
         path,
         contentType,
         size: file.size,
-        uploadedAt: serverTimestamp(),
+        uploadedAt: Timestamp.now(),
         uploadedBy: user?.email || user?.uid || '',
       };
 
-      await updateDoc(doc(db, 'projects', id, collectionName, expense.id), {
-        invoice,
-        invoiceStatus: 'pendiente',
-        updatedAt: serverTimestamp(),
+      const expenseRef = doc(db, 'projects', id, collectionName, expense.id);
+      let nextInvoices: ExpenseInvoiceDocument[] = [];
+      await runTransaction(db, async (transaction) => {
+        const expenseSnapshot = await transaction.get(expenseRef);
+        if (!expenseSnapshot.exists()) throw new Error('La fila de gasto ya no existe.');
+        const expenseData = expenseSnapshot.data();
+        const storedInvoices = Array.isArray(expenseData.invoices) ? expenseData.invoices : [];
+        const nextStoredInvoices = [...storedInvoices, invoice];
+        nextInvoices = getExpenseInvoices({ invoice: expenseData.invoice, invoices: nextStoredInvoices });
+        transaction.update(expenseRef, {
+          ...(!expenseData.invoice?.url && storedInvoices.length === 0 ? { invoice } : {}),
+          invoices: nextStoredInvoices,
+          invoiceStatus: 'pendiente',
+          updatedAt: serverTimestamp(),
+        });
       });
 
       updateItemCollectionState(collectionName, expense.id, {
-        invoice: { ...invoice, uploadedAt: new Date() },
+        invoice: nextInvoices[0],
+        invoices: nextInvoices,
         invoiceStatus: 'pendiente',
       });
     } catch (error: any) {
@@ -1813,25 +1828,40 @@ export default function ProjectDetail() {
     }
   };
 
-  const removeInvoiceFromExpense = async (expense: any, collectionName: PaymentCollection = 'areaExpenses') => {
-    if (!id || !expense.invoice || !isProjectAdmin) return;
-    if (!confirm('¿Quitar la factura adjunta de este gasto?')) return;
+  const removeInvoiceFromExpense = async (expense: any, invoiceToRemove: ExpenseInvoiceDocument, collectionName: PaymentCollection = 'areaExpenses') => {
+    if (!id || !invoiceToRemove || !isProjectAdmin) return;
+    const invoiceLabel = invoiceToRemove.originalFileName || invoiceToRemove.fileName || 'esta factura';
+    if (!confirm(`¿Quitar "${invoiceLabel}" de este gasto?`)) return;
 
     const uploadKey = `${collectionName}-${expense.id}`;
     setUploadingInvoices(prev => ({ ...prev, [uploadKey]: true }));
 
     try {
-      await updateDoc(doc(db, 'projects', id, collectionName, expense.id), {
-        invoice: null,
-        invoiceStatus: null,
-        updatedAt: serverTimestamp(),
+      const expenseRef = doc(db, 'projects', id, collectionName, expense.id);
+      let remainingInvoices: ExpenseInvoiceDocument[] = [];
+      await runTransaction(db, async (transaction) => {
+        const expenseSnapshot = await transaction.get(expenseRef);
+        if (!expenseSnapshot.exists()) throw new Error('La fila de gasto ya no existe.');
+        const invoiceKey = getInvoiceDocumentKey(invoiceToRemove);
+        remainingInvoices = getExpenseInvoices(expenseSnapshot.data())
+          .filter((invoice) => getInvoiceDocumentKey(invoice) !== invoiceKey);
+        transaction.update(expenseRef, {
+          invoice: remainingInvoices[0] || null,
+          invoices: remainingInvoices,
+          invoiceStatus: remainingInvoices.length > 0 ? 'pendiente' : null,
+          updatedAt: serverTimestamp(),
+        });
       });
 
-      if (expense.invoice.path) {
-        await deleteObject(ref(storage, expense.invoice.path)).catch(() => {});
+      if (invoiceToRemove.path) {
+        await deleteObject(ref(storage, invoiceToRemove.path)).catch(() => {});
       }
 
-      updateItemCollectionState(collectionName, expense.id, { invoice: null, invoiceStatus: null });
+      updateItemCollectionState(collectionName, expense.id, {
+        invoice: remainingInvoices[0] || null,
+        invoices: remainingInvoices,
+        invoiceStatus: remainingInvoices.length > 0 ? 'pendiente' : null,
+      });
     } catch (error: any) {
       console.error('Error removing invoice:', error);
       handleFirestoreError(error, 'update', `projects/${id}/${collectionName}/${expense.id}`);
@@ -1846,11 +1876,6 @@ export default function ProjectDetail() {
       alert('Asigná un proveedor a la fila antes de generar el link de factura.');
       return;
     }
-    if (expense.invoice?.url) {
-      alert('Esta fila ya tiene una factura cargada. Si necesitás otra, eliminá la actual primero.');
-      return;
-    }
-
     const loadingKey = `${collectionName}-${expense.id}`;
     setGeneratingInvoiceLinks(prev => ({ ...prev, [loadingKey]: true }));
     try {
@@ -2162,24 +2187,21 @@ export default function ProjectDetail() {
     setDragOverExpenseId(null);
 
     if (uploadingInvoices[`${collectionName}-${expense.id}`]) return;
-    if (expense.invoice?.url) {
-      alert('Para cambiar la factura, primero elimina la factura actual y luego carga otra.');
-      return;
-    }
-
     const files: File[] = [];
     for (let index = 0; index < event.dataTransfer.files.length; index += 1) {
       const file = event.dataTransfer.files.item(index);
       if (file) files.push(file);
     }
-    const invoiceFile = files.find(file => !validateInvoiceFile(file));
+    const invoiceFiles = files.filter(file => !validateInvoiceFile(file));
 
-    if (!invoiceFile) {
+    if (invoiceFiles.length === 0) {
       alert(`Soltá un archivo ${INVOICE_FILE_LABEL} para adjuntarlo como factura.`);
       return;
     }
 
-    await uploadInvoiceForExpense(expense, invoiceFile, collectionName);
+    for (const invoiceFile of invoiceFiles) {
+      await uploadInvoiceForExpense(expense, invoiceFile, collectionName);
+    }
   };
 
   const renameCategory = async (oldName: string) => {
@@ -2796,7 +2818,7 @@ export default function ProjectDetail() {
       uploadingInvoice={!!uploadingInvoices[`${collectionName}-${item.id}`]}
       generatingLink={!!generatingInvoiceLinks[`${collectionName}-${item.id}`]}
       onUploadInvoice={(file) => uploadInvoiceForExpense(item, file, collectionName)}
-      onRemoveInvoice={() => removeInvoiceFromExpense(item, collectionName)}
+      onRemoveInvoice={(invoice) => removeInvoiceFromExpense(item, invoice, collectionName)}
       onCreateInvoiceLink={() => createInvoiceUploadLink(item, collectionName)}
     />
   );
@@ -3151,6 +3173,7 @@ export default function ProjectDetail() {
         total: number;
         paid: number;
         invoice?: any;
+        invoices: ExpenseInvoiceDocument[];
         otherReceipts?: any[];
       }>;
     }>();
@@ -3193,7 +3216,8 @@ export default function ProjectDetail() {
           description: item.description || 'Partida de presupuesto',
           total: Number(item.total) || 0,
           paid: itemPaid,
-          invoice: item.invoice,
+          invoice: getExpenseInvoices(item)[0],
+          invoices: getExpenseInvoices(item),
           otherReceipts: Array.isArray(item.otherReceipts) ? item.otherReceipts : [],
         });
       }
@@ -3213,7 +3237,8 @@ export default function ProjectDetail() {
         description: item.description || 'Gasto de area',
         total: Number(item.total) || 0,
         paid: itemPaid,
-        invoice: item.invoice,
+        invoice: getExpenseInvoices(item)[0],
+        invoices: getExpenseInvoices(item),
         otherReceipts: Array.isArray(item.otherReceipts) ? item.otherReceipts : [],
       });
     });
@@ -3255,7 +3280,7 @@ export default function ProjectDetail() {
       .map((group) => {
         const rows = group.rows.filter((saldo) => {
           const status = getFinanceStatus(saldo);
-          const hasInvoice = saldo.entries.some((entry) => entry.invoice?.url);
+          const hasInvoice = saldo.entries.some((entry) => entry.invoices.length > 0);
           const matchesArea = financeAreaFilter === 'all' || saldo.area === financeAreaFilter;
           const matchesStatus = financeStatusFilter === 'all' || status === financeStatusFilter;
           const matchesInvoice = financeInvoiceFilter === 'all'
@@ -3280,7 +3305,7 @@ export default function ProjectDetail() {
       spent: acc.spent + saldo.spent,
       paid: acc.paid + saldo.paid,
       debt: acc.debt + saldo.debt,
-      invoices: acc.invoices + saldo.entries.filter((entry) => entry.invoice?.url).length,
+      invoices: acc.invoices + saldo.entries.reduce((count, entry) => count + entry.invoices.length, 0),
       receipts: acc.receipts + saldo.entries.reduce((count, entry) => (
         count
         + safeArray(entry.item?.paymentHistory).filter((payment: any) => payment.receipt?.url).length
@@ -3378,21 +3403,21 @@ export default function ProjectDetail() {
     providerSaldosByArea.forEach((group) => {
       group.rows.forEach((saldo) => {
         saldo.entries.forEach((entry) => {
-          if (entry.invoice?.url) {
+          entry.invoices.forEach((invoice, invoiceIndex) => {
             docs.push({
-              id: `invoice-${entry.collectionName}-${entry.id}`,
+              id: `invoice-${entry.collectionName}-${entry.id}-${getInvoiceDocumentKey(invoice) || invoiceIndex}`,
               family: 'finanzas',
               type: 'factura',
               area: saldo.area,
               providerName: saldo.name,
               description: entry.description,
-              fileName: entry.invoice.fileName || entry.invoice.originalFileName || 'Factura',
-              url: entry.invoice.url,
+              fileName: invoice.fileName || invoice.originalFileName || 'Factura',
+              url: invoice.url || '',
               amount: entry.total,
               source: entry.collectionName === 'areaExpenses' ? 'Gestion por Areas' : 'Presupuesto Principal',
-              uploadedAt: entry.invoice.uploadedAt,
+              uploadedAt: invoice.uploadedAt,
             });
-          }
+          });
 
           safeArray(entry.item?.paymentHistory).forEach((payment: any, index) => {
             if (!payment.receipt?.url) return;
@@ -3640,7 +3665,7 @@ export default function ProjectDetail() {
         'Rodaje a Pago': getPaymentLeadTimeLabel(item.paymentDate, getShootingEndDate(project)),
         Pagado: paid,
         Deuda: (Number(item.total) || 0) - paid,
-        Factura: item.invoice?.url || '',
+        Factura: getExpenseInvoices(item).map((invoice) => invoice.url).filter(Boolean).join(' | '),
         Actualizado: formatExportDate(item.updatedAt),
       };
     });
@@ -5559,61 +5584,7 @@ export default function ProjectDetail() {
                                     <div className="w-[78px] rounded border border-slate-100 bg-slate-50 px-1 py-0.5 [&_button]:h-7 [&_button]:px-1 [&_button]:py-0 [&_button]:text-[8px]">
                                       {renderPaymentScheduleCell(item, 'areaExpenses', !canEditPaymentDateForItem(item, 'areaExpenses'))}
                                     </div>
-                                    {item.invoice?.url ? (
-                                      <>
-                                        <a
-                                          href={item.invoice.url}
-                                          target="_blank"
-                                          rel="noreferrer"
-                                          className="inline-flex h-7 items-center gap-1 rounded border border-emerald-100 bg-emerald-50 px-1.5 text-[8px] font-black uppercase tracking-widest text-emerald-700"
-                                        >
-                                          <FileText className="h-3 w-3" />
-                                          Factura
-                                        </a>
-                                        {isProjectAdmin && (
-                                          <button
-                                            type="button"
-                                            disabled={!!uploadingInvoices[`areaExpenses-${item.id}`]}
-                                            onClick={() => removeInvoiceFromExpense(item)}
-                                            className="inline-flex h-7 w-7 items-center justify-center rounded border border-red-100 bg-red-50 text-red-600 disabled:opacity-40"
-                                            title="Quitar factura"
-                                          >
-                                            <X className="h-3 w-3" />
-                                          </button>
-                                        )}
-                                      </>
-                                    ) : (
-                                      canUploadAreaFiles(item.area, item.subcategory) ? (
-                                        <>
-                                          <label className="inline-flex h-7 items-center gap-1 rounded border border-slate-200 bg-white px-1.5 text-[8px] font-black uppercase tracking-widest text-slate-700">
-                                            <Paperclip className="h-3 w-3" />
-                                            Factura
-                                            <input
-                                              type="file"
-                                              accept={INVOICE_FILE_ACCEPT}
-                                              className="hidden"
-                                              disabled={!!uploadingInvoices[`areaExpenses-${item.id}`]}
-                                              onChange={(event) => {
-                                                const file = event.target.files?.[0];
-                                                uploadInvoiceForExpense(item, file);
-                                                event.target.value = '';
-                                              }}
-                                            />
-                                          </label>
-                                          <button
-                                            type="button"
-                                            disabled={!!generatingInvoiceLinks[`areaExpenses-${item.id}`]}
-                                            onClick={() => createInvoiceUploadLink(item)}
-                                            className="inline-flex h-7 items-center gap-1 rounded border border-blue-100 bg-blue-50 px-1.5 text-[8px] font-black uppercase tracking-widest text-blue-700 disabled:opacity-40"
-                                          >
-                                            <LinkIcon className="h-3 w-3" />
-                                            Link
-                                          </button>
-                                        </>
-                                      ) : (
-                                        <span className="inline-flex h-7 items-center rounded border border-slate-100 bg-slate-50 px-1.5 text-[8px] font-black uppercase tracking-widest text-slate-300">Sin factura</span>
-                                      )
-                                    )}
+                                    {renderExpenseInvoiceCell(item, 'areaExpenses')}
 
                                     {canUploadAreaFiles(item.area, item.subcategory) && (
                                       <label className="inline-flex h-7 items-center gap-1 rounded border border-slate-200 bg-white px-1.5 text-[8px] font-black uppercase tracking-widest text-slate-600">

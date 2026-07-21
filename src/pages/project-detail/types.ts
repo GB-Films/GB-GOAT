@@ -43,6 +43,7 @@ export interface BudgetItem {
   createdBy?: string;
   createdByEmail?: string;
   invoice?: any;
+  invoices?: any[];
   invoiceStatus?: string | null;
   otherReceipts?: Array<any>;
   sourceBudgetItemId?: string;
@@ -55,6 +56,7 @@ export interface AreaExpense extends Omit<BudgetItem, 'order'> {
   subcategory?: string;
   order?: number;
   invoice?: any;
+  invoices?: any[];
   invoiceStatus?: string | null;
   otherReceipts?: Array<{
     id: string;

@@ -25,6 +25,8 @@ test('evita duplicar presupuesto y gasto cuando un área está activa', () => {
   assert.equal(totals.spent, 750);
   assert.equal(totals.paid, 200);
   assert.equal(totals.debt, 550);
+  assert.equal(totals.margin, 250);
+  assert.equal(totals.marginPercent, 25);
 });
 
 test('la deuda nunca es negativa aunque exista un sobrepago histórico', () => {
@@ -32,4 +34,3 @@ test('la deuda nunca es negativa aunque exista un sobrepago histórico', () => {
   assert.equal(getPaymentTotal(item), 120);
   assert.equal(getItemDebt(item), 0);
 });
-

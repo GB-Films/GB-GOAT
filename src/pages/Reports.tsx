@@ -1,6 +1,6 @@
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, BarChart3, Building2, CalendarDays, DollarSign, Download, FileSpreadsheet, FileText, Layers3, ReceiptText, Wallet } from 'lucide-react';
+import { AlertTriangle, BarChart3, CalendarDays, DollarSign, Download, FileSpreadsheet, FileText, ReceiptText, Search, Wallet } from 'lucide-react';
 import { collection, deleteDoc, doc, getDocs, orderBy, query, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { deleteObject, ref } from 'firebase/storage';
 import { db, storage } from '../lib/firebase';
@@ -12,8 +12,9 @@ import { PaymentModal } from './project-detail/PaymentModal';
 import type { Payment, PaymentCollection } from './project-detail/types';
 import { calculateProjectFinance, getItemTotal, getPaymentTotal, getStandaloneBudgetItems } from '../lib/projectFinance';
 import { PageHeader } from '../components/PageHeader';
+import { getPrimaryExpenseInvoice } from '../lib/invoices';
 
-type ReportView = 'resumen' | 'proyectos' | 'proveedores' | 'areas' | 'pagos';
+type ReportView = 'resumen' | 'proyectos' | 'pagos';
 
 interface PayableLine {
   id: string;
@@ -54,36 +55,16 @@ interface ProjectReport {
   paid: number;
   debt: number;
   usagePercent: number;
+  margin: number;
+  marginPercent: number;
   overBudget: number;
   unpaidLines: number;
   payableLines: PayableLine[];
-  areaBudgets: Record<string, number>;
-}
-
-interface ProviderReport {
-  key: string;
-  name: string;
-  total: number;
-  paid: number;
-  debt: number;
-  items: number;
-  projects: string[];
-}
-
-interface AreaReport {
-  key: string;
-  area: string;
-  budget: number;
-  spent: number;
-  debt: number;
-  projects: string[];
 }
 
 const reportTabs: Array<{ id: ReportView; label: string; icon: any }> = [
   { id: 'resumen', label: 'Resumen', icon: BarChart3 },
   { id: 'proyectos', label: 'Proyectos', icon: FileSpreadsheet },
-  { id: 'proveedores', label: 'Proveedores', icon: Building2 },
-  { id: 'areas', label: 'Areas', icon: Layers3 },
   { id: 'pagos', label: 'Proyección de Pagos', icon: CalendarDays },
 ];
 
@@ -143,12 +124,6 @@ const buildProjectReport = (
 ): ProjectReport => {
   const standaloneBudgetItems = getStandaloneBudgetItems(project, budgetItems);
   const finance = calculateProjectFinance(project, budgetItems, areaExpenses);
-  const areaBudgets = budgetItems.reduce((acc: Record<string, number>, item) => {
-    const area = item.area || 'Sin area';
-    acc[area] = (acc[area] || 0) + getItemTotal(item);
-    return acc;
-  }, {});
-
   const payableLines: PayableLine[] = [
     ...areaExpenses.map((item) => {
       const total = getItemTotal(item);
@@ -171,7 +146,7 @@ const buildProjectReport = (
         paid,
         debt: Math.max(0, total - paid),
         paymentDate: item.paymentDate,
-        invoice: item.invoice,
+        invoice: getPrimaryExpenseInvoice(item),
         source: 'area' as const,
       };
     }),
@@ -196,6 +171,7 @@ const buildProjectReport = (
         paid,
         debt: Math.max(0, total - paid),
         paymentDate: item.paymentDate,
+        invoice: getPrimaryExpenseInvoice(item),
         source: 'budget' as const,
       };
     }),
@@ -212,10 +188,11 @@ const buildProjectReport = (
     paid: finance.paid,
     debt: finance.debt,
     usagePercent: finance.usagePercent,
+    margin: finance.margin,
+    marginPercent: finance.marginPercent,
     overBudget: finance.overBudget,
     unpaidLines: finance.unpaidLines,
     payableLines,
-    areaBudgets,
   };
 };
 
@@ -224,6 +201,8 @@ const recalculateProjectTotals = (project: ProjectReport): ProjectReport => {
   const paid = project.payableLines.reduce((acc, line) => acc + line.paid, 0);
   const debt = project.payableLines.reduce((acc, line) => acc + line.debt, 0);
   const usagePercent = project.budgetTotal > 0 ? (spent / project.budgetTotal) * 100 : 0;
+  const margin = project.budgetTotal - spent;
+  const marginPercent = project.budgetTotal > 0 ? (margin / project.budgetTotal) * 100 : 0;
 
   return {
     ...project,
@@ -231,6 +210,8 @@ const recalculateProjectTotals = (project: ProjectReport): ProjectReport => {
     paid,
     debt,
     usagePercent,
+    margin,
+    marginPercent,
     overBudget: Math.max(0, spent - project.budgetTotal),
     unpaidLines: project.payableLines.filter((line) => line.debt > 0.01).length,
   };
@@ -241,6 +222,8 @@ export default function Reports() {
   const [projects, setProjects] = useState<ProjectReport[]>([]);
   const [activeView, setActiveView] = useState<ReportView>('resumen');
   const [loading, setLoading] = useState(true);
+  const [projectSearch, setProjectSearch] = useState('');
+  const [projectStatusFilter, setProjectStatusFilter] = useState('all');
   const [paymentProjectionAnchor, setPaymentProjectionAnchor] = useState(() => formatDateKey(new Date()));
   const [paymentProjectFilter, setPaymentProjectFilter] = useState('all');
   const [selectedPaymentBucketKey, setSelectedPaymentBucketKey] = useState<string | null>(null);
@@ -290,67 +273,22 @@ export default function Reports() {
     const spent = projects.reduce((acc, project) => acc + project.spent, 0);
     const paid = projects.reduce((acc, project) => acc + project.paid, 0);
     const debt = projects.reduce((acc, project) => acc + project.debt, 0);
-    const overBudget = projects.reduce((acc, project) => acc + project.overBudget, 0);
     const usagePercent = budget > 0 ? (spent / budget) * 100 : 0;
+    const margin = budget - spent;
+    const marginPercent = budget > 0 ? (margin / budget) * 100 : 0;
 
-    return { budget, spent, paid, debt, overBudget, usagePercent };
+    return { budget, spent, paid, debt, usagePercent, margin, marginPercent };
   }, [projects]);
 
-  const providerReports = useMemo(() => {
-    const map = new Map<string, ProviderReport>();
-
-    projects.forEach((project) => {
-      project.payableLines.forEach((line) => {
-        const key = line.providerId || line.providerName || 'sin-proveedor';
-        const name = line.providerName || 'Sin proveedor asignado';
-
-        if (!map.has(key)) {
-          map.set(key, { key, name, total: 0, paid: 0, debt: 0, items: 0, projects: [] });
-        }
-
-        const item = map.get(key)!;
-        item.total += line.total;
-        item.paid += line.paid;
-        item.debt += line.debt;
-        item.items += 1;
-        if (!item.projects.includes(project.name)) item.projects.push(project.name);
-      });
+  const projectStatuses = useMemo(() => Array.from(new Set(projects.map((project) => project.status))).sort(), [projects]);
+  const filteredProjects = useMemo(() => {
+    const search = projectSearch.trim().toLowerCase();
+    return projects.filter((project) => {
+      const matchesStatus = projectStatusFilter === 'all' || project.status === projectStatusFilter;
+      const matchesSearch = !search || `${project.name} ${project.clientName || ''}`.toLowerCase().includes(search);
+      return matchesStatus && matchesSearch;
     });
-
-    return Array.from(map.values()).sort((a, b) => b.debt - a.debt);
-  }, [projects]);
-
-  const areaReports = useMemo(() => {
-    const map = new Map<string, AreaReport>();
-
-    projects.forEach((project) => {
-      project.payableLines.forEach((line) => {
-        const key = line.area || 'Sin area';
-        if (!map.has(key)) {
-          map.set(key, { key, area: key, budget: 0, spent: 0, debt: 0, projects: [] });
-        }
-        const item = map.get(key)!;
-        item.spent += line.total;
-        item.debt += line.debt;
-        if (!item.projects.includes(project.name)) item.projects.push(project.name);
-      });
-    });
-
-    projects.forEach((project) => {
-      Object.entries(project.areaBudgets).forEach(([area, amount]) => {
-        if (!map.has(area)) {
-          map.set(area, { key: area, area, budget: 0, spent: 0, debt: 0, projects: [] });
-        }
-        const item = map.get(area)!;
-        item.budget += Number(amount) || 0;
-        if (!item.projects.includes(project.name)) {
-          item.projects.push(project.name);
-        }
-      });
-    });
-
-    return Array.from(map.values()).sort((a, b) => b.spent - a.spent);
-  }, [projects]);
+  }, [projectSearch, projectStatusFilter, projects]);
 
   const paymentScheduleLines = useMemo<ReportPaymentScheduleLine[]>(() => (
     projects.flatMap((project) => (
@@ -543,8 +481,8 @@ export default function Reports() {
 
   const attentionProjects = useMemo(() => (
     projects
-      .filter((project) => project.overBudget > 0 || project.debt > 0 || project.usagePercent >= 85)
-      .sort((a, b) => b.overBudget - a.overBudget || b.debt - a.debt || b.usagePercent - a.usagePercent)
+      .filter((project) => project.margin <= 0 || project.marginPercent < 20)
+      .sort((a, b) => a.marginPercent - b.marginPercent || a.margin - b.margin)
       .slice(0, 8)
   ), [projects]);
 
@@ -553,29 +491,12 @@ export default function Reports() {
     Cliente: project.clientName || '',
     Estado: project.status,
     Presupuesto: project.budgetTotal,
-    Gastado: project.spent,
+    Gastos: project.spent,
+    Margen: project.margin,
+    'Margen %': formatPercent(project.marginPercent),
     Pagado: project.paid,
     Deuda: project.debt,
-    Uso: formatPercent(project.usagePercent),
-    Excedido: project.overBudget,
     Pendientes: project.unpaidLines,
-  })));
-
-  const exportProviders = () => downloadCsv('reporte-proveedores.csv', providerReports.map((provider) => ({
-    Proveedor: provider.name,
-    Total: provider.total,
-    Pagado: provider.paid,
-    Deuda: provider.debt,
-    Partidas: provider.items,
-    Proyectos: provider.projects.join(' / '),
-  })));
-
-  const exportAreas = () => downloadCsv('reporte-areas.csv', areaReports.map((area) => ({
-    Area: area.area,
-    Presupuesto: area.budget,
-    Gastado: area.spent,
-    Deuda: area.debt,
-    Proyectos: area.projects.join(' / '),
   })));
 
 
@@ -595,19 +516,11 @@ export default function Reports() {
     <div className="max-w-full mx-auto space-y-6">
       <PageHeader
         eyebrow="GB GOAT / Reportes"
-        title="Finanzas y producción"
+        title="Márgenes de proyectos"
         actions={<>
           <button onClick={exportProjects} className="px-3 py-2 bg-black text-white text-[10px] font-bold uppercase tracking-widest rounded flex items-center gap-2">
             <Download className="w-3 h-3" />
             Proyectos CSV
-          </button>
-          <button onClick={exportProviders} className="px-3 py-2 bg-white border border-slate-200 text-slate-600 text-[10px] font-bold uppercase tracking-widest rounded flex items-center gap-2 hover:border-black">
-            <Download className="w-3 h-3" />
-            Proveedores CSV
-          </button>
-          <button onClick={exportAreas} className="px-3 py-2 bg-white border border-slate-200 text-slate-600 text-[10px] font-bold uppercase tracking-widest rounded flex items-center gap-2 hover:border-black">
-            <Download className="w-3 h-3" />
-            Areas CSV
           </button>
           <button onClick={exportPayments} className="px-3 py-2 bg-white border border-slate-200 text-slate-600 text-[10px] font-bold uppercase tracking-widest rounded flex items-center gap-2 hover:border-black">
             <Download className="w-3 h-3" />
@@ -619,16 +532,16 @@ export default function Reports() {
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
         {[
           { label: 'Presupuesto', value: formatCurrency(totals.budget), icon: FileSpreadsheet },
-          { label: 'Gastado', value: formatCurrency(totals.spent), icon: ReceiptText },
-          { label: 'Pagado', value: formatCurrency(totals.paid), icon: Wallet },
+          { label: 'Gastos', value: formatCurrency(totals.spent), icon: ReceiptText },
+          { label: 'Margen', value: formatCurrency(totals.margin), icon: Wallet, tone: totals.margin < 0 ? 'text-rose-600' : 'text-emerald-700' },
+          { label: 'Margen %', value: formatPercent(totals.marginPercent), icon: BarChart3, tone: totals.marginPercent < 0 ? 'text-rose-600' : 'text-emerald-700' },
           { label: 'Deuda', value: formatCurrency(totals.debt), icon: AlertTriangle },
-          { label: 'Uso global', value: formatPercent(totals.usagePercent), icon: BarChart3 },
         ].map((item) => (
           <div key={item.label} className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <div className="text-[9px] text-slate-400 font-bold uppercase mb-1 tracking-wider">{item.label}</div>
-                <div className="text-xl font-black text-slate-900 leading-none">{loading ? '...' : item.value}</div>
+                <div className={cn("text-xl font-black leading-none", item.tone || 'text-slate-900')}>{loading ? '...' : item.value}</div>
               </div>
               <div className="w-9 h-9 rounded-lg flex items-center justify-center bg-slate-50">
                 <item.icon className="w-4 h-4 text-slate-500" />
@@ -659,8 +572,8 @@ export default function Reports() {
         <div className="grid grid-cols-1 xl:grid-cols-[1.3fr_0.9fr] gap-4">
           <section className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
             <div className="px-4 py-3 border-b border-slate-100">
-              <h2 className="text-sm font-bold text-slate-900">Proyectos que requieren atencion</h2>
-              <p className="text-[10px] uppercase font-bold tracking-widest text-slate-400 mt-0.5">Excesos, deuda pendiente o consumo alto</p>
+              <h2 className="text-sm font-bold text-slate-900">Márgenes a revisar</h2>
+              <p className="text-[10px] uppercase font-bold tracking-widest text-slate-400 mt-0.5">Proyectos sin margen o por debajo del 20%</p>
             </div>
             <div className="divide-y divide-slate-100">
               {attentionProjects.map((project) => (
@@ -670,40 +583,48 @@ export default function Reports() {
                       <div className="text-xs font-bold text-slate-900 truncate">{project.name}</div>
                       <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400 mt-1">{project.status} / {project.clientName || 'Sin cliente'}</div>
                     </div>
-                    <div className={cn("text-[10px] font-black px-2 py-1 rounded border", project.overBudget > 0 ? "bg-rose-50 text-rose-700 border-rose-100" : "bg-yellow-50 text-yellow-700 border-yellow-100")}>
-                      {formatPercent(project.usagePercent)}
+                    <div className={cn("text-[10px] font-black px-2 py-1 rounded border", project.margin < 0 ? "bg-rose-50 text-rose-700 border-rose-100" : "bg-yellow-50 text-yellow-700 border-yellow-100")}>
+                      {formatPercent(project.marginPercent)}
                     </div>
                   </div>
                   <div className="mt-3 grid grid-cols-3 gap-2 text-[10px] font-bold">
-                    <span className="text-slate-400">Gastado <b className="text-slate-800">{formatCurrency(project.spent)}</b></span>
-                    <span className="text-slate-400">Pagado <b className="text-emerald-600">{formatCurrency(project.paid)}</b></span>
-                    <span className="text-slate-400">Debe <b className="text-rose-600">{formatCurrency(project.debt)}</b></span>
+                    <span className="text-slate-400">Presupuesto <b className="text-slate-800">{formatCurrency(project.budgetTotal)}</b></span>
+                    <span className="text-slate-400">Gastos <b className="text-slate-800">{formatCurrency(project.spent)}</b></span>
+                    <span className="text-slate-400">Margen <b className={project.margin < 0 ? 'text-rose-600' : 'text-emerald-700'}>{formatCurrency(project.margin)}</b></span>
                   </div>
                 </Link>
               ))}
               {!loading && attentionProjects.length === 0 && (
-                <div className="px-4 py-10 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">Sin alertas financieras</div>
+                <div className="px-4 py-10 text-center text-[10px] font-bold uppercase tracking-widest text-emerald-600">Todos los proyectos conservan al menos 20% de margen</div>
               )}
             </div>
           </section>
 
           <section className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
             <div className="px-4 py-3 border-b border-slate-100">
-              <h2 className="text-sm font-bold text-slate-900">Distribucion por estado</h2>
-              <p className="text-[10px] uppercase font-bold tracking-widest text-slate-400 mt-0.5">Cantidad y gasto por etapa</p>
+              <h2 className="text-sm font-bold text-slate-900">Margen por estado</h2>
+              <p className="text-[10px] uppercase font-bold tracking-widest text-slate-400 mt-0.5">Presupuesto, gastos y resultado por etapa</p>
             </div>
             <div className="divide-y divide-slate-100">
-              {['Presupuesto', 'Pre Produccion', 'Rodaje', 'Post', 'Aprobado'].map((status) => {
-                const normalized = status === 'Pre Produccion' ? 'Pre Producción' : status;
-                const rows = projects.filter((project) => project.status === normalized);
+              {projectStatuses.map((status) => {
+                const rows = projects.filter((project) => project.status === status);
+                const budget = rows.reduce((acc, project) => acc + project.budgetTotal, 0);
                 const spent = rows.reduce((acc, project) => acc + project.spent, 0);
+                const margin = budget - spent;
+                const marginPercent = budget > 0 ? (margin / budget) * 100 : 0;
                 return (
-                  <div key={status} className="px-4 py-3 flex items-center justify-between gap-4">
+                  <div key={status} className="px-4 py-3">
+                    <div className="flex items-center justify-between gap-4">
                     <div>
                       <div className="text-xs font-bold text-slate-900">{status}</div>
                       <div className="text-[9px] font-bold uppercase tracking-widest text-slate-300">{rows.length} proyectos</div>
                     </div>
-                    <div className="text-right text-xs font-black text-slate-700">{formatCurrency(spent)}</div>
+                    <div className={cn("text-right text-xs font-black", margin < 0 ? 'text-rose-600' : 'text-emerald-700')}>{formatCurrency(margin)} · {formatPercent(marginPercent)}</div>
+                    </div>
+                    <div className="mt-2 grid grid-cols-2 gap-2 text-[9px] font-bold uppercase tracking-wider text-slate-400">
+                      <span>Presupuesto <b className="text-slate-700">{formatCurrency(budget)}</b></span>
+                      <span>Gastos <b className="text-slate-700">{formatCurrency(spent)}</b></span>
+                    </div>
                   </div>
                 );
               })}
@@ -713,57 +634,44 @@ export default function Reports() {
       )}
 
       {activeView === 'proyectos' && (
-        <ReportTable
-          emptyLabel="No hay proyectos para reportar"
-          headers={['Proyecto', 'Estado', 'Presupuesto', 'Gastado', 'Pagado', 'Deuda', 'Uso']}
-          rows={projects.map((project) => ({
-            key: project.id,
-            cells: [
-              <Link to={`/proyectos/${project.id}`} className="font-bold text-slate-900 hover:underline">{project.name}<div className="text-[9px] uppercase tracking-widest text-slate-300">{project.clientName || 'Sin cliente'}</div></Link>,
-              project.status,
-              formatCurrency(project.budgetTotal),
-              formatCurrency(project.spent),
-              formatCurrency(project.paid),
-              <span className={project.debt > 0 ? 'text-rose-600 font-black' : 'text-emerald-600 font-black'}>{formatCurrency(project.debt)}</span>,
-              formatPercent(project.usagePercent),
-            ],
-          }))}
-        />
-      )}
-
-      {activeView === 'proveedores' && (
-        <ReportTable
-          emptyLabel="No hay proveedores con movimientos"
-          headers={['Proveedor', 'Proyectos', 'Total', 'Pagado', 'Deuda', 'Partidas']}
-          rows={providerReports.map((provider) => ({
-            key: provider.key,
-            cells: [
-              <span className="font-bold text-slate-900">{provider.name}</span>,
-              provider.projects.join(' / '),
-              formatCurrency(provider.total),
-              formatCurrency(provider.paid),
-              <span className={provider.debt > 0 ? 'text-rose-600 font-black' : 'text-emerald-600 font-black'}>{formatCurrency(provider.debt)}</span>,
-              provider.items,
-            ],
-          }))}
-        />
-      )}
-
-      {activeView === 'areas' && (
-        <ReportTable
-          emptyLabel="No hay areas con movimientos"
-          headers={['Area', 'Proyectos', 'Presupuesto usado', 'Gastado', 'Deuda']}
-          rows={areaReports.map((area) => ({
-            key: area.key,
-            cells: [
-              <span className="font-bold text-slate-900">{area.area}</span>,
-              area.projects.join(' / '),
-              formatCurrency(area.budget),
-              formatCurrency(area.spent),
-              <span className={area.debt > 0 ? 'text-rose-600 font-black' : 'text-emerald-600 font-black'}>{formatCurrency(area.debt)}</span>,
-            ],
-          }))}
-        />
+        <div className="space-y-3">
+          <div className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-white p-3 sm:flex-row sm:items-center">
+            <div className="flex min-w-0 flex-1 items-center gap-2 rounded border border-slate-100 bg-slate-50 px-3 py-2">
+              <Search className="h-3.5 w-3.5 text-slate-400" />
+              <input
+                value={projectSearch}
+                onChange={(event) => setProjectSearch(event.target.value)}
+                placeholder="Buscar proyecto o cliente..."
+                className="w-full bg-transparent text-xs font-bold text-slate-700 outline-none placeholder:text-slate-300"
+              />
+            </div>
+            <select
+              value={projectStatusFilter}
+              onChange={(event) => setProjectStatusFilter(event.target.value)}
+              className="rounded border border-slate-100 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:border-black"
+            >
+              <option value="all">Todos los estados</option>
+              {projectStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
+            </select>
+            <div className="px-2 text-[9px] font-black uppercase tracking-widest text-slate-400">{filteredProjects.length} proyectos</div>
+          </div>
+          <ReportTable
+            emptyLabel="No hay proyectos que coincidan con los filtros"
+            headers={['Proyecto', 'Estado', 'Presupuesto', 'Gastos', 'Margen', 'Margen %', 'Deuda']}
+            rows={filteredProjects.map((project) => ({
+              key: project.id,
+              cells: [
+                <Link to={`/proyectos/${project.id}`} className="font-bold text-slate-900 hover:underline">{project.name}<div className="text-[9px] uppercase tracking-widest text-slate-300">{project.clientName || 'Sin cliente'}</div></Link>,
+                project.status,
+                formatCurrency(project.budgetTotal),
+                formatCurrency(project.spent),
+                <span className={project.margin < 0 ? 'text-rose-600 font-black' : 'text-emerald-700 font-black'}>{formatCurrency(project.margin)}</span>,
+                <span className={project.marginPercent < 0 ? 'text-rose-600 font-black' : project.marginPercent < 20 ? 'text-amber-600 font-black' : 'text-emerald-700 font-black'}>{formatPercent(project.marginPercent)}</span>,
+                <span className={project.debt > 0 ? 'text-rose-600 font-black' : 'text-slate-400 font-black'}>{formatCurrency(project.debt)}</span>,
+              ],
+            }))}
+          />
+        </div>
       )}
 
 

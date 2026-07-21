@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { doc, getDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { arrayUnion, doc, getDoc, serverTimestamp, Timestamp, writeBatch } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { useParams } from 'react-router-dom';
 import { AlertTriangle, CheckCircle2, FileText, Loader2, Upload } from 'lucide-react';
@@ -118,18 +118,20 @@ export default function InvoiceUploadInvite() {
 
       const url = await getDownloadURL(storageRef);
       const invoice = {
+        id: token,
         fileName,
         originalFileName: file!.name,
         url,
         path,
         contentType,
         size: file!.size,
-        uploadedAt: serverTimestamp(),
+        uploadedAt: Timestamp.now(),
         uploadedBy: 'provider_public_link',
       };
 
-      await updateDoc(doc(db, 'projects', invite.projectId, collectionName, invite.expenseId), {
-        invoice,
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'projects', invite.projectId, collectionName, invite.expenseId), {
+        invoices: arrayUnion(invoice),
         invoiceStatus: 'pendiente',
         publicInvoiceUpload: {
           token,
@@ -140,7 +142,7 @@ export default function InvoiceUploadInvite() {
         updatedAt: serverTimestamp(),
       });
 
-      await updateDoc(doc(db, 'invoiceUploadInvites', token), {
+      batch.update(doc(db, 'invoiceUploadInvites', token), {
         used: true,
         status: 'used',
         usedAt: serverTimestamp(),
@@ -149,6 +151,7 @@ export default function InvoiceUploadInvite() {
         invoiceUrl: url,
         originalFileName: file!.name,
       });
+      await batch.commit();
 
       setSubmitted(true);
     } catch (err) {

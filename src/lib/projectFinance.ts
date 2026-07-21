@@ -39,6 +39,8 @@ export const calculateProjectFinance = (project: any, budgetItems: any[], areaEx
   const paid = entries.reduce((total, entry) => total + getPaymentTotal(entry.item), 0);
   const debt = entries.reduce((total, entry) => total + getItemDebt(entry.item), 0);
   const usagePercent = budgetTotal > 0 ? (spent / budgetTotal) * 100 : 0;
+  const margin = budgetTotal - spent;
+  const marginPercent = budgetTotal > 0 ? (margin / budgetTotal) * 100 : 0;
 
   return {
     budgetTotal,
@@ -47,9 +49,10 @@ export const calculateProjectFinance = (project: any, budgetItems: any[], areaEx
     paid,
     debt,
     usagePercent,
+    margin,
+    marginPercent,
     overBudget: Math.max(0, spent - budgetTotal),
     unpaidLines: entries.filter((entry) => getItemDebt(entry.item) > 0.01).length,
     entries,
   };
 };
-

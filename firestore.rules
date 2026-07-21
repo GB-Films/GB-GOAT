@@ -278,14 +278,46 @@ service cloud.firestore {
         );
     }
 
+    function validExpenseInvoice(invoice) {
+      return invoice is map
+        && invoice.fileName is string
+        && invoice.originalFileName is string
+        && invoice.url is string
+        && invoice.path is string
+        && invoice.contentType in ['application/pdf', 'image/jpeg', 'image/png']
+        && invoice.size is number
+        && invoice.size <= 2 * 1024 * 1024;
+    }
+
     function preservesExistingExpenseInvoice() {
       let changed = request.resource.data.diff(resource.data).affectedKeys();
       let hadInvoice = resource.data.keys().hasAny(['invoice']) && resource.data.invoice != null;
-      return !changed.hasAny(['invoice', 'invoiceStatus'])
+      let oldInvoices = resource.data.keys().hasAny(['invoices']) && resource.data.invoices is list
+        ? resource.data.invoices
+        : [];
+      let requestedInvoices = request.resource.data.keys().hasAny(['invoices']) && request.resource.data.invoices is list
+        ? request.resource.data.invoices
+        : [];
+      let nextInvoice = requestedInvoices.size() > oldInvoices.size()
+        ? requestedInvoices[oldInvoices.size()]
+        : null;
+      return !changed.hasAny(['invoice', 'invoices', 'invoiceStatus'])
         || (
-          !hadInvoice
-          && request.resource.data.invoice is map
+          request.resource.data.invoices is list
+          && request.resource.data.invoices.size() == oldInvoices.size() + 1
+          && request.resource.data.invoices.hasAll(oldInvoices)
+          && validExpenseInvoice(nextInvoice)
           && request.resource.data.invoiceStatus == 'pendiente'
+          && (
+            (hadInvoice && request.resource.data.invoice == resource.data.invoice)
+            || (
+              !hadInvoice
+              && (
+                (oldInvoices.size() == 0 && request.resource.data.invoice == nextInvoice)
+                || (oldInvoices.size() > 0 && !request.resource.data.keys().hasAny(['invoice']))
+              )
+            )
+          )
         );
     }
 
@@ -431,21 +463,28 @@ service cloud.firestore {
     }
 
     function canPublicUploadInvoice(projectId, collectionName, expenseId) {
+      let oldInvoices = resource.data.keys().hasAny(['invoices']) && resource.data.invoices is list
+        ? resource.data.invoices
+        : [];
+      let requestedInvoices = request.resource.data.keys().hasAny(['invoices']) && request.resource.data.invoices is list
+        ? request.resource.data.invoices
+        : [];
+      let nextInvoice = requestedInvoices.size() > oldInvoices.size()
+        ? requestedInvoices[oldInvoices.size()]
+        : null;
+      let hadInvoice = resource.data.keys().hasAny(['invoice']) && resource.data.invoice != null;
       return request.auth == null
-        && (
-          !resource.data.keys().hasAny(['invoice'])
-          || resource.data.invoice == null
-        )
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['invoice', 'invoiceStatus', 'publicInvoiceUpload', 'updatedAt'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['invoice', 'invoices', 'invoiceStatus', 'publicInvoiceUpload', 'updatedAt'])
+        && request.resource.data.invoices is list
+        && request.resource.data.invoices.size() == oldInvoices.size() + 1
+        && request.resource.data.invoices.hasAll(oldInvoices)
         && request.resource.data.invoiceStatus == 'pendiente'
-        && request.resource.data.invoice.fileName is string
-        && request.resource.data.invoice.originalFileName is string
-        && request.resource.data.invoice.url is string
-        && request.resource.data.invoice.path is string
-        && request.resource.data.invoice.contentType in ['application/pdf', 'image/jpeg', 'image/png']
-        && request.resource.data.invoice.size is number
-        && request.resource.data.invoice.size <= 2 * 1024 * 1024
-        && request.resource.data.invoice.uploadedBy == 'provider_public_link'
+        && validExpenseInvoice(nextInvoice)
+        && nextInvoice.uploadedBy == 'provider_public_link'
+        && (
+          (hadInvoice && request.resource.data.invoice == resource.data.invoice)
+          || (!hadInvoice && !request.resource.data.keys().hasAny(['invoice']))
+        )
         && request.resource.data.publicInvoiceUpload.token is string
         && invoiceUploadInviteIsPending(request.resource.data.publicInvoiceUpload.token, projectId, collectionName, expenseId);
     }
