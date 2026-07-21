@@ -1776,6 +1776,7 @@ export default function ProjectDetail() {
           expenseId: expense.id,
           collectionName,
           area: expense.area || '',
+          areaFolder,
           originalFileName: file.name,
           uploadedBy: user?.email || user?.uid || 'unknown',
         },

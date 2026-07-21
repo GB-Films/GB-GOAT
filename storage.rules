@@ -116,12 +116,52 @@ service firebase.storage {
         );
     }
 
-    function canWriteInvoiceFromRequest(projectId, area) {
+    function invoiceMetadataMatchesExpense(projectId, collectionName, expenseId) {
+      return (
+          collectionName == 'budgetItems'
+          && firestore.exists(/databases/(default)/documents/projects/$(projectId)/budgetItems/$(expenseId))
+          && (
+            (
+              firestore.get(/databases/(default)/documents/projects/$(projectId)/budgetItems/$(expenseId)).data.keys().hasAny(['area'])
+              && request.resource.metadata.area == firestore.get(/databases/(default)/documents/projects/$(projectId)/budgetItems/$(expenseId)).data.area
+            )
+            || (
+              !firestore.get(/databases/(default)/documents/projects/$(projectId)/budgetItems/$(expenseId)).data.keys().hasAny(['area'])
+              && request.resource.metadata.area == ''
+            )
+          )
+        )
+        || (
+          collectionName == 'areaExpenses'
+          && firestore.exists(/databases/(default)/documents/projects/$(projectId)/areaExpenses/$(expenseId))
+          && (
+            (
+              firestore.get(/databases/(default)/documents/projects/$(projectId)/areaExpenses/$(expenseId)).data.keys().hasAny(['area'])
+              && request.resource.metadata.area == firestore.get(/databases/(default)/documents/projects/$(projectId)/areaExpenses/$(expenseId)).data.area
+            )
+            || (
+              !firestore.get(/databases/(default)/documents/projects/$(projectId)/areaExpenses/$(expenseId)).data.keys().hasAny(['area'])
+              && request.resource.metadata.area == ''
+            )
+          )
+        );
+    }
+
+    function canWriteInvoiceFromRequest(projectId, areaFolder) {
       return isSignedIn()
         && request.resource.metadata.projectId == projectId
-        && request.resource.metadata.area == area
+        && (
+          !request.resource.metadata.keys().hasAny(['areaFolder'])
+          || request.resource.metadata.areaFolder == areaFolder
+        )
+        && request.resource.metadata.area is string
         && request.resource.metadata.collectionName in ['budgetItems', 'areaExpenses']
         && request.resource.metadata.expenseId is string
+        && invoiceMetadataMatchesExpense(
+          projectId,
+          request.resource.metadata.collectionName,
+          request.resource.metadata.expenseId
+        )
         && canWritePaymentReceipt(
           projectId,
           request.resource.metadata.collectionName,
@@ -129,13 +169,28 @@ service firebase.storage {
         );
     }
 
-    function publicInvoiceUploadInviteIsPending(projectId) {
+    function publicInvoiceUploadInviteIsPending(projectId, areaFolder) {
       return request.auth == null
         && request.resource.metadata.token is string
+        && (
+          !request.resource.metadata.keys().hasAny(['areaFolder'])
+          || request.resource.metadata.areaFolder == areaFolder
+        )
         && firestore.exists(/databases/(default)/documents/invoiceUploadInvites/$(request.resource.metadata.token))
         && firestore.get(/databases/(default)/documents/invoiceUploadInvites/$(request.resource.metadata.token)).data.used == false
         && firestore.get(/databases/(default)/documents/invoiceUploadInvites/$(request.resource.metadata.token)).data.status == 'pending'
         && firestore.get(/databases/(default)/documents/invoiceUploadInvites/$(request.resource.metadata.token)).data.projectId == projectId
+        && (
+          !request.resource.metadata.keys().hasAny(['area'])
+          || (
+            firestore.get(/databases/(default)/documents/invoiceUploadInvites/$(request.resource.metadata.token)).data.keys().hasAny(['area'])
+            && firestore.get(/databases/(default)/documents/invoiceUploadInvites/$(request.resource.metadata.token)).data.area == request.resource.metadata.area
+          )
+          || (
+            !firestore.get(/databases/(default)/documents/invoiceUploadInvites/$(request.resource.metadata.token)).data.keys().hasAny(['area'])
+            && request.resource.metadata.area == ''
+          )
+        )
         && firestore.get(/databases/(default)/documents/invoiceUploadInvites/$(request.resource.metadata.token)).data.expenseId == request.resource.metadata.expenseId
         && (
           (
@@ -157,11 +212,11 @@ service firebase.storage {
         && firestore.get(/databases/(default)/documents/invoiceUploadInvites/$(resource.metadata.token)).data.projectId == projectId;
     }
 
-    match /projects/{projectId}/areas/{area}/facturas/{fileName} {
+    match /projects/{projectId}/areas/{areaFolder}/facturas/{fileName} {
       allow read: if hasProjectAccess(projectId) || publicInvoiceUploadInviteCanRead(projectId);
       allow create: if (
-          canWriteInvoiceFromRequest(projectId, area)
-          || publicInvoiceUploadInviteIsPending(projectId)
+          canWriteInvoiceFromRequest(projectId, areaFolder)
+          || publicInvoiceUploadInviteIsPending(projectId, areaFolder)
         )
         && request.resource.size <= 2 * 1024 * 1024
         && request.resource.contentType in ['application/pdf', 'image/jpeg', 'image/png'];

@@ -107,6 +107,8 @@ export default function InvoiceUploadInvite() {
           projectId: invite.projectId,
           expenseId: invite.expenseId,
           collectionName,
+          area: invite.area || '',
+          areaFolder,
           providerId: invite.providerId || '',
           providerName: invite.providerName || '',
           originalFileName: file!.name,
