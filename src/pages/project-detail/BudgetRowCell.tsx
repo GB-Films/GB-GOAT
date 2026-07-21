@@ -20,7 +20,7 @@ interface BudgetRowCellProps {
   disabledPayment?: boolean;
   disabled?: boolean;
   canCopyProviderInfo?: boolean;
-  onCreateProviderInvite?: (item: any) => Promise<void> | void;
+  onCreateProviderInvite?: (item: any) => Promise<boolean | void> | boolean | void;
   creatingProviderInvite?: boolean;
 }
 
@@ -269,9 +269,11 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
                     type="button"
                     disabled={creatingProviderInvite}
                     onClick={async () => {
-                      await onCreateProviderInvite(item);
-                      setIsEditingProvider(false);
-                      setProviderSearch('');
+                      const inviteCreated = await onCreateProviderInvite(item);
+                      if (inviteCreated !== false) {
+                        setIsEditingProvider(false);
+                        setProviderSearch('');
+                      }
                     }}
                     className={cn(
                       "mb-1 flex w-full items-center gap-2 rounded px-3 py-2 text-left text-[10px] font-bold uppercase transition-colors hover:bg-blue-50 disabled:text-slate-300",

@@ -1886,30 +1886,57 @@ export default function ProjectDetail() {
   };
 
   const createProviderInviteForItem = async (item: any, collectionName: PaymentCollection) => {
-    if (!id || !item?.id) return;
-    if (!canManagePaymentForItem(item, collectionName)) return;
-    if (item.providerId || item.providerName) {
+    if (!id || !item?.id) return false;
+
+    // Las filas que llegan desde búsquedas y ordenamientos son vistas derivadas.
+    // Volvemos a la colección original para no crear links con una copia obsoleta.
+    const currentItem = (collectionName === 'budgetItems' ? budgetItems : areaExpenses)
+      .find((candidate) => candidate.id === item.id);
+    if (!currentItem) {
+      alert('No se encontró la fila de gasto. Actualizá la pantalla e intentá nuevamente.');
+      return false;
+    }
+    if (!canManagePaymentForItem(currentItem, collectionName)) {
+      alert('No tenés permisos para generar un link de alta de proveedor en esta fila.');
+      return false;
+    }
+    if (currentItem.providerId || currentItem.providerName) {
       alert('Esta fila ya tiene un proveedor asignado.');
-      return;
+      return false;
     }
 
-    const existingInvite = getPendingProviderInviteLink(item);
+    const copyInviteLink = async (inviteLink: string) => {
+      try {
+        if (!navigator.clipboard?.writeText) return false;
+        await navigator.clipboard.writeText(inviteLink);
+        return true;
+      } catch (error) {
+        console.warn('Could not copy provider invite link:', error);
+        return false;
+      }
+    };
+
+    const existingInvite = getPendingProviderInviteLink(currentItem);
     if (existingInvite?.link || existingInvite?.token) {
       const existingLink = existingInvite.link || getPublicProviderInviteLink(existingInvite.token);
-      await navigator.clipboard?.writeText(existingLink);
-      alert(`Link de alta de proveedor pendiente copiado al portapapeles:\n\n${existingLink}`);
-      return;
+      const copied = await copyInviteLink(existingLink);
+      alert(`${copied ? 'Link de alta de proveedor pendiente copiado al portapapeles:' : 'Este es el link de alta de proveedor pendiente:'}\n\n${existingLink}`);
+      return true;
     }
 
     const days = 7;
     const token = generateInvoiceUploadToken();
     const link = getPublicProviderInviteLink(token);
-    const loadingKey = `${collectionName}-${item.id}`;
+    const loadingKey = `${collectionName}-${currentItem.id}`;
     const expiresAt = Timestamp.fromDate(buildProviderInviteExpiration(days));
 
     setGeneratingProviderInviteLinks(prev => ({ ...prev, [loadingKey]: true }));
     try {
-      await setDoc(doc(db, 'providerInvites', token), {
+      const providerInviteRef = doc(db, 'providerInvites', token);
+      const expenseRef = doc(db, 'projects', id, collectionName, currentItem.id);
+      const batch = writeBatch(db);
+
+      batch.set(providerInviteRef, {
         token,
         status: 'pending',
         used: false,
@@ -1917,10 +1944,10 @@ export default function ProjectDetail() {
         projectId: id,
         projectName: project?.name || '',
         collectionName,
-        expenseId: item.id,
-        area: item.area || '',
-        subcategory: cleanAreaExpenseSubcategory(item.subcategory),
-        description: item.description || '',
+        expenseId: currentItem.id,
+        area: currentItem.area || '',
+        subcategory: cleanAreaExpenseSubcategory(currentItem.subcategory),
+        description: currentItem.description || '',
         expiresAt,
         expiresInDays: days,
         createdBy: user?.uid || '',
@@ -1939,7 +1966,7 @@ export default function ProjectDetail() {
         expiresAt: expiresAt.toDate(),
       };
 
-      await updateDoc(doc(db, 'projects', id, collectionName, item.id), {
+      batch.update(expenseRef, {
         providerInviteLink: {
           ...providerInviteLink,
           createdAt: serverTimestamp(),
@@ -1947,13 +1974,16 @@ export default function ProjectDetail() {
         },
         updatedAt: serverTimestamp(),
       });
-      updateItemCollectionState(collectionName, item.id, { providerInviteLink });
+      await batch.commit();
+      updateItemCollectionState(collectionName, currentItem.id, { providerInviteLink });
 
-      await navigator.clipboard?.writeText(link);
-      alert(`Link de alta de proveedor creado y copiado al portapapeles:\n\n${link}\n\nEs de un solo uso, vence en ${days} dias y se asignara automaticamente a este gasto.`);
+      const copied = await copyInviteLink(link);
+      alert(`${copied ? 'Link de alta de proveedor creado y copiado al portapapeles:' : 'Link de alta de proveedor creado:'}\n\n${link}\n\nEs de un solo uso, vence en ${days} dias y se asignara automaticamente a este gasto.`);
+      return true;
     } catch (error) {
       console.error('Error creating provider invite for item:', error);
       alert('No se pudo generar el link de alta de proveedor.');
+      return false;
     } finally {
       setGeneratingProviderInviteLinks(prev => ({ ...prev, [loadingKey]: false }));
     }
