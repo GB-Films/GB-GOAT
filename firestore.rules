@@ -369,6 +369,11 @@ service cloud.firestore {
             && request.resource.data.fromUserEmail == userEmail()
             && request.resource.data.collectionName in ['budgetItems', 'areaExpenses']
             && canWriteAreaExpense(projectId, request.resource.data.area, request.resource.data.subcategory)
+            && (
+              !request.resource.data.keys().hasAny(['cashAccount'])
+              || request.resource.data.cashAccount == 'personal'
+              || (request.resource.data.cashAccount == 'general' && isProjectAdmin(projectId))
+            )
           )
         );
     }

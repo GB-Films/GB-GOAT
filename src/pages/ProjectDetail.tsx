@@ -65,6 +65,7 @@ import { getPaymentTotal } from '../lib/projectFinance';
 import { getFileExtension, sanitizeFileName, validateSpreadsheetImport } from '../lib/files';
 import { PROJECT_STATUSES } from '../lib/projects';
 import { getExpenseInvoices, getInvoiceDocumentKey, type ExpenseInvoiceDocument } from '../lib/invoices';
+import { calculateGeneralCashSummary, GENERAL_CASH_ACCOUNT, isGeneralCashMovement } from '../lib/cashBoxes';
 
 const tabs = [
   { id: 'resumen', label: 'Resumen', icon: Info },
@@ -3049,12 +3050,20 @@ export default function ProjectDetail() {
       const toEmail = normalizeEmail(movement.toUserEmail);
       const fromEmail = normalizeEmail(movement.fromUserEmail);
       if (toEmail) balances.set(toEmail, (balances.get(toEmail) || 0) + amount);
-      if (fromEmail) balances.set(fromEmail, (balances.get(fromEmail) || 0) - amount);
+      if (fromEmail && !isGeneralCashMovement(movement)) balances.set(fromEmail, (balances.get(fromEmail) || 0) - amount);
     });
     return balances;
   }, [cashMovements]);
 
   const currentCashBalance = cashBalanceByEmail.get(currentUserEmail) || 0;
+  const generalCashSummary = React.useMemo(() => calculateGeneralCashSummary(cashMovements), [cashMovements]);
+  const generalCashMovements = React.useMemo(() => (
+    [...generalCashSummary.movements].sort((a, b) => {
+      const ad = a.createdAt?.seconds ? a.createdAt.seconds : new Date(a.date || 0).getTime() / 1000;
+      const bd = b.createdAt?.seconds ? b.createdAt.seconds : new Date(b.date || 0).getTime() / 1000;
+      return bd - ad;
+    })
+  ), [generalCashSummary.movements]);
   const pendingCashDeliveries = React.useMemo(() => (
     cashMovements
       .filter((movement) => (
@@ -3092,7 +3101,10 @@ export default function ProjectDetail() {
       .map((responsible) => {
         const email = normalizeEmail(responsible.email);
         const movements = cashMovements
-          .filter((movement) => normalizeEmail(movement.toUserEmail) === email || normalizeEmail(movement.fromUserEmail) === email)
+          .filter((movement) => (
+            (normalizeEmail(movement.toUserEmail) === email || normalizeEmail(movement.fromUserEmail) === email)
+            && !(movement.type === 'pago' && movement.cashAccount === GENERAL_CASH_ACCOUNT)
+          ))
           .sort((a, b) => {
             const ad = a.createdAt?.seconds ? a.createdAt.seconds : new Date(a.date || 0).getTime() / 1000;
             const bd = b.createdAt?.seconds ? b.createdAt.seconds : new Date(b.date || 0).getTime() / 1000;
@@ -3864,6 +3876,7 @@ export default function ProjectDetail() {
 
     const payload = {
       type: 'entrega',
+      cashAccount: GENERAL_CASH_ACCOUNT,
       status: 'pending',
       amount,
       date,
@@ -5988,14 +6001,14 @@ export default function ProjectDetail() {
           <div className="space-y-5 pb-20">
             <header className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-3">
               <div>
-                <h2 className="text-lg font-bold text-slate-900">Cajas por Responsable</h2>
+                <h2 className="text-lg font-bold text-slate-900">{isProjectAdmin ? 'Caja General y Cajas por Responsable' : 'Cajas por Responsable'}</h2>
                 <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest mt-1">
-                  Entregas de efectivo, pagos rendidos y saldos disponibles por persona
+                  {isProjectAdmin ? 'Salidas generales, entregas, pagos rendidos y saldos por persona' : 'Entregas de efectivo, pagos rendidos y saldos disponibles por persona'}
                 </p>
               </div>
               <div className="px-4 py-3 bg-slate-900 text-white rounded-xl text-right">
-                <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Mi saldo</div>
-                <div className="text-xl font-black font-mono">${currentCashBalance.toLocaleString()}</div>
+                <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{isProjectAdmin ? 'Salidas Caja General' : 'Mi saldo'}</div>
+                <div className="text-xl font-black font-mono">${(isProjectAdmin ? generalCashSummary.totalOut : currentCashBalance).toLocaleString()}</div>
               </div>
             </header>
 
@@ -6031,12 +6044,67 @@ export default function ProjectDetail() {
               </section>
             )}
 
+            {isProjectAdmin && (
+              <section className="overflow-hidden rounded-xl border border-slate-800 bg-slate-950 text-white shadow-xl">
+                <div className="flex flex-col gap-3 border-b border-white/10 px-5 py-4 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <h3 className="text-sm font-black">Caja General</h3>
+                    <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-slate-400">Sin saldo inicial ni límite · registro acumulado de salidas</p>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-2xl font-black font-mono text-white">-${generalCashSummary.totalOut.toLocaleString()}</div>
+                    <div className="text-[9px] font-black uppercase tracking-widest text-slate-500">Total efectivamente salido</div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 divide-y divide-white/10 border-b border-white/10 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+                  {[
+                    { label: 'Entregas confirmadas', value: generalCashSummary.confirmedDeliveries, tone: 'text-blue-300' },
+                    { label: 'Pagos directos', value: generalCashSummary.directPayments, tone: 'text-emerald-300' },
+                    { label: 'Entregas pendientes', value: generalCashSummary.pendingDeliveries, tone: 'text-amber-300' },
+                  ].map((summaryItem) => (
+                    <div key={summaryItem.label} className="px-5 py-4">
+                      <div className="text-[9px] font-black uppercase tracking-widest text-slate-500">{summaryItem.label}</div>
+                      <div className={cn('mt-1 text-lg font-black font-mono', summaryItem.tone)}>${summaryItem.value.toLocaleString()}</div>
+                    </div>
+                  ))}
+                </div>
+                <div className="max-h-80 divide-y divide-white/10 overflow-y-auto">
+                  {generalCashMovements.map((movement) => {
+                    const isPending = movement.type === 'entrega' && movement.status === 'pending';
+                    const movementLabel = movement.type === 'entrega' ? 'Entrega de caja' : 'Pago directo';
+                    const destination = movement.type === 'entrega'
+                      ? `A ${movement.toUserName || movement.toUserEmail || 'responsable sin identificar'}`
+                      : movement.description || movement.area || 'Gasto del proyecto';
+                    return (
+                      <div key={`general-${movement.id}`} className={cn('flex items-center justify-between gap-4 px-5 py-3', isPending && 'bg-amber-500/10')}>
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-xs font-black text-white">{movementLabel}</span>
+                            {isPending && <span className="rounded-full bg-amber-300/15 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-amber-300">Pendiente</span>}
+                            {movement.type === 'entrega' && movement.status === 'confirmed' && <span className="rounded-full bg-emerald-300/15 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-emerald-300">Confirmada</span>}
+                          </div>
+                          <div className="mt-1 truncate text-[10px] text-slate-400">{destination} · {formatDate(movement.date || movement.createdAt)}</div>
+                          {(movement.notes || movement.area) && <div className="mt-1 truncate text-[9px] text-slate-500">{movement.notes || movement.area}</div>}
+                        </div>
+                        <div className={cn('shrink-0 text-sm font-black font-mono', isPending ? 'text-amber-300' : 'text-rose-300')}>
+                          {isPending ? 'Pend. ' : '-'}${Number(movement.amount || 0).toLocaleString()}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {generalCashMovements.length === 0 && (
+                    <div className="px-5 py-10 text-center text-[10px] font-black uppercase tracking-widest text-slate-600">Todavía no hay salidas registradas</div>
+                  )}
+                </div>
+              </section>
+            )}
+
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               {isProjectAdmin && (
                 <form onSubmit={createCashDelivery} className="bg-white border border-slate-200 rounded-xl shadow-sm p-5 space-y-4">
                   <div>
                     <h3 className="text-sm font-bold text-slate-900">Entregar efectivo</h3>
-                    <p className="text-[10px] uppercase tracking-widest text-slate-400 font-bold mt-1">Quedará pendiente hasta que el responsable confirme la recepción</p>
+                    <p className="text-[10px] uppercase tracking-widest text-slate-400 font-bold mt-1">Sale de Caja General y queda pendiente hasta que el responsable confirme la recepción</p>
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
@@ -7985,8 +8053,11 @@ export default function ProjectDetail() {
           item={selectedItemForPayment}
           isOpen={paymentModalOpen}
           canManagePayments={canManagePaymentForItem(selectedItemForPayment, selectedItemForPayment?.__paymentCollection || paymentType)}
-          canUseCashBox={canManagePaymentForItem(selectedItemForPayment, selectedItemForPayment?.__paymentCollection || paymentType) && currentCashBalance > 0}
+          canUseCashBox={canManagePaymentForItem(selectedItemForPayment, selectedItemForPayment?.__paymentCollection || paymentType) && (isProjectAdmin || currentCashBalance > 0)}
           cashBoxBalance={currentCashBalance}
+          cashBoxAccount={isProjectAdmin ? 'general' : 'personal'}
+          cashBoxUnlimited={isProjectAdmin}
+          cashBoxLabel={isProjectAdmin ? 'Caja General' : 'caja en efectivo'}
           cashOwnerEmail={currentUserEmail}
           cashOwnerName={currentUserName}
           paymentType={paymentType}

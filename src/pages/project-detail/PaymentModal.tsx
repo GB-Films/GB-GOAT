@@ -66,6 +66,9 @@ interface PaymentModalProps {
   canManagePayments: boolean;
   canUseCashBox: boolean;
   cashBoxBalance: number;
+  cashBoxAccount?: 'general' | 'personal';
+  cashBoxUnlimited?: boolean;
+  cashBoxLabel?: string;
   cashOwnerEmail?: string;
   cashOwnerName?: string;
   paymentType: PaymentCollection;
@@ -96,6 +99,9 @@ export function PaymentModal({
   canManagePayments,
   canUseCashBox,
   cashBoxBalance,
+  cashBoxAccount = 'personal',
+  cashBoxUnlimited = false,
+  cashBoxLabel = 'Caja en efectivo',
   cashOwnerEmail,
   cashOwnerName,
   paymentType,
@@ -397,7 +403,7 @@ export function PaymentModal({
                 return;
               }
 
-              if (useCashBox && amount > cashBoxBalance + 0.01) {
+              if (useCashBox && !cashBoxUnlimited && amount > cashBoxBalance + 0.01) {
                 alert('El monto supera el saldo disponible en caja.');
                 return;
               }
@@ -421,6 +427,7 @@ export function PaymentModal({
                 date: customDate ? new Date(customDate + 'T12:00:00') : new Date(),
                 type: isRemainingBalance ? 'total' : 'partial',
                 method: useCashBox ? 'caja_efectivo' : 'otro',
+                ...(useCashBox ? { cashAccount: cashBoxAccount, cashBoxLabel } : {}),
                 createdByEmail: currentUserEmail,
                 createdBy: currentUserId,
                 createdByName: currentUserName,
@@ -470,6 +477,7 @@ export function PaymentModal({
                 const paymentDate = customDate ? new Date(customDate + 'T12:00:00') : new Date();
                 const movement = useCashBox && cashMovementRef ? {
                     type: 'pago',
+                    cashAccount: cashBoxAccount,
                     amount,
                     date: paymentDate,
                     fromUserEmail: cashOwnerEmail || '',
@@ -598,8 +606,10 @@ export function PaymentModal({
               {canUseCashBox && (
                 <label className="flex items-center justify-between gap-4 p-3 bg-amber-50 border border-amber-100 rounded-xl cursor-pointer">
                   <div>
-                    <div className="text-[10px] font-bold uppercase tracking-widest text-amber-700">Usar caja en efectivo</div>
-                    <div className="text-xs text-amber-700/70 mt-1">Saldo disponible: ${cashBoxBalance.toLocaleString()}</div>
+                    <div className="text-[10px] font-bold uppercase tracking-widest text-amber-700">Usar {cashBoxLabel}</div>
+                    <div className="text-xs text-amber-700/70 mt-1">
+                      {cashBoxUnlimited ? 'Sin saldo inicial · se registrará como salida' : `Saldo disponible: $${cashBoxBalance.toLocaleString()}`}
+                    </div>
                   </div>
                   <input name="useCashBox" type="checkbox" className="w-4 h-4 accent-amber-600" />
                 </label>
@@ -743,7 +753,7 @@ export function PaymentModal({
                             <div className="mt-2 inline-flex max-w-full items-center gap-1 rounded border border-amber-200 bg-amber-50 px-2 py-1 text-[8px] font-black uppercase tracking-widest text-amber-700">
                               <Wallet className="h-3 w-3 shrink-0" />
                               <span className="truncate">
-                                Caja de {cashOwner || 'responsable sin identificar'}
+                                {payment.cashBoxLabel || (payment.cashAccount === 'general' ? 'Caja General' : `Caja de ${cashOwner || 'responsable sin identificar'}`)}
                               </span>
                             </div>
                           )}

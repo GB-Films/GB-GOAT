@@ -5,6 +5,8 @@ export interface Payment {
   date: any;
   type: 'partial' | 'total';
   method?: 'caja_efectivo' | 'otro';
+  cashAccount?: 'general' | 'personal';
+  cashBoxLabel?: string;
   createdByEmail?: string;
   createdBy?: string;
   createdByName?: string;
@@ -80,6 +82,7 @@ export interface CashMovement {
   id: string;
   type: 'entrega' | 'transferencia' | 'pago';
   amount: number;
+  cashAccount?: 'general' | 'personal';
   date: any;
   fromUserEmail?: string;
   fromUserName?: string;
