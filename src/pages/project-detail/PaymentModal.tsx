@@ -8,6 +8,7 @@ import { handleFirestoreError } from '../../lib/firestoreUtils';
 import { cn } from '../../lib/utils';
 import { validateMaxUploadSize } from '../../lib/uploadLimits';
 import { getFileExtension, sanitizeFileName } from '../../lib/files';
+import type { PaymentCashBoxOption } from '../../lib/cashBoxes';
 import type { Payment, PaymentCollection } from './types';
 
 const formatDate = (dateString: string | any) => {
@@ -64,13 +65,7 @@ interface PaymentModalProps {
   item: any | null;
   isOpen: boolean;
   canManagePayments: boolean;
-  canUseCashBox: boolean;
-  cashBoxBalance: number;
-  cashBoxAccount?: 'general' | 'personal';
-  cashBoxUnlimited?: boolean;
-  cashBoxLabel?: string;
-  cashOwnerEmail?: string;
-  cashOwnerName?: string;
+  cashBoxOptions: PaymentCashBoxOption[];
   paymentType: PaymentCollection;
   isDeletingPayment: number | null;
   canEditExistingPayments?: boolean;
@@ -97,13 +92,7 @@ export function PaymentModal({
   item,
   isOpen,
   canManagePayments,
-  canUseCashBox,
-  cashBoxBalance,
-  cashBoxAccount = 'personal',
-  cashBoxUnlimited = false,
-  cashBoxLabel = 'Caja en efectivo',
-  cashOwnerEmail,
-  cashOwnerName,
+  cashBoxOptions,
   paymentType,
   isDeletingPayment,
   canEditExistingPayments = false,
@@ -389,7 +378,9 @@ export function PaymentModal({
               const amount = Number(formData.get('amount'));
               const formReceiptFile = formData.get('receipt') as File | null;
               const receiptFile = selectedReceipt || (formReceiptFile && formReceiptFile.size > 0 ? formReceiptFile : null);
-              const useCashBox = formData.get('useCashBox') === 'on';
+              const requestedCashBoxId = String(formData.get('cashBoxId') || cashBoxOptions[0]?.id || '');
+              const selectedCashBox = cashBoxOptions.find((option) => option.id === requestedCashBoxId);
+              const useCashBox = formData.get('useCashBox') === 'on' && Boolean(selectedCashBox);
               
               if (!amount || amount <= 0) {
                 alert('Por favor ingrese un monto válido');
@@ -403,7 +394,7 @@ export function PaymentModal({
                 return;
               }
 
-              if (useCashBox && !cashBoxUnlimited && amount > cashBoxBalance + 0.01) {
+              if (useCashBox && selectedCashBox && !selectedCashBox.unlimited && amount > selectedCashBox.balance + 0.01) {
                 alert('El monto supera el saldo disponible en caja.');
                 return;
               }
@@ -427,7 +418,10 @@ export function PaymentModal({
                 date: customDate ? new Date(customDate + 'T12:00:00') : new Date(),
                 type: isRemainingBalance ? 'total' : 'partial',
                 method: useCashBox ? 'caja_efectivo' : 'otro',
-                ...(useCashBox ? { cashAccount: cashBoxAccount, cashBoxLabel } : {}),
+                ...(useCashBox && selectedCashBox ? {
+                  cashAccount: selectedCashBox.account,
+                  cashBoxLabel: selectedCashBox.label,
+                } : {}),
                 createdByEmail: currentUserEmail,
                 createdBy: currentUserId,
                 createdByName: currentUserName,
@@ -439,9 +433,9 @@ export function PaymentModal({
               const cashMovementRef = useCashBox ? doc(collection(db, 'projects', projectId, 'cashMovements')) : null;
               
               try {
-                if (useCashBox && cashMovementRef) {
-                  newPayment.paidByEmail = cashOwnerEmail || '';
-                  newPayment.paidByName = cashOwnerName || '';
+                if (useCashBox && selectedCashBox && cashMovementRef) {
+                  newPayment.paidByEmail = selectedCashBox.ownerEmail;
+                  newPayment.paidByName = selectedCashBox.ownerName;
                   newPayment.cashMovementId = cashMovementRef.id;
                 }
 
@@ -475,13 +469,13 @@ export function PaymentModal({
                 }
 
                 const paymentDate = customDate ? new Date(customDate + 'T12:00:00') : new Date();
-                const movement = useCashBox && cashMovementRef ? {
+                const movement = useCashBox && selectedCashBox && cashMovementRef ? {
                     type: 'pago',
-                    cashAccount: cashBoxAccount,
+                    cashAccount: selectedCashBox.account,
                     amount,
                     date: paymentDate,
-                    fromUserEmail: cashOwnerEmail || '',
-                    fromUserName: cashOwnerName || '',
+                    fromUserEmail: selectedCashBox.ownerEmail,
+                    fromUserName: selectedCashBox.ownerName,
                     area: item.area || '',
                     subcategory: item.subcategory || '',
                     collectionName,
@@ -489,8 +483,8 @@ export function PaymentModal({
                     paymentId,
                     description: item.description || '',
                     notes: formData.get('detail') as string || '',
-                    createdByEmail: cashOwnerEmail || '',
-                    createdByName: cashOwnerName || '',
+                    createdByEmail: selectedCashBox.ownerEmail,
+                    createdByName: selectedCashBox.ownerName,
                     createdAt: serverTimestamp(),
                     updatedAt: serverTimestamp(),
                   } : null;
@@ -603,16 +597,27 @@ export function PaymentModal({
                 <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1.5 tracking-widest">Detalle / Referencia</label>
                 <input name="detail" placeholder="Ej: Transferencia Banco X, Pago en efectivo..." className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs focus:outline-none focus:border-black transition-all" />
               </div>
-              {canUseCashBox && (
-                <label className="flex items-center justify-between gap-4 p-3 bg-amber-50 border border-amber-100 rounded-xl cursor-pointer">
-                  <div>
-                    <div className="text-[10px] font-bold uppercase tracking-widest text-amber-700">Usar {cashBoxLabel}</div>
-                    <div className="text-xs text-amber-700/70 mt-1">
-                      {cashBoxUnlimited ? 'Sin saldo inicial · se registrará como salida' : `Saldo disponible: $${cashBoxBalance.toLocaleString()}`}
+              {cashBoxOptions.length > 0 && (
+                <div className="p-3 bg-amber-50 border border-amber-100 rounded-xl space-y-3">
+                  <label className="flex items-center justify-between gap-4 cursor-pointer">
+                    <div>
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-amber-700">Usar caja en efectivo</div>
+                      <div className="text-xs text-amber-700/70 mt-1">Elegí la caja que financiará este pago</div>
                     </div>
-                  </div>
-                  <input name="useCashBox" type="checkbox" className="w-4 h-4 accent-amber-600" />
-                </label>
+                    <input name="useCashBox" type="checkbox" className="w-4 h-4 accent-amber-600" />
+                  </label>
+                  <select
+                    name="cashBoxId"
+                    defaultValue={cashBoxOptions[0]?.id}
+                    className="w-full px-3 py-2 bg-white border border-amber-200 rounded-lg text-xs font-bold text-amber-900 focus:outline-none focus:border-amber-500"
+                  >
+                    {cashBoxOptions.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.label}{option.unlimited ? ' · salida de Caja General' : ` · saldo $${option.balance.toLocaleString()}`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               )}
               <div>
                 <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1.5 tracking-widest">Comprobante de Pago</label>

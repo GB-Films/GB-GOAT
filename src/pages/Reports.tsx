@@ -968,8 +968,7 @@ export default function Reports() {
         item={selectedPaymentLine?.item || null}
         isOpen={Boolean(selectedPaymentLine)}
         canManagePayments={Boolean(selectedPaymentLine)}
-        canUseCashBox={false}
-        cashBoxBalance={0}
+        cashBoxOptions={[]}
         paymentType={selectedPaymentLine?.collectionName || 'areaExpenses'}
         isDeletingPayment={isDeletingPayment}
         canEditExistingPayments={profile?.role === 'admin'}

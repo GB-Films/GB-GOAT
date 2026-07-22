@@ -65,7 +65,7 @@ import { getPaymentTotal } from '../lib/projectFinance';
 import { getFileExtension, sanitizeFileName, validateSpreadsheetImport } from '../lib/files';
 import { PROJECT_STATUSES } from '../lib/projects';
 import { getExpenseInvoices, getInvoiceDocumentKey, type ExpenseInvoiceDocument } from '../lib/invoices';
-import { calculateGeneralCashSummary, GENERAL_CASH_ACCOUNT, isGeneralCashMovement } from '../lib/cashBoxes';
+import { buildPaymentCashBoxOptions, calculateGeneralCashSummary, GENERAL_CASH_ACCOUNT, isGeneralCashMovement } from '../lib/cashBoxes';
 
 const tabs = [
   { id: 'resumen', label: 'Resumen', icon: Info },
@@ -695,6 +695,7 @@ export default function ProjectDetail() {
   const [collapsedAreaSubcategories, setCollapsedAreaSubcategories] = useState<Record<string, boolean>>({});
   const [areaExpenseSort, setAreaExpenseSort] = useState<AreaExpenseSortKey>('manual');
   const [areaExpenseSearch, setAreaExpenseSearch] = useState('');
+  const [providerSearch, setProviderSearch] = useState('');
   const [draggedAreaExpenseId, setDraggedAreaExpenseId] = useState<string | null>(null);
   const [dragOverAreaTarget, setDragOverAreaTarget] = useState<string | null>(null);
   const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
@@ -3056,6 +3057,13 @@ export default function ProjectDetail() {
   }, [cashMovements]);
 
   const currentCashBalance = cashBalanceByEmail.get(currentUserEmail) || 0;
+  const paymentCashBoxOptions = React.useMemo(() => buildPaymentCashBoxOptions({
+    isProjectAdmin,
+    hasPersonalCashBox: cashBalanceByEmail.has(currentUserEmail),
+    personalBalance: currentCashBalance,
+    currentUserEmail,
+    currentUserName,
+  }), [cashBalanceByEmail, currentCashBalance, currentUserEmail, currentUserName, isProjectAdmin]);
   const generalCashSummary = React.useMemo(() => calculateGeneralCashSummary(cashMovements), [cashMovements]);
   const generalCashMovements = React.useMemo(() => (
     [...generalCashSummary.movements].sort((a, b) => {
@@ -3403,6 +3411,7 @@ export default function ProjectDetail() {
       type: string;
       area: string;
       providerName: string;
+      providerId?: string;
       description: string;
       fileName: string;
       url: string;
@@ -3422,6 +3431,7 @@ export default function ProjectDetail() {
               type: 'factura',
               area: saldo.area,
               providerName: saldo.name,
+              providerId: entry.item?.providerId || '',
               description: entry.description,
               fileName: invoice.fileName || invoice.originalFileName || 'Factura',
               url: invoice.url || '',
@@ -3439,6 +3449,7 @@ export default function ProjectDetail() {
               type: 'comprobante',
               area: saldo.area,
               providerName: saldo.name,
+              providerId: entry.item?.providerId || '',
               description: entry.description,
               fileName: payment.receipt.originalFileName || payment.receipt.fileName || 'Comprobante',
               url: payment.receipt.url,
@@ -3457,6 +3468,7 @@ export default function ProjectDetail() {
               type: 'comprobante',
               area: saldo.area,
               providerName: saldo.name,
+              providerId: entry.item?.providerId || '',
               description: entry.description,
               fileName: receipt.originalFileName || receipt.fileName || 'Comprobante',
               url: receipt.url,
@@ -3477,6 +3489,7 @@ export default function ProjectDetail() {
         type: document.type || document.subtype || 'Documento',
         area: document.area || 'General',
         providerName: document.providerName || 'Sin proveedor',
+        providerId: document.providerId || '',
         description: document.title || document.notes || document.subtype || 'Documento',
         fileName: document.originalFileName || document.fileName || 'Documento',
         url: document.url,
@@ -3564,9 +3577,36 @@ export default function ProjectDetail() {
         provider: row.provider,
         areas: Array.from(row.areas).sort(),
         concepts: Array.from(row.concepts).sort(),
+        documents: projectDocuments.filter((document) => (
+          document.providerId === row.provider.id
+          || (!document.providerId && normalizeText(document.providerName) === normalizeText(providerDisplayName(row.provider)))
+        )),
       }))
       .sort((a, b) => providerDisplayName(a.provider).localeCompare(providerDisplayName(b.provider), 'es'));
-  }, [areaExpenses, budgetItems, canSeeFullPayroll, categories, providers, userPermissions]);
+  }, [areaExpenses, budgetItems, canSeeFullPayroll, categories, projectDocuments, providers, userPermissions]);
+
+  const filteredProjectAreaProviderRows = React.useMemo(() => {
+    const term = normalizeText(providerSearch);
+    if (!term) return projectAreaProviderRows;
+
+    return projectAreaProviderRows.filter(({ provider, areas, concepts }) => {
+      const inferred = inferLegacyIdentifiers(provider);
+      return normalizeText([
+        providerDisplayName(provider),
+        provider.type,
+        provider.dni || inferred.dniNormalized,
+        provider.cuit || inferred.cuitNormalized,
+        provider.category,
+        provider.categoryOther,
+        provider.email,
+        provider.adminEmail,
+        provider.phone,
+        provider.address,
+        ...areas,
+        ...concepts,
+      ].filter(Boolean).join(' ')).includes(term);
+    });
+  }, [projectAreaProviderRows, providerSearch]);
 
   const allProjectAreaProviderRows = React.useMemo(() => {
     const byProvider = new Map<string, { provider: any; areas: Set<string>; concepts: Set<string> }>();
@@ -6270,14 +6310,25 @@ export default function ProjectDetail() {
 
         {activeTab === 'proveedores' && (
           <div className="space-y-4 pb-20">
-            <header>
-              <h2 className="text-lg font-bold text-slate-900">Proveedores del Proyecto</h2>
-              <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest mt-1">
-                Proveedores cargados en Gestion por Areas
-              </p>
+            <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">Proveedores del Proyecto</h2>
+                <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest mt-1">
+                  Proveedores cargados en Gestion por Areas
+                </p>
+              </div>
+              <div className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-lg min-w-[260px]">
+                <Search className="w-3.5 h-3.5 text-slate-400" />
+                <input
+                  value={providerSearch}
+                  onChange={(event) => setProviderSearch(event.target.value)}
+                  placeholder="Buscar proveedor..."
+                  className="w-full bg-transparent text-[10px] font-bold text-slate-700 placeholder:text-slate-300 focus:outline-none"
+                />
+              </div>
             </header>
 
-            <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+            <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-x-auto">
               <table className="w-full text-left">
                 <thead>
                   <tr className="bg-slate-50 border-b border-slate-200">
@@ -6288,11 +6339,12 @@ export default function ProjectDetail() {
                     <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Categoria</th>
                     <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Contacto</th>
                     <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Areas</th>
+                    <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400 min-w-[220px]">Documentos</th>
                     <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Domicilio</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {projectAreaProviderRows.map(({ provider, areas }) => {
+                  {filteredProjectAreaProviderRows.map(({ provider, areas, documents }) => {
                     const inferred = inferLegacyIdentifiers(provider);
                     const category = provider.category === 'Otra'
                       ? `Otra: ${provider.categoryOther || '-'}`
@@ -6321,14 +6373,36 @@ export default function ProjectDetail() {
                         <td className="px-5 py-4 text-xs text-slate-500 max-w-[180px]">
                           {areas.join(', ') || '-'}
                         </td>
+                        <td className="px-5 py-4">
+                          {documents.length > 0 ? (
+                            <div className="flex flex-col items-start gap-1.5">
+                              {documents.map((document) => (
+                                <a
+                                  key={document.id}
+                                  href={document.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  title={`${document.type}: ${document.fileName}`}
+                                  className="inline-flex max-w-[260px] items-center gap-1.5 text-[10px] font-bold text-blue-600 hover:text-blue-800 hover:underline"
+                                >
+                                  {document.type === 'factura' ? <FileText className="h-3 w-3 shrink-0" /> : <Paperclip className="h-3 w-3 shrink-0" />}
+                                  <span className="truncate">{document.fileName}</span>
+                                  <LinkIcon className="h-2.5 w-2.5 shrink-0" />
+                                </a>
+                              ))}
+                            </div>
+                          ) : (
+                            <span className="text-[10px] font-bold uppercase tracking-widest text-slate-300">Sin documentos</span>
+                          )}
+                        </td>
                         <td className="px-5 py-4 text-xs text-slate-500 max-w-[220px] truncate">{provider.address || '-'}</td>
                       </tr>
                     );
                   })}
-                  {projectAreaProviderRows.length === 0 && (
+                  {filteredProjectAreaProviderRows.length === 0 && (
                     <tr>
-                      <td colSpan={8} className="px-6 py-12 text-center text-[10px] font-bold uppercase text-slate-300 tracking-widest italic">
-                        No hay proveedores cargados en Gestion por Areas
+                      <td colSpan={9} className="px-6 py-12 text-center text-[10px] font-bold uppercase text-slate-300 tracking-widest italic">
+                        {providerSearch.trim() ? 'No hay proveedores que coincidan con la busqueda' : 'No hay proveedores cargados en Gestion por Areas'}
                       </td>
                     </tr>
                   )}
@@ -8053,13 +8127,7 @@ export default function ProjectDetail() {
           item={selectedItemForPayment}
           isOpen={paymentModalOpen}
           canManagePayments={canManagePaymentForItem(selectedItemForPayment, selectedItemForPayment?.__paymentCollection || paymentType)}
-          canUseCashBox={canManagePaymentForItem(selectedItemForPayment, selectedItemForPayment?.__paymentCollection || paymentType) && (isProjectAdmin || currentCashBalance > 0)}
-          cashBoxBalance={currentCashBalance}
-          cashBoxAccount={isProjectAdmin ? 'general' : 'personal'}
-          cashBoxUnlimited={isProjectAdmin}
-          cashBoxLabel={isProjectAdmin ? 'Caja General' : 'caja en efectivo'}
-          cashOwnerEmail={currentUserEmail}
-          cashOwnerName={currentUserName}
+          cashBoxOptions={paymentCashBoxOptions}
           paymentType={paymentType}
           isDeletingPayment={isDeletingPayment}
           canEditExistingPayments={isProjectAdmin}
