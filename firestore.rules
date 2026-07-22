@@ -729,6 +729,29 @@ service cloud.firestore {
         allow update, delete: if isProjectAdmin(projectId);
       }
 
+      match /activityLog/{entryId} {
+        allow read: if isProjectAdmin(projectId);
+        allow create: if hasProjectAccess(projectId)
+          && request.resource.data.keys().hasAll([
+            'action',
+            'deletedBy',
+            'deletedByEmail',
+            'deletedByName',
+            'deletedByRole',
+            'createdAt'
+          ])
+          && request.resource.data.action in [
+            'expense_rows_deleted',
+            'payment_deleted',
+            'cash_delivery_deleted'
+          ]
+          && request.resource.data.deletedBy == request.auth.uid
+          && request.resource.data.deletedByEmail == userEmail()
+          && request.resource.data.createdAt == request.time;
+        allow update: if false;
+        allow delete: if isAppAdmin();
+      }
+
       match /cashMovements/{movementId} {
         allow read: if hasProjectAccess(projectId);
         allow create: if canCreateCashMovement(projectId);

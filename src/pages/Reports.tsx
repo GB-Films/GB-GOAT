@@ -1,7 +1,7 @@
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, BarChart3, CalendarDays, DollarSign, Download, FileSpreadsheet, FileText, ReceiptText, Search, Wallet } from 'lucide-react';
-import { collection, deleteDoc, doc, getDocs, orderBy, query, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { collection, doc, getDocs, orderBy, query, serverTimestamp, writeBatch } from 'firebase/firestore';
 import { deleteObject, ref } from 'firebase/storage';
 import { db, storage } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
@@ -10,7 +10,7 @@ import { buildPaymentCalendarDays, formatDateKey, formatPeriodLabel, formatSched
 import { formatIdentifier, inferLegacyIdentifiers, normalizeProviderText, providerDisplayName, providerMatchesSearch } from '../lib/providerConstants';
 import { PaymentModal } from './project-detail/PaymentModal';
 import type { Payment, PaymentCollection } from './project-detail/types';
-import { calculateProjectFinance, getItemTotal, getPaymentTotal, getStandaloneBudgetItems } from '../lib/projectFinance';
+import { calculateProjectFinance, calculateProjectResult, getItemTotal, getPaymentTotal, getStandaloneBudgetItems } from '../lib/projectFinance';
 import { PageHeader } from '../components/PageHeader';
 import { getPrimaryExpenseInvoice } from '../lib/invoices';
 
@@ -124,6 +124,7 @@ const buildProjectReport = (
 ): ProjectReport => {
   const standaloneBudgetItems = getStandaloneBudgetItems(project, budgetItems);
   const finance = calculateProjectFinance(project, budgetItems, areaExpenses);
+  const result = calculateProjectResult(project, budgetItems, areaExpenses);
   const payableLines: PayableLine[] = [
     ...areaExpenses.map((item) => {
       const total = getItemTotal(item);
@@ -184,35 +185,26 @@ const buildProjectReport = (
     clientName: project.clientName,
     budgetTotal: finance.budgetTotal,
     committedBudget: finance.committedBudget,
-    spent: finance.spent,
+    spent: result.totalCost,
     paid: finance.paid,
     debt: finance.debt,
-    usagePercent: finance.usagePercent,
-    margin: finance.margin,
-    marginPercent: finance.marginPercent,
-    overBudget: finance.overBudget,
+    usagePercent: result.saleValue > 0 ? (result.totalCost / result.saleValue) * 100 : 0,
+    margin: result.margin,
+    marginPercent: result.marginPercent,
+    overBudget: Math.max(0, result.totalCost - result.saleValue),
     unpaidLines: finance.unpaidLines,
     payableLines,
   };
 };
 
 const recalculateProjectTotals = (project: ProjectReport): ProjectReport => {
-  const spent = project.payableLines.reduce((acc, line) => acc + line.total, 0);
   const paid = project.payableLines.reduce((acc, line) => acc + line.paid, 0);
   const debt = project.payableLines.reduce((acc, line) => acc + line.debt, 0);
-  const usagePercent = project.budgetTotal > 0 ? (spent / project.budgetTotal) * 100 : 0;
-  const margin = project.budgetTotal - spent;
-  const marginPercent = project.budgetTotal > 0 ? (margin / project.budgetTotal) * 100 : 0;
 
   return {
     ...project,
-    spent,
     paid,
     debt,
-    usagePercent,
-    margin,
-    marginPercent,
-    overBudget: Math.max(0, spent - project.budgetTotal),
     unpaidLines: project.payableLines.filter((line) => line.debt > 0.01).length,
   };
 };
@@ -274,7 +266,7 @@ export default function Reports() {
     const paid = projects.reduce((acc, project) => acc + project.paid, 0);
     const debt = projects.reduce((acc, project) => acc + project.debt, 0);
     const usagePercent = budget > 0 ? (spent / budget) * 100 : 0;
-    const margin = budget - spent;
+    const margin = projects.reduce((acc, project) => acc + project.margin, 0);
     const marginPercent = budget > 0 ? (margin / budget) * 100 : 0;
 
     return { budget, spent, paid, debt, usagePercent, margin, marginPercent };
@@ -456,18 +448,33 @@ export default function Reports() {
       const totalPaid = updatedHistory.reduce((acc: number, payment: Payment) => acc + (Number(payment.amount) || 0), 0);
       const isFullyPaid = totalPaid >= ((Number(selectedPaymentLine.item.total) || 0) - 0.01);
 
-      await updateDoc(doc(db, 'projects', selectedPaymentLine.projectId, selectedPaymentLine.collectionName, selectedPaymentLine.item.id), {
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'projects', selectedPaymentLine.projectId, selectedPaymentLine.collectionName, selectedPaymentLine.item.id), {
         paymentHistory: updatedHistory,
         paid: isFullyPaid,
         updatedAt: serverTimestamp(),
       });
+      if (paymentToDelete.cashMovementId) {
+        batch.delete(doc(db, 'projects', selectedPaymentLine.projectId, 'cashMovements', paymentToDelete.cashMovementId));
+      }
+      batch.set(doc(collection(db, 'projects', selectedPaymentLine.projectId, 'activityLog')), {
+        action: 'payment_deleted',
+        collectionName: selectedPaymentLine.collectionName,
+        itemId: selectedPaymentLine.item.id,
+        itemLabel: selectedPaymentLine.item.description || selectedPaymentLine.item.providerName || '',
+        paymentId: paymentToDelete.id || '',
+        amount: Number(paymentToDelete.amount) || 0,
+        deletedCashMovementCount: paymentToDelete.cashMovementId ? 1 : 0,
+        deletedBy: user?.uid || '',
+        deletedByEmail: currentUserEmail,
+        deletedByName: currentUserName,
+        deletedByRole: profile?.role || 'colaborador',
+        createdAt: serverTimestamp(),
+      });
+      await batch.commit();
 
       if (paymentToDelete.receipt?.path) {
         deleteObject(ref(storage, paymentToDelete.receipt.path)).catch(() => {});
-      }
-
-      if (paymentToDelete.cashMovementId) {
-        await deleteDoc(doc(db, 'projects', selectedPaymentLine.projectId, 'cashMovements', paymentToDelete.cashMovementId));
       }
 
       updatePaymentState(selectedPaymentLine.item.id, selectedPaymentLine.collectionName, updatedHistory, isFullyPaid);
@@ -610,7 +617,7 @@ export default function Reports() {
                 const rows = projects.filter((project) => project.status === status);
                 const budget = rows.reduce((acc, project) => acc + project.budgetTotal, 0);
                 const spent = rows.reduce((acc, project) => acc + project.spent, 0);
-                const margin = budget - spent;
+                const margin = rows.reduce((acc, project) => acc + project.margin, 0);
                 const marginPercent = budget > 0 ? (margin / budget) * 100 : 0;
                 return (
                   <div key={status} className="px-4 py-3">

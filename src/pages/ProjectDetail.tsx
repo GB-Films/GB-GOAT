@@ -61,7 +61,7 @@ import {
   normalizeAllowedTabs,
   normalizeProjectRole,
 } from '../lib/projectAccess';
-import { getPaymentTotal } from '../lib/projectFinance';
+import { calculateProjectResult, getPaymentTotal } from '../lib/projectFinance';
 import { getFileExtension, sanitizeFileName, validateSpreadsheetImport } from '../lib/files';
 import { PROJECT_STATUSES } from '../lib/projects';
 import { getExpenseInvoices, getInvoiceDocumentKey, type ExpenseInvoiceDocument } from '../lib/invoices';
@@ -702,6 +702,8 @@ export default function ProjectDetail() {
   const [cashMovements, setCashMovements] = useState<CashMovement[]>([]);
   const [cashRecipientEmail, setCashRecipientEmail] = useState('');
   const [cashTransferTargetEmail, setCashTransferTargetEmail] = useState('');
+  const [isCreatingCashDelivery, setIsCreatingCashDelivery] = useState(false);
+  const [cashDeliveryNotice, setCashDeliveryNotice] = useState<{ message: string } | null>(null);
   const [confirmingCashDeliveryId, setConfirmingCashDeliveryId] = useState('');
   const [availableUsers, setAvailableUsers] = useState<any[]>([]);
   const [newCollaboratorSearch, setNewCollaboratorSearch] = useState('');
@@ -978,6 +980,68 @@ export default function ProjectDetail() {
     };
   };
 
+  const queueExpenseRowsDeletion = (
+    batch: ReturnType<typeof writeBatch>,
+    items: any[],
+    collectionName: PaymentCollection,
+    reason: 'row_deleted' | 'category_deleted' | 'budget_replaced',
+  ) => {
+    const itemIds = new Set(items.map((item) => item.id).filter(Boolean));
+    const cashMovementIds = new Set<string>();
+
+    cashMovements.forEach((movement) => {
+      if (movement.collectionName === collectionName && movement.itemId && itemIds.has(movement.itemId)) {
+        cashMovementIds.add(movement.id);
+      }
+    });
+    items.forEach((item) => {
+      safeArray(item.paymentHistory).forEach((payment: any) => {
+        if (payment.cashMovementId) cashMovementIds.add(payment.cashMovementId);
+      });
+      batch.delete(doc(db, 'projects', id!, collectionName, item.id));
+    });
+    cashMovementIds.forEach((movementId) => {
+      batch.delete(doc(db, 'projects', id!, 'cashMovements', movementId));
+    });
+
+    const auditRef = doc(collection(db, 'projects', id!, 'activityLog'));
+    batch.set(auditRef, {
+      action: 'expense_rows_deleted',
+      reason,
+      collectionName,
+      itemId: items.length === 1 ? items[0].id : '',
+      itemCount: items.length,
+      itemLabel: items.length === 1 ? (items[0].description || items[0].providerName || '') : `${items.length} filas`,
+      area: items.length === 1 ? (items[0].area || '') : '',
+      providerName: items.length === 1 ? (items[0].providerName || '') : '',
+      amount: items.reduce((total, item) => total + (Number(item.total) || 0), 0),
+      paymentCount: items.reduce((total, item) => total + safeArray(item.paymentHistory).length, 0),
+      deletedCashMovementCount: cashMovementIds.size,
+      deletedBy: user?.uid || '',
+      deletedByEmail: currentUserEmail,
+      deletedByName: currentUserName,
+      deletedByRole: currentProjectRole,
+      createdAt: serverTimestamp(),
+    });
+
+    return Array.from(cashMovementIds);
+  };
+
+  const deleteExpenseRows = async (
+    items: any[],
+    collectionName: PaymentCollection,
+    reason: 'row_deleted' | 'category_deleted' | 'budget_replaced' = 'row_deleted',
+  ) => {
+    const batch = writeBatch(db);
+    const cashMovementIds = queueExpenseRowsDeletion(batch, items, collectionName, reason);
+    await batch.commit();
+    if (cashMovementIds.length > 0) {
+      const deletedIds = new Set(cashMovementIds);
+      setCashMovements((current) => current.filter((movement) => !deletedIds.has(movement.id)));
+    }
+    return cashMovementIds.length;
+  };
+
   const updateBudgetItem = async (itemId: string, updates: any) => {
     if (!id || !canEditMainBudget) return;
     try {
@@ -1001,8 +1065,13 @@ export default function ProjectDetail() {
     if (!id || !canEditMainBudget || !currentItem) return;
     if (!confirm(`¿Eliminar "${itemLabel}" del Presupuesto Principal?\n\nTotal: $${itemTotal.toLocaleString()}\nEsta acción no se puede deshacer.`)) return;
     try {
-      await deleteDoc(doc(db, 'projects', id, 'budgetItems', itemId));
+      const deletedCashMovements = await deleteExpenseRows([currentItem], 'budgetItems');
       setBudgetItems(items => items.filter(i => i.id !== itemId));
+      showExpenseConfirmation(
+        deletedCashMovements > 0
+          ? `Partida eliminada junto con ${deletedCashMovements} movimiento${deletedCashMovements === 1 ? '' : 's'} de caja.`
+          : 'Partida eliminada.',
+      );
     } catch (e) {
       console.error("Error deleting budget item:", e);
     }
@@ -1742,8 +1811,13 @@ export default function ProjectDetail() {
     }
     if (!confirm(`¿Eliminar "${itemLabel}" de Gestión por Áreas?\n\nÁrea: ${currentExpense.area || 'Sin área'}\nTotal: $${itemTotal.toLocaleString()}\nEsta acción no se puede deshacer.`)) return;
     try {
-      await deleteDoc(doc(db, 'projects', id, 'areaExpenses', expenseId));
+      const deletedCashMovements = await deleteExpenseRows([currentExpense], 'areaExpenses');
       setAreaExpenses(areaExpenses.filter(e => e.id !== expenseId));
+      showExpenseConfirmation(
+        deletedCashMovements > 0
+          ? `Gasto eliminado junto con ${deletedCashMovements} movimiento${deletedCashMovements === 1 ? '' : 's'} de caja.`
+          : 'Gasto eliminado.',
+      );
     } catch (e) {
       console.error("Error deleting area expense:", e);
     }
@@ -2301,18 +2375,36 @@ export default function ProjectDetail() {
       const itemTotal = Number(selectedItemForPayment.total) || 0;
       const isFullyPaid = totalPaid >= (itemTotal - 0.01);
 
-      await updateDoc(doc(db, 'projects', id, collectionName, currentItemId), {
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'projects', id, collectionName, currentItemId), {
         paymentHistory: updatedHistory,
         paid: isFullyPaid,
         updatedAt: serverTimestamp()
       });
+      if (paymentToDelete.cashMovementId) {
+        batch.delete(doc(db, 'projects', id, 'cashMovements', paymentToDelete.cashMovementId));
+      }
+      batch.set(doc(collection(db, 'projects', id, 'activityLog')), {
+        action: 'payment_deleted',
+        collectionName,
+        itemId: currentItemId,
+        itemLabel: selectedItemForPayment.description || selectedItemForPayment.providerName || '',
+        paymentId: paymentToDelete.id || '',
+        amount: Number(paymentToDelete.amount) || 0,
+        deletedCashMovementCount: paymentToDelete.cashMovementId ? 1 : 0,
+        deletedBy: user?.uid || '',
+        deletedByEmail: currentUserEmail,
+        deletedByName: currentUserName,
+        deletedByRole: currentProjectRole,
+        createdAt: serverTimestamp(),
+      });
+      await batch.commit();
 
       if (paymentToDelete.receipt?.path) {
         deleteObject(ref(storage, paymentToDelete.receipt.path)).catch(() => {});
       }
 
       if (paymentToDelete.cashMovementId) {
-        await deleteDoc(doc(db, 'projects', id, 'cashMovements', paymentToDelete.cashMovementId));
         setCashMovements((current) => current.filter((movement) => movement.id !== paymentToDelete.cashMovementId));
       }
 
@@ -2485,10 +2577,9 @@ export default function ProjectDetail() {
       }
 
       const batch = writeBatch(db);
+      let deletedCashMovementIds: string[] = [];
       if (budgetItems.length > 0) {
-        budgetItems.forEach((item) => {
-          batch.delete(doc(db, 'projects', id, 'budgetItems', item.id));
-        });
+        deletedCashMovementIds = queueExpenseRowsDeletion(batch, budgetItems, 'budgetItems', 'budget_replaced');
       }
 
       const copiedItems = sourceItems.map((item, index) => {
@@ -2523,6 +2614,10 @@ export default function ProjectDetail() {
       });
 
       await batch.commit();
+      if (deletedCashMovementIds.length > 0) {
+        const deletedIds = new Set(deletedCashMovementIds);
+        setCashMovements((current) => current.filter((movement) => !deletedIds.has(movement.id)));
+      }
       setBudgetItems(copiedItems as BudgetItem[]);
       setCategories(nextCategories);
       setShowCopyBudgetModal(false);
@@ -2545,12 +2640,20 @@ export default function ProjectDetail() {
     const newActiveAreas = activeAreas.filter(a => a !== area);
     
     try {
-      // Delete items in category
-      for (const item of itemsToDelete) {
-        await deleteDoc(doc(db, 'projects', id, 'budgetItems', item.id));
+      const batch = writeBatch(db);
+      const deletedCashMovementIds = itemsToDelete.length > 0
+        ? queueExpenseRowsDeletion(batch, itemsToDelete, 'budgetItems', 'category_deleted')
+        : [];
+      batch.update(doc(db, 'projects', id), {
+        categories: newCategories,
+        activeAreas: newActiveAreas,
+        updatedAt: serverTimestamp(),
+      });
+      await batch.commit();
+      if (deletedCashMovementIds.length > 0) {
+        const deletedIds = new Set(deletedCashMovementIds);
+        setCashMovements((current) => current.filter((movement) => !deletedIds.has(movement.id)));
       }
-      // Update categories in project and remove it from active area management if needed
-      await updateDoc(doc(db, 'projects', id), { categories: newCategories, activeAreas: newActiveAreas });
 
       const collaboratorsToUpdate = collaborators.filter(col => safeArray(col.allowedCategories).includes(area));
       for (const col of collaboratorsToUpdate) {
@@ -3735,23 +3838,11 @@ export default function ProjectDetail() {
       : {}
   ), [project?.resultIncidences]);
 
-  const resultCategoryTotals = React.useMemo(() => (
-    categories
-      .map((area) => {
-        const assigned = budgetItems
-          .filter((item) => item.area === area)
-          .reduce((acc, item) => acc + (Number(item.total) || 0), 0);
-        const spent = areaExpenses
-          .filter((item) => item.area === area)
-          .reduce((acc, item) => acc + (Number(item.total) || 0), 0);
-
-        return {
-          area,
-          total: spent > 0 ? spent : assigned,
-        };
-      })
-      .filter((item) => item.total > 0)
-  ), [areaExpenses, budgetItems, categories]);
+  const projectResult = React.useMemo(
+    () => calculateProjectResult(project, budgetItems, areaExpenses),
+    [areaExpenses, budgetItems, project],
+  );
+  const resultCategoryTotals = projectResult.categoryTotals;
 
   const executiveTotal = resultCategoryTotals
     .filter((item) => isExecutiveArea(item.area))
@@ -3763,8 +3854,8 @@ export default function ProjectDetail() {
   const postProductionCategoryRows = resultCategoryTotals.filter((item) => isPostProductionArea(item.area));
   const productionCategoryTotals = resultCategoryTotals.filter((item) => !isExecutiveArea(item.area) && !isPostProductionArea(item.area));
   const productionTotal = productionCategoryTotals.reduce((acc, item) => acc + item.total, 0);
-  const directCostTotal = productionTotal + executiveTotal + postProductionTotal;
-  const saleValue = Number(project?.budgetTotal) || 0;
+  const directCostTotal = projectResult.directCostTotal;
+  const saleValue = projectResult.saleValue;
   const incidenceRows = RESULT_INCIDENCES.map((incidence) => {
     const percent = Number(resultIncidences[incidence.id]) || 0;
     return {
@@ -3773,10 +3864,11 @@ export default function ProjectDetail() {
       amount: saleValue * (percent / 100),
     };
   });
-  const incidenceTotal = incidenceRows.reduce((acc, item) => acc + item.amount, 0);
-  const totalCost = directCostTotal + incidenceTotal;
-  const margin = saleValue - totalCost;
-  const marginPercent = saleValue > 0 ? (margin / saleValue) * 100 : 0;
+  const expenseIncidenceRows = incidenceRows.filter((item) => item.id !== 'margen');
+  const incidenceTotal = projectResult.expenseIncidenceTotal;
+  const totalCost = projectResult.totalCost;
+  const estimatedMargin = projectResult.estimatedMargin;
+  const margin = projectResult.margin;
 
   const updateResultIncidence = async (incidenceId: string, value: number) => {
     if (!id || !isProjectAdmin) return;
@@ -3900,9 +3992,10 @@ export default function ProjectDetail() {
 
   const createCashDelivery = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!id || !isProjectAdmin) return;
+    if (!id || !isProjectAdmin || isCreatingCashDelivery) return;
 
-    const formData = new FormData(event.currentTarget);
+    const form = event.currentTarget;
+    const formData = new FormData(form);
     const toEmail = normalizeEmail(formData.get('toUserEmail') as string);
     const amount = Number(formData.get('amount'));
     const date = parseProjectDate(String(formData.get('date') || ''));
@@ -3931,10 +4024,21 @@ export default function ProjectDetail() {
       updatedAt: serverTimestamp(),
     };
 
-    const docRef = await addDoc(collection(db, 'projects', id, 'cashMovements'), payload);
-    setCashMovements((current) => [{ id: docRef.id, ...payload, createdAt: new Date(), updatedAt: new Date() } as CashMovement, ...current]);
-    event.currentTarget.reset();
-    showExpenseConfirmation(`Entrega de $${amount.toLocaleString()} registrada. Queda pendiente de confirmación por ${recipient.displayName || recipient.email}.`, 'warning');
+    setIsCreatingCashDelivery(true);
+    setCashDeliveryNotice(null);
+    try {
+      const docRef = await addDoc(collection(db, 'projects', id, 'cashMovements'), payload);
+      setCashMovements((current) => [{ id: docRef.id, ...payload, createdAt: new Date(), updatedAt: new Date() } as CashMovement, ...current]);
+      form.reset();
+      const message = `Entrega de $${amount.toLocaleString()} registrada. Queda pendiente de confirmación por ${recipient.displayName || recipient.email}.`;
+      setCashDeliveryNotice({ message });
+      showExpenseConfirmation(message, 'warning');
+    } catch (error) {
+      console.error('Error creating cash delivery:', error);
+      alert('No se pudo registrar la entrega de caja. Intentá nuevamente.');
+    } finally {
+      setIsCreatingCashDelivery(false);
+    }
   };
 
   const confirmCashDelivery = async (movement: CashMovement) => {
@@ -4027,7 +4131,22 @@ export default function ProjectDetail() {
     if (!window.confirm('¿Eliminar definitivamente esta entrega de caja?')) return;
 
     try {
-      await deleteDoc(doc(db, 'projects', id, 'cashMovements', movement.id));
+      const batch = writeBatch(db);
+      batch.delete(doc(db, 'projects', id, 'cashMovements', movement.id));
+      batch.set(doc(collection(db, 'projects', id, 'activityLog')), {
+        action: 'cash_delivery_deleted',
+        movementId: movement.id,
+        amount: Number(movement.amount) || 0,
+        recipientEmail: movement.toUserEmail || '',
+        recipientName: movement.toUserName || '',
+        status: movement.status || 'pending',
+        deletedBy: user?.uid || '',
+        deletedByEmail: currentUserEmail,
+        deletedByName: currentUserName,
+        deletedByRole: currentProjectRole,
+        createdAt: serverTimestamp(),
+      });
+      await batch.commit();
       setCashMovements((current) => current.filter((item) => item.id !== movement.id));
     } catch (error) {
       console.error('Error deleting cash delivery:', error);
@@ -4225,6 +4344,7 @@ export default function ProjectDetail() {
         'payments',
         'invoices',
         'projectDocuments',
+        'activityLog',
         'cashMovements',
       ];
 
@@ -6172,9 +6292,21 @@ export default function ProjectDetail() {
                     <input name="date" type="date" defaultValue={toProjectDateInputValue(new Date())} required className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black" />
                   </div>
                   <input name="notes" placeholder="Nota opcional" className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs focus:outline-none focus:border-black" />
-                  <button type="submit" className="w-full px-4 py-3 bg-black text-white rounded text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 transition-all">
-                    Registrar entrega pendiente
+                  <button disabled={isCreatingCashDelivery} type="submit" className="w-full px-4 py-3 bg-black text-white rounded text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 transition-all disabled:bg-slate-300 disabled:cursor-not-allowed">
+                    {isCreatingCashDelivery ? 'Registrando entrega...' : 'Registrar entrega pendiente'}
                   </button>
+                  {cashDeliveryNotice && (
+                    <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-amber-900">
+                      <Clock3 className="mt-0.5 h-4 w-4 shrink-0" />
+                      <div className="min-w-0">
+                        <div className="text-[9px] font-black uppercase tracking-widest">Entrega pendiente creada</div>
+                        <div className="mt-1 text-xs font-bold">{cashDeliveryNotice.message}</div>
+                      </div>
+                      <button type="button" onClick={() => setCashDeliveryNotice(null)} className="ml-auto text-amber-700 hover:text-black" aria-label="Cerrar aviso">
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  )}
                 </form>
               )}
 
@@ -6423,15 +6555,15 @@ export default function ProjectDetail() {
               </div>
               <div className={cn(
                 "px-4 py-3 rounded-xl border text-right",
-                margin >= 0 ? "bg-emerald-50 border-emerald-100" : "bg-rose-50 border-rose-100"
+                estimatedMargin >= 0 ? "bg-emerald-50 border-emerald-100" : "bg-rose-50 border-rose-100"
               )}>
-                <div className={cn("text-[10px] font-bold uppercase tracking-widest", margin >= 0 ? "text-emerald-700" : "text-rose-700")}>
+                <div className={cn("text-[10px] font-bold uppercase tracking-widest", estimatedMargin >= 0 ? "text-emerald-700" : "text-rose-700")}>
                   Margen estimado
                 </div>
-                <div className={cn("text-2xl font-black font-mono", margin >= 0 ? "text-emerald-700" : "text-rose-700")}>
-                  ${margin.toLocaleString()}
+                <div className={cn("text-2xl font-black font-mono", estimatedMargin >= 0 ? "text-emerald-700" : "text-rose-700")}>
+                  ${estimatedMargin.toLocaleString()}
                 </div>
-                <div className="text-[10px] font-bold text-slate-500">{marginPercent.toFixed(1)}% sobre venta</div>
+                <div className="text-[10px] font-bold text-slate-500">Venta menos costos e incidencias de gasto</div>
               </div>
             </header>
 
@@ -6506,7 +6638,7 @@ export default function ProjectDetail() {
                 <div className="pointer-events-none absolute left-3 right-3 top-full z-40 mt-2 rounded-lg border border-slate-200 bg-white p-3 opacity-0 shadow-xl transition-opacity group-hover:opacity-100">
                   <div className="mb-2 text-[10px] font-black uppercase tracking-widest text-slate-400">Suma</div>
                   <div className="space-y-1">
-                    {incidenceRows.some((item) => item.amount > 0) ? incidenceRows.filter((item) => item.amount > 0).map((item) => (
+                    {expenseIncidenceRows.some((item) => item.amount > 0) ? expenseIncidenceRows.filter((item) => item.amount > 0).map((item) => (
                       <div key={`tooltip-incidence-${item.id}`} className="flex justify-between gap-2 text-[10px] font-bold text-slate-600">
                         <span className="truncate">{item.label} ({item.percent}%)</span>
                         <span className="font-mono text-slate-900">${item.amount.toLocaleString()}</span>

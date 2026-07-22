@@ -31,6 +31,56 @@ export const getProjectExpenseEntries = <T extends { area?: string }>(
     .map((item) => ({ item, collectionName: 'budgetItems' as const, source: 'budget' as const })),
 ];
 
+export const calculateProjectResult = (project: any, budgetItems: any[], areaExpenses: any[]) => {
+  const configuredCategories = Array.isArray(project?.categories) ? project.categories : [];
+  const categories = Array.from(new Set([
+    ...configuredCategories,
+    ...budgetItems.map((item) => item?.area).filter(Boolean),
+    ...areaExpenses.map((item) => item?.area).filter(Boolean),
+  ]));
+  const categoryTotals = categories
+    .map((area) => {
+      const assigned = budgetItems
+        .filter((item) => item?.area === area)
+        .reduce((total, item) => total + getItemTotal(item), 0);
+      const actual = areaExpenses
+        .filter((item) => item?.area === area)
+        .reduce((total, item) => total + getItemTotal(item), 0);
+      return { area, total: actual > 0 ? actual : assigned };
+    })
+    .filter((item) => item.total > 0);
+
+  const saleValue = Number(project?.budgetTotal) || 0;
+  const directCostTotal = categoryTotals.reduce((total, item) => total + item.total, 0);
+  const resultIncidences = project?.resultIncidences && typeof project.resultIncidences === 'object'
+    ? project.resultIncidences
+    : {};
+  const expenseIncidencePercent = Object.entries(resultIncidences)
+    .filter(([incidenceId]) => incidenceId !== 'margen')
+    .reduce((total, [, value]) => total + (Number(value) || 0), 0);
+  const expenseIncidenceTotal = saleValue * (expenseIncidencePercent / 100);
+  const marginIncidencePercent = Number(resultIncidences.margen) || 0;
+  const marginIncidence = saleValue * (marginIncidencePercent / 100);
+  const totalCost = directCostTotal + expenseIncidenceTotal;
+  const estimatedMargin = saleValue - totalCost;
+  const margin = estimatedMargin + marginIncidence;
+  const marginPercent = saleValue > 0 ? (margin / saleValue) * 100 : 0;
+
+  return {
+    saleValue,
+    categoryTotals,
+    directCostTotal,
+    expenseIncidencePercent,
+    expenseIncidenceTotal,
+    marginIncidencePercent,
+    marginIncidence,
+    totalCost,
+    estimatedMargin,
+    margin,
+    marginPercent,
+  };
+};
+
 export const calculateProjectFinance = (project: any, budgetItems: any[], areaExpenses: any[]) => {
   const committedBudget = budgetItems.reduce((total, item) => total + getItemTotal(item), 0);
   const budgetTotal = Number(project?.budgetTotal) || committedBudget;

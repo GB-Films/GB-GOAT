@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   calculateProjectFinance,
+  calculateProjectResult,
   getItemDebt,
   getPaymentTotal,
   getProjectExpenseEntries,
@@ -33,4 +34,26 @@ test('la deuda nunca es negativa aunque exista un sobrepago histórico', () => {
   const item = { total: 100, paymentHistory: [{ amount: 80 }, { amount: 40 }] };
   assert.equal(getPaymentTotal(item), 120);
   assert.equal(getItemDebt(item), 0);
+});
+
+test('Resultado trata las incidencias como gastos excepto Margen', () => {
+  const result = calculateProjectResult({
+    budgetTotal: 1000,
+    categories: ['Producción'],
+    resultIncidences: {
+      imprevistos: 10,
+      impuestos: 5,
+      margen: 20,
+    },
+  }, [
+    { area: 'Producción', total: 500 },
+  ], []);
+
+  assert.equal(result.directCostTotal, 500);
+  assert.equal(result.expenseIncidenceTotal, 150);
+  assert.equal(result.totalCost, 650);
+  assert.equal(result.estimatedMargin, 350);
+  assert.equal(result.marginIncidence, 200);
+  assert.equal(result.margin, 550);
+  assert.equal(Math.round(result.marginPercent), 55);
 });
