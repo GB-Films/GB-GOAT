@@ -236,8 +236,10 @@ service cloud.firestore {
 
     function validPaymentAuditAppend() {
       let oldCount = storedPaymentCount();
-      let hadAudit = resource.data.keys().hasAny(['paymentAuthorIds'])
-        && resource.data.paymentAuthorIds is list;
+      let oldAuthorIds = resource.data.keys().hasAny(['paymentAuthorIds'])
+        && resource.data.paymentAuthorIds is list
+        ? resource.data.paymentAuthorIds
+        : [];
       return request.resource.data.keys().hasAll(['paymentHistory', 'paymentLocked', 'paymentAuthorIds'])
         && request.resource.data.paymentHistory is list
         && request.resource.data.paymentAuthorIds is list
@@ -248,10 +250,9 @@ service cloud.firestore {
         && request.resource.data.paymentHistory[oldCount].createdByEmail == userEmail()
         && request.resource.data.paymentHistory[oldCount].amount is number
         && request.resource.data.paymentHistory[oldCount].amount > 0
-        && (
-          (hadAudit && request.resource.data.paymentAuthorIds == resource.data.paymentAuthorIds.concat([request.auth.uid]))
-          || (!hadAudit && request.resource.data.paymentAuthorIds == [request.auth.uid])
-        );
+        && request.resource.data.paymentAuthorIds.size() == oldAuthorIds.size() + 1
+        && request.resource.data.paymentAuthorIds.hasAll(oldAuthorIds)
+        && request.resource.data.paymentAuthorIds[oldAuthorIds.size()] == request.auth.uid;
     }
 
     function preservesExpensePaymentAudit() {
