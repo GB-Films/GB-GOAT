@@ -1,7 +1,7 @@
 import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { collection, doc, runTransaction, serverTimestamp } from 'firebase/firestore';
 import { deleteObject, getDownloadURL, ref, uploadBytes } from 'firebase/storage';
-import { Calendar, DollarSign, ExternalLink, History, Paperclip, Plus, Trash2, Wallet } from 'lucide-react';
+import { Calendar, DollarSign, ExternalLink, History, Loader2, Paperclip, Plus, Trash2, Wallet } from 'lucide-react';
 import { motion } from 'motion/react';
 import { db, storage } from '../../lib/firebase';
 import { handleFirestoreError } from '../../lib/firestoreUtils';
@@ -10,6 +10,7 @@ import { validateMaxUploadSize } from '../../lib/uploadLimits';
 import { getFileExtension, sanitizeFileName } from '../../lib/files';
 import type { PaymentCashBoxOption } from '../../lib/cashBoxes';
 import { buildPaymentAuditAppend } from '../../lib/paymentAudit';
+import { parsePaymentAmount } from '../../lib/paymentAmounts';
 import type { Payment, PaymentCollection } from './types';
 
 const formatDate = (dateString: string | any) => {
@@ -116,6 +117,9 @@ export function PaymentModal({
   const [editingPaymentIndex, setEditingPaymentIndex] = useState<number | null>(null);
   const [editPaymentDateInput, setEditPaymentDateInput] = useState(() => toDateInputValue());
   const [editReceipt, setEditReceipt] = useState<File | null>(null);
+  const [amountInput, setAmountInput] = useState('');
+  const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
+  const [paymentError, setPaymentError] = useState('');
 
   useEffect(() => {
     setSelectedReceipt(null);
@@ -125,6 +129,9 @@ export function PaymentModal({
     setEditingPaymentIndex(null);
     setEditPaymentDateInput(toDateInputValue());
     setEditReceipt(null);
+    setAmountInput('');
+    setIsSubmittingPayment(false);
+    setPaymentError('');
   }, [isOpen, item?.id]);
 
   useEffect(() => {
@@ -376,7 +383,7 @@ export function PaymentModal({
               
               const formData = new FormData(e.currentTarget);
               const customDate = formData.get('paymentDate') as string;
-              const amount = Number(formData.get('amount'));
+              const amount = parsePaymentAmount(formData.get('amount'));
               const formReceiptFile = formData.get('receipt') as File | null;
               const receiptFile = selectedReceipt || (formReceiptFile && formReceiptFile.size > 0 ? formReceiptFile : null);
               const requestedCashBoxId = String(formData.get('cashBoxId') || cashBoxOptions[0]?.id || '');
@@ -384,19 +391,19 @@ export function PaymentModal({
               const useCashBox = formData.get('useCashBox') === 'on' && Boolean(selectedCashBox);
               
               if (!amount || amount <= 0) {
-                alert('Por favor ingrese un monto válido');
+                setPaymentError('Ingresá un monto válido. Podés escribir 2530000 o 2.530.000.');
                 return;
               }
 
               const remainingBalanceCents = Math.max(0, toMoneyCents(item.total) - totalPaidCents);
               const remainingBalance = remainingBalanceCents / 100;
               if (toMoneyCents(amount) > remainingBalanceCents) {
-                alert(`El pago no puede superar el saldo pendiente de $${remainingBalance.toLocaleString()}.`);
+                setPaymentError(`El pago no puede superar el saldo pendiente de $${remainingBalance.toLocaleString()}.`);
                 return;
               }
 
               if (useCashBox && selectedCashBox && !selectedCashBox.unlimited && amount > selectedCashBox.balance + 0.01) {
-                alert('El monto supera el saldo disponible en caja.');
+                setPaymentError('El monto supera el saldo disponible en la caja seleccionada.');
                 return;
               }
 
@@ -433,6 +440,8 @@ export function PaymentModal({
               const docRef = doc(db, 'projects', projectId, collectionName, currentItemId);
               const cashMovementRef = useCashBox ? doc(collection(db, 'projects', projectId, 'cashMovements')) : null;
               
+              setIsSubmittingPayment(true);
+              setPaymentError('');
               try {
                 if (useCashBox && selectedCashBox && cashMovementRef) {
                   newPayment.paidByEmail = selectedCashBox.ownerEmail;
@@ -527,16 +536,24 @@ export function PaymentModal({
                 onPaymentStateChange(currentItemId, collectionName, result.updatedHistory, result.isFullyPaid, result.audit);
                 
                 (e.target as HTMLFormElement).reset();
+                setAmountInput('');
                 setSelectedReceipt(null);
                 setPaymentDateInput(toDateInputValue());
               } catch (err: any) {
                 console.error("Error updating payment:", err);
                 if (newPayment.receipt?.path) deleteObject(ref(storage, newPayment.receipt.path)).catch(() => {});
                 if (err?.message === 'PAYMENT_EXCEEDS_TOTAL') {
-                  alert('No se registró el pago porque el gasto ya alcanzó su valor total. Actualizá y revisá el historial.');
+                  setPaymentError('No se registró el pago porque el gasto ya alcanzó su valor total. Actualizá y revisá el historial.');
                   return;
                 }
-                handleFirestoreError(err, 'update', `projects/${projectId}/${collectionName}/${currentItemId}`);
+                const messageByCode: Record<string, string> = {
+                  'permission-denied': 'Firebase rechazó el pago por permisos. Actualizá la página y, si continúa, enviá una captura de este mensaje.',
+                  unavailable: 'No pudimos conectar con Firebase. Revisá la conexión e intentá nuevamente.',
+                  aborted: 'El gasto cambió mientras se registraba el pago. Los datos siguen cargados: volvé a intentar.',
+                };
+                setPaymentError(messageByCode[err?.code] || `No se pudo registrar el pago${err?.code ? ` (${err.code})` : ''}. Intentá nuevamente.`);
+              } finally {
+                setIsSubmittingPayment(false);
               }
             }} className="space-y-3 pt-3 border-t border-slate-100">
               <div className="grid grid-cols-2 gap-3">
@@ -556,9 +573,8 @@ export function PaymentModal({
                      type="button"
                      onClick={() => {
                        const remaining = Math.max(0, (Number(item.total) || 0) - totalPaid);
-                       if (amountRef.current) {
-                         amountRef.current.value = remaining.toFixed(2);
-                       }
+                       setAmountInput(remaining.toFixed(2));
+                       amountRef.current?.focus();
                      }}
                      className="w-full px-3 py-2 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded text-[10px] font-bold uppercase tracking-widest hover:bg-emerald-100 transition-all flex items-center justify-center gap-2 shadow-sm"
                    >
@@ -573,12 +589,15 @@ export function PaymentModal({
                   <input 
                     ref={amountRef}
                     name="amount" 
-                    type="number" 
-                    step="0.01" 
-                    min="0.01"
-                    max={Math.max(0, balance)}
+                    type="text"
+                    inputMode="decimal"
                     required
                     placeholder="0.00" 
+                    value={amountInput}
+                    onChange={(event) => {
+                      setAmountInput(event.target.value);
+                      setPaymentError('');
+                    }}
                     className="w-full pl-8 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-base font-black text-slate-900 focus:outline-none focus:border-black focus:ring-4 focus:ring-slate-100 transition-all" 
                   />
                 </div>
@@ -594,7 +613,7 @@ export function PaymentModal({
                       <div className="text-[10px] font-bold uppercase tracking-widest text-amber-700">Usar caja en efectivo</div>
                       <div className="text-xs text-amber-700/70 mt-1">Elegí la caja que financiará este pago</div>
                     </div>
-                    <input name="useCashBox" type="checkbox" className="w-4 h-4 accent-amber-600" />
+                    <input name="useCashBox" type="checkbox" defaultChecked className="w-4 h-4 accent-amber-600" />
                   </label>
                   <select
                     name="cashBoxId"
@@ -667,8 +686,14 @@ export function PaymentModal({
                   </button>
                 )}
               </div>
-              <button type="submit" disabled={balance <= 0.01} className="w-full py-3 bg-emerald-600 text-white rounded-xl text-[10px] font-bold tracking-widest uppercase hover:bg-emerald-700 transition-colors flex items-center justify-center gap-2 disabled:bg-slate-300 disabled:cursor-not-allowed">
-                 <DollarSign className="w-4 h-4" /> Registrar Pago
+              {paymentError && (
+                <div role="alert" className="rounded-lg border border-red-100 bg-red-50 p-3 text-xs font-bold text-red-600">
+                  {paymentError}
+                </div>
+              )}
+              <button type="submit" disabled={balance <= 0.01 || isSubmittingPayment} className="w-full py-3 bg-emerald-600 text-white rounded-xl text-[10px] font-bold tracking-widest uppercase hover:bg-emerald-700 transition-colors flex items-center justify-center gap-2 disabled:bg-slate-300 disabled:cursor-not-allowed">
+                 {isSubmittingPayment ? <Loader2 className="w-4 h-4 animate-spin" /> : <DollarSign className="w-4 h-4" />}
+                 {isSubmittingPayment ? 'Registrando pago...' : 'Registrar Pago'}
               </button>
             </form>
           )}
