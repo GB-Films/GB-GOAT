@@ -67,6 +67,7 @@ import { PROJECT_STATUSES } from '../lib/projects';
 import { getExpenseInvoices, getInvoiceDocumentKey, type ExpenseInvoiceDocument } from '../lib/invoices';
 import { buildPaymentCashBoxOptions, calculateGeneralCashSummary, GENERAL_CASH_ACCOUNT, isGeneralCashMovement } from '../lib/cashBoxes';
 import { buildLinkedProviderInviteExpiration } from '../lib/providerInvites';
+import { resolveCashMovementTarget } from '../lib/cashMovementTargets';
 
 const tabs = [
   { id: 'resumen', label: 'Resumen', icon: Info },
@@ -2308,6 +2309,27 @@ export default function ProjectDetail() {
     setPaymentType(type);
     setIsDeletingPayment(null);
     setPaymentModalOpen(true);
+  };
+
+  const openCashMovementExpense = (movement: CashMovement) => {
+    const target = resolveCashMovementTarget(movement, budgetItems, areaExpenses);
+    if (target.status !== 'found') return;
+
+    if (target.collectionName === 'areaExpenses') {
+      const expense = target.item as AreaExpense;
+      const subcategoryKey = `${expense.area}__${cleanAreaExpenseSubcategory(expense.subcategory)}`;
+      setAreaExpenseSearch('');
+      setSelectedAreaTabs([expense.area]);
+      setCollapsedCategories((current) => ({ ...current, [expense.area]: false }));
+      setCollapsedAreaSubcategories((current) => ({ ...current, [subcategoryKey]: false }));
+      setActiveTab('areas');
+    } else {
+      const item = target.item as BudgetItem;
+      setCollapsedCategories((current) => ({ ...current, [item.area]: false }));
+      setActiveTab('presupuesto');
+    }
+
+    openPaymentModal(target.item, target.collectionName);
   };
 
   const updatePaymentState = (
@@ -6225,6 +6247,7 @@ export default function ProjectDetail() {
                   {generalCashMovements.map((movement) => {
                     const isPending = movement.type === 'entrega' && movement.status === 'pending';
                     const movementLabel = movement.type === 'entrega' ? 'Entrega de caja' : 'Pago directo';
+                    const expenseTarget = resolveCashMovementTarget(movement, budgetItems, areaExpenses);
                     const destination = movement.type === 'entrega'
                       ? `A ${movement.toUserName || movement.toUserEmail || 'responsable sin identificar'}`
                       : movement.description || movement.area || 'Gasto del proyecto';
@@ -6238,6 +6261,26 @@ export default function ProjectDetail() {
                           </div>
                           <div className="mt-1 truncate text-[10px] text-slate-400">{destination} · {formatDate(movement.date || movement.createdAt)}</div>
                           {(movement.notes || movement.area) && <div className="mt-1 truncate text-[9px] text-slate-500">{movement.notes || movement.area}</div>}
+                          {expenseTarget.status === 'found' && (
+                            <button
+                              type="button"
+                              onClick={() => openCashMovementExpense(movement)}
+                              className="mt-2 inline-flex items-center gap-1 rounded border border-white/15 bg-white/5 px-2 py-1 text-[8px] font-black uppercase tracking-widest text-sky-300 hover:border-sky-300 hover:bg-sky-300/10"
+                            >
+                              <LinkIcon className="h-3 w-3" />
+                              Abrir gasto
+                            </button>
+                          )}
+                          {expenseTarget.status === 'missing' && (
+                            <span className="mt-2 inline-flex rounded bg-rose-400/10 px-2 py-1 text-[8px] font-black uppercase tracking-widest text-rose-300">
+                              Gasto eliminado
+                            </span>
+                          )}
+                          {expenseTarget.status === 'unlinked' && (
+                            <span className="mt-2 inline-flex rounded bg-white/5 px-2 py-1 text-[8px] font-black uppercase tracking-widest text-slate-500">
+                              Pago anterior sin enlace
+                            </span>
+                          )}
                         </div>
                         <div className={cn('shrink-0 text-sm font-black font-mono', isPending ? 'text-amber-300' : 'text-rose-300')}>
                           {isPending ? 'Pend. ' : '-'}${Number(movement.amount || 0).toLocaleString()}
@@ -6370,6 +6413,7 @@ export default function ProjectDetail() {
                       const incoming = normalizeEmail(movement.toUserEmail) === row.email;
                       const isPendingDelivery = movement.type === 'entrega' && movement.status === 'pending';
                       const signedAmount = incoming ? Number(movement.amount) || 0 : -(Number(movement.amount) || 0);
+                      const expenseTarget = resolveCashMovementTarget(movement, budgetItems, areaExpenses);
                       return (
                         <div key={movement.id} className={cn("px-5 py-3 flex items-center justify-between gap-4", isPendingDelivery && "bg-amber-50/70")}>
                           <div className="min-w-0">
@@ -6387,6 +6431,26 @@ export default function ProjectDetail() {
                             <div className="text-[10px] text-slate-400 truncate">
                               {movement.description || movement.notes || movement.area || 'Movimiento de caja'} · {formatDate(movement.date || movement.createdAt)}
                             </div>
+                            {expenseTarget.status === 'found' && (
+                              <button
+                                type="button"
+                                onClick={() => openCashMovementExpense(movement)}
+                                className="mt-2 inline-flex items-center gap-1 rounded border border-sky-100 bg-sky-50 px-2 py-1 text-[8px] font-black uppercase tracking-widest text-sky-700 hover:border-sky-300"
+                              >
+                                <LinkIcon className="h-3 w-3" />
+                                Abrir gasto
+                              </button>
+                            )}
+                            {expenseTarget.status === 'missing' && (
+                              <span className="mt-2 inline-flex rounded bg-rose-50 px-2 py-1 text-[8px] font-black uppercase tracking-widest text-rose-600">
+                                Gasto eliminado
+                              </span>
+                            )}
+                            {expenseTarget.status === 'unlinked' && (
+                              <span className="mt-2 inline-flex rounded bg-slate-100 px-2 py-1 text-[8px] font-black uppercase tracking-widest text-slate-400">
+                                Pago anterior sin enlace
+                              </span>
+                            )}
                           </div>
                           <div className="shrink-0 text-right">
                             <div className={cn("text-xs font-black font-mono", isPendingDelivery ? "text-amber-700" : signedAmount >= 0 ? "text-emerald-600" : "text-rose-600")}>
