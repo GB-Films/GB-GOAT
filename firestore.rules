@@ -495,8 +495,7 @@ service cloud.firestore {
     }
 
     function publicProviderCreateIsValid() {
-      return request.auth == null
-        && request.resource.data.source == 'provider_invite'
+      return request.resource.data.source == 'provider_invite'
         && inviteIsPending(request.resource.data.inviteToken)
         && request.resource.data.type in ['persona', 'empresa']
         && request.resource.data.cuitNormalized is string
@@ -554,8 +553,7 @@ service cloud.firestore {
     }
 
     function providerInviteTargetsItem(projectId, collectionName, itemId, token) {
-      return request.auth == null
-        && token is string
+      return token is string
         && exists(/databases/$(database)/documents/providerInvites/$(token))
         && get(/databases/$(database)/documents/providerInvites/$(token)).data.used == false
         && get(/databases/$(database)/documents/providerInvites/$(token)).data.status == 'pending'
@@ -566,8 +564,7 @@ service cloud.firestore {
     }
 
     function canPublicAssignProviderFromInvite(projectId, collectionName, itemId) {
-      return request.auth == null
-        && (!resource.data.keys().hasAny(['providerId']) || resource.data.providerId == '')
+      return (!resource.data.keys().hasAny(['providerId']) || resource.data.providerId == '')
         && (!resource.data.keys().hasAny(['providerName']) || resource.data.providerName == '')
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['providerId', 'providerName', 'providerInviteAssignment', 'updatedAt'])
         && request.resource.data.providerId is string
@@ -788,8 +785,7 @@ service cloud.firestore {
           && request.resource.data.status == 'cancelled'
         )
         || (
-          request.auth == null
-          && resource.data.used == false
+          resource.data.used == false
           && resource.data.status == 'pending'
           && providerInviteNotExpired(token)
           && (!resource.data.keys().hasAny(['mode']) || resource.data.mode != 'multi_use')
@@ -800,8 +796,7 @@ service cloud.firestore {
           && request.resource.data.providerType in ['persona', 'empresa']
         )
         || (
-          request.auth == null
-          && resource.data.used == false
+          resource.data.used == false
           && resource.data.status == 'pending'
           && resource.data.mode == 'multi_use'
           && providerInviteNotExpired(token)
@@ -819,8 +814,7 @@ service cloud.firestore {
       allow list: if isAppAdmin();
       allow create: if canCreateGlobalProvider()
         || (
-          request.auth == null
-          && request.resource.data.inviteToken is string
+          request.resource.data.inviteToken is string
           && inviteIsPending(request.resource.data.inviteToken)
           && request.resource.data.providerId is string
           && request.resource.data.identifierType in ['dni', 'cuit']

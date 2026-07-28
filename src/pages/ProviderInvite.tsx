@@ -301,6 +301,7 @@ export default function ProviderInvite() {
   const [form, setForm] = useState(emptyForm);
   const [fieldErrors, setFieldErrors] = useState<FormErrors>({});
   const [showFieldErrors, setShowFieldErrors] = useState(false);
+  const submitErrorRef = useRef<HTMLDivElement>(null);
 
   const dniNormalized = useMemo(() => normalizeDigits(form.dni), [form.dni]);
   const cuitNormalized = useMemo(() => normalizeDigits(form.cuit), [form.cuit]);
@@ -423,7 +424,7 @@ export default function ProviderInvite() {
 
     if (!values.bankAccount_cbu.trim() && !values.bankAccount_alias.trim()) {
       nextErrors.bankAccount = 'Completá al menos un CBU o un Alias.';
-    } else if (values.bankAccount_cbu.trim() && !isValidCbu(values.bankAccount_cbu)) {
+    } else if (values.bankAccount_cbu.trim() && !isValidCbu(normalizeDigits(values.bankAccount_cbu))) {
       nextErrors.bankAccount_cbu = 'El CBU debe tener exactamente 22 números consecutivos.';
     }
 
@@ -501,7 +502,7 @@ export default function ProviderInvite() {
           address: form.address.trim(),
           category: form.category,
           categoryOther: form.category === 'Otra' ? form.categoryOther.trim() : '',
-          bankAccount_cbu: form.bankAccount_cbu.trim(),
+          bankAccount_cbu: normalizeDigits(form.bankAccount_cbu),
           bankAccount_alias: form.bankAccount_alias.trim(),
           source: 'provider_invite',
           inviteToken: token,
@@ -596,7 +597,17 @@ export default function ProviderInvite() {
         DNI_EXISTS: 'Ya existe una persona registrada con este DNI.',
         CUIT_EXISTS: 'Ya existe un proveedor registrado con este CUIT/CUIL.',
       };
-      const submitError = messageByCode[err?.message] || 'No se pudo enviar el alta. Revisá los datos e intentá de nuevo.';
+      const firebaseMessageByCode: Record<string, string> = {
+        'permission-denied': 'El link no pudo autorizar el envío. Recargá la página e intentá nuevamente. Si continúa, pedí un link nuevo.',
+        'firestore/permission-denied': 'El link no pudo autorizar el envío. Recargá la página e intentá nuevamente. Si continúa, pedí un link nuevo.',
+        unavailable: 'No pudimos conectar con el servidor. Revisá la conexión a internet y volvé a intentar.',
+        'firestore/unavailable': 'No pudimos conectar con el servidor. Revisá la conexión a internet y volvé a intentar.',
+        'deadline-exceeded': 'La conexión tardó demasiado. Los datos siguen cargados: volvé a presionar Enviar.',
+        aborted: 'El alta cambió mientras se enviaba. Los datos siguen cargados: volvé a presionar Enviar.',
+      };
+      const submitError = messageByCode[err?.message]
+        || firebaseMessageByCode[err?.code]
+        || 'Ocurrió un error inesperado al enviar. Los datos siguen cargados: recargá la página o pedí un link nuevo.';
       if (err?.message === 'DNI_EXISTS' || err?.message === 'CUIT_EXISTS') {
         const field = err.message === 'DNI_EXISTS' ? 'dni' : 'cuit';
         setShowFieldErrors(true);
@@ -605,6 +616,11 @@ export default function ProviderInvite() {
           const firstInvalidField = document.querySelector<HTMLElement>('[data-provider-form] [aria-invalid="true"]');
           firstInvalidField?.focus();
           firstInvalidField?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        });
+      } else {
+        window.requestAnimationFrame(() => {
+          submitErrorRef.current?.focus();
+          submitErrorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
         });
       }
       setError(submitError);
@@ -754,7 +770,7 @@ export default function ProviderInvite() {
                     <input
                       value={form.bankAccount_cbu}
                       aria-label="CBU"
-                      onChange={(e) => updateField('bankAccount_cbu', e.target.value)}
+                      onChange={(e) => updateField('bankAccount_cbu', normalizeDigits(e.target.value).slice(0, 22))}
                       inputMode="numeric"
                       pattern="[0-9]{22}"
                       maxLength={22}
@@ -785,7 +801,16 @@ export default function ProviderInvite() {
               </div>
 
               {checkingDuplicates && <p className="text-xs text-slate-400 font-bold uppercase tracking-widest">Revisando duplicados...</p>}
-              {error && <div className="p-4 rounded-lg bg-red-50 border border-red-100 text-sm font-bold text-red-600">{error}</div>}
+              {error && (
+                <div
+                  ref={submitErrorRef}
+                  role="alert"
+                  tabIndex={-1}
+                  className="p-4 rounded-lg bg-red-50 border border-red-100 text-sm font-bold text-red-600 outline-none focus:ring-2 focus:ring-red-200"
+                >
+                  {error}
+                </div>
+              )}
 
               <button
                 type="submit"
