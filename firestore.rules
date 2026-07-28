@@ -101,17 +101,25 @@ service cloud.firestore {
       return area + '||' + subcategory;
     }
 
-    function canWriteAreaExpense(projectId, area, subcategory) {
-      return canWriteArea(projectId, area)
-        || (
-          hasCollaboratorDoc(projectId)
-          && collaboratorDoc(projectId).canEditBudgetAreas == true
-          && 'areas' in collaboratorDoc(projectId).allowedTabs
-          && subcategory is string
-          && subcategory != ''
-          && 'allowedSubcategories' in collaboratorDoc(projectId)
-          && areaSubcategoryKey(area, subcategory) in collaboratorDoc(projectId).allowedSubcategories
+    function canWriteAssignedAreaExpense(projectId, area, subcategory) {
+      let access = collaboratorDoc(projectId);
+      return hasCollaboratorDoc(projectId)
+        && access.canEditBudgetAreas == true
+        && 'areas' in access.allowedTabs
+        && (
+          area in access.allowedCategories
+          || (
+            subcategory is string
+            && subcategory != ''
+            && 'allowedSubcategories' in access
+            && areaSubcategoryKey(area, subcategory) in access.allowedSubcategories
+          )
         );
+    }
+
+    function canWriteAreaExpense(projectId, area, subcategory) {
+      return canWriteAssignedAreaExpense(projectId, area, subcategory)
+        || isProjectAdmin(projectId);
     }
 
     function canAssignAreasAsProductionLead(projectId) {
