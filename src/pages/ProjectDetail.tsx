@@ -66,6 +66,7 @@ import { getFileExtension, sanitizeFileName, validateSpreadsheetImport } from '.
 import { PROJECT_STATUSES } from '../lib/projects';
 import { getExpenseInvoices, getInvoiceDocumentKey, type ExpenseInvoiceDocument } from '../lib/invoices';
 import { buildPaymentCashBoxOptions, calculateGeneralCashSummary, GENERAL_CASH_ACCOUNT, isGeneralCashMovement } from '../lib/cashBoxes';
+import { buildLinkedProviderInviteExpiration } from '../lib/providerInvites';
 
 const tabs = [
   { id: 'resumen', label: 'Resumen', icon: Info },
@@ -375,14 +376,6 @@ const getPublicProviderInviteLink = (token: string) => {
 const getPublicInvoiceUploadLink = (token: string) => {
   const baseUrl = ((import.meta as ImportMeta & { env?: { BASE_URL?: string } }).env?.BASE_URL || '/');
   return `${window.location.origin}${baseUrl}#/carga-factura/${token}`;
-};
-
-const clampProviderInviteDays = (value: number) => Math.max(1, Math.min(7, Math.floor(value) || 7));
-
-const buildProviderInviteExpiration = (days: number) => {
-  const expiresAt = new Date();
-  expiresAt.setDate(expiresAt.getDate() + clampProviderInviteDays(days));
-  return expiresAt;
 };
 
 const validateProjectDocumentFile = (file?: File | null) => {
@@ -2029,7 +2022,7 @@ export default function ProjectDetail() {
     const token = generateInvoiceUploadToken();
     const link = getPublicProviderInviteLink(token);
     const loadingKey = `${collectionName}-${currentItem.id}`;
-    const expiresAt = Timestamp.fromDate(buildProviderInviteExpiration(days));
+    const expiresAt = Timestamp.fromDate(buildLinkedProviderInviteExpiration(days));
 
     setGeneratingProviderInviteLinks(prev => ({ ...prev, [loadingKey]: true }));
     try {
