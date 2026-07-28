@@ -250,7 +250,7 @@ service cloud.firestore {
         && request.resource.data.paymentHistory[oldCount].amount > 0
         && (
           (hadAudit && request.resource.data.paymentAuthorIds == resource.data.paymentAuthorIds.concat([request.auth.uid]))
-          || (!hadAudit && oldCount == 0 && request.resource.data.paymentAuthorIds == [request.auth.uid])
+          || (!hadAudit && request.resource.data.paymentAuthorIds == [request.auth.uid])
         );
     }
 

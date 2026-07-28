@@ -9,6 +9,7 @@ import { cn } from '../../lib/utils';
 import { validateMaxUploadSize } from '../../lib/uploadLimits';
 import { getFileExtension, sanitizeFileName } from '../../lib/files';
 import type { PaymentCashBoxOption } from '../../lib/cashBoxes';
+import { buildPaymentAuditAppend } from '../../lib/paymentAudit';
 import type { Payment, PaymentCollection } from './types';
 
 const formatDate = (dateString: string | any) => {
@@ -500,13 +501,7 @@ export function PaymentModal({
                   if (latestTotalPaidCents + toMoneyCents(amount) > latestItemTotalCents) throw new Error('PAYMENT_EXCEEDS_TOTAL');
 
                   const updatedHistory = [...latestHistory, newPayment];
-                  const existingPaymentAuthorIds = Array.isArray(latestItem.paymentAuthorIds)
-                    ? latestItem.paymentAuthorIds.filter((authorId: unknown) => typeof authorId === 'string' && authorId)
-                    : [];
-                  const canInitializePaymentAudit = latestHistory.length === 0 || latestItem.paymentLocked === true;
-                  const paymentAuthorIds = canInitializePaymentAudit && currentUserId
-                    ? [...existingPaymentAuthorIds, currentUserId]
-                    : existingPaymentAuthorIds;
+                  const paymentAudit = buildPaymentAuditAppend(latestItem.paymentAuthorIds, currentUserId);
                   const nextTotalPaidCents = latestTotalPaidCents + toMoneyCents(amount);
                   const isFullyPaid = nextTotalPaidCents >= latestItemTotalCents;
 
@@ -515,18 +510,13 @@ export function PaymentModal({
                     paymentHistory: updatedHistory,
                     paid: isFullyPaid,
                     updatedAt: serverTimestamp(),
-                    ...(canInitializePaymentAudit && currentUserId ? {
-                      paymentLocked: true,
-                      paymentAuthorIds,
-                    } : {}),
+                    ...paymentAudit,
                   });
 
                   return {
                     updatedHistory,
                     isFullyPaid,
-                    audit: canInitializePaymentAudit && currentUserId
-                      ? { paymentLocked: true, paymentAuthorIds }
-                      : undefined,
+                    audit: paymentAudit,
                   };
                 });
 
