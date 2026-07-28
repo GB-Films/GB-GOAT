@@ -532,12 +532,6 @@ export default function ProviderInvite() {
         const targetExpenseRef = inviteData.projectId && inviteData.expenseId
           ? doc(db, 'projects', inviteData.projectId, targetCollectionName, inviteData.expenseId)
           : null;
-        const targetExpenseSnap = targetExpenseRef ? await transaction.get(targetExpenseRef) : null;
-        if (targetExpenseRef && !targetExpenseSnap?.exists()) throw new Error('TARGET_EXPENSE_NOT_FOUND');
-        const targetExpenseData = targetExpenseSnap?.data();
-        if (targetExpenseData && (targetExpenseData.providerId || targetExpenseData.providerName)) {
-          throw new Error('TARGET_EXPENSE_ALREADY_ASSIGNED');
-        }
 
         transaction.set(providerRef, providerData);
         for (const item of identifierRefs) {
@@ -604,6 +598,8 @@ export default function ProviderInvite() {
         'firestore/unavailable': 'No pudimos conectar con el servidor. Revisá la conexión a internet y volvé a intentar.',
         'deadline-exceeded': 'La conexión tardó demasiado. Los datos siguen cargados: volvé a presionar Enviar.',
         aborted: 'El alta cambió mientras se enviaba. Los datos siguen cargados: volvé a presionar Enviar.',
+        'not-found': 'La fila de gasto asociada a este link ya no existe. Pedí un link nuevo.',
+        'firestore/not-found': 'La fila de gasto asociada a este link ya no existe. Pedí un link nuevo.',
       };
       const submitError = messageByCode[err?.message]
         || firebaseMessageByCode[err?.code]
