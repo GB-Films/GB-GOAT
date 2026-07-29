@@ -158,6 +158,18 @@ const roleLabels: Record<Collaborator['role'], string> = {
   jefe_area: 'Jefe de Área',
 };
 
+const formatPersonIdentity = (name?: string, email?: string) => {
+  const normalizedEmail = normalizeEmail(email);
+  const normalizedName = String(name || '').trim();
+  if (!normalizedName) return normalizedEmail || 'Persona sin identificar';
+  if (!normalizedEmail || normalizedName.toLowerCase() === normalizedEmail) return normalizedName;
+  return `${normalizedName} · ${normalizedEmail}`;
+};
+
+const formatCashResponsibleOption = (responsible: Collaborator) => (
+  `${formatPersonIdentity(responsible.displayName, responsible.email)} · ${roleLabels[responsible.role]}`
+);
+
 const PROJECT_ADMIN_ROLE_OPTIONS: Collaborator['role'][] = ['admin', 'jefe_produccion', 'jefe_area'];
 const PRODUCTION_LEAD_ROLE_OPTIONS: Collaborator['role'][] = ['jefe_produccion', 'jefe_area'];
 const safeArray = (value: any): string[] => Array.isArray(value) ? value : [];
@@ -3260,6 +3272,8 @@ export default function ProjectDetail() {
         };
       })
   ), [cashBalanceByEmail, cashMovements, cashResponsibles, currentUserEmail, isProductionLead, isProjectAdmin, userPermissions]);
+  const currentCashRow = visibleCashRows.find((row) => row.email === currentUserEmail);
+  const visibleCashBalanceTotal = visibleCashRows.reduce((total, row) => total + row.balance, 0);
 
   useEffect(() => {
     if (!cashRecipientEmail && cashResponsibles.length > 0) {
@@ -6173,22 +6187,93 @@ export default function ProjectDetail() {
         )}
 
         {activeTab === 'cajas' && (
-          <div className="space-y-5 pb-20">
-            <header className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-3">
+          <div className="flex flex-col gap-5 pb-20">
+            <header className="order-1">
               <div>
-                <h2 className="text-lg font-bold text-slate-900">{isProjectAdmin ? 'Caja General y Cajas por Responsable' : 'Cajas por Responsable'}</h2>
-                <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest mt-1">
-                  {isProjectAdmin ? 'Salidas generales, entregas, pagos rendidos y saldos por persona' : 'Entregas de efectivo, pagos rendidos y saldos disponibles por persona'}
+                <h2 className="text-xl font-black text-slate-900">Cajas del proyecto</h2>
+                <p className="mt-1 max-w-3xl text-sm text-slate-500">
+                  {isProjectAdmin
+                    ? 'Entregá fondos, seguí las confirmaciones y consultá cuánto efectivo tiene disponible cada responsable.'
+                    : 'Consultá el efectivo que recibiste, los movimientos realizados y tu saldo disponible.'}
                 </p>
-              </div>
-              <div className="px-4 py-3 bg-slate-900 text-white rounded-xl text-right">
-                <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{isProjectAdmin ? 'Salidas Caja General' : 'Mi saldo'}</div>
-                <div className="text-xl font-black font-mono">${(isProjectAdmin ? generalCashSummary.totalOut : currentCashBalance).toLocaleString()}</div>
               </div>
             </header>
 
+            <section className="order-2 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+              <div className="border-b border-slate-100 px-5 py-3">
+                <h3 className="text-xs font-black text-slate-900">Cómo funciona</h3>
+              </div>
+              <div className="grid grid-cols-1 divide-y divide-slate-100 md:grid-cols-4 md:divide-x md:divide-y-0">
+                {[
+                  { step: '1', title: 'Caja General', detail: 'El proyecto registra una entrega.' },
+                  { step: '2', title: 'Entrega pendiente', detail: 'El monto todavía no suma al saldo.' },
+                  { step: '3', title: 'Recepción confirmada', detail: 'El responsable confirma que recibió el dinero.' },
+                  { step: '4', title: 'Caja personal', detail: 'Pagos y transferencias descuentan del saldo.' },
+                ].map((item) => (
+                  <div key={item.step} className="flex gap-3 px-5 py-4">
+                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-900 text-[10px] font-black text-white">{item.step}</span>
+                    <div>
+                      <div className="text-xs font-black text-slate-900">{item.title}</div>
+                      <p className="mt-1 text-[11px] leading-4 text-slate-500">{item.detail}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section className="order-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+              {(isProjectAdmin
+                ? [
+                    {
+                      label: 'Salió de Caja General',
+                      value: generalCashSummary.totalOut,
+                      detail: 'Entregas confirmadas y pagos directos',
+                      tone: 'text-slate-950',
+                    },
+                    {
+                      label: 'Pendiente de confirmación',
+                      value: generalCashSummary.pendingDeliveries,
+                      detail: 'Todavía no integra ninguna caja personal',
+                      tone: 'text-amber-700',
+                    },
+                    {
+                      label: 'Disponible en cajas',
+                      value: visibleCashBalanceTotal,
+                      detail: 'Saldo total entre los responsables visibles',
+                      tone: visibleCashBalanceTotal >= 0 ? 'text-emerald-700' : 'text-rose-700',
+                    },
+                  ]
+                : [
+                    {
+                      label: 'Mi saldo disponible',
+                      value: currentCashBalance,
+                      detail: 'Efectivo que todavía podés utilizar',
+                      tone: currentCashBalance >= 0 ? 'text-emerald-700' : 'text-rose-700',
+                    },
+                    {
+                      label: 'Total recibido',
+                      value: currentCashRow?.received || 0,
+                      detail: 'Entregas y transferencias confirmadas',
+                      tone: 'text-slate-950',
+                    },
+                    {
+                      label: 'Pagado o transferido',
+                      value: (currentCashRow?.used || 0) + (currentCashRow?.transferred || 0),
+                      detail: 'Movimientos que redujeron tu caja',
+                      tone: 'text-slate-950',
+                    },
+                  ]
+              ).map((summaryItem) => (
+                <div key={summaryItem.label} className="rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
+                  <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">{summaryItem.label}</div>
+                  <div className={cn('mt-2 font-mono text-2xl font-black', summaryItem.tone)}>${summaryItem.value.toLocaleString()}</div>
+                  <p className="mt-1 text-[11px] text-slate-500">{summaryItem.detail}</p>
+                </div>
+              ))}
+            </section>
+
             {pendingCashDeliveries.length > 0 && (
-              <section className="overflow-hidden rounded-xl border-2 border-amber-300 bg-amber-50 shadow-lg shadow-amber-100">
+              <section className="order-4 overflow-hidden rounded-xl border-2 border-amber-300 bg-amber-50 shadow-lg shadow-amber-100">
                 <div className="flex items-center gap-3 border-b border-amber-200 px-5 py-4">
                   <Clock3 className="h-5 w-5 text-amber-700" />
                   <div>
@@ -6201,7 +6286,9 @@ export default function ProjectDetail() {
                     <div key={`pending-${movement.id}`} className="flex flex-col gap-4 px-5 py-4 md:flex-row md:items-center md:justify-between">
                       <div>
                         <div className="text-2xl font-black font-mono text-amber-950">${Number(movement.amount || 0).toLocaleString()}</div>
-                        <div className="mt-1 text-xs font-bold text-amber-900">Entregado por {movement.createdByName || movement.createdByEmail || 'responsable sin identificar'}</div>
+                        <div className="mt-1 text-xs font-bold text-amber-900">
+                          Entregado por {formatPersonIdentity(movement.createdByName, movement.createdByEmail)}
+                        </div>
                         <div className="mt-1 text-[10px] font-bold uppercase tracking-widest text-amber-700">Fecha: {formatDate(movement.date || movement.createdAt)}{movement.notes ? ` · ${movement.notes}` : ''}</div>
                       </div>
                       <button
@@ -6220,7 +6307,7 @@ export default function ProjectDetail() {
             )}
 
             {isProjectAdmin && (
-              <section className="overflow-hidden rounded-xl border border-slate-800 bg-slate-950 text-white shadow-xl">
+              <section className="order-6 overflow-hidden rounded-xl border border-slate-800 bg-slate-950 text-white shadow-xl">
                 <div className="flex flex-col gap-3 border-b border-white/10 px-5 py-4 md:flex-row md:items-center md:justify-between">
                   <div>
                     <h3 className="text-sm font-black">Caja General</h3>
@@ -6249,7 +6336,7 @@ export default function ProjectDetail() {
                     const movementLabel = movement.type === 'entrega' ? 'Entrega de caja' : 'Pago directo';
                     const expenseTarget = resolveCashMovementTarget(movement, budgetItems, areaExpenses);
                     const destination = movement.type === 'entrega'
-                      ? `A ${movement.toUserName || movement.toUserEmail || 'responsable sin identificar'}`
+                      ? `A ${formatPersonIdentity(movement.toUserName, movement.toUserEmail)}`
                       : movement.description || movement.area || 'Gasto del proyecto';
                     return (
                       <div key={`general-${movement.id}`} className={cn('flex items-center justify-between gap-4 px-5 py-3', isPending && 'bg-amber-500/10')}>
@@ -6295,40 +6382,62 @@ export default function ProjectDetail() {
               </section>
             )}
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <section className="order-5">
+              <div className="mb-3">
+                <h3 className="text-sm font-black text-slate-900">Acciones de caja</h3>
+                <p className="mt-1 text-xs text-slate-500">Registrá una entrega o transferí saldo a otra persona del proyecto.</p>
+              </div>
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
               {isProjectAdmin && (
                 <form onSubmit={createCashDelivery} className="bg-white border border-slate-200 rounded-xl shadow-sm p-5 space-y-4">
                   <div>
-                    <h3 className="text-sm font-bold text-slate-900">Entregar efectivo</h3>
-                    <p className="text-[10px] uppercase tracking-widest text-slate-400 font-bold mt-1">Sale de Caja General y queda pendiente hasta que el responsable confirme la recepción</p>
+                    <div className="flex items-center gap-2">
+                      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-900 text-[10px] font-black text-white">1</span>
+                      <h3 className="text-sm font-black text-slate-900">Entregar efectivo desde Caja General</h3>
+                    </div>
+                    <p className="mt-2 text-xs leading-5 text-slate-500">La entrega quedará pendiente y recién se sumará a la caja de la persona cuando confirme que recibió el dinero.</p>
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Responsable</label>
+                      <label htmlFor="cash-delivery-recipient" className="mb-2 block text-[10px] font-black text-slate-700">Persona que recibe</label>
                       <select
+                        id="cash-delivery-recipient"
                         name="toUserEmail"
                         value={cashRecipientEmail}
                         onChange={(event) => setCashRecipientEmail(event.target.value)}
-                        className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black"
+                        disabled={cashResponsibles.length === 0}
+                        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-bold focus:border-black focus:outline-none disabled:text-slate-300"
                       >
+                        {cashResponsibles.length === 0 && <option value="">No hay personas disponibles</option>}
                         {cashResponsibles.map((responsible) => (
                           <option key={responsible.email} value={responsible.email}>
-                            {responsible.displayName || responsible.email} · {roleLabels[responsible.role]}
+                            {formatCashResponsibleOption(responsible)}
                           </option>
                         ))}
                       </select>
+                      {cashRecipientEmail && (
+                        <div className="mt-2 flex items-center gap-1.5 truncate text-[10px] font-bold text-slate-500" title={cashRecipientEmail}>
+                          <Mail className="h-3 w-3 shrink-0" />
+                          <span className="truncate">{cashRecipientEmail}</span>
+                        </div>
+                      )}
                     </div>
                     <div>
-                      <label className="block text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Monto</label>
-                      <input name="amount" type="number" min="0" step="0.01" required className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black" />
+                      <label htmlFor="cash-delivery-amount" className="mb-2 block text-[10px] font-black text-slate-700">Monto a entregar</label>
+                      <input id="cash-delivery-amount" name="amount" type="number" min="0" step="0.01" required placeholder="$ 0" className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-bold focus:border-black focus:outline-none" />
                     </div>
                   </div>
-                  <div>
-                    <label className="block text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Fecha de entrega</label>
-                    <input name="date" type="date" defaultValue={toProjectDateInputValue(new Date())} required className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black" />
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <div>
+                      <label htmlFor="cash-delivery-date" className="mb-2 block text-[10px] font-black text-slate-700">Fecha de entrega</label>
+                      <input id="cash-delivery-date" name="date" type="date" defaultValue={toProjectDateInputValue(new Date())} required className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-bold focus:border-black focus:outline-none" />
+                    </div>
+                    <div>
+                      <label htmlFor="cash-delivery-notes" className="mb-2 block text-[10px] font-black text-slate-700">Nota (opcional)</label>
+                      <input id="cash-delivery-notes" name="notes" placeholder="Ej.: adelanto de rodaje" className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs focus:border-black focus:outline-none" />
+                    </div>
                   </div>
-                  <input name="notes" placeholder="Nota opcional" className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs focus:outline-none focus:border-black" />
-                  <button disabled={isCreatingCashDelivery} type="submit" className="w-full px-4 py-3 bg-black text-white rounded text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 transition-all disabled:bg-slate-300 disabled:cursor-not-allowed">
+                  <button disabled={isCreatingCashDelivery || cashResponsibles.length === 0} type="submit" className="w-full rounded-lg bg-black px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-white transition-all hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300">
                     {isCreatingCashDelivery ? 'Registrando entrega...' : 'Registrar entrega pendiente'}
                   </button>
                   {cashDeliveryNotice && (
@@ -6349,45 +6458,70 @@ export default function ProjectDetail() {
               {isProductionLead && (
                 <form onSubmit={createCashTransfer} className="bg-white border border-slate-200 rounded-xl shadow-sm p-5 space-y-4">
                   <div>
-                    <h3 className="text-sm font-bold text-slate-900">Transferir a Jefe de Área</h3>
-                    <p className="text-[10px] uppercase tracking-widest text-slate-400 font-bold mt-1">Desde tu caja disponible</p>
+                    <div className="flex items-center gap-2">
+                      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-900 text-[10px] font-black text-white">2</span>
+                      <h3 className="text-sm font-black text-slate-900">Transferir a un Jefe de Área</h3>
+                    </div>
+                    <p className="mt-2 text-xs leading-5 text-slate-500">El monto saldrá de tu saldo disponible y se acreditará en la caja de la persona elegida.</p>
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Destino</label>
+                      <label htmlFor="cash-transfer-recipient" className="mb-2 block text-[10px] font-black text-slate-700">Persona que recibe</label>
                       <select
+                        id="cash-transfer-recipient"
                         name="toUserEmail"
                         value={cashTransferTargetEmail}
                         onChange={(event) => setCashTransferTargetEmail(event.target.value)}
-                        className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black"
+                        disabled={productionTransferTargets.length === 0}
+                        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-bold focus:border-black focus:outline-none disabled:text-slate-300"
                       >
+                        {productionTransferTargets.length === 0 && <option value="">No hay jefes de área disponibles</option>}
                         {productionTransferTargets.map((responsible) => (
                           <option key={responsible.email} value={responsible.email}>
-                            {responsible.displayName || responsible.email}
+                            {formatCashResponsibleOption(responsible)}
                           </option>
                         ))}
                       </select>
+                      {cashTransferTargetEmail && (
+                        <div className="mt-2 flex items-center gap-1.5 truncate text-[10px] font-bold text-slate-500" title={cashTransferTargetEmail}>
+                          <Mail className="h-3 w-3 shrink-0" />
+                          <span className="truncate">{cashTransferTargetEmail}</span>
+                        </div>
+                      )}
                     </div>
                     <div>
-                      <label className="block text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Monto</label>
-                      <input name="amount" type="number" min="0" max={Math.max(0, currentCashBalance)} step="0.01" required className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black" />
+                      <label htmlFor="cash-transfer-amount" className="mb-2 block text-[10px] font-black text-slate-700">Monto a transferir</label>
+                      <input id="cash-transfer-amount" name="amount" type="number" min="0" max={Math.max(0, currentCashBalance)} step="0.01" required placeholder="$ 0" className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-bold focus:border-black focus:outline-none" />
                     </div>
                   </div>
-                  <input name="notes" placeholder="Nota opcional" className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs focus:outline-none focus:border-black" />
+                  <div>
+                    <label htmlFor="cash-transfer-notes" className="mb-2 block text-[10px] font-black text-slate-700">Nota (opcional)</label>
+                    <input id="cash-transfer-notes" name="notes" placeholder="Ej.: fondos para Arte" className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs focus:border-black focus:outline-none" />
+                  </div>
                   <button type="submit" disabled={currentCashBalance <= 0 || productionTransferTargets.length === 0} className="w-full px-4 py-3 bg-black text-white rounded text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 transition-all disabled:bg-slate-300 disabled:cursor-not-allowed">
                     Transferir efectivo
                   </button>
                 </form>
               )}
-            </div>
+              </div>
+            </section>
 
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+            <section className="order-7">
+              <div className="mb-3">
+                <h3 className="text-sm font-black text-slate-900">{isProjectAdmin ? 'Cajas por responsable' : 'Detalle de mi caja'}</h3>
+                <p className="mt-1 text-xs text-slate-500">{isProjectAdmin ? 'Saldo y movimientos de cada persona identificada por nombre y email.' : 'Todos los ingresos y egresos que componen tu saldo.'}</p>
+              </div>
+              <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
               {visibleCashRows.map((row) => (
                 <div key={row.email} className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
                   <div className="px-5 py-4 bg-slate-50 border-b border-slate-200 flex items-start justify-between gap-4">
                     <div className="min-w-0">
                       <div className="text-sm font-black text-slate-900 truncate">{row.responsible.displayName || row.email}</div>
-                      <div className="text-[10px] uppercase tracking-widest text-slate-400 font-bold mt-1">{roleLabels[row.responsible.role]} · {safeArray(row.responsible.allowedCategories).join(', ') || 'Sin áreas'}</div>
+                      <div className="mt-1 flex items-center gap-1.5 truncate text-[11px] font-bold text-slate-600" title={row.email}>
+                        <Mail className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                        <span className="truncate">{row.email}</span>
+                      </div>
+                      <div className="mt-2 text-[9px] font-bold uppercase tracking-widest text-slate-400">{roleLabels[row.responsible.role]} · {safeArray(row.responsible.allowedCategories).join(', ') || 'Sin áreas'}</div>
                     </div>
                     <div className="text-right">
                       <div className={cn("text-xl font-black font-mono", row.balance >= 0 ? "text-emerald-600" : "text-red-600")}>${row.balance.toLocaleString()}</div>
@@ -6493,7 +6627,8 @@ export default function ProjectDetail() {
                   No hay responsables con caja para mostrar
                 </div>
               )}
-            </div>
+              </div>
+            </section>
           </div>
         )}
 
