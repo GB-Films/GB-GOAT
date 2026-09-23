@@ -5102,6 +5102,18 @@ export default function ProjectDetail() {
                   <div>
                     <div className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-400">Resumen del proyecto</div>
                     <h2 className="mt-2 text-2xl font-black tracking-[-0.04em] text-slate-950 sm:text-4xl">{project.name}</h2>
+                    {project.projectCode && (
+                      <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-500">
+                        <span className="font-bold">{project.projectCode}</span>
+                        {project.brandName && <span>Marca: {project.brandName}</span>}
+                        {project.companyName && <span>Empresa: {project.companyName}</span>}
+                        {project.serviceName && <span>Servicio: {project.serviceName}</span>}
+                        {project.controlTotalContractCurrency && project.controlTotalContractAmount != null && (
+                          <span>Contrato al importar: {project.controlTotalContractCurrency} {Number(project.controlTotalContractAmount).toLocaleString('es-AR')}</span>
+                        )}
+                        {project.controlTotalUrl && <a href={project.controlTotalUrl} target="_blank" rel="noopener noreferrer" className="text-blue-700 underline">Ver en Control Total</a>}
+                      </div>
+                    )}
                     <div className="mt-3 flex flex-wrap items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-slate-500">
                       <span className={cn("rounded-full border px-2.5 py-1", statusColors[project.status || 'Presupuesto'] || 'bg-emerald-100 text-emerald-700 border-emerald-200')}>
                         {project.status || 'Presupuesto'}
@@ -9091,6 +9103,11 @@ export default function ProjectDetail() {
                   name: formData.get('name'),
                   description: formData.get('description'),
                   clientName: formData.get('clientName'),
+                  brandName: formData.get('brandName'),
+                  ...(project.projectCode ? {
+                    companyName: formData.get('companyName'),
+                    serviceName: formData.get('serviceName'),
+                  } : {}),
                   budgetTotal: Number(formData.get('budgetTotal')),
                 };
                 try {
@@ -9111,6 +9128,9 @@ export default function ProjectDetail() {
                     <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Cliente</label>
                     <select name="clientName" defaultValue={project.clientName} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all appearance-none">
                       <option value="">Sin cliente</option>
+                      {project.clientName && !clients.some((client: any) => client.businessName === project.clientName) && (
+                        <option value={project.clientName}>{project.clientName}</option>
+                      )}
                       {clients.map(client => (
                         <option key={client.id} value={client.businessName}>{client.businessName}</option>
                       ))}
@@ -9121,6 +9141,20 @@ export default function ProjectDetail() {
                     <input name="budgetTotal" type="number" defaultValue={project.budgetTotal} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all" />
                   </div>
                 </div>
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Marca</label>
+                  <input name="brandName" defaultValue={project.brandName || ''} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all" />
+                </div>
+                {project.projectCode && <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Empresa</label>
+                    <input name="companyName" defaultValue={project.companyName || ''} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all" />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Servicio</label>
+                    <input name="serviceName" defaultValue={project.serviceName || ''} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all" />
+                  </div>
+                </div>}
                 <div>
                   <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Resumen del Proyecto</label>
                   <textarea name="description" defaultValue={project.description} rows={4} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all resize-none" />

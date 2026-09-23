@@ -1,0 +1,9 @@
+# Alta de proyectos desde Control Total
+
+En **Nuevo Proyecto**, un administrador puede elegir un proyecto de la pestaña `Proyectos` de Control Total. GOAT solicita a su cuenta de Google permiso de lectura y consulta el maestro sólo en ese momento. La cuenta debe tener acceso a la planilla y la API de Google Sheets debe estar habilitada en el proyecto de Google Cloud de GOAT. GOAT no guarda el token ni una copia completa de la planilla.
+
+El selector incluye únicamente códigos `G`. El nombre visible se crea sin el código, mientras que `projectCode` conserva el código (por ejemplo `G LO 0001`), y `controlTotalProjectId` guarda el texto original de `ProyectoID`. También se copian `Cliente` a `clientName`, `Marca` a `brandName`, `Empresa`, `Servicio`, unidad dueña, condición, fechas de confirmación y entrega, moneda e importe del contrato, el estado de origen y la fecha de importación. GOAT conserva un enlace a la fila de origen como referencia. No se crean proyectos `B`, ya que GOAT gestiona producción.
+
+El importe del contrato no se interpreta como una conversión de moneda. Cuando está en ARS, se propone como presupuesto de GOAT. Cuando está en USD, queda guardado en su moneda original y el administrador debe indicar por separado el presupuesto operativo en ARS antes de confiar en el resultado calculado por GOAT. Un contrato sin importe tampoco genera un presupuesto supuesto.
+
+La importación es un **snapshot**: cambios posteriores en Control Total no se sincronizan. Se corrigen manualmente en GOAT cuando corresponda. El código sirve para conciliar ambos sistemas y debe mantenerse estable. GOAT evita volver a importar un código ya usado y señala posibles proyectos previos con el mismo nombre. La carga manual sigue disponible para casos excepcionales, sin vínculo automático; primero corresponde crear el proyecto comercial en Control Total.

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { collection, query, getDocs, addDoc, serverTimestamp, where, or, doc, updateDoc } from 'firebase/firestore';
+import { collection, query, getDocs, addDoc, serverTimestamp, where, or, doc, updateDoc, runTransaction } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { handleFirestoreError } from '../lib/firestoreUtils';
 import { useAuth } from '../context/AuthContext';
@@ -9,6 +9,8 @@ import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { normalizeEmail } from '../lib/identity';
 import { PageHeader } from '../components/PageHeader';
+import { readControlTotalProjects } from '../lib/readControlTotalProjects';
+import { controlTotalProjectUrl, type ControlTotalProject } from '../lib/controlTotalProjects';
 
 const statusColors: Record<string, string> = {
   'Presupuesto': 'bg-slate-100 text-slate-700',
@@ -23,9 +25,15 @@ export default function Projects() {
   const [clients, setClients] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showNewModal, setShowNewModal] = useState(false);
+  const [creationMode, setCreationMode] = useState<'controlTotal' | 'manual'>('controlTotal');
+  const [sourceProjects, setSourceProjects] = useState<ControlTotalProject[]>([]);
+  const [sourceLoading, setSourceLoading] = useState(false);
+  const [sourceError, setSourceError] = useState('');
+  const [selectedCode, setSelectedCode] = useState('');
+  const [creating, setCreating] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [localPinnedProjectIds, setLocalPinnedProjectIds] = useState<string[]>([]);
-  const { profile } = useAuth();
+  const { profile, user } = useAuth();
   const isAppAdmin = profile?.role === 'admin';
   const pinnedProjectIds = localPinnedProjectIds;
 
@@ -37,7 +45,7 @@ export default function Projects() {
     .filter((project) => {
       const term = searchTerm.trim().toLowerCase();
       if (!term) return true;
-      return [project.name, project.clientName, project.status, project.description]
+      return [project.name, project.projectCode, project.clientName, project.brandName, project.status, project.description]
         .filter(Boolean)
         .join(' ')
         .toLowerCase()
@@ -113,6 +121,34 @@ export default function Projects() {
     fetchClients();
   }, [profile]);
 
+  const selectedSource = sourceProjects.find(project => project.projectCode === selectedCode);
+  const sourceAlreadyInGoat = (source: ControlTotalProject) => projects.some(project =>
+    project.projectCode === source.projectCode
+    || (!project.projectCode && String(project.name || '').trim().toLocaleLowerCase() === source.name.toLocaleLowerCase())
+  );
+
+  const loadSourceProjects = async () => {
+    if (!isAppAdmin || !user) return;
+    setSourceLoading(true);
+    setSourceError('');
+    try {
+      setSourceProjects(await readControlTotalProjects(user));
+    } catch (error) {
+      setSourceProjects([]);
+      setSourceError(error instanceof Error ? error.message : 'No se pudo leer Control Total.');
+    } finally {
+      setSourceLoading(false);
+    }
+  };
+
+  const openNewProject = () => {
+    setShowNewModal(true);
+    setCreationMode('controlTotal');
+    setSelectedCode('');
+    setSourceProjects([]);
+    void loadSourceProjects();
+  };
+
   const handleCreateProject = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!isAppAdmin) {
@@ -120,12 +156,37 @@ export default function Projects() {
       return;
     }
 
+    if (creating) return;
     const formData = new FormData(e.currentTarget);
+    const source = creationMode === 'controlTotal' ? selectedSource : undefined;
+    if (creationMode === 'controlTotal' && (!source || sourceAlreadyInGoat(source))) {
+      setSourceError('Seleccioná un proyecto G que todavía no exista en GOAT.');
+      return;
+    }
+    const budgetTotal = Number(formData.get('budgetTotal')) || 0;
     const data = {
-      name: formData.get('name'),
+      name: source?.name || formData.get('name'),
       description: formData.get('description'),
-      clientName: formData.get('clientName') || '',
-      budgetTotal: Number(formData.get('budgetTotal')) || 0,
+      clientName: source?.client || formData.get('clientName') || '',
+      brandName: source?.brand || '',
+      companyName: source?.company || '',
+      serviceName: source?.service || '',
+      budgetTotal,
+      ...(source ? {
+        projectCode: source.projectCode,
+        controlTotalProjectId: source.sourceProjectId,
+        controlTotalUrl: controlTotalProjectUrl(source),
+        controlTotalSourceRowAtImport: source.sourceRow,
+        controlTotalStatusAtImport: source.status,
+        controlTotalOwnerUnit: source.ownerUnit,
+        controlTotalInternalProviderUnit: source.internalProviderUnit,
+        controlTotalCondition: source.condition,
+        controlTotalConfirmationDate: source.confirmationDate,
+        controlTotalDeliveryDate: source.deliveryDate,
+        controlTotalContractCurrency: source.contractCurrency,
+        controlTotalContractAmount: source.contractAmount,
+        controlTotalImportedAt: serverTimestamp(),
+      } : {}),
       status: 'Presupuesto',
       createdBy: profile?.uid,
       createdByEmail: normalizeEmail(profile?.email),
@@ -136,12 +197,23 @@ export default function Projects() {
       updatedAt: serverTimestamp(),
     };
 
+    setCreating(true);
     try {
-      const docRef = await addDoc(collection(db, 'projects'), data);
+      const docRef = source ? doc(db, 'projects', `ct-${source.projectCode.replace(/\s+/g, '-')}`)
+        : await addDoc(collection(db, 'projects'), data);
+      if (source) {
+        await runTransaction(db, async transaction => {
+          if ((await transaction.get(docRef)).exists()) throw new Error('Este código ya tiene un proyecto en GOAT.');
+          transaction.set(docRef, data);
+        });
+      }
       setProjects([{ id: docRef.id, ...data }, ...projects]);
       setShowNewModal(false);
     } catch (error) {
       console.error("Error adding project:", error);
+      setSourceError(error instanceof Error ? error.message : 'No se pudo crear el proyecto.');
+    } finally {
+      setCreating(false);
     }
   };
 
@@ -153,7 +225,7 @@ export default function Projects() {
         className="gap-3 pb-4 sm:gap-4 sm:pb-6"
         actions={isAppAdmin ? (
           <button 
-            onClick={() => setShowNewModal(true)}
+            onClick={openNewProject}
             className="px-3 py-1.5 bg-black text-white rounded text-[10px] font-bold hover:bg-slate-800 transition-all active:scale-[0.98] uppercase tracking-widest flex items-center gap-2"
           >
             <Plus className="w-3 h-3" />
@@ -235,6 +307,7 @@ export default function Projects() {
                 <h3 className="text-sm sm:text-xl font-bold text-slate-900 leading-tight mb-1 sm:mb-2 line-clamp-1 sm:line-clamp-none">
                   {project.name}
                 </h3>
+                {project.projectCode && <div className="text-[9px] font-bold text-slate-400 mb-1">{project.projectCode}</div>}
                 
                 {project.clientName && (
                   <div className="text-[8px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0 sm:mb-4 truncate">
@@ -277,20 +350,50 @@ export default function Projects() {
               initial={{ opacity: 0, scale: 0.98 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.98 }}
-              className="bg-white rounded-xl w-full max-w-md p-8 relative z-10 border border-slate-200 shadow-2xl shadow-slate-200/50"
+              className="bg-white rounded-xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-8 relative z-10 border border-slate-200 shadow-2xl shadow-slate-200/50"
             >
               <h2 className="text-xs font-bold uppercase tracking-widest mb-8 border-l-4 border-black pl-4">Nueva Producción</h2>
               <form onSubmit={handleCreateProject} className="space-y-6">
-                <div>
-                  <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Nombre</label>
-                  <input name="name" required className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all" placeholder="Título del proyecto..." />
+                <div className="flex gap-2 text-xs">
+                  <button type="button" onClick={() => setCreationMode('controlTotal')} className={cn('flex-1 rounded border px-3 py-2', creationMode === 'controlTotal' ? 'bg-black text-white' : 'border-slate-200')}>Desde Control Total</button>
+                  <button type="button" onClick={() => setCreationMode('manual')} className={cn('flex-1 rounded border px-3 py-2', creationMode === 'manual' ? 'bg-black text-white' : 'border-slate-200')}>Carga manual</button>
                 </div>
+                {creationMode === 'controlTotal' ? (
+                  <div className="space-y-3">
+                    <label className="block text-[10px] font-bold uppercase text-slate-400 tracking-widest">Proyecto G de Control Total</label>
+                    <select value={selectedCode} onChange={event => { setSelectedCode(event.target.value); setSourceError(''); }} disabled={sourceLoading} required className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm">
+                      <option value="">{sourceLoading ? 'Leyendo proyectos...' : 'Seleccionar proyecto...'}</option>
+                      {sourceProjects.map(source => (
+                        <option key={source.projectCode} value={source.projectCode} disabled={sourceAlreadyInGoat(source)}>
+                          {source.projectCode} · {source.name}{sourceAlreadyInGoat(source) ? ' (ya existe)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                    {sourceError && <p role="alert" className="text-xs text-red-700">{sourceError}</p>}
+                    {!sourceLoading && sourceProjects.length === 0 && <button type="button" onClick={() => void loadSourceProjects()} className="text-xs underline">Volver a conectar con Control Total</button>}
+                    {selectedSource && (
+                      <div className="rounded border border-slate-200 bg-slate-50 p-3 text-xs space-y-1">
+                        <div><b>Nombre en GOAT:</b> {selectedSource.name}</div>
+                        <div><b>Código:</b> {selectedSource.projectCode}</div>
+                        <div><b>Cliente:</b> {selectedSource.client || 'Sin dato'} · <b>Marca:</b> {selectedSource.brand || 'Sin dato'}</div>
+                        <div><b>Contrato:</b> {selectedSource.contractAmount === null ? 'Sin importe' : `${selectedSource.contractCurrency} ${selectedSource.contractAmount.toLocaleString('es-AR')}`}</div>
+                        <a href={controlTotalProjectUrl(selectedSource)} target="_blank" rel="noopener noreferrer" className="inline-block text-blue-700 underline">Ver fila de origen</a>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Nombre</label>
+                    <input name="name" required className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all" placeholder="Título del proyecto..." />
+                    <p className="text-[11px] text-amber-700 mt-2">La carga manual no vincula el proyecto al código de Control Total.</p>
+                  </div>
+                )}
                 <div>
                   <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Resumen</label>
                   <textarea name="description" rows={3} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all resize-none" placeholder="Descripción breve..." />
                 </div>
                 <div className="grid grid-cols-2 gap-4">
-                  <div>
+                  {creationMode === 'manual' && <div>
                     <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Cliente</label>
                     <select name="clientName" className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all appearance-none">
                       <option value="">Sin cliente</option>
@@ -298,15 +401,16 @@ export default function Projects() {
                         <option key={client.id} value={client.businessName}>{client.businessName}</option>
                       ))}
                     </select>
-                  </div>
+                  </div>}
                   <div>
-                    <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Presupuesto Total</label>
-                    <input name="budgetTotal" type="number" className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all" placeholder="0" />
+                    <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Presupuesto GOAT (ARS)</label>
+                    <input key={`${creationMode}-${selectedCode}`} name="budgetTotal" type="number" min={selectedSource?.contractCurrency === 'USD' ? '0.01' : '0'} step="0.01" required={selectedSource?.contractCurrency === 'USD'} defaultValue={selectedSource?.contractCurrency === 'ARS' ? selectedSource.contractAmount ?? undefined : undefined} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all" placeholder="0" />
                   </div>
                 </div>
+                {selectedSource?.contractCurrency === 'USD' && <p className="text-xs text-amber-800">El contrato USD queda guardado como referencia. GOAT compara este presupuesto con costos en ARS: ingresá aquí su valor en ARS para calcular resultados.</p>}
                 <div className="flex gap-3 pt-4">
                   <button type="button" onClick={() => setShowNewModal(false)} className="flex-1 px-4 py-3 border border-slate-200 rounded text-xs font-bold tracking-widest uppercase hover:bg-slate-50 transition-colors">Cancelar</button>
-                  <button type="submit" className="flex-1 px-4 py-3 bg-black text-white rounded text-xs font-bold tracking-widest uppercase hover:bg-slate-800 transition-colors">Confirmar</button>
+                  <button type="submit" disabled={creating || sourceLoading || (creationMode === 'controlTotal' && !selectedSource)} className="flex-1 px-4 py-3 bg-black text-white rounded text-xs font-bold tracking-widest uppercase hover:bg-slate-800 transition-colors disabled:opacity-50">{creating ? 'Creando...' : 'Confirmar'}</button>
                 </div>
               </form>
             </motion.div>
