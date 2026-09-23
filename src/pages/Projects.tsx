@@ -403,7 +403,7 @@ export default function Projects() {
                       ))}
                     </select>
                     {sourceError && <p role="alert" className="text-xs text-red-700">{sourceError}</p>}
-                    <p className="text-[11px] text-slate-500">Catálogo G: {catalogUpdatedAt ? `actualizado el ${catalogUpdatedAt.toLocaleString('es-AR')}` : 'aún no publicado'}.</p>
+                    <p className="text-[11px] text-slate-500">Catálogo G: {catalogUpdatedAt ? `actualizado el ${catalogUpdatedAt.toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires', hour12: false })}` : 'aún no publicado'}.</p>
                     {!sourceLoading && sourceProjects.length === 0 && !canRefreshCatalog && <p className="text-xs text-amber-800">Pedile a Tomás o a info@granbertafilms.com que actualice el catálogo.</p>}
                     {!sourceLoading && sourceProjects.length === 0 && <button type="button" onClick={() => void loadSourceProjects()} className="text-xs underline">Volver a cargar el catálogo</button>}
                     {canRefreshCatalog && <button type="button" onClick={() => void refreshSourceProjects()} disabled={sourceLoading} className="block text-xs font-semibold text-blue-700 underline disabled:opacity-50">Actualizar desde Control Total</button>}
