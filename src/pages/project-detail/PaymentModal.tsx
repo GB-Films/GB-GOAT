@@ -9,7 +9,7 @@ import { cn } from '../../lib/utils';
 import { validateMaxUploadSize } from '../../lib/uploadLimits';
 import { getFileExtension, sanitizeFileName } from '../../lib/files';
 import type { PaymentCashBoxOption } from '../../lib/cashBoxes';
-import { samePaymentTarget } from '../../lib/expenseEdits';
+import { assertCashPaymentLink, findCurrentPayment, samePaymentTarget } from '../../lib/expenseEdits';
 import { buildPaymentAuditAppend } from '../../lib/paymentAudit';
 import { parsePaymentAmount } from '../../lib/paymentAmounts';
 import type { Payment, PaymentCollection } from './types';
@@ -250,6 +250,7 @@ export function PaymentModal({
         receipt: nextReceipt,
       };
       const itemRef = doc(db, 'projects', projectId, collectionName, item.id);
+      const auditRef = doc(collection(db, 'projects', projectId, 'activityLog'));
 
       const result = await runTransaction(db, async (transaction) => {
         const latestItemSnap = await transaction.get(itemRef);
@@ -257,10 +258,15 @@ export function PaymentModal({
 
         const latestItem = latestItemSnap.data();
         const latestHistory = Array.isArray(latestItem.paymentHistory) ? latestItem.paymentHistory as Payment[] : [];
-        const latestPaymentIndex = currentPayment.id
-          ? latestHistory.findIndex((payment) => payment.id === currentPayment.id)
-          : paymentIndex;
-        if (latestPaymentIndex < 0 || !latestHistory[latestPaymentIndex]) throw new Error('PAYMENT_NOT_FOUND');
+        if (!samePaymentTarget(item, latestItem)) throw new Error('ITEM_CHANGED');
+        const { payment: latestPayment, index: latestPaymentIndex } = findCurrentPayment(latestHistory, currentPayment, paymentIndex);
+        const movementRef = latestPayment.cashMovementId
+          ? doc(db, 'projects', projectId, 'cashMovements', latestPayment.cashMovementId) : null;
+        if (movementRef) {
+          const movementSnapshot = await transaction.get(movementRef);
+          if (!movementSnapshot.exists()) throw new Error('CASH_LINK_MISMATCH');
+          assertCashPaymentLink(movementSnapshot.data(), { collectionName, itemId: item.id, payment: latestPayment });
+        }
 
         const itemTotalCents = toMoneyCents(latestItem.total);
         const otherPaymentsTotalCents = latestHistory.reduce((acc, payment, index) => (
@@ -271,25 +277,45 @@ export function PaymentModal({
 
         const isFullyPaid = nextTotalPaidCents >= itemTotalCents;
         const updatedPayment = {
-          ...latestHistory[latestPaymentIndex],
-          ...paymentChanges,
+          ...latestPayment,
+          amount: paymentChanges.amount,
+          detail: paymentChanges.detail,
+          date: paymentChanges.date,
+          receipt: paymentChanges.receipt,
           type: isFullyPaid ? 'total' as const : 'partial' as const,
         };
         const updatedHistory = latestHistory.map((payment, index) => index === latestPaymentIndex ? updatedPayment : payment);
         transaction.update(itemRef, {
           paymentHistory: updatedHistory,
           paid: isFullyPaid,
+          paymentLocked: true,
+          lastFinancialAuditId: auditRef.id,
           updatedAt: serverTimestamp(),
         });
 
-        if (currentPayment.cashMovementId) {
-          transaction.update(doc(db, 'projects', projectId, 'cashMovements', currentPayment.cashMovementId), {
+        if (movementRef) {
+          transaction.update(movementRef, {
             amount: nextAmount,
             date: paymentChanges.date,
             notes: nextDetail,
             updatedAt: serverTimestamp(),
           });
         }
+        transaction.set(auditRef, {
+          action: 'payment_corrected',
+          collectionName,
+          itemId: item.id,
+          paymentId: latestPayment.id || '',
+          paymentIndex: latestPaymentIndex,
+          cashMovementId: latestPayment.cashMovementId || '',
+          oldAmount: Number(latestPayment.amount) || 0,
+          amount: nextAmount,
+          deletedBy: currentUserId,
+          deletedByEmail: currentUserEmail,
+          deletedByName: currentUserName,
+          deletedByRole: currentUserRole,
+          createdAt: serverTimestamp(),
+        });
 
         return { updatedHistory, isFullyPaid };
       });

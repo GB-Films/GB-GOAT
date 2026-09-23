@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { doc, getDoc, getDocFromServer, collection, query, getDocs, onSnapshot, addDoc, serverTimestamp, deleteDoc, updateDoc, setDoc, writeBatch, runTransaction, Timestamp, type Transaction } from 'firebase/firestore';
+import { doc, getDoc, getDocFromServer, collection, query, getDocs, getDocsFromServer, onSnapshot, addDoc, serverTimestamp, deleteDoc, updateDoc, setDoc, writeBatch, runTransaction, Timestamp, type Transaction } from 'firebase/firestore';
 import { deleteObject, getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { db, storage } from '../lib/firebase';
 import { handleFirestoreError } from '../lib/firestoreUtils';
@@ -68,7 +68,7 @@ import { getExpenseInvoices, getInvoiceDocumentKey, type ExpenseInvoiceDocument 
 import { buildPaymentCashBoxOptions, calculateGeneralCashSummary, GENERAL_CASH_ACCOUNT, isGeneralCashMovement } from '../lib/cashBoxes';
 import { buildLinkedProviderInviteExpiration } from '../lib/providerInvites';
 import { resolveCashMovementTarget } from '../lib/cashMovementTargets';
-import { prepareExpenseEdit } from '../lib/expenseEdits';
+import { assertCashPaymentLink, findCurrentPayment, hasRecordedPayment, prepareExpenseEdit, sameExpenseVersion, samePaymentTarget } from '../lib/expenseEdits';
 
 const tabs = [
   { id: 'resumen', label: 'Resumen', icon: Info },
@@ -853,14 +853,6 @@ export default function ProjectDetail() {
           }));
         }
 
-        // Fetch Budget Items
-        const bq = query(collection(db, 'projects', id, 'budgetItems'));
-        const bSnap = await getDocs(bq);
-        const fetchedItems = bSnap.docs.map(d => ({ id: d.id, ...d.data() } as BudgetItem));
-        // Sort items by order if order exists
-        fetchedItems.sort((a, b) => (a.order || 0) - (b.order || 0));
-        setBudgetItems(fetchedItems);
-
         const dq = query(collection(db, 'projects', id, 'projectDocuments'));
         const dSnap = await getDocs(dq);
         setManualProjectDocuments(dSnap.docs.map(d => ({ id: d.id, ...d.data() })));
@@ -891,13 +883,18 @@ export default function ProjectDetail() {
   // the stored version because a listener cannot prevent an in-flight race.
   useEffect(() => {
     if (!id || !user) return;
+    const stopBudget = onSnapshot(collection(db, 'projects', id, 'budgetItems'), (snapshot) => {
+      const items = snapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() } as BudgetItem));
+      items.sort((a, b) => (a.order || 0) - (b.order || 0));
+      setBudgetItems(items);
+    }, (error) => console.error('Error watching budget items:', error));
     const stopExpenses = onSnapshot(collection(db, 'projects', id, 'areaExpenses'), (snapshot) => {
       setAreaExpenses(snapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() } as AreaExpense)));
     }, (error) => console.error('Error watching area expenses:', error));
     const stopCash = onSnapshot(collection(db, 'projects', id, 'cashMovements'), (snapshot) => {
       setCashMovements(snapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() } as CashMovement)));
     }, (error) => console.error('Error watching cash movements:', error));
-    return () => { stopExpenses(); stopCash(); };
+    return () => { stopBudget(); stopExpenses(); stopCash(); };
   }, [id, user]);
 
   useEffect(() => {
@@ -990,51 +987,55 @@ export default function ProjectDetail() {
     };
   };
 
-  const queueExpenseRowsDeletion = (
-    batch: ReturnType<typeof writeBatch>,
+  const assertNoLinkedCashMovements = async (items: any[], collectionName: PaymentCollection) => {
+    if (!id || items.length === 0) return;
+    const itemIds = new Set(items.map((item) => item.id));
+    const snapshot = await getDocsFromServer(collection(db, 'projects', id, 'cashMovements'));
+    if (snapshot.docs.some((entry) => {
+      const movement = entry.data();
+      return movement.type === 'pago' && movement.collectionName === collectionName
+        && itemIds.has(movement.itemId);
+    })) throw new Error('EXPENSE_HAS_CASH_MOVEMENT');
+  };
+
+  const queueExpenseRowsDeletion = async (
+    transaction: Transaction,
     items: any[],
     collectionName: PaymentCollection,
     reason: 'row_deleted' | 'category_deleted' | 'budget_replaced',
   ) => {
-    const itemIds = new Set(items.map((item) => item.id).filter(Boolean));
-    const cashMovementIds = new Set<string>();
-
-    cashMovements.forEach((movement) => {
-      if (movement.collectionName === collectionName && movement.itemId && itemIds.has(movement.itemId)) {
-        cashMovementIds.add(movement.id);
-      }
+    if (items.length > 498) throw new Error('TOO_MANY_EXPENSES');
+    const refs = items.map((item) => doc(db, 'projects', id!, collectionName, item.id));
+    const snapshots = await Promise.all(refs.map((expenseRef) => transaction.get(expenseRef)));
+    const currentItems: any[] = snapshots.map((snapshot, index) => {
+      if (!snapshot.exists()) throw new Error('EXPENSE_CHANGED');
+      const current = snapshot.data();
+      if (hasRecordedPayment(current)) throw new Error('PAID_EXPENSE_LOCKED');
+      if (!sameExpenseVersion(current.updatedAt, items[index].updatedAt)
+        || !samePaymentTarget(current, items[index])) throw new Error('EXPENSE_CHANGED');
+      return { id: snapshot.id, ...current };
     });
-    items.forEach((item) => {
-      safeArray(item.paymentHistory).forEach((payment: any) => {
-        if (payment.cashMovementId) cashMovementIds.add(payment.cashMovementId);
-      });
-      batch.delete(doc(db, 'projects', id!, collectionName, item.id));
-    });
-    cashMovementIds.forEach((movementId) => {
-      batch.delete(doc(db, 'projects', id!, 'cashMovements', movementId));
-    });
+    refs.forEach((expenseRef) => transaction.delete(expenseRef));
 
     const auditRef = doc(collection(db, 'projects', id!, 'activityLog'));
-    batch.set(auditRef, {
+    transaction.set(auditRef, {
       action: 'expense_rows_deleted',
       reason,
       collectionName,
-      itemId: items.length === 1 ? items[0].id : '',
-      itemCount: items.length,
-      itemLabel: items.length === 1 ? (items[0].description || items[0].providerName || '') : `${items.length} filas`,
-      area: items.length === 1 ? (items[0].area || '') : '',
-      providerName: items.length === 1 ? (items[0].providerName || '') : '',
-      amount: items.reduce((total, item) => total + (Number(item.total) || 0), 0),
-      paymentCount: items.reduce((total, item) => total + safeArray(item.paymentHistory).length, 0),
-      deletedCashMovementCount: cashMovementIds.size,
+      itemId: currentItems.length === 1 ? currentItems[0].id : '',
+      itemCount: currentItems.length,
+      itemLabel: currentItems.length === 1 ? (currentItems[0].description || currentItems[0].providerName || '') : `${currentItems.length} filas`,
+      area: currentItems.length === 1 ? (currentItems[0].area || '') : '',
+      providerName: currentItems.length === 1 ? (currentItems[0].providerName || '') : '',
+      amount: currentItems.reduce((total, item) => total + (Number(item.total) || 0), 0),
+      paymentCount: 0,
+      deletedCashMovementCount: 0,
       deletedBy: user?.uid || '',
       deletedByEmail: currentUserEmail,
       deletedByName: currentUserName,
       deletedByRole: currentProjectRole,
       createdAt: serverTimestamp(),
     });
-
-    return Array.from(cashMovementIds);
   };
 
   const deleteExpenseRows = async (
@@ -1042,14 +1043,11 @@ export default function ProjectDetail() {
     collectionName: PaymentCollection,
     reason: 'row_deleted' | 'category_deleted' | 'budget_replaced' = 'row_deleted',
   ) => {
-    const batch = writeBatch(db);
-    const cashMovementIds = queueExpenseRowsDeletion(batch, items, collectionName, reason);
-    await batch.commit();
-    if (cashMovementIds.length > 0) {
-      const deletedIds = new Set(cashMovementIds);
-      setCashMovements((current) => current.filter((movement) => !deletedIds.has(movement.id)));
-    }
-    return cashMovementIds.length;
+    if (items.length === 0) return;
+    await assertNoLinkedCashMovements(items, collectionName);
+    await runTransaction(db, async (transaction) => {
+      await queueExpenseRowsDeletion(transaction, items, collectionName, reason);
+    });
   };
 
   const updateBudgetItem = async (itemId: string, updates: any) => {
@@ -1081,13 +1079,9 @@ export default function ProjectDetail() {
     if (!id || !canEditMainBudget || !currentItem) return;
     if (!confirm(`¿Eliminar "${itemLabel}" del Presupuesto Principal?\n\nTotal: $${itemTotal.toLocaleString()}\nEsta acción no se puede deshacer.`)) return;
     try {
-      const deletedCashMovements = await deleteExpenseRows([currentItem], 'budgetItems');
+      await deleteExpenseRows([currentItem], 'budgetItems');
       setBudgetItems(items => items.filter(i => i.id !== itemId));
-      showExpenseConfirmation(
-        deletedCashMovements > 0
-          ? `Partida eliminada junto con ${deletedCashMovements} movimiento${deletedCashMovements === 1 ? '' : 's'} de caja.`
-          : 'Partida eliminada.',
-      );
+      showExpenseConfirmation('Partida eliminada.');
     } catch (e) {
       console.error("Error deleting budget item:", e);
     }
@@ -1182,6 +1176,10 @@ export default function ProjectDetail() {
       const otherItems = newItems.filter(i => i.area !== sourceArea && i.area !== destArea);
 
       const [movedItem] = sourceItems.splice(source.index, 1);
+      if (!movedItem || hasRecordedPayment(movedItem)) {
+        alert('Una partida con pagos no puede cambiar de categoría.');
+        return;
+      }
       movedItem.area = destArea; // Update area
       destItems.splice(destination.index, 0, movedItem);
 
@@ -1230,16 +1228,29 @@ export default function ProjectDetail() {
       const budgetItemsToMigrate = budgetItems.filter((item) => (
         item.area === areaName && !alreadyMigratedIds.has(item.id)
       ));
+      if (budgetItemsToMigrate.length > 498) throw new Error('TOO_MANY_EXPENSES');
       const migratedExpenses: AreaExpense[] = [];
-      const batch = writeBatch(db);
+      const expenseRefs = budgetItemsToMigrate.map(() => doc(collection(db, 'projects', id, 'areaExpenses')));
+      await runTransaction(db, async (transaction) => {
+        migratedExpenses.length = 0;
+        const projectRef = doc(db, 'projects', id);
+        const projectSnapshot = await transaction.get(projectRef);
+        if (!projectSnapshot.exists()
+          || JSON.stringify(safeArray(projectSnapshot.data().activeAreas)) !== JSON.stringify(currentActive)) {
+          throw new Error('AREA_CHANGED');
+        }
+        const budgetRefs = budgetItemsToMigrate.map((item) => doc(db, 'projects', id, 'budgetItems', item.id));
+        const snapshots = await Promise.all(budgetRefs.map((budgetRef) => transaction.get(budgetRef)));
+        const currentItems = snapshots.map((snapshot, index) => {
+          if (!snapshot.exists() || !sameExpenseVersion(snapshot.data().updatedAt, budgetItemsToMigrate[index].updatedAt)
+            || !samePaymentTarget(snapshot.data(), budgetItemsToMigrate[index])) throw new Error('EXPENSE_CHANGED');
+          if (hasRecordedPayment(snapshot.data())) throw new Error('PAID_EXPENSE_LOCKED');
+          return { id: snapshot.id, ...snapshot.data() };
+        });
 
-      budgetItemsToMigrate.forEach((item, index) => {
-        const expenseRef = doc(collection(db, 'projects', id, 'areaExpenses'));
-        const paymentHistory = Array.isArray(item.paymentHistory) ? item.paymentHistory : [];
-        const paymentAuthorIds = Array.isArray(item.paymentAuthorIds)
-          ? item.paymentAuthorIds
-          : paymentHistory.map((payment: any) => payment.createdBy).filter(Boolean);
-        const migratedExpense: any = {
+        currentItems.forEach((item, index) => {
+          const expenseRef = expenseRefs[index];
+          const migratedExpense: any = {
           projectId: id,
           area: areaName,
           subcategory: '',
@@ -1255,27 +1266,26 @@ export default function ProjectDetail() {
           invoices: getExpenseInvoices(item),
           invoiceStatus: item.invoiceStatus || null,
           otherReceipts: Array.isArray(item.otherReceipts) ? item.otherReceipts : [],
-          paymentHistory,
-          paid: item.paid === true,
+          paymentHistory: [],
+          paid: false,
           paymentDate: item.paymentDate || '',
-          paymentLocked: item.paymentLocked === true || paymentHistory.length > 0,
-          paymentAuthorIds,
+          paymentLocked: false,
+          paymentAuthorIds: [],
           sourceBudgetItemId: item.id,
           createdBy: user?.uid || '',
           createdByEmail: currentUserEmail,
           migratedFromBudgetAt: serverTimestamp(),
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
-        };
-        batch.set(expenseRef, migratedExpense);
-        migratedExpenses.push({ id: expenseRef.id, ...migratedExpense } as AreaExpense);
+          };
+          transaction.set(expenseRef, migratedExpense);
+          migratedExpenses.push({ id: expenseRef.id, ...migratedExpense } as AreaExpense);
+        });
+        transaction.update(projectRef, {
+          activeAreas: newActiveAreas,
+          updatedAt: serverTimestamp(),
+        });
       });
-
-      batch.update(doc(db, 'projects', id), {
-        activeAreas: newActiveAreas,
-        updatedAt: serverTimestamp(),
-      });
-      await batch.commit();
 
       setActiveAreas(newActiveAreas);
       setSelectedAreaTabs((current) => Array.from(new Set([...current, areaName])));
@@ -1289,12 +1299,14 @@ export default function ProjectDetail() {
       setIsAreaSelectorOpen(false);
       showExpenseConfirmation(
         migratedExpenses.length > 0
-          ? `Gestión activada. Se migraron ${migratedExpenses.length} gastos con sus pagos y comprobantes.`
+          ? `Gestión activada. Se migraron ${migratedExpenses.length} gastos sin pagos y sus comprobantes.`
           : 'Gestión por área activada.'
       );
     } catch (error) {
       console.error("Error activating area:", error);
-      alert("Error al activar el área.");
+      alert(error instanceof Error && error.message === 'PAID_EXPENSE_LOCKED'
+        ? 'Hay partidas con pagos en esta área. Revisalas antes de activar la gestión por área.'
+        : 'No se pudo activar el área. Actualizá y revisá los gastos antes de volver a intentar.');
     }
   };
 
@@ -1515,15 +1527,6 @@ export default function ProjectDetail() {
 
     setIsSavingSubcategoryBudget(true);
     try {
-      await updateDoc(doc(db, 'projects', id), {
-        areaExpenseSubcategories: {
-          ...(project?.areaExpenseSubcategories || {}),
-          [area]: nextSubcategories,
-        },
-        areaExpenseSubcategoryBudgets: nextBudgetMap,
-        updatedAt: serverTimestamp(),
-      });
-
       const expenseUpdates = isRename
         ? areaExpenses.filter((expense) => (
             expense.area === area
@@ -1532,23 +1535,32 @@ export default function ProjectDetail() {
               : cleanAreaExpenseSubcategory(expense.subcategory) === original)
           ))
         : [];
-      for (const expense of expenseUpdates) {
-        await updateDoc(doc(db, 'projects', id, 'areaExpenses', expense.id), {
-          subcategory: name,
+      if (expenseUpdates.length > 450) throw new Error('TOO_MANY_EXPENSES');
+      const collaboratorsToUpdate = isRename && oldPermissionKey
+        ? collaborators.filter((col) => safeArray(col.allowedSubcategories).includes(oldPermissionKey)) : [];
+      await runTransaction(db, async (transaction) => {
+        const refs = expenseUpdates.map((expense) => doc(db, 'projects', id, 'areaExpenses', expense.id));
+        const snapshots = await Promise.all(refs.map((expenseRef) => transaction.get(expenseRef)));
+        snapshots.forEach((snapshot, index) => {
+          if (!snapshot.exists() || hasRecordedPayment(snapshot.data())
+            || !sameExpenseVersion(snapshot.data().updatedAt, expenseUpdates[index].updatedAt)
+            || !samePaymentTarget(snapshot.data(), expenseUpdates[index])) throw new Error('EXPENSE_CHANGED');
+        });
+        transaction.update(doc(db, 'projects', id), {
+          areaExpenseSubcategories: { ...(project?.areaExpenseSubcategories || {}), [area]: nextSubcategories },
+          areaExpenseSubcategoryBudgets: nextBudgetMap,
           updatedAt: serverTimestamp(),
         });
-      }
-      if (isRename && oldPermissionKey) {
-        const collaboratorsToUpdate = collaborators.filter((col) => safeArray(col.allowedSubcategories).includes(oldPermissionKey));
-        for (const col of collaboratorsToUpdate) {
-          const nextAllowedSubcategories = Array.from(new Set(
-            safeArray(col.allowedSubcategories).map((key) => key === oldPermissionKey ? nextPermissionKey : key)
-          ));
-          await updateDoc(doc(db, 'projects', id, 'collaborators', normalizeEmail(col.email)), {
-            allowedSubcategories: nextAllowedSubcategories,
+        refs.forEach((expenseRef) => transaction.update(expenseRef, { subcategory: name, updatedAt: serverTimestamp() }));
+        collaboratorsToUpdate.forEach((col) => transaction.update(
+          doc(db, 'projects', id, 'collaborators', normalizeEmail(col.email)),
+          {
+            allowedSubcategories: Array.from(new Set(safeArray(col.allowedSubcategories).map((key) => key === oldPermissionKey ? nextPermissionKey : key))),
             updatedAt: serverTimestamp(),
-          });
-        }
+          },
+        ));
+      });
+      if (isRename && oldPermissionKey) {
         if (collaboratorsToUpdate.length > 0) {
           setCollaborators((current) => current.map((col) => (
             safeArray(col.allowedSubcategories).includes(oldPermissionKey)
@@ -1622,28 +1634,29 @@ export default function ProjectDetail() {
 
     setIsSavingSubcategoryBudget(true);
     try {
-      await updateDoc(doc(db, 'projects', id), {
-        areaExpenseSubcategories: {
-          ...(project?.areaExpenseSubcategories || {}),
-          [area]: nextSubcategories,
-        },
-        areaExpenseSubcategoryBudgets: currentBudgetMap,
-        updatedAt: serverTimestamp(),
+      if (affectedExpenses.length > 450) throw new Error('TOO_MANY_EXPENSES');
+      await runTransaction(db, async (transaction) => {
+        const refs = affectedExpenses.map((expense) => doc(db, 'projects', id, 'areaExpenses', expense.id));
+        const snapshots = await Promise.all(refs.map((expenseRef) => transaction.get(expenseRef)));
+        snapshots.forEach((snapshot, index) => {
+          if (!snapshot.exists() || hasRecordedPayment(snapshot.data())
+            || !sameExpenseVersion(snapshot.data().updatedAt, affectedExpenses[index].updatedAt)
+            || !samePaymentTarget(snapshot.data(), affectedExpenses[index])) throw new Error('EXPENSE_CHANGED');
+        });
+        transaction.update(doc(db, 'projects', id), {
+          areaExpenseSubcategories: { ...(project?.areaExpenseSubcategories || {}), [area]: nextSubcategories },
+          areaExpenseSubcategoryBudgets: currentBudgetMap,
+          updatedAt: serverTimestamp(),
+        });
+        refs.forEach((expenseRef) => transaction.update(expenseRef, { subcategory: '', updatedAt: serverTimestamp() }));
+        collaboratorsToUpdate.forEach((col) => transaction.update(
+          doc(db, 'projects', id, 'collaborators', normalizeEmail(col.email)),
+          {
+            allowedSubcategories: safeArray(col.allowedSubcategories).filter((key) => key !== permissionKey),
+            updatedAt: serverTimestamp(),
+          },
+        ));
       });
-
-      for (const expense of affectedExpenses) {
-        await updateDoc(doc(db, 'projects', id, 'areaExpenses', expense.id), {
-          subcategory: '',
-          updatedAt: serverTimestamp(),
-        });
-      }
-
-      for (const col of collaboratorsToUpdate) {
-        await updateDoc(doc(db, 'projects', id, 'collaborators', normalizeEmail(col.email)), {
-          allowedSubcategories: safeArray(col.allowedSubcategories).filter((key) => key !== permissionKey),
-          updatedAt: serverTimestamp(),
-        });
-      }
 
       setProject((current: any) => current ? {
         ...current,
@@ -1686,6 +1699,11 @@ export default function ProjectDetail() {
     const sourceSubcategory = cleanAreaExpenseSubcategory(expense.subcategory);
     const targetArea = nextArea || sourceArea;
     const targetSubcategory = cleanAreaExpenseSubcategory(nextSubcategory);
+    if (hasRecordedPayment(expense)
+      && (sourceArea !== targetArea || sourceSubcategory !== targetSubcategory)) {
+      alert('Un gasto con pagos no puede cambiar de área o subcategoría.');
+      return;
+    }
     const inGroup = (item: AreaExpense, area: string, subcategory: string) => (
       item.area === area && cleanAreaExpenseSubcategory(item.subcategory) === subcategory
     );
@@ -1723,16 +1741,29 @@ export default function ProjectDetail() {
     setAreaExpenseSort('manual');
 
     try {
-      const batch = writeBatch(db);
-      [...updatedSource, ...updatedTarget].forEach((item) => {
-        batch.update(doc(db, 'projects', id, 'areaExpenses', item.id), {
+      await runTransaction(db, async (transaction) => {
+        const changed = [...updatedSource, ...updatedTarget];
+        const refs = changed.map((item) => doc(db, 'projects', id, 'areaExpenses', item.id));
+        const snapshots = await Promise.all(refs.map((expenseRef) => transaction.get(expenseRef)));
+        snapshots.forEach((snapshot, index) => {
+          if (!snapshot.exists()) throw new Error('EXPENSE_CHANGED');
+          const latest = snapshot.data();
+          const original = areaExpenses.find((item) => item.id === changed[index].id);
+          if (!original || !sameExpenseVersion(latest.updatedAt, original.updatedAt)
+            || !samePaymentTarget(latest, original)) throw new Error('EXPENSE_CHANGED');
+          if (hasRecordedPayment(latest)
+            && (latest.area !== changed[index].area
+              || cleanAreaExpenseSubcategory(latest.subcategory) !== cleanAreaExpenseSubcategory(changed[index].subcategory))) {
+            throw new Error('PAID_EXPENSE_LOCKED');
+          }
+        });
+        changed.forEach((item, index) => transaction.update(refs[index], {
           area: item.area,
           subcategory: cleanAreaExpenseSubcategory(item.subcategory),
           order: item.order,
           updatedAt: serverTimestamp(),
-        });
+        }));
       });
-      await batch.commit();
       if (budgetWarning && (sourceArea !== targetArea || sourceSubcategory !== targetSubcategory)) {
         showExpenseConfirmation(budgetWarning, 'warning');
       }
@@ -1835,13 +1866,9 @@ export default function ProjectDetail() {
     }
     if (!confirm(`¿Eliminar "${itemLabel}" de Gestión por Áreas?\n\nÁrea: ${currentExpense.area || 'Sin área'}\nTotal: $${itemTotal.toLocaleString()}\nEsta acción no se puede deshacer.`)) return;
     try {
-      const deletedCashMovements = await deleteExpenseRows([currentExpense], 'areaExpenses');
+      await deleteExpenseRows([currentExpense], 'areaExpenses');
       setAreaExpenses(areaExpenses.filter(e => e.id !== expenseId));
-      showExpenseConfirmation(
-        deletedCashMovements > 0
-          ? `Gasto eliminado junto con ${deletedCashMovements} movimiento${deletedCashMovements === 1 ? '' : 's'} de caja.`
-          : 'Gasto eliminado.',
-      );
+      showExpenseConfirmation('Gasto eliminado.');
     } catch (e) {
       console.error("Error deleting area expense:", e);
     }
@@ -2312,18 +2339,25 @@ export default function ProjectDetail() {
     const newCategories = categories.map(c => c === oldName ? newName : c);
     const updatedItems = budgetItems.map(i => i.area === oldName ? { ...i, area: newName } : i);
 
-    setCategories(newCategories);
-    setBudgetItems(updatedItems);
-
     try {
-      await updateDoc(doc(db, 'projects', id), { categories: newCategories });
-      // Update all items in this area in Firestore
       const itemsInArea = budgetItems.filter(i => i.area === oldName);
-      for (const item of itemsInArea) {
-        await updateDoc(doc(db, 'projects', id, 'budgetItems', item.id), { area: newName });
-      }
+      if (itemsInArea.length > 450) throw new Error('TOO_MANY_EXPENSES');
+      await runTransaction(db, async (transaction) => {
+        const refs = itemsInArea.map((item) => doc(db, 'projects', id, 'budgetItems', item.id));
+        const snapshots = await Promise.all(refs.map((budgetRef) => transaction.get(budgetRef)));
+        snapshots.forEach((snapshot, index) => {
+          if (!snapshot.exists() || hasRecordedPayment(snapshot.data())
+            || !sameExpenseVersion(snapshot.data().updatedAt, itemsInArea[index].updatedAt)
+            || !samePaymentTarget(snapshot.data(), itemsInArea[index])) throw new Error('EXPENSE_CHANGED');
+        });
+        transaction.update(doc(db, 'projects', id), { categories: newCategories, updatedAt: serverTimestamp() });
+        refs.forEach((budgetRef) => transaction.update(budgetRef, { area: newName, updatedAt: serverTimestamp() }));
+      });
+      setCategories(newCategories);
+      setBudgetItems(updatedItems);
     } catch (e) {
       console.error("Error renaming category:", e);
+      alert('No se pudo cambiar la categoría. Revisá si alguna partida recibió un pago o cambió.');
     }
   };
 
@@ -2411,49 +2445,62 @@ export default function ProjectDetail() {
         return;
       }
 
-      const updatedHistory = currentHistory.filter((payment: Payment, index: number) => {
-        if (paymentToDelete.id) return payment.id !== paymentToDelete.id;
-        return index !== paymentIndex;
-      });
-
-      const totalPaid = getPaymentTotal({ paymentHistory: updatedHistory });
-      const itemTotal = Number(selectedItemForPayment.total) || 0;
-      const isFullyPaid = totalPaid >= (itemTotal - 0.01);
-
-      const batch = writeBatch(db);
-      batch.update(doc(db, 'projects', id, collectionName, currentItemId), {
-        paymentHistory: updatedHistory,
-        paid: isFullyPaid,
-        updatedAt: serverTimestamp()
-      });
-      if (paymentToDelete.cashMovementId) {
-        batch.delete(doc(db, 'projects', id, 'cashMovements', paymentToDelete.cashMovementId));
-      }
-      batch.set(doc(collection(db, 'projects', id, 'activityLog')), {
+      const itemRef = doc(db, 'projects', id, collectionName, currentItemId);
+      const auditRef = doc(collection(db, 'projects', id, 'activityLog'));
+      const result = await runTransaction(db, async (transaction) => {
+        const latestSnapshot = await transaction.get(itemRef);
+        if (!latestSnapshot.exists() || !samePaymentTarget(selectedItemForPayment, latestSnapshot.data())) {
+          throw new Error('EXPENSE_CHANGED');
+        }
+        const latest = latestSnapshot.data();
+        const history = Array.isArray(latest.paymentHistory) ? latest.paymentHistory as Payment[] : [];
+        const { payment, index } = findCurrentPayment(history, paymentToDelete, paymentIndex);
+        const movementRef = payment.cashMovementId
+          ? doc(db, 'projects', id, 'cashMovements', payment.cashMovementId) : null;
+        if (movementRef) {
+          const movementSnapshot = await transaction.get(movementRef);
+          if (!movementSnapshot.exists()) throw new Error('CASH_LINK_MISMATCH');
+          assertCashPaymentLink(movementSnapshot.data(), { collectionName, itemId: currentItemId, payment });
+        }
+        const updatedHistory = history.filter((_, currentIndex) => currentIndex !== index);
+        const totalPaid = getPaymentTotal({ paymentHistory: updatedHistory });
+        const isFullyPaid = totalPaid >= ((Number(latest.total) || 0) - 0.01);
+        transaction.update(itemRef, {
+          paymentHistory: updatedHistory,
+          paid: isFullyPaid,
+          paymentLocked: true,
+          lastFinancialAuditId: auditRef.id,
+          updatedAt: serverTimestamp(),
+        });
+        if (movementRef) transaction.delete(movementRef);
+        transaction.set(auditRef, {
         action: 'payment_deleted',
         collectionName,
         itemId: currentItemId,
-        itemLabel: selectedItemForPayment.description || selectedItemForPayment.providerName || '',
-        paymentId: paymentToDelete.id || '',
-        amount: Number(paymentToDelete.amount) || 0,
-        deletedCashMovementCount: paymentToDelete.cashMovementId ? 1 : 0,
+        itemLabel: latest.description || latest.providerName || '',
+        paymentId: payment.id || '',
+        paymentIndex: index,
+        amount: Number(payment.amount) || 0,
+        cashMovementId: payment.cashMovementId || '',
+        deletedCashMovementCount: payment.cashMovementId ? 1 : 0,
         deletedBy: user?.uid || '',
         deletedByEmail: currentUserEmail,
         deletedByName: currentUserName,
         deletedByRole: currentProjectRole,
         createdAt: serverTimestamp(),
+        });
+        return { payment, updatedHistory, isFullyPaid };
       });
-      await batch.commit();
 
-      if (paymentToDelete.receipt?.path) {
-        deleteObject(ref(storage, paymentToDelete.receipt.path)).catch(() => {});
+      if (result.payment.receipt?.path) {
+        deleteObject(ref(storage, result.payment.receipt.path)).catch(() => {});
       }
 
-      if (paymentToDelete.cashMovementId) {
-        setCashMovements((current) => current.filter((movement) => movement.id !== paymentToDelete.cashMovementId));
+      if (result.payment.cashMovementId) {
+        setCashMovements((current) => current.filter((movement) => movement.id !== result.payment.cashMovementId));
       }
 
-      updatePaymentState(currentItemId, collectionName, updatedHistory, isFullyPaid);
+      updatePaymentState(currentItemId, collectionName, result.updatedHistory, result.isFullyPaid);
     } catch (error: any) {
       console.error('Error deleting payment:', error);
       alert('Error al eliminar el pago: ' + (error.message || 'Error desconocido'));
@@ -2621,11 +2668,12 @@ export default function ProjectDetail() {
         return;
       }
 
-      const batch = writeBatch(db);
-      let deletedCashMovementIds: string[] = [];
-      if (budgetItems.length > 0) {
-        deletedCashMovementIds = queueExpenseRowsDeletion(batch, budgetItems, 'budgetItems', 'budget_replaced');
+      if (sourceItems.length + budgetItems.length + (budgetItems.length > 0 ? 2 : 1) > 500) {
+        alert('El presupuesto es demasiado grande para copiarlo en una sola operación segura.');
+        return;
       }
+
+      await assertNoLinkedCashMovements(budgetItems, 'budgetItems');
 
       const copiedItems = sourceItems.map((item, index) => {
         const docRef = doc(collection(db, 'projects', id, 'budgetItems'));
@@ -2644,8 +2692,7 @@ export default function ProjectDetail() {
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         };
-        batch.set(docRef, payload);
-        return { id: docRef.id, ...payload };
+        return { ref: docRef, payload };
       });
 
       const copiedCategories = Array.from(new Set([
@@ -2653,17 +2700,17 @@ export default function ProjectDetail() {
         ...sourceItems.map((item) => item.area).filter(Boolean),
       ]));
       const nextCategories = copiedCategories.length > 0 ? copiedCategories : BUDGET_AREAS;
-      batch.update(doc(db, 'projects', id), {
-        categories: nextCategories,
-        updatedAt: serverTimestamp(),
+      await runTransaction(db, async (transaction) => {
+        if (budgetItems.length > 0) {
+          await queueExpenseRowsDeletion(transaction, budgetItems, 'budgetItems', 'budget_replaced');
+        }
+        copiedItems.forEach(({ ref, payload }) => transaction.set(ref, payload));
+        transaction.update(doc(db, 'projects', id), {
+          categories: nextCategories,
+          updatedAt: serverTimestamp(),
+        });
       });
-
-      await batch.commit();
-      if (deletedCashMovementIds.length > 0) {
-        const deletedIds = new Set(deletedCashMovementIds);
-        setCashMovements((current) => current.filter((movement) => !deletedIds.has(movement.id)));
-      }
-      setBudgetItems(copiedItems as BudgetItem[]);
+      setBudgetItems(copiedItems.map(({ ref, payload }) => ({ id: ref.id, ...payload })) as BudgetItem[]);
       setCategories(nextCategories);
       setShowCopyBudgetModal(false);
       setSelectedSourceProjectId('');
@@ -2685,20 +2732,17 @@ export default function ProjectDetail() {
     const newActiveAreas = activeAreas.filter(a => a !== area);
     
     try {
-      const batch = writeBatch(db);
-      const deletedCashMovementIds = itemsToDelete.length > 0
-        ? queueExpenseRowsDeletion(batch, itemsToDelete, 'budgetItems', 'category_deleted')
-        : [];
-      batch.update(doc(db, 'projects', id), {
-        categories: newCategories,
-        activeAreas: newActiveAreas,
-        updatedAt: serverTimestamp(),
+      await assertNoLinkedCashMovements(itemsToDelete, 'budgetItems');
+      await runTransaction(db, async (transaction) => {
+        if (itemsToDelete.length > 0) {
+          await queueExpenseRowsDeletion(transaction, itemsToDelete, 'budgetItems', 'category_deleted');
+        }
+        transaction.update(doc(db, 'projects', id), {
+          categories: newCategories,
+          activeAreas: newActiveAreas,
+          updatedAt: serverTimestamp(),
+        });
       });
-      await batch.commit();
-      if (deletedCashMovementIds.length > 0) {
-        const deletedIds = new Set(deletedCashMovementIds);
-        setCashMovements((current) => current.filter((movement) => !deletedIds.has(movement.id)));
-      }
 
       const collaboratorsToUpdate = collaborators.filter(col => safeArray(col.allowedCategories).includes(area));
       for (const col of collaboratorsToUpdate) {
@@ -2937,9 +2981,7 @@ export default function ProjectDetail() {
   const canEditAreaExpense = (expense?: any | null) => canEditAreaSubcategory(expense?.area, expense?.subcategory);
   const canDeleteAreaExpense = (expense?: any | null) => {
     if (!expense || !canEditAreaExpense(expense)) return false;
-    if (isProjectAdmin) return true;
-    const hasReceivedPayment = expense.paymentLocked === true || safeArray(expense.paymentHistory).length > 0;
-    return !hasReceivedPayment;
+    return !hasRecordedPayment(expense);
   };
   const canEditPaymentDateForItem = (item?: any | null, collectionName?: PaymentCollection) => {
     if (!item || !collectionName) return false;
@@ -4381,8 +4423,15 @@ export default function ProjectDetail() {
 
     setIsDeletingProject(true);
     try {
+      const financialCollections = ['budgetItems', 'areaExpenses', 'expenses', 'payments', 'invoices', 'activityLog', 'cashMovements'];
+      const financialSnapshots = await Promise.all(financialCollections.map((name) => (
+        getDocsFromServer(collection(db, 'projects', id, name))
+      )));
+      if (financialSnapshots.some((snapshot) => !snapshot.empty)) {
+        alert('Este proyecto tiene registros financieros o de auditoría. No se puede borrar desde la aplicación.');
+        return;
+      }
       const subcollections = [
-        'collaborators',
         'budgetItems',
         'areaExpenses',
         'expenses',
@@ -4393,6 +4442,7 @@ export default function ProjectDetail() {
         'projectDocuments',
         'activityLog',
         'cashMovements',
+        'collaborators',
       ];
 
       for (const subcollection of subcollections) {

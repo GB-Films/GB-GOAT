@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { prepareExpenseEdit, samePaymentTarget } from './expenseEdits';
+import { assertCashPaymentLink, findCurrentPayment, prepareExpenseEdit, samePaymentTarget } from './expenseEdits';
 
 const paidGimbal = {
   description: 'Alquiler de Gimbal', quantity: 1, unitPrice: 87000, total: 87000,
@@ -14,10 +14,10 @@ test('a collaborator cannot turn a paid expense into a different row', () => {
   }, { isProjectAdmin: false, expectedUpdatedAt: paidGimbal.updatedAt }), /PAID_EXPENSE_LOCKED/);
 });
 
-test('an admin cannot set an expense total below recorded payments', () => {
+test('an admin cannot repurpose an expense after payment', () => {
   assert.throws(() => prepareExpenseEdit(paidGimbal, { unitPrice: 25000 }, {
     isProjectAdmin: true, expectedUpdatedAt: paidGimbal.updatedAt,
-  }), /EXPENSE_BELOW_PAYMENTS/);
+  }), /PAID_EXPENSE_LOCKED/);
 });
 
 test('stale edits fail instead of overwriting a concurrent change', () => {
@@ -37,4 +37,23 @@ test('a payment rejects a row repurposed while its dialog was open', () => {
   assert.equal(samePaymentTarget(paidGimbal, {
     ...paidGimbal, description: 'Gastos de Arte', providerId: 'carolina', total: 25000,
   }), false);
+});
+
+test('payment edits reject a concurrent correction, including legacy index payments', () => {
+  const opened = { amount: 100, date: { seconds: 10, nanoseconds: 0 }, cashMovementId: 'cash-1' };
+  assert.equal(findCurrentPayment([opened], opened, 0).index, 0);
+  assert.throws(() => findCurrentPayment([{ ...opened, amount: 125 }], opened, 0), /PAYMENT_CHANGED/);
+  assert.throws(() => findCurrentPayment([opened, { ...opened, cashMovementId: 'cash-2' }], opened, 1), /PAYMENT_CHANGED/);
+});
+
+test('a cash movement must still point to the selected payment and amount', () => {
+  const payment = { id: 'pay-1', amount: 100 };
+  assert.doesNotThrow(() => assertCashPaymentLink(
+    { type: 'pago', collectionName: 'areaExpenses', itemId: 'expense-1', paymentId: 'pay-1', amount: 100 },
+    { collectionName: 'areaExpenses', itemId: 'expense-1', payment },
+  ));
+  assert.throws(() => assertCashPaymentLink(
+    { type: 'pago', collectionName: 'areaExpenses', itemId: 'expense-1', paymentId: 'pay-1', amount: 99 },
+    { collectionName: 'areaExpenses', itemId: 'expense-1', payment },
+  ), /CASH_LINK_MISMATCH/);
 });

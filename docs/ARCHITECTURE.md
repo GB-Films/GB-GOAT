@@ -36,7 +36,7 @@ Cuando un área está activa, los reportes financieros toman sus gastos desde `a
 
 - Un colaborador autorizado puede crear gastos en su alcance y anexar pagos o comprobantes.
 - El historial existente es inmutable para colaboradores.
-- Corregir o eliminar pagos, comprobantes existentes o gastos que ya recibieron pagos requiere administración del proyecto.
+- Corregir o eliminar pagos requiere administración del proyecto y una auditoría en la misma operación. La identidad de un gasto que recibió pagos no puede cambiarse ni eliminarse, incluso por administración.
 - Los archivos financieros se crean dentro del alcance de la fila y no pueden reemplazarse o borrarse por un colaborador.
 
 ## Límites conocidos

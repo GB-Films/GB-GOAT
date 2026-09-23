@@ -239,6 +239,7 @@ service cloud.firestore {
 
     function hasReceivedPayment() {
       return (resource.data.keys().hasAny(['paymentLocked']) && resource.data.paymentLocked == true)
+        || (resource.data.keys().hasAny(['paid']) && resource.data.paid == true)
         || storedPaymentCount() > 0;
     }
 
@@ -269,6 +270,56 @@ service cloud.firestore {
         && (
           !changed.hasAny(['paymentHistory', 'paymentLocked', 'paymentAuthorIds'])
           || validPaymentAuditAppend()
+        );
+    }
+
+    function validFinancialAudit(projectId, collectionName, itemId, action) {
+      let auditId = request.resource.data.get('lastFinancialAuditId', '');
+      let auditPath = /databases/$(database)/documents/projects/$(projectId)/activityLog/$(auditId);
+      return request.resource.data.keys().hasAny(['lastFinancialAuditId'])
+        && auditId is string
+        && auditId != ''
+        && !exists(auditPath)
+        && existsAfter(auditPath)
+        && getAfter(auditPath).data.action == action
+        && getAfter(auditPath).data.collectionName == collectionName
+        && getAfter(auditPath).data.itemId == itemId
+        && getAfter(auditPath).data.deletedBy == request.auth.uid
+        && getAfter(auditPath).data.deletedByEmail == userEmail()
+        && getAfter(auditPath).data.createdAt == request.time
+        && getAfter(auditPath).data.paymentIndex is int
+        && getAfter(auditPath).data.paymentIndex >= 0
+        && getAfter(auditPath).data.paymentIndex < storedPaymentCount()
+        && getAfter(auditPath).data.paymentId == resource.data.paymentHistory[getAfter(auditPath).data.paymentIndex].get('id', '')
+        && (
+          (action == 'payment_deleted'
+            && getAfter(auditPath).data.amount == resource.data.paymentHistory[getAfter(auditPath).data.paymentIndex].amount
+            && resource.data.paymentHistory.hasAll(request.resource.data.paymentHistory))
+          || (action == 'payment_corrected'
+            && getAfter(auditPath).data.oldAmount == resource.data.paymentHistory[getAfter(auditPath).data.paymentIndex].amount
+            && getAfter(auditPath).data.amount == request.resource.data.paymentHistory[getAfter(auditPath).data.paymentIndex].amount
+            && request.resource.data.paymentHistory[getAfter(auditPath).data.paymentIndex].get('id', '')
+              == resource.data.paymentHistory[getAfter(auditPath).data.paymentIndex].get('id', ''))
+        );
+    }
+
+    function preservesAdminFinancialHistory(projectId, collectionName, itemId) {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      let newHistory = request.resource.data.get('paymentHistory', []);
+      let newCount = newHistory is list ? newHistory.size() : 0;
+      return !changed.hasAny(['paymentHistory', 'paymentLocked', 'paymentAuthorIds', 'lastFinancialAuditId'])
+        || validPaymentAuditAppend()
+        || (
+          isProjectAdmin(projectId)
+          && changed.hasAny(['paymentHistory'])
+          && request.resource.data.paymentLocked == true
+          && !changed.hasAny(['paymentAuthorIds'])
+          && (
+            (newCount == storedPaymentCount() - 1
+              && validFinancialAudit(projectId, collectionName, itemId, 'payment_deleted'))
+            || (newCount == storedPaymentCount()
+              && validFinancialAudit(projectId, collectionName, itemId, 'payment_corrected'))
+          )
         );
     }
 
@@ -340,10 +391,7 @@ service cloud.firestore {
 
     function canDeleteAreaExpenseWithPayment(projectId) {
       return canWriteAreaExpense(projectId, resource.data.area, resource.data.subcategory)
-        && (
-          !hasReceivedPayment()
-          || isProjectAdmin(projectId)
-        );
+        && !hasReceivedPayment();
     }
 
     function cashMovementBaseIsValid() {
@@ -352,7 +400,51 @@ service cloud.firestore {
         && request.resource.data.date is timestamp;
     }
 
-    function canCreateCashMovement(projectId) {
+    function paymentExpensePath(projectId, collectionName, itemId) {
+      return /databases/$(database)/documents/projects/$(projectId)/$(collectionName)/$(itemId);
+    }
+
+    function cashPaymentIsAppended(projectId, movementId) {
+      let expensePath = paymentExpensePath(projectId, request.resource.data.collectionName, request.resource.data.itemId);
+      let history = getAfter(expensePath).data.paymentHistory;
+      let payment = history[history.size() - 1];
+      return existsAfter(expensePath)
+        && history is list
+        && history.size() > 0
+        && exists(expensePath)
+        && history.size() == get(expensePath).data.get('paymentHistory', []).size() + 1
+        && payment.id == request.resource.data.paymentId
+        && payment.cashMovementId == movementId
+        && payment.amount == request.resource.data.amount;
+    }
+
+    function cashPaymentHasAudit(projectId, movementId, action) {
+      let expensePath = paymentExpensePath(projectId, resource.data.collectionName, resource.data.itemId);
+      let expense = getAfter(expensePath).data;
+      let auditId = expense.get('lastFinancialAuditId', '');
+      let auditPath = /databases/$(database)/documents/projects/$(projectId)/activityLog/$(auditId);
+      return existsAfter(expensePath)
+        && auditId is string
+        && auditId != ''
+        && !exists(auditPath)
+        && existsAfter(auditPath)
+        && getAfter(auditPath).data.action == action
+        && getAfter(auditPath).data.collectionName == resource.data.collectionName
+        && getAfter(auditPath).data.itemId == resource.data.itemId
+        && getAfter(auditPath).data.cashMovementId == movementId
+        && getAfter(auditPath).data.deletedBy == request.auth.uid
+        && getAfter(auditPath).data.paymentId == resource.data.paymentId
+        && (
+          (action == 'payment_deleted'
+            && getAfter(auditPath).data.amount == resource.data.amount)
+          || (action == 'payment_corrected'
+            && getAfter(auditPath).data.oldAmount == resource.data.amount
+            && getAfter(auditPath).data.amount == request.resource.data.amount
+            && expense.paymentHistory[getAfter(auditPath).data.paymentIndex].cashMovementId == movementId)
+        );
+    }
+
+    function canCreateCashMovement(projectId, movementId) {
       return cashMovementBaseIsValid()
         && (
           (
@@ -386,6 +478,7 @@ service cloud.firestore {
             && request.resource.data.fromUserEmail == userEmail()
             && request.resource.data.collectionName in ['budgetItems', 'areaExpenses']
             && canWriteAreaExpense(projectId, request.resource.data.area, request.resource.data.subcategory)
+            && cashPaymentIsAppended(projectId, movementId)
             && (
               !request.resource.data.keys().hasAny(['cashAccount'])
               || request.resource.data.cashAccount == 'personal'
@@ -395,11 +488,13 @@ service cloud.firestore {
         );
     }
 
-    function canDeleteCashMovement(projectId) {
-      return isProjectAdmin(projectId);
+    function canDeleteCashMovement(projectId, movementId) {
+      return isProjectAdmin(projectId)
+        && (resource.data.type != 'pago'
+          || cashPaymentHasAudit(projectId, movementId, 'payment_deleted'));
     }
 
-    function canUpdateCashMovement(projectId) {
+    function canUpdateCashMovement(projectId, movementId) {
       return cashMovementBaseIsValid()
         && (
           (
@@ -440,6 +535,7 @@ service cloud.firestore {
             && request.resource.data.paymentId == resource.data.paymentId
             && request.resource.data.area == resource.data.area
             && canWriteAreaExpense(projectId, resource.data.area, resource.data.subcategory)
+            && cashPaymentHasAudit(projectId, movementId, 'payment_corrected')
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['amount', 'date', 'notes', 'updatedAt'])
           )
         );
@@ -581,7 +677,8 @@ service cloud.firestore {
     }
 
     function canPublicAssignProviderFromInvite(projectId, collectionName, itemId) {
-      return (!resource.data.keys().hasAny(['providerId']) || resource.data.providerId == '')
+      return !hasReceivedPayment()
+        && (!resource.data.keys().hasAny(['providerId']) || resource.data.providerId == '')
         && (!resource.data.keys().hasAny(['providerName']) || resource.data.providerName == '')
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['providerId', 'providerName', 'providerInviteAssignment', 'updatedAt'])
         && request.resource.data.providerId is string
@@ -685,24 +782,32 @@ service cloud.firestore {
 
       match /budgetItems/{itemId} {
         allow read: if hasProjectAccess(projectId);
-        allow create, delete: if isProjectAdmin(projectId);
-        allow update: if isProjectAdmin(projectId)
+        allow create: if isProjectAdmin(projectId)
+          && !(request.resource.data.area in getAfter(/databases/$(database)/documents/projects/$(projectId)).data.get('activeAreas', []))
+          && request.resource.data.get('paymentHistory', []) == []
+          && request.resource.data.get('paymentLocked', false) == false
+          && request.resource.data.get('paid', false) == false;
+        allow delete: if isProjectAdmin(projectId) && !hasReceivedPayment();
+        allow update: if (isProjectAdmin(projectId) && preservesPaidExpenseIdentity()
+          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['area'])
+            || !(request.resource.data.area in getAfter(/databases/$(database)/documents/projects/$(projectId)).data.get('activeAreas', [])))
+          && preservesAdminFinancialHistory(projectId, 'budgetItems', itemId))
           || canPublicAssignProviderFromInvite(projectId, 'budgetItems', itemId)
           || canPublicUploadInvoice(projectId, 'budgetItems', itemId);
       }
 
       match /areaExpenses/{expenseId} {
         allow read: if hasProjectAccess(projectId);
-        allow create: if isProjectAdmin(projectId)
-          || (
-            canWriteAreaExpense(projectId, request.resource.data.area, request.resource.data.subcategory)
+        allow create: if (isProjectAdmin(projectId)
+          || canWriteAreaExpense(projectId, request.resource.data.area, request.resource.data.subcategory))
             && request.resource.data.createdBy == request.auth.uid
             && request.resource.data.createdByEmail is string
             && request.resource.data.paymentHistory == []
             && request.resource.data.paymentLocked == false
             && request.resource.data.paymentAuthorIds == []
-          );
-        allow update: if isProjectAdmin(projectId)
+          ;
+        allow update: if (isProjectAdmin(projectId) && preservesPaidExpenseIdentity()
+          && preservesAdminFinancialHistory(projectId, 'areaExpenses', expenseId))
           || ((
             canWriteAreaExpense(projectId, resource.data.area, resource.data.subcategory)
             && canWriteAreaExpense(projectId, request.resource.data.area, request.resource.data.subcategory)
@@ -758,20 +863,21 @@ service cloud.firestore {
           && request.resource.data.action in [
             'expense_rows_deleted',
             'payment_deleted',
+            'payment_corrected',
             'cash_delivery_deleted'
           ]
           && request.resource.data.deletedBy == request.auth.uid
           && request.resource.data.deletedByEmail == userEmail()
           && request.resource.data.createdAt == request.time;
         allow update: if false;
-        allow delete: if isAppAdmin();
+        allow delete: if false;
       }
 
       match /cashMovements/{movementId} {
         allow read: if hasProjectAccess(projectId);
-        allow create: if canCreateCashMovement(projectId);
-        allow update: if canUpdateCashMovement(projectId);
-        allow delete: if canDeleteCashMovement(projectId);
+        allow create: if canCreateCashMovement(projectId, movementId);
+        allow update: if canUpdateCashMovement(projectId, movementId);
+        allow delete: if canDeleteCashMovement(projectId, movementId);
       }
     }
 
