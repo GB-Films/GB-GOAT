@@ -6,6 +6,7 @@ const googleAuth = new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/sp
 
 exports.refreshControlTotalProjectCatalog = onCall({
   region: 'us-central1',
+  invoker: 'public',
   serviceAccount: 'goat-catalog-reader@gb-goat.iam.gserviceaccount.com',
   memory: '256MiB',
   maxInstances: 2,
