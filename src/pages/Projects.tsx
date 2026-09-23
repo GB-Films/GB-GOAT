@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { collection, query, getDocs, getDoc, setDoc, addDoc, serverTimestamp, where, or, doc, updateDoc, runTransaction } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { httpsCallable } from 'firebase/functions';
+import { db, functions } from '../lib/firebase';
 import { handleFirestoreError } from '../lib/firestoreUtils';
 import { useAuth } from '../context/AuthContext';
 import { cn } from '../lib/utils';
@@ -9,7 +10,6 @@ import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { normalizeEmail } from '../lib/identity';
 import { PageHeader } from '../components/PageHeader';
-import { readControlTotalProjects } from '../lib/readControlTotalProjects';
 import { CONTROL_TOTAL_SPREADSHEET_ID, controlTotalProjectUrl, type ControlTotalProject } from '../lib/controlTotalProjects';
 
 const projectCatalogRef = doc(db, 'integrations', 'controlTotalProjectCatalog');
@@ -152,20 +152,19 @@ export default function Projects() {
   };
 
   const refreshSourceProjects = async () => {
-    if (!canRefreshCatalog || !user) return;
+    if (!canRefreshCatalog) return;
     setSourceLoading(true);
     setSourceError('');
     try {
-      const catalog = await readControlTotalProjects(user);
-      if (catalog.length === 0) throw new Error('Control Total no devolvió proyectos G. No se reemplazó el catálogo existente.');
+      const result = await httpsCallable<void, { projects: ControlTotalProject[] }>(functions, 'refreshControlTotalProjectCatalog')();
+      if (!Array.isArray(result.data.projects) || result.data.projects.length === 0) throw new Error('Control Total no devolvió proyectos G.');
       await setDoc(projectCatalogRef, {
         sourceSpreadsheetId: CONTROL_TOTAL_SPREADSHEET_ID,
-        projects: catalog,
+        projects: result.data.projects,
         updatedAt: serverTimestamp(),
-        updatedByEmail: normalizeEmail(user.email || ''),
+        updatedByEmail: normalizeEmail(user?.email),
       });
-      setSourceProjects(catalog);
-      setCatalogUpdatedAt(new Date());
+      await loadSourceProjects();
       setSelectedCode('');
     } catch (error) {
       setSourceError(error instanceof Error ? error.message : 'No se pudo actualizar el catálogo desde Control Total.');
@@ -406,7 +405,7 @@ export default function Projects() {
                     <p className="text-[11px] text-slate-500">Catálogo G: {catalogUpdatedAt ? `actualizado el ${catalogUpdatedAt.toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires', hour12: false })}` : 'aún no publicado'}.</p>
                     {!sourceLoading && sourceProjects.length === 0 && !canRefreshCatalog && <p className="text-xs text-amber-800">Pedile a Tomás o a info@granbertafilms.com que actualice el catálogo.</p>}
                     {!sourceLoading && sourceProjects.length === 0 && <button type="button" onClick={() => void loadSourceProjects()} className="text-xs underline">Volver a cargar el catálogo</button>}
-                    {canRefreshCatalog && <button type="button" onClick={() => void refreshSourceProjects()} disabled={sourceLoading} className="block text-xs font-semibold text-blue-700 underline disabled:opacity-50">Actualizar desde Control Total</button>}
+                    {canRefreshCatalog && <button type="button" onClick={() => void refreshSourceProjects()} disabled={sourceLoading} className="block text-xs font-semibold text-blue-700 underline disabled:opacity-50">Actualizar catálogo G</button>}
                     {selectedSource && (
                       <div className="rounded border border-slate-200 bg-slate-50 p-3 text-xs space-y-1">
                         <div><b>Nombre en GOAT:</b> {selectedSource.name}</div>

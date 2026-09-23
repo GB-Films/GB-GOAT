@@ -1,0 +1,17 @@
+{
+  "name": "gb-goat-catalog-function",
+  "private": true,
+  "version": "1.0.0",
+  "engines": {
+    "node": "22"
+  },
+  "main": "index.js",
+  "scripts": {
+    "test": "node --test catalog.test.js"
+  },
+  "dependencies": {
+    "firebase-functions": "^7.4.0",
+    "gb-goat": "file:..",
+    "google-auth-library": "^11.1.0"
+  }
+}
