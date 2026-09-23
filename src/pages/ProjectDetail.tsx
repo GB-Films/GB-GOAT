@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { doc, getDoc, collection, query, getDocs, addDoc, serverTimestamp, deleteDoc, updateDoc, setDoc, writeBatch, runTransaction, Timestamp } from 'firebase/firestore';
+import { doc, getDoc, getDocFromServer, collection, query, getDocs, onSnapshot, addDoc, serverTimestamp, deleteDoc, updateDoc, setDoc, writeBatch, runTransaction, Timestamp, type Transaction } from 'firebase/firestore';
 import { deleteObject, getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { db, storage } from '../lib/firebase';
 import { handleFirestoreError } from '../lib/firestoreUtils';
@@ -68,6 +68,7 @@ import { getExpenseInvoices, getInvoiceDocumentKey, type ExpenseInvoiceDocument 
 import { buildPaymentCashBoxOptions, calculateGeneralCashSummary, GENERAL_CASH_ACCOUNT, isGeneralCashMovement } from '../lib/cashBoxes';
 import { buildLinkedProviderInviteExpiration } from '../lib/providerInvites';
 import { resolveCashMovementTarget } from '../lib/cashMovementTargets';
+import { prepareExpenseEdit } from '../lib/expenseEdits';
 
 const tabs = [
   { id: 'resumen', label: 'Resumen', icon: Info },
@@ -860,17 +861,9 @@ export default function ProjectDetail() {
         fetchedItems.sort((a, b) => (a.order || 0) - (b.order || 0));
         setBudgetItems(fetchedItems);
 
-        // Fetch All Area Expenses
-        const eq = query(collection(db, 'projects', id, 'areaExpenses'));
-        const eSnap = await getDocs(eq);
-        setAreaExpenses(eSnap.docs.map(d => ({ id: d.id, ...d.data() } as AreaExpense)));
-
         const dq = query(collection(db, 'projects', id, 'projectDocuments'));
         const dSnap = await getDocs(dq);
         setManualProjectDocuments(dSnap.docs.map(d => ({ id: d.id, ...d.data() })));
-
-        const cashSnap = await getDocs(collection(db, 'projects', id, 'cashMovements'));
-        setCashMovements(cashSnap.docs.map(d => ({ id: d.id, ...d.data() } as CashMovement)));
 
         // Fetch all Providers (for selection)
         const pq = query(collection(db, 'providers'));
@@ -893,6 +886,19 @@ export default function ProjectDetail() {
     };
     fetchProject();
   }, [id, user, profile]);
+
+  // Keep financial rows current across browsers. Transactions below still validate
+  // the stored version because a listener cannot prevent an in-flight race.
+  useEffect(() => {
+    if (!id || !user) return;
+    const stopExpenses = onSnapshot(collection(db, 'projects', id, 'areaExpenses'), (snapshot) => {
+      setAreaExpenses(snapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() } as AreaExpense)));
+    }, (error) => console.error('Error watching area expenses:', error));
+    const stopCash = onSnapshot(collection(db, 'projects', id, 'cashMovements'), (snapshot) => {
+      setCashMovements(snapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() } as CashMovement)));
+    }, (error) => console.error('Error watching cash movements:', error));
+    return () => { stopExpenses(); stopCash(); };
+  }, [id, user]);
 
   useEffect(() => {
     if (!isProjectAdmin) return;
@@ -963,23 +969,21 @@ export default function ProjectDetail() {
       : null
   );
 
-  const cancelPendingProviderInviteIfAssigning = async (item: any, updates: any) => {
+  const cancelPendingProviderInviteIfAssigning = async (transaction: Transaction, item: any, updates: any) => {
     const isAssigningExistingProvider = updates.providerId && updates.providerName;
     const pendingInvite = isAssigningExistingProvider ? getPendingProviderInviteLink(item) : null;
     if (!pendingInvite) return updates;
-
-    try {
-      await updateDoc(doc(db, 'providerInvites', pendingInvite.token), {
+    const inviteRef = doc(db, 'providerInvites', pendingInvite.token);
+    const inviteSnap = await transaction.get(inviteRef);
+    if (inviteSnap.exists() && inviteSnap.data().status === 'pending' && inviteSnap.data().used === false) {
+      transaction.update(inviteRef, {
         status: 'cancelled',
         cancelledAt: serverTimestamp(),
         cancelledBy: user?.uid || '',
         cancelledByEmail: currentUserEmail,
         updatedAt: serverTimestamp(),
       });
-    } catch (error) {
-      console.error('Error cancelling pending provider invite:', error);
     }
-
     return {
       ...updates,
       providerInviteLink: null,
@@ -1052,15 +1056,21 @@ export default function ProjectDetail() {
     if (!id || !canEditMainBudget) return;
     try {
       const currentItem = budgetItems.find((item) => item.id === itemId);
-      const nextUpdates = await cancelPendingProviderInviteIfAssigning(currentItem, updates);
       const itemRef = doc(db, 'projects', id, 'budgetItems', itemId);
-      await updateDoc(itemRef, {
-        ...nextUpdates,
-        updatedAt: serverTimestamp()
+      await runTransaction(db, async (transaction) => {
+        const latestSnap = await transaction.get(itemRef);
+        if (!latestSnap.exists()) throw new Error('EXPENSE_MISSING');
+        const nextUpdates = prepareExpenseEdit(latestSnap.data(), updates, {
+          isProjectAdmin: true, expectedUpdatedAt: currentItem?.updatedAt,
+        });
+        const assignedUpdates = await cancelPendingProviderInviteIfAssigning(transaction, latestSnap.data(), nextUpdates);
+        transaction.update(itemRef, { ...assignedUpdates, updatedAt: serverTimestamp() });
       });
-      setBudgetItems(items => items.map(i => i.id === itemId ? { ...i, ...nextUpdates } : i));
+      const saved = await getDocFromServer(itemRef);
+      if (saved.exists()) setBudgetItems(items => items.map(i => i.id === itemId ? { id: i.id, ...saved.data() } as BudgetItem : i));
     } catch (e) {
       console.error("Error updating budget item:", e);
+      alert('La partida cambió o su importe no permite conservar los pagos. Actualizá y revisá la fila antes de intentarlo otra vez.');
     }
   };
 
@@ -1379,14 +1389,22 @@ export default function ProjectDetail() {
       if (!canEditAreaExpense(currentExpense) || !canEditAreaSubcategory(nextArea, nextSubcategory)) return;
       const nextTotal = updates.total !== undefined ? Number(updates.total) : Number(currentExpense.total) || 0;
       const budgetWarning = getAreaExpenseBudgetWarning(nextArea, nextTotal, expenseId);
-      const nextUpdates = await cancelPendingProviderInviteIfAssigning(currentExpense, updates);
-
       const docRef = doc(db, 'projects', id, 'areaExpenses', expenseId);
-      await updateDoc(docRef, { ...nextUpdates, updatedAt: serverTimestamp() });
-      setAreaExpenses(areaExpenses.map(e => e.id === expenseId ? { ...e, ...nextUpdates } : e));
+      await runTransaction(db, async (transaction) => {
+        const latestSnap = await transaction.get(docRef);
+        if (!latestSnap.exists()) throw new Error('EXPENSE_MISSING');
+        const nextUpdates = prepareExpenseEdit(latestSnap.data(), updates, {
+          isProjectAdmin, expectedUpdatedAt: currentExpense.updatedAt,
+        });
+        const assignedUpdates = await cancelPendingProviderInviteIfAssigning(transaction, latestSnap.data(), nextUpdates);
+        transaction.update(docRef, { ...assignedUpdates, updatedAt: serverTimestamp() });
+      });
+      const saved = await getDocFromServer(docRef);
+      if (saved.exists()) setAreaExpenses(expenses => expenses.map(e => e.id === expenseId ? { id: e.id, ...saved.data() } as AreaExpense : e));
       if (budgetWarning) showExpenseConfirmation(budgetWarning, 'warning');
     } catch (e) {
       console.error("Error updating area expense:", e);
+      alert('El gasto cambió, ya recibió un pago o no se pudo cerrar su invitación. Actualizá y revisá la fila antes de intentarlo otra vez.');
     }
   };
 

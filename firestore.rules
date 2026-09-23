@@ -272,6 +272,14 @@ service cloud.firestore {
         );
     }
 
+    function preservesPaidExpenseIdentity() {
+      return !hasReceivedPayment()
+        || !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'area', 'subcategory', 'providerId', 'providerName', 'description',
+          'unit', 'quantity', 'unitPrice', 'total'
+        ]);
+    }
+
     function preservesExpenseReceipts() {
       let changed = request.resource.data.diff(resource.data).affectedKeys();
       let oldReceipts = resource.data.keys().hasAny(['otherReceipts'])
@@ -698,7 +706,8 @@ service cloud.firestore {
           || ((
             canWriteAreaExpense(projectId, resource.data.area, resource.data.subcategory)
             && canWriteAreaExpense(projectId, request.resource.data.area, request.resource.data.subcategory)
-          ) && preservesExpensePaymentAudit() && preservesExpenseReceipts() && preservesExistingExpenseInvoice())
+          ) && preservesExpensePaymentAudit() && preservesPaidExpenseIdentity()
+            && preservesExpenseReceipts() && preservesExistingExpenseInvoice())
           || canPublicAssignProviderFromInvite(projectId, 'areaExpenses', expenseId)
           || canPublicUploadInvoice(projectId, 'areaExpenses', expenseId);
         allow delete: if canDeleteAreaExpenseWithPayment(projectId);

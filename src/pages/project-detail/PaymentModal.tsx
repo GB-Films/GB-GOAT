@@ -9,6 +9,7 @@ import { cn } from '../../lib/utils';
 import { validateMaxUploadSize } from '../../lib/uploadLimits';
 import { getFileExtension, sanitizeFileName } from '../../lib/files';
 import type { PaymentCashBoxOption } from '../../lib/cashBoxes';
+import { samePaymentTarget } from '../../lib/expenseEdits';
 import { buildPaymentAuditAppend } from '../../lib/paymentAudit';
 import { parsePaymentAmount } from '../../lib/paymentAmounts';
 import type { Payment, PaymentCollection } from './types';
@@ -504,6 +505,7 @@ export function PaymentModal({
                   if (!latestItemSnap.exists()) throw new Error('ITEM_NOT_FOUND');
 
                   const latestItem = latestItemSnap.data();
+                  if (!samePaymentTarget(item, latestItem)) throw new Error('ITEM_CHANGED');
                   const latestHistory = Array.isArray(latestItem.paymentHistory) ? latestItem.paymentHistory as Payment[] : [];
                   const latestItemTotalCents = toMoneyCents(latestItem.total);
                   const latestTotalPaidCents = latestHistory.reduce((acc, payment) => acc + toMoneyCents(payment.amount), 0);
@@ -544,6 +546,10 @@ export function PaymentModal({
                 if (newPayment.receipt?.path) deleteObject(ref(storage, newPayment.receipt.path)).catch(() => {});
                 if (err?.message === 'PAYMENT_EXCEEDS_TOTAL') {
                   setPaymentError('No se registró el pago porque el gasto ya alcanzó su valor total. Actualizá y revisá el historial.');
+                  return;
+                }
+                if (err?.message === 'ITEM_CHANGED') {
+                  setPaymentError('El gasto cambió mientras preparabas el pago. Cerrá esta ventana y revisá la fila actualizada.');
                   return;
                 }
                 const messageByCode: Record<string, string> = {

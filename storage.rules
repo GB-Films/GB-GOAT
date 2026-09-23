@@ -77,13 +77,12 @@ service firebase.storage {
     }
 
     function canWriteArea(projectId, area) {
-      return isProjectAdmin(projectId)
-        || (
+      return (
           hasCollaboratorDoc(projectId)
           && collaboratorDoc(projectId).canEditBudgetAreas == true
           && area in collaboratorDoc(projectId).allowedCategories
           && 'areas' in collaboratorDoc(projectId).allowedTabs
-        );
+        ) || isProjectAdmin(projectId);
     }
 
     function areaSubcategoryKey(area, subcategory) {
@@ -91,8 +90,7 @@ service firebase.storage {
     }
 
     function canWriteAreaExpense(projectId, area, subcategory) {
-      return canWriteArea(projectId, area)
-        || (
+      return (
           hasCollaboratorDoc(projectId)
           && collaboratorDoc(projectId).canEditBudgetAreas == true
           && 'areas' in collaboratorDoc(projectId).allowedTabs
@@ -100,12 +98,11 @@ service firebase.storage {
           && subcategory != ''
           && 'allowedSubcategories' in collaboratorDoc(projectId)
           && areaSubcategoryKey(area, subcategory) in collaboratorDoc(projectId).allowedSubcategories
-        );
+        ) || canWriteArea(projectId, area);
     }
 
     function canWritePaymentReceipt(projectId, collectionName, itemId) {
-      return isProjectAdmin(projectId)
-        || (
+      return (
           collectionName == 'areaExpenses'
           && firestore.exists(/databases/(default)/documents/projects/$(projectId)/areaExpenses/$(itemId))
           && canWriteAreaExpense(
@@ -113,7 +110,7 @@ service firebase.storage {
             firestore.get(/databases/(default)/documents/projects/$(projectId)/areaExpenses/$(itemId)).data.area,
             firestore.get(/databases/(default)/documents/projects/$(projectId)/areaExpenses/$(itemId)).data.subcategory
           )
-        );
+        ) || isProjectAdmin(projectId);
     }
 
     function invoiceMetadataMatchesExpense(projectId, collectionName, expenseId) {
