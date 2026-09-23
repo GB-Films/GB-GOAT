@@ -10,7 +10,8 @@
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "lint": "tsc --noEmit && npm run lint:rules",
     "lint:rules": "node scripts/validate-rules.mjs",
-    "test": "tsx --test src/**/*.test.ts"
+    "test": "tsx --test src/**/*.test.ts",
+    "test:rules": "firebase emulators:exec --only firestore --project demo-gb-goat-financial-rules \"node tests/financialRules.emulator.mjs\""
   },
   "dependencies": {
     "@hello-pangea/dnd": "^18.0.1",
@@ -27,6 +28,7 @@
   },
   "devDependencies": {
     "@firebase/eslint-plugin-security-rules": "^0.0.2",
+    "@firebase/rules-unit-testing": "^5.0.2",
     "@tailwindcss/vite": "^4.1.14",
     "@types/node": "^22.14.0",
     "@types/papaparse": "^5.5.2",

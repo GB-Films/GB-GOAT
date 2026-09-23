@@ -1087,6 +1087,25 @@ export default function ProjectDetail() {
     }
   };
 
+  const createBudgetItem = async (newItem: Record<string, unknown>) => {
+    if (!id) throw new Error('PROJECT_MISSING');
+    const budgetRef = doc(collection(db, 'projects', id, 'budgetItems'));
+    const nextRevision = await runTransaction(db, async (transaction) => {
+      const projectRef = doc(db, 'projects', id);
+      const projectSnapshot = await transaction.get(projectRef);
+      if (!projectSnapshot.exists()
+        || safeArray(projectSnapshot.data().activeAreas).includes(String(newItem.area || ''))) {
+        throw new Error('AREA_CHANGED');
+      }
+      const revision = (Number(projectSnapshot.data().budgetRevision) || 0) + 1;
+      transaction.set(budgetRef, newItem);
+      transaction.update(projectRef, { budgetRevision: revision, updatedAt: serverTimestamp() });
+      return revision;
+    });
+    setProject((current: any) => current ? { ...current, budgetRevision: nextRevision } : current);
+    return budgetRef;
+  };
+
   const addEmptyRow = async (area: string) => {
     if (!id || !canEditMainBudget) return;
     const itemsInArea = budgetItems.filter(i => i.area === area);
@@ -1106,7 +1125,7 @@ export default function ProjectDetail() {
       createdAt: serverTimestamp()
     };
     try {
-      const docRef = await addDoc(collection(db, 'projects', id, 'budgetItems'), newItem);
+      const docRef = await createBudgetItem(newItem);
       setBudgetItems(items => [...items, { id: docRef.id, ...newItem }]);
       showExpenseConfirmation('Nuevo gasto agregado en Presu Ppal');
     } catch (e) {
@@ -1218,14 +1237,19 @@ export default function ProjectDetail() {
   const addActiveArea = async (areaName: string) => {
     if (!id || !isProjectAdmin) return;
     try {
-      const currentActive = Array.isArray(activeAreas) ? activeAreas : [];
+      const projectRef = doc(db, 'projects', id);
+      const baselineProject = await getDocFromServer(projectRef);
+      if (!baselineProject.exists()) throw new Error('PROJECT_MISSING');
+      const currentActive = safeArray(baselineProject.data().activeAreas);
       const newActiveAreas = [...currentActive, areaName];
+      const budgetSnapshot = await getDocsFromServer(collection(db, 'projects', id, 'budgetItems'));
+      const areaSnapshot = await getDocsFromServer(collection(db, 'projects', id, 'areaExpenses'));
       const alreadyMigratedIds = new Set(
-        areaExpenses
+        areaSnapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() } as AreaExpense))
           .filter((expense: any) => expense.area === areaName && expense.sourceBudgetItemId)
           .map((expense: any) => expense.sourceBudgetItemId)
       );
-      const budgetItemsToMigrate = budgetItems.filter((item) => (
+      const budgetItemsToMigrate = budgetSnapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() } as BudgetItem)).filter((item) => (
         item.area === areaName && !alreadyMigratedIds.has(item.id)
       ));
       if (budgetItemsToMigrate.length > 498) throw new Error('TOO_MANY_EXPENSES');
@@ -1233,10 +1257,10 @@ export default function ProjectDetail() {
       const expenseRefs = budgetItemsToMigrate.map(() => doc(collection(db, 'projects', id, 'areaExpenses')));
       await runTransaction(db, async (transaction) => {
         migratedExpenses.length = 0;
-        const projectRef = doc(db, 'projects', id);
         const projectSnapshot = await transaction.get(projectRef);
         if (!projectSnapshot.exists()
-          || JSON.stringify(safeArray(projectSnapshot.data().activeAreas)) !== JSON.stringify(currentActive)) {
+          || JSON.stringify(safeArray(projectSnapshot.data().activeAreas)) !== JSON.stringify(currentActive)
+          || (Number(projectSnapshot.data().budgetRevision) || 0) !== (Number(baselineProject.data().budgetRevision) || 0)) {
           throw new Error('AREA_CHANGED');
         }
         const budgetRefs = budgetItemsToMigrate.map((item) => doc(db, 'projects', id, 'budgetItems', item.id));
@@ -1245,7 +1269,7 @@ export default function ProjectDetail() {
           if (!snapshot.exists() || !sameExpenseVersion(snapshot.data().updatedAt, budgetItemsToMigrate[index].updatedAt)
             || !samePaymentTarget(snapshot.data(), budgetItemsToMigrate[index])) throw new Error('EXPENSE_CHANGED');
           if (hasRecordedPayment(snapshot.data())) throw new Error('PAID_EXPENSE_LOCKED');
-          return { id: snapshot.id, ...snapshot.data() };
+          return { id: snapshot.id, ...snapshot.data() } as BudgetItem;
         });
 
         currentItems.forEach((item, index) => {
@@ -2616,7 +2640,7 @@ export default function ProjectDetail() {
             createdAt: serverTimestamp()
           };
 
-          const docRef = await addDoc(collection(db, 'projects', id, 'budgetItems'), newItem);
+          const docRef = await createBudgetItem(newItem);
           newItems.push({ id: docRef.id, ...newItem });
         }
 
@@ -2700,16 +2724,26 @@ export default function ProjectDetail() {
         ...sourceItems.map((item) => item.area).filter(Boolean),
       ]));
       const nextCategories = copiedCategories.length > 0 ? copiedCategories : BUDGET_AREAS;
-      await runTransaction(db, async (transaction) => {
+      const nextRevision = await runTransaction(db, async (transaction) => {
+        const projectRef = doc(db, 'projects', id);
+        const projectSnapshot = await transaction.get(projectRef);
+        if (!projectSnapshot.exists()
+          || copiedItems.some(({ payload }) => safeArray(projectSnapshot.data().activeAreas).includes(payload.area))) {
+          throw new Error('AREA_CHANGED');
+        }
+        const revision = (Number(projectSnapshot.data().budgetRevision) || 0) + 1;
         if (budgetItems.length > 0) {
           await queueExpenseRowsDeletion(transaction, budgetItems, 'budgetItems', 'budget_replaced');
         }
         copiedItems.forEach(({ ref, payload }) => transaction.set(ref, payload));
-        transaction.update(doc(db, 'projects', id), {
+        transaction.update(projectRef, {
           categories: nextCategories,
+          budgetRevision: revision,
           updatedAt: serverTimestamp(),
         });
+        return revision;
       });
+      setProject((current: any) => current ? { ...current, budgetRevision: nextRevision } : current);
       setBudgetItems(copiedItems.map(({ ref, payload }) => ({ id: ref.id, ...payload })) as BudgetItem[]);
       setCategories(nextCategories);
       setShowCopyBudgetModal(false);

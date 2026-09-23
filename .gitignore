@@ -1,6 +1,8 @@
 ﻿node_modules/
 dist/
 .firebase/
+firestore-debug.log
+ui-debug.log
 .env
 .env.local
 .DS_Store

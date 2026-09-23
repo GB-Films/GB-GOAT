@@ -245,6 +245,7 @@ service cloud.firestore {
 
     function validPaymentAuditAppend() {
       let oldCount = storedPaymentCount();
+      let oldHistory = resource.data.get('paymentHistory', []);
       let oldAuthorIds = resource.data.keys().hasAny(['paymentAuthorIds'])
         && resource.data.paymentAuthorIds is list
         ? resource.data.paymentAuthorIds
@@ -254,7 +255,8 @@ service cloud.firestore {
         && request.resource.data.paymentAuthorIds is list
         && request.resource.data.paymentLocked == true
         && request.resource.data.paymentHistory.size() == oldCount + 1
-        && (oldCount == 0 || request.resource.data.paymentHistory.hasAll(resource.data.paymentHistory))
+        && request.resource.data.paymentHistory.removeAll([request.resource.data.paymentHistory[oldCount]]) == oldHistory
+        && request.resource.data.paymentHistory.removeAll([request.resource.data.paymentHistory[oldCount]]).size() == oldCount
         && request.resource.data.paymentHistory[oldCount].createdBy == request.auth.uid
         && request.resource.data.paymentHistory[oldCount].createdByEmail == userEmail()
         && request.resource.data.paymentHistory[oldCount].amount is number
@@ -276,6 +278,10 @@ service cloud.firestore {
     function validFinancialAudit(projectId, collectionName, itemId, action) {
       let auditId = request.resource.data.get('lastFinancialAuditId', '');
       let auditPath = /databases/$(database)/documents/projects/$(projectId)/activityLog/$(auditId);
+      let oldHistory = resource.data.paymentHistory;
+      let newHistory = request.resource.data.paymentHistory;
+      let auditIndex = getAfter(auditPath).data.paymentIndex;
+      let oldPayment = oldHistory[auditIndex];
       return request.resource.data.keys().hasAny(['lastFinancialAuditId'])
         && auditId is string
         && auditId != ''
@@ -287,19 +293,22 @@ service cloud.firestore {
         && getAfter(auditPath).data.deletedBy == request.auth.uid
         && getAfter(auditPath).data.deletedByEmail == userEmail()
         && getAfter(auditPath).data.createdAt == request.time
-        && getAfter(auditPath).data.paymentIndex is int
-        && getAfter(auditPath).data.paymentIndex >= 0
-        && getAfter(auditPath).data.paymentIndex < storedPaymentCount()
-        && getAfter(auditPath).data.paymentId == resource.data.paymentHistory[getAfter(auditPath).data.paymentIndex].get('id', '')
+        && auditIndex is int
+        && auditIndex >= 0
+        && auditIndex < storedPaymentCount()
+        && getAfter(auditPath).data.paymentId == oldPayment.get('id', '')
         && (
           (action == 'payment_deleted'
-            && getAfter(auditPath).data.amount == resource.data.paymentHistory[getAfter(auditPath).data.paymentIndex].amount
-            && resource.data.paymentHistory.hasAll(request.resource.data.paymentHistory))
+            && getAfter(auditPath).data.amount == oldPayment.amount
+            && oldHistory.removeAll([oldPayment]) == newHistory
+            && oldHistory.removeAll([oldPayment]).size() == storedPaymentCount() - 1)
           || (action == 'payment_corrected'
-            && getAfter(auditPath).data.oldAmount == resource.data.paymentHistory[getAfter(auditPath).data.paymentIndex].amount
-            && getAfter(auditPath).data.amount == request.resource.data.paymentHistory[getAfter(auditPath).data.paymentIndex].amount
-            && request.resource.data.paymentHistory[getAfter(auditPath).data.paymentIndex].get('id', '')
-              == resource.data.paymentHistory[getAfter(auditPath).data.paymentIndex].get('id', ''))
+            && getAfter(auditPath).data.oldAmount == oldPayment.amount
+            && getAfter(auditPath).data.amount == newHistory[auditIndex].amount
+            && newHistory[auditIndex].get('id', '') == oldPayment.get('id', '')
+            && oldHistory.removeAll([oldPayment]) == newHistory.removeAll([newHistory[auditIndex]])
+            && oldHistory.removeAll([oldPayment]).size() == storedPaymentCount() - 1
+            && newHistory.removeAll([newHistory[auditIndex]]).size() == storedPaymentCount() - 1)
         );
     }
 
@@ -329,6 +338,12 @@ service cloud.firestore {
           'area', 'subcategory', 'providerId', 'providerName', 'description',
           'unit', 'quantity', 'unitPrice', 'total'
         ]);
+    }
+
+    function budgetCreateAdvancesRevision(projectId) {
+      let projectPath = /databases/$(database)/documents/projects/$(projectId);
+      return getAfter(projectPath).data.get('budgetRevision', 0)
+        == get(projectPath).data.get('budgetRevision', 0) + 1;
     }
 
     function preservesExpenseReceipts() {
@@ -784,6 +799,7 @@ service cloud.firestore {
         allow read: if hasProjectAccess(projectId);
         allow create: if isProjectAdmin(projectId)
           && !(request.resource.data.area in getAfter(/databases/$(database)/documents/projects/$(projectId)).data.get('activeAreas', []))
+          && budgetCreateAdvancesRevision(projectId)
           && request.resource.data.get('paymentHistory', []) == []
           && request.resource.data.get('paymentLocked', false) == false
           && request.resource.data.get('paid', false) == false;
@@ -792,8 +808,8 @@ service cloud.firestore {
           && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['area'])
             || !(request.resource.data.area in getAfter(/databases/$(database)/documents/projects/$(projectId)).data.get('activeAreas', [])))
           && preservesAdminFinancialHistory(projectId, 'budgetItems', itemId))
-          || canPublicAssignProviderFromInvite(projectId, 'budgetItems', itemId)
-          || canPublicUploadInvoice(projectId, 'budgetItems', itemId);
+          || (request.auth == null && canPublicAssignProviderFromInvite(projectId, 'budgetItems', itemId))
+          || (request.auth == null && canPublicUploadInvoice(projectId, 'budgetItems', itemId));
       }
 
       match /areaExpenses/{expenseId} {
@@ -808,13 +824,13 @@ service cloud.firestore {
           ;
         allow update: if (isProjectAdmin(projectId) && preservesPaidExpenseIdentity()
           && preservesAdminFinancialHistory(projectId, 'areaExpenses', expenseId))
-          || ((
+          || ((!isProjectAdmin(projectId) && (
             canWriteAreaExpense(projectId, resource.data.area, resource.data.subcategory)
             && canWriteAreaExpense(projectId, request.resource.data.area, request.resource.data.subcategory)
           ) && preservesExpensePaymentAudit() && preservesPaidExpenseIdentity()
-            && preservesExpenseReceipts() && preservesExistingExpenseInvoice())
-          || canPublicAssignProviderFromInvite(projectId, 'areaExpenses', expenseId)
-          || canPublicUploadInvoice(projectId, 'areaExpenses', expenseId);
+            && preservesExpenseReceipts() && preservesExistingExpenseInvoice()))
+          || (request.auth == null && canPublicAssignProviderFromInvite(projectId, 'areaExpenses', expenseId))
+          || (request.auth == null && canPublicUploadInvoice(projectId, 'areaExpenses', expenseId));
         allow delete: if canDeleteAreaExpenseWithPayment(projectId);
       }
 
