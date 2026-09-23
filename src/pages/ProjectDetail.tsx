@@ -1045,9 +1045,20 @@ export default function ProjectDetail() {
   ) => {
     if (items.length === 0) return;
     await assertNoLinkedCashMovements(items, collectionName);
-    await runTransaction(db, async (transaction) => {
+    const nextRevision = await runTransaction(db, async (transaction) => {
+      const projectRef = doc(db, 'projects', id!);
+      const projectSnapshot = collectionName === 'budgetItems' ? await transaction.get(projectRef) : null;
       await queueExpenseRowsDeletion(transaction, items, collectionName, reason);
+      if (projectSnapshot?.exists()) {
+        const revision = (Number(projectSnapshot.data().budgetRevision) || 0) + 1;
+        transaction.update(projectRef, { budgetRevision: revision, updatedAt: serverTimestamp() });
+        return revision;
+      }
+      return null;
     });
+    if (nextRevision != null) {
+      setProject((current: any) => current ? { ...current, budgetRevision: nextRevision } : current);
+    }
   };
 
   const updateBudgetItem = async (itemId: string, updates: any) => {
@@ -1055,15 +1066,31 @@ export default function ProjectDetail() {
     try {
       const currentItem = budgetItems.find((item) => item.id === itemId);
       const itemRef = doc(db, 'projects', id, 'budgetItems', itemId);
-      await runTransaction(db, async (transaction) => {
+      const projectRef = doc(db, 'projects', id);
+      const nextRevision = await runTransaction(db, async (transaction) => {
+        const projectSnapshot = 'area' in updates ? await transaction.get(projectRef) : null;
         const latestSnap = await transaction.get(itemRef);
         if (!latestSnap.exists()) throw new Error('EXPENSE_MISSING');
         const nextUpdates = prepareExpenseEdit(latestSnap.data(), updates, {
           isProjectAdmin: true, expectedUpdatedAt: currentItem?.updatedAt,
         });
         const assignedUpdates = await cancelPendingProviderInviteIfAssigning(transaction, latestSnap.data(), nextUpdates);
+        if ('area' in assignedUpdates && assignedUpdates.area !== latestSnap.data().area) {
+          if (!projectSnapshot?.exists()
+            || safeArray(projectSnapshot.data().activeAreas).includes(assignedUpdates.area)) {
+            throw new Error('AREA_CHANGED');
+          }
+          const revision = (Number(projectSnapshot.data().budgetRevision) || 0) + 1;
+          transaction.update(projectRef, { budgetRevision: revision, updatedAt: serverTimestamp() });
+          transaction.update(itemRef, { ...assignedUpdates, updatedAt: serverTimestamp() });
+          return revision;
+        }
         transaction.update(itemRef, { ...assignedUpdates, updatedAt: serverTimestamp() });
+        return null;
       });
+      if (nextRevision != null) {
+        setProject((current: any) => current ? { ...current, budgetRevision: nextRevision } : current);
+      }
       const saved = await getDocFromServer(itemRef);
       if (saved.exists()) setBudgetItems(items => items.map(i => i.id === itemId ? { id: i.id, ...saved.data() } as BudgetItem : i));
     } catch (e) {
@@ -1194,12 +1221,12 @@ export default function ProjectDetail() {
       const destItems = newItems.filter(i => i.area === destArea).sort((a, b) => (a.order || 0) - (b.order || 0));
       const otherItems = newItems.filter(i => i.area !== sourceArea && i.area !== destArea);
 
-      const [movedItem] = sourceItems.splice(source.index, 1);
-      if (!movedItem || hasRecordedPayment(movedItem)) {
+      const [originalItem] = sourceItems.splice(source.index, 1);
+      if (!originalItem || hasRecordedPayment(originalItem)) {
         alert('Una partida con pagos no puede cambiar de categoría.');
         return;
       }
-      movedItem.area = destArea; // Update area
+      const movedItem = { ...originalItem, area: destArea };
       destItems.splice(destination.index, 0, movedItem);
 
       // Update orders for both categories
@@ -1216,18 +1243,37 @@ export default function ProjectDetail() {
       // Persistence
       try {
         const itemRef = doc(db, 'projects', id, 'budgetItems', movedItem.id);
-        await updateDoc(itemRef, { area: destArea, order: destination.index });
-        
-        // Update others in source
-        for (const item of updatedSourceItems) {
-          await updateDoc(doc(db, 'projects', id, 'budgetItems', item.id), { order: item.order });
-        }
-        // Update others in destination
-        for (const item of updatedDestItems) {
-          await updateDoc(doc(db, 'projects', id, 'budgetItems', item.id), { order: item.order });
-        }
+        if (updatedSourceItems.length + updatedDestItems.length + 1 > 500) throw new Error('TOO_MANY_EXPENSES');
+        const nextRevision = await runTransaction(db, async (transaction) => {
+          const projectRef = doc(db, 'projects', id);
+          const projectSnapshot = await transaction.get(projectRef);
+          const itemSnapshot = await transaction.get(itemRef);
+          if (!projectSnapshot.exists() || safeArray(projectSnapshot.data().activeAreas).includes(destArea)
+            || !itemSnapshot.exists() || hasRecordedPayment(itemSnapshot.data())
+            || itemSnapshot.data().area !== sourceArea
+            || !sameExpenseVersion(itemSnapshot.data().updatedAt, originalItem.updatedAt)) {
+            throw new Error('EXPENSE_CHANGED');
+          }
+          const revision = (Number(projectSnapshot.data().budgetRevision) || 0) + 1;
+          transaction.update(projectRef, { budgetRevision: revision, updatedAt: serverTimestamp() });
+          transaction.update(itemRef, {
+            area: destArea,
+            order: updatedDestItems.find((item) => item.id === movedItem.id)?.order ?? destination.index,
+            updatedAt: serverTimestamp(),
+          });
+          [...updatedSourceItems, ...updatedDestItems]
+            .filter((item) => item.id !== movedItem.id)
+            .forEach((item) => transaction.update(
+              doc(db, 'projects', id, 'budgetItems', item.id),
+              { order: item.order, updatedAt: serverTimestamp() },
+            ));
+          return revision;
+        });
+        setProject((current: any) => current ? { ...current, budgetRevision: nextRevision } : current);
       } catch (e) {
         console.error("Error moving item across categories:", e);
+        setBudgetItems(budgetItems);
+        alert('No se pudo mover la partida. Actualizá y revisá la categoría.');
       }
     }
   };
@@ -2360,13 +2406,29 @@ export default function ProjectDetail() {
     const newName = prompt('Nuevo nombre para la categoría:', oldName);
     if (!newName || newName === oldName || !id) return;
 
-    const newCategories = categories.map(c => c === oldName ? newName : c);
-    const updatedItems = budgetItems.map(i => i.area === oldName ? { ...i, area: newName } : i);
-
     try {
-      const itemsInArea = budgetItems.filter(i => i.area === oldName);
+      const projectRef = doc(db, 'projects', id);
+      const baselineProject = await getDocFromServer(projectRef);
+      if (!baselineProject.exists()) throw new Error('PROJECT_MISSING');
+      if (safeArray(baselineProject.data().activeAreas).includes(oldName)) {
+        alert('No se puede renombrar una categoría con gestión por área activa.');
+        return;
+      }
+      const baselineCategories = safeArray(baselineProject.data().categories);
+      const newCategories = baselineCategories.map((category) => category === oldName ? newName : category);
+      const budgetSnapshot = await getDocsFromServer(collection(db, 'projects', id, 'budgetItems'));
+      const itemsInArea = budgetSnapshot.docs
+        .map((entry) => ({ id: entry.id, ...entry.data() } as BudgetItem))
+        .filter((item) => item.area === oldName);
       if (itemsInArea.length > 450) throw new Error('TOO_MANY_EXPENSES');
-      await runTransaction(db, async (transaction) => {
+      const nextRevision = await runTransaction(db, async (transaction) => {
+        const projectSnapshot = await transaction.get(projectRef);
+        if (!projectSnapshot.exists()
+          || (Number(projectSnapshot.data().budgetRevision) || 0) !== (Number(baselineProject.data().budgetRevision) || 0)
+          || JSON.stringify(safeArray(projectSnapshot.data().categories)) !== JSON.stringify(baselineCategories)
+          || (itemsInArea.length > 0 && safeArray(projectSnapshot.data().activeAreas).includes(newName))) {
+          throw new Error('AREA_CHANGED');
+        }
         const refs = itemsInArea.map((item) => doc(db, 'projects', id, 'budgetItems', item.id));
         const snapshots = await Promise.all(refs.map((budgetRef) => transaction.get(budgetRef)));
         snapshots.forEach((snapshot, index) => {
@@ -2374,11 +2436,18 @@ export default function ProjectDetail() {
             || !sameExpenseVersion(snapshot.data().updatedAt, itemsInArea[index].updatedAt)
             || !samePaymentTarget(snapshot.data(), itemsInArea[index])) throw new Error('EXPENSE_CHANGED');
         });
-        transaction.update(doc(db, 'projects', id), { categories: newCategories, updatedAt: serverTimestamp() });
+        const revision = (Number(projectSnapshot.data().budgetRevision) || 0) + (itemsInArea.length > 0 ? 1 : 0);
+        transaction.update(projectRef, {
+          categories: newCategories,
+          ...(itemsInArea.length > 0 ? { budgetRevision: revision } : {}),
+          updatedAt: serverTimestamp(),
+        });
         refs.forEach((budgetRef) => transaction.update(budgetRef, { area: newName, updatedAt: serverTimestamp() }));
+        return revision;
       });
+      setProject((current: any) => current ? { ...current, budgetRevision: nextRevision } : current);
       setCategories(newCategories);
-      setBudgetItems(updatedItems);
+      setBudgetItems((current) => current.map((item) => item.area === oldName ? { ...item, area: newName } : item));
     } catch (e) {
       console.error("Error renaming category:", e);
       alert('No se pudo cambiar la categoría. Revisá si alguna partida recibió un pago o cambió.');
@@ -2692,12 +2761,20 @@ export default function ProjectDetail() {
         return;
       }
 
-      if (sourceItems.length + budgetItems.length + (budgetItems.length > 0 ? 2 : 1) > 500) {
+      const projectRef = doc(db, 'projects', id);
+      const baselineProject = await getDocFromServer(projectRef);
+      if (!baselineProject.exists()) throw new Error('PROJECT_MISSING');
+      const baselineCategories = safeArray(baselineProject.data().categories);
+      const targetSnapshot = await getDocsFromServer(collection(db, 'projects', id, 'budgetItems'));
+      const targetItems = targetSnapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() } as BudgetItem));
+      if (budgetItems.length === 0 && targetItems.length > 0) throw new Error('EXPENSE_CHANGED');
+
+      if (sourceItems.length + targetItems.length + (targetItems.length > 0 ? 2 : 1) > 500) {
         alert('El presupuesto es demasiado grande para copiarlo en una sola operación segura.');
         return;
       }
 
-      await assertNoLinkedCashMovements(budgetItems, 'budgetItems');
+      await assertNoLinkedCashMovements(targetItems, 'budgetItems');
 
       const copiedItems = sourceItems.map((item, index) => {
         const docRef = doc(collection(db, 'projects', id, 'budgetItems'));
@@ -2725,15 +2802,16 @@ export default function ProjectDetail() {
       ]));
       const nextCategories = copiedCategories.length > 0 ? copiedCategories : BUDGET_AREAS;
       const nextRevision = await runTransaction(db, async (transaction) => {
-        const projectRef = doc(db, 'projects', id);
         const projectSnapshot = await transaction.get(projectRef);
         if (!projectSnapshot.exists()
+          || (Number(projectSnapshot.data().budgetRevision) || 0) !== (Number(baselineProject.data().budgetRevision) || 0)
+          || JSON.stringify(safeArray(projectSnapshot.data().categories)) !== JSON.stringify(baselineCategories)
           || copiedItems.some(({ payload }) => safeArray(projectSnapshot.data().activeAreas).includes(payload.area))) {
           throw new Error('AREA_CHANGED');
         }
         const revision = (Number(projectSnapshot.data().budgetRevision) || 0) + 1;
-        if (budgetItems.length > 0) {
-          await queueExpenseRowsDeletion(transaction, budgetItems, 'budgetItems', 'budget_replaced');
+        if (targetItems.length > 0) {
+          await queueExpenseRowsDeletion(transaction, targetItems, 'budgetItems', 'budget_replaced');
         }
         copiedItems.forEach(({ ref, payload }) => transaction.set(ref, payload));
         transaction.update(projectRef, {
@@ -2761,22 +2839,44 @@ export default function ProjectDetail() {
   const deleteCategory = async (area: string) => {
     if (!id || !canEditMainBudget || !confirm(`¿Eliminar la categoría "${area}" y todos sus ítems?`)) return;
     
-    const itemsToDelete = budgetItems.filter(i => i.area === area);
-    const newCategories = categories.filter(c => c !== area);
-    const newActiveAreas = activeAreas.filter(a => a !== area);
-    
     try {
+      const projectRef = doc(db, 'projects', id);
+      const baselineProject = await getDocFromServer(projectRef);
+      if (!baselineProject.exists()) throw new Error('PROJECT_MISSING');
+      const baselineCategories = safeArray(baselineProject.data().categories);
+      const baselineActiveAreas = safeArray(baselineProject.data().activeAreas);
+      if (baselineActiveAreas.includes(area)) {
+        alert('No se puede borrar una categoría con gestión por área activa. Los gastos de esa área deben seguir visibles.');
+        return;
+      }
+      const newCategories = baselineCategories.filter((category) => category !== area);
+      const newActiveAreas = baselineActiveAreas.filter((activeArea) => activeArea !== area);
+      const budgetSnapshot = await getDocsFromServer(collection(db, 'projects', id, 'budgetItems'));
+      const itemsToDelete = budgetSnapshot.docs
+        .map((entry) => ({ id: entry.id, ...entry.data() } as BudgetItem))
+        .filter((item) => item.area === area);
       await assertNoLinkedCashMovements(itemsToDelete, 'budgetItems');
-      await runTransaction(db, async (transaction) => {
+      const nextRevision = await runTransaction(db, async (transaction) => {
+        const projectSnapshot = await transaction.get(projectRef);
+        if (!projectSnapshot.exists()
+          || (Number(projectSnapshot.data().budgetRevision) || 0) !== (Number(baselineProject.data().budgetRevision) || 0)
+          || JSON.stringify(safeArray(projectSnapshot.data().categories)) !== JSON.stringify(baselineCategories)
+          || JSON.stringify(safeArray(projectSnapshot.data().activeAreas)) !== JSON.stringify(baselineActiveAreas)) {
+          throw new Error('AREA_CHANGED');
+        }
         if (itemsToDelete.length > 0) {
           await queueExpenseRowsDeletion(transaction, itemsToDelete, 'budgetItems', 'category_deleted');
         }
-        transaction.update(doc(db, 'projects', id), {
+        const revision = (Number(projectSnapshot.data().budgetRevision) || 0) + (itemsToDelete.length > 0 ? 1 : 0);
+        transaction.update(projectRef, {
           categories: newCategories,
           activeAreas: newActiveAreas,
+          ...(itemsToDelete.length > 0 ? { budgetRevision: revision } : {}),
           updatedAt: serverTimestamp(),
         });
+        return revision;
       });
+      setProject((current: any) => current ? { ...current, budgetRevision: nextRevision } : current);
 
       const collaboratorsToUpdate = collaborators.filter(col => safeArray(col.allowedCategories).includes(area));
       for (const col of collaboratorsToUpdate) {

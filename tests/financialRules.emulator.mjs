@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
-import { collection, doc, getDoc, runTransaction, serverTimestamp, setDoc, Timestamp, updateDoc, writeBatch } from 'firebase/firestore';
+import { collection, deleteDoc, doc, getDoc, runTransaction, serverTimestamp, setDoc, Timestamp, updateDoc, writeBatch } from 'firebase/firestore';
 
 const testEnv = await initializeTestEnvironment({
   projectId: 'demo-gb-goat-financial-rules',
@@ -92,6 +92,9 @@ try {
     await setDoc(doc(db, itemPath('budgetItems', 'paid-budget')), baseExpense({
       paymentHistory: [payment('paid-2', 50)], paymentLocked: true, paymentAuthorIds: [adminId],
     }));
+    await setDoc(doc(db, itemPath('budgetItems', 'move-row')), baseExpense({ area: 'Arte' }));
+    await setDoc(doc(db, itemPath('budgetItems', 'concurrent-move')), baseExpense({ area: 'Arte' }));
+    await setDoc(doc(db, itemPath('budgetItems', 'delete-row')), baseExpense({ area: 'Arte' }));
     await setDoc(doc(db, itemPath('areaExpenses', 'new-payment')), baseExpense());
     await setDoc(doc(db, itemPath('areaExpenses', 'payment-race')), baseExpense());
     const first = payment('correction-1', 50, { cashMovementId: 'cash-correction' });
@@ -229,10 +232,40 @@ try {
     transaction.update(projectRef, { activeAreas: ['Producción'] });
   }), /BUDGET_CHANGED/);
   assert.equal((await getDoc(doc(adminDb, `projects/${projectId}`))).data().activeAreas.length, 0);
+
+  await assertFails(updateDoc(doc(adminDb, itemPath('budgetItems', 'move-row')), { area: 'Producción' }));
+  const authorizedMove = writeBatch(adminDb);
+  authorizedMove.update(doc(adminDb, itemPath('budgetItems', 'move-row')), { area: 'Producción' });
+  authorizedMove.update(doc(adminDb, `projects/${projectId}`), { budgetRevision: 3 });
+  await assertSucceeds(authorizedMove.commit());
+
+  let injectedConcurrentMove = false;
+  await assert.rejects(runTransaction(adminDb, async (transaction) => {
+    const projectRef = doc(adminDb, `projects/${projectId}`);
+    const snapshot = await transaction.get(projectRef);
+    if ((Number(snapshot.data().budgetRevision) || 0) !== 3) throw new Error('BUDGET_CHANGED');
+    if (!injectedConcurrentMove) {
+      injectedConcurrentMove = true;
+      const move = writeBatch(adminDb);
+      move.update(doc(adminDb, itemPath('budgetItems', 'concurrent-move')), { area: 'Producción' });
+      move.update(projectRef, { budgetRevision: 4 });
+      await move.commit();
+    }
+    transaction.update(projectRef, { activeAreas: ['Producción'] });
+  }), /BUDGET_CHANGED/);
+  assert.equal((await getDoc(doc(adminDb, itemPath('budgetItems', 'concurrent-move')))).data().area, 'Producción');
+  assert.equal((await getDoc(doc(adminDb, `projects/${projectId}`))).data().activeAreas.length, 0);
+
+  await assertFails(deleteDoc(doc(adminDb, itemPath('budgetItems', 'delete-row'))));
+  const authorizedDeletion = writeBatch(adminDb);
+  authorizedDeletion.delete(doc(adminDb, itemPath('budgetItems', 'delete-row')));
+  authorizedDeletion.update(doc(adminDb, `projects/${projectId}`), { budgetRevision: 5 });
+  await assertSucceeds(authorizedDeletion.commit());
+
   await assertSucceeds(updateDoc(doc(adminDb, `projects/${projectId}`), { activeAreas: ['Producción'] }));
   const shadowCreation = writeBatch(adminDb);
   shadowCreation.set(doc(adminDb, itemPath('budgetItems', 'shadow-row')), baseExpense());
-  shadowCreation.update(doc(adminDb, `projects/${projectId}`), { budgetRevision: 3 });
+  shadowCreation.update(doc(adminDb, `projects/${projectId}`), { budgetRevision: 6 });
   await assertFails(shadowCreation.commit());
 
   console.log('Firestore emulator financial rules: expected allow and deny cases passed');

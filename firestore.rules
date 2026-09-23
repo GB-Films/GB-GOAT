@@ -340,7 +340,7 @@ service cloud.firestore {
         ]);
     }
 
-    function budgetCreateAdvancesRevision(projectId) {
+    function budgetMembershipAdvancesRevision(projectId) {
       let projectPath = /databases/$(database)/documents/projects/$(projectId);
       return getAfter(projectPath).data.get('budgetRevision', 0)
         == get(projectPath).data.get('budgetRevision', 0) + 1;
@@ -799,14 +799,16 @@ service cloud.firestore {
         allow read: if hasProjectAccess(projectId);
         allow create: if isProjectAdmin(projectId)
           && !(request.resource.data.area in getAfter(/databases/$(database)/documents/projects/$(projectId)).data.get('activeAreas', []))
-          && budgetCreateAdvancesRevision(projectId)
+          && budgetMembershipAdvancesRevision(projectId)
           && request.resource.data.get('paymentHistory', []) == []
           && request.resource.data.get('paymentLocked', false) == false
           && request.resource.data.get('paid', false) == false;
-        allow delete: if isProjectAdmin(projectId) && !hasReceivedPayment();
+        allow delete: if isProjectAdmin(projectId) && !hasReceivedPayment()
+          && budgetMembershipAdvancesRevision(projectId);
         allow update: if (isProjectAdmin(projectId) && preservesPaidExpenseIdentity()
           && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['area'])
-            || !(request.resource.data.area in getAfter(/databases/$(database)/documents/projects/$(projectId)).data.get('activeAreas', [])))
+            || (!(request.resource.data.area in getAfter(/databases/$(database)/documents/projects/$(projectId)).data.get('activeAreas', []))
+              && budgetMembershipAdvancesRevision(projectId)))
           && preservesAdminFinancialHistory(projectId, 'budgetItems', itemId))
           || (request.auth == null && canPublicAssignProviderFromInvite(projectId, 'budgetItems', itemId))
           || (request.auth == null && canPublicUploadInvoice(projectId, 'budgetItems', itemId));
