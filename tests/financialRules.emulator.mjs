@@ -72,6 +72,7 @@ try {
     const db = context.firestore();
     await setDoc(doc(db, `users/${adminId}`), { email: adminEmail, role: 'admin' });
     await setDoc(doc(db, `users/${collaboratorId}`), { email: collaboratorEmail, role: 'colaborador' });
+    await setDoc(doc(db, 'providers/payer-1'), { type: 'persona', name: 'Persona', lastName: 'Ejemplo' });
     await setDoc(doc(db, `projects/${projectId}`), {
       createdBy: adminId,
       collaboratorEmails: [collaboratorEmail],
@@ -97,7 +98,8 @@ try {
     await setDoc(doc(db, itemPath('budgetItems', 'delete-row')), baseExpense({ area: 'Arte' }));
     await setDoc(doc(db, itemPath('areaExpenses', 'new-payment')), baseExpense());
     await setDoc(doc(db, itemPath('areaExpenses', 'payment-race')), baseExpense());
-    const first = payment('correction-1', 50, { cashMovementId: 'cash-correction' });
+    await setDoc(doc(db, itemPath('areaExpenses', 'third-party')), baseExpense());
+    const first = payment('correction-1', 50, { cashMovementId: 'cash-correction', method: 'caja_efectivo' });
     const second = payment('correction-2', 20);
     await setDoc(doc(db, itemPath('areaExpenses', 'correction')), baseExpense({
       paymentHistory: [first, second], paymentLocked: true, paymentAuthorIds: [adminId, adminId],
@@ -110,6 +112,73 @@ try {
   });
 
   await assertFails(updateDoc(doc(adminDb, itemPath('areaExpenses', 'paid-area')), { description: 'Otra cosa' }));
+  const externalPayment = payment('external-1', 100, {
+    method: 'tercero', thirdPartyPayerId: 'payer-1', thirdPartyPayerName: 'Persona Ejemplo',
+    reimbursements: [], reimbursedAmount: 0,
+  });
+  await assertFails(updateDoc(doc(adminDb, itemPath('areaExpenses', 'third-party')), {
+    paymentHistory: [{ ...externalPayment, thirdPartyPayerId: 'missing-person' }],
+    paymentLocked: true, paymentAuthorIds: [adminId], paid: true,
+  }));
+  await assertSucceeds(updateDoc(doc(adminDb, itemPath('areaExpenses', 'third-party')), {
+    paymentHistory: [externalPayment], paymentLocked: true, paymentAuthorIds: [adminId], paid: true,
+  }));
+  await assertFails(deleteDoc(doc(adminDb, itemPath('areaExpenses', 'third-party'))));
+  const reimbursement = {
+    id: 'reimbursement-1', amount: 40, date, detail: 'Caja General',
+    cashMovementId: 'cash-reimbursement-1', cashAccount: 'general',
+    createdBy: adminId, createdByEmail: adminEmail,
+  };
+  const reimbursementAuditRef = doc(collection(adminDb, `projects/${projectId}/activityLog`));
+  const settlement = writeBatch(adminDb);
+  settlement.update(doc(adminDb, itemPath('areaExpenses', 'third-party')), {
+    paymentHistory: [{ ...externalPayment, reimbursements: [reimbursement], reimbursedAmount: 40 }],
+    lastFinancialAuditId: reimbursementAuditRef.id, updatedAt: serverTimestamp(),
+  });
+  settlement.set(doc(adminDb, movementPath('cash-reimbursement-1')), {
+    type: 'reintegro', collectionName: 'areaExpenses', itemId: 'third-party',
+    paymentId: externalPayment.id, paymentIndex: 0,
+    reimbursementId: reimbursement.id, thirdPartyPayerId: 'payer-1',
+    thirdPartyPayerName: 'Persona Ejemplo', area: 'Producción', subcategory: '',
+    description: 'Gasto original', amount: 40, date, notes: 'Caja General',
+    cashAccount: 'general', fromUserEmail: adminEmail, fromUserName: 'Admin',
+    createdBy: adminId, createdByEmail: adminEmail,
+    createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+  });
+  settlement.set(reimbursementAuditRef, audit('reimbursement_recorded', 'third-party', externalPayment.id, 0, {
+    reimbursementId: reimbursement.id, reimbursementIndex: 0,
+    cashMovementId: reimbursement.cashMovementId, thirdPartyPayerId: 'payer-1',
+    amount: 40, oldReimbursedAmount: 0, newReimbursedAmount: 40,
+  }));
+  await assertSucceeds(settlement.commit());
+  await assertFails(deleteDoc(doc(adminDb, movementPath('cash-reimbursement-1'))));
+  const fakeAuditRef = doc(collection(adminDb, `projects/${projectId}/activityLog`));
+  const fakeSettlement = writeBatch(adminDb);
+  fakeSettlement.update(doc(adminDb, itemPath('areaExpenses', 'third-party')), {
+    paymentHistory: [{ ...externalPayment, reimbursements: [reimbursement, { ...reimbursement, id: 'fake-reimbursement', cashMovementId: 'missing-cash', amount: 10 }], reimbursedAmount: 50 }],
+    lastFinancialAuditId: fakeAuditRef.id,
+  });
+  fakeSettlement.set(fakeAuditRef, audit('reimbursement_recorded', 'third-party', externalPayment.id, 0, {
+    reimbursementId: 'fake-reimbursement', reimbursementIndex: 1, cashMovementId: 'missing-cash',
+    thirdPartyPayerId: 'payer-1', amount: 10, oldReimbursedAmount: 40, newReimbursedAmount: 50,
+  }));
+  await assertFails(fakeSettlement.commit());
+  await assertFails(updateDoc(doc(adminDb, itemPath('areaExpenses', 'third-party')), {
+    paymentHistory: [{ ...externalPayment, reimbursements: [reimbursement], reimbursedAmount: 40, amount: 30 }],
+  }));
+  const reimbursementDeleteAuditRef = doc(collection(adminDb, `projects/${projectId}/activityLog`));
+  const reverseSettlement = writeBatch(adminDb);
+  reverseSettlement.update(doc(adminDb, itemPath('areaExpenses', 'third-party')), {
+    paymentHistory: [externalPayment], lastFinancialAuditId: reimbursementDeleteAuditRef.id,
+    updatedAt: serverTimestamp(),
+  });
+  reverseSettlement.delete(doc(adminDb, movementPath('cash-reimbursement-1')));
+  reverseSettlement.set(reimbursementDeleteAuditRef, audit('reimbursement_deleted', 'third-party', externalPayment.id, 0, {
+    reimbursementId: reimbursement.id, reimbursementIndex: 0,
+    cashMovementId: reimbursement.cashMovementId, thirdPartyPayerId: 'payer-1',
+    amount: 40, oldReimbursedAmount: 40, newReimbursedAmount: 0,
+  }));
+  await assertSucceeds(reverseSettlement.commit());
   await assertFails(updateDoc(doc(collaboratorDb, itemPath('areaExpenses', 'paid-area')), { providerId: 'other' }));
   await assertFails(updateDoc(doc(adminDb, itemPath('budgetItems', 'paid-budget')), { total: 20 }));
   await assertFails(updateDoc(doc(adminDb, itemPath('areaExpenses', 'paid-area')), { paymentLocked: false, paymentHistory: [] }));
@@ -119,7 +188,7 @@ try {
   await assertSucceeds(updateDoc(doc(collaboratorDb, itemPath('areaExpenses', 'paid-area')), { paymentDate: '2026-10-02' }));
 
   const collaboratorPayment = payment('collab-payment', 100, {
-    createdBy: collaboratorId, createdByEmail: collaboratorEmail, cashMovementId: 'cash-collab',
+    createdBy: collaboratorId, createdByEmail: collaboratorEmail, cashMovementId: 'cash-collab', method: 'caja_efectivo',
   });
   const append = writeBatch(collaboratorDb);
   append.update(doc(collaboratorDb, itemPath('areaExpenses', 'new-payment')), {
@@ -154,7 +223,7 @@ try {
   }), (error) => error?.message?.includes('PAID_EXPENSE_LOCKED') || error?.code === 'permission-denied');
   assert.equal((await getDoc(raceRef)).data().paymentHistory.length, 1);
 
-  const oldFirst = payment('correction-1', 50, { cashMovementId: 'cash-correction' });
+  const oldFirst = payment('correction-1', 50, { cashMovementId: 'cash-correction', method: 'caja_efectivo' });
   const oldSecond = payment('correction-2', 20);
   const correctedFirst = { ...oldFirst, amount: 60 };
   const wrongAuditRef = doc(collection(adminDb, `projects/${projectId}/activityLog`));

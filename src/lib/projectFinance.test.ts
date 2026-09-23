@@ -36,6 +36,21 @@ test('la deuda nunca es negativa aunque exista un sobrepago histórico', () => {
   assert.equal(getItemDebt(item), 0);
 });
 
+test('un gasto pagado por tercero sigue siendo costo y deuda hasta reintegrarlo', () => {
+  const project = { budgetTotal: 100 };
+  const item = { area: 'Transporte', total: 100, paymentHistory: [
+    { id: 'external', amount: 80, method: 'tercero', thirdPartyPayerId: 'person-1', thirdPartyPayerName: 'Persona Ejemplo', reimbursements: [
+      { id: 'r1', amount: 30, cashMovementId: 'cash-1', cashAccount: 'general', createdBy: 'admin', createdByEmail: 'admin@example.test', date: '' },
+    ] },
+  ] };
+  const finance = calculateProjectFinance(project, [], [item]);
+  assert.equal(finance.spent, 100);
+  assert.equal(finance.paid, 30);
+  assert.equal(finance.reimbursementDebt, 50);
+  assert.equal(finance.debt, 70); // $20 owed to the service provider + $50 owed to the payer.
+  assert.equal(finance.margin, 0);
+});
+
 test('Resultado trata las incidencias como gastos excepto Margen', () => {
   const result = calculateProjectResult({
     budgetTotal: 1000,

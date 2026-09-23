@@ -62,6 +62,7 @@ import {
   normalizeProjectRole,
 } from '../lib/projectAccess';
 import { calculateProjectResult, getPaymentTotal } from '../lib/projectFinance';
+import { getReimbursementBalanceCents, getReimbursedCents, isThirdPartyPayment } from '../lib/reimbursements';
 import { getFileExtension, sanitizeFileName, validateSpreadsheetImport } from '../lib/files';
 import { PROJECT_STATUSES } from '../lib/projects';
 import { getExpenseInvoices, getInvoiceDocumentKey, type ExpenseInvoiceDocument } from '../lib/invoices';
@@ -993,7 +994,7 @@ export default function ProjectDetail() {
     const snapshot = await getDocsFromServer(collection(db, 'projects', id, 'cashMovements'));
     if (snapshot.docs.some((entry) => {
       const movement = entry.data();
-      return movement.type === 'pago' && movement.collectionName === collectionName
+      return (movement.type === 'pago' || movement.type === 'reintegro') && movement.collectionName === collectionName
         && itemIds.has(movement.itemId);
     })) throw new Error('EXPENSE_HAS_CASH_MOVEMENT');
   };
@@ -2548,6 +2549,7 @@ export default function ProjectDetail() {
         const latest = latestSnapshot.data();
         const history = Array.isArray(latest.paymentHistory) ? latest.paymentHistory as Payment[] : [];
         const { payment, index } = findCurrentPayment(history, paymentToDelete, paymentIndex);
+        if (payment.reimbursements?.length) throw new Error('REIMBURSEMENTS_EXIST');
         const movementRef = payment.cashMovementId
           ? doc(db, 'projects', id, 'cashMovements', payment.cashMovementId) : null;
         if (movementRef) {
@@ -3435,7 +3437,7 @@ export default function ProjectDetail() {
         const movements = cashMovements
           .filter((movement) => (
             (normalizeEmail(movement.toUserEmail) === email || normalizeEmail(movement.fromUserEmail) === email)
-            && !(movement.type === 'pago' && movement.cashAccount === GENERAL_CASH_ACCOUNT)
+            && !((movement.type === 'pago' || movement.type === 'reintegro') && movement.cashAccount === GENERAL_CASH_ACCOUNT)
           ))
           .sort((a, b) => {
             const ad = a.createdAt?.seconds ? a.createdAt.seconds : new Date(a.date || 0).getTime() / 1000;
@@ -3449,7 +3451,8 @@ export default function ProjectDetail() {
           ))
           .reduce((acc, movement) => acc + (Number(movement.amount) || 0), 0);
         const used = movements
-          .filter((movement) => normalizeEmail(movement.fromUserEmail) === email && movement.type === 'pago')
+          .filter((movement) => normalizeEmail(movement.fromUserEmail) === email
+            && (movement.type === 'pago' || movement.type === 'reintegro'))
           .reduce((acc, movement) => acc + (Number(movement.amount) || 0), 0);
         const transferred = movements
           .filter((movement) => normalizeEmail(movement.fromUserEmail) === email && movement.type === 'transferencia')
@@ -3613,6 +3616,29 @@ export default function ProjectDetail() {
 
   const providerSaldos = providerSaldosByArea.flatMap(group => group.rows);
 
+  const thirdPartyBalances = React.useMemo(() => {
+    const allowedCategories = isProjectAdmin ? categories : safeArray(userPermissions?.allowedCategories);
+    const rows: Array<{ key: string; name: string; area: string; description: string; amount: number; reimbursed: number; debt: number; item: any; collectionName: PaymentCollection }> = [];
+    const collect = (item: any, collectionName: PaymentCollection) => {
+      if (!isProjectAdmin && !allowedCategories.includes(item.area || '')) return;
+      (Array.isArray(item.paymentHistory) ? item.paymentHistory : []).forEach((payment: Payment, index: number) => {
+        if (!isThirdPartyPayment(payment)) return;
+        rows.push({
+          key: `${collectionName}-${item.id}-${payment.id || index}`,
+          name: payment.thirdPartyPayerName || 'Persona sin identificar',
+          area: item.area || 'Sin area', description: item.description || 'Gasto',
+          amount: Number(payment.amount) || 0,
+          reimbursed: getReimbursedCents(payment) / 100,
+          debt: getReimbursementBalanceCents(payment) / 100,
+          item, collectionName,
+        });
+      });
+    };
+    areaExpenses.forEach((item) => collect(item, 'areaExpenses'));
+    budgetItems.filter((item) => !activeAreas.includes(item.area)).forEach((item) => collect(item, 'budgetItems'));
+    return rows;
+  }, [activeAreas, areaExpenses, budgetItems, categories, isProjectAdmin, userPermissions]);
+
   const getFinanceStatus = (saldo: { debt: number; paid: number }) => {
     if (saldo.debt <= 0.01 && saldo.paid > 0) return 'pagado';
     if (saldo.paid > 0 && saldo.debt > 0.01) return 'parcial';
@@ -3645,8 +3671,8 @@ export default function ProjectDetail() {
   }, [financeAreaFilter, financeInvoiceFilter, financeSearch, financeStatusFilter, providerSaldosByArea]);
 
   const filteredProviderSaldos = filteredProviderSaldosByArea.flatMap(group => group.rows);
-  const financeTotals = React.useMemo(() => (
-    filteredProviderSaldos.reduce((acc, saldo) => ({
+  const financeTotals = React.useMemo(() => {
+    const providerTotals = filteredProviderSaldos.reduce((acc, saldo) => ({
       budgeted: acc.budgeted + saldo.budgeted,
       spent: acc.spent + saldo.spent,
       paid: acc.paid + saldo.paid,
@@ -3657,12 +3683,19 @@ export default function ProjectDetail() {
         + safeArray(entry.item?.paymentHistory).filter((payment: any) => payment.receipt?.url).length
         + (Array.isArray(entry.otherReceipts) ? entry.otherReceipts.filter((receipt: any) => receipt?.url).length : 0)
       ), 0),
-    }), { budgeted: 0, spent: 0, paid: 0, debt: 0, invoices: 0, receipts: 0 })
-  ), [filteredProviderSaldos]);
+    }), { budgeted: 0, spent: 0, paid: 0, debt: 0, invoices: 0, receipts: 0 });
+    const visibleItems = new Set(filteredProviderSaldos.flatMap((saldo) => saldo.entries.map((entry) => `${entry.collectionName}-${entry.id}`)));
+    const visibleReimbursements = thirdPartyBalances.filter((row) => visibleItems.has(`${row.collectionName}-${row.item.id}`));
+    return {
+      ...providerTotals,
+      paid: providerTotals.paid - visibleReimbursements.reduce((sum, row) => sum + row.amount - row.reimbursed, 0),
+      debt: providerTotals.debt + visibleReimbursements.reduce((sum, row) => sum + row.debt, 0),
+    };
+  }, [filteredProviderSaldos, thirdPartyBalances]);
 
 
   const paymentScheduleLines = React.useMemo<ProjectPaymentScheduleLine[]>(() => (
-    providerSaldos.flatMap((saldo) => (
+    [...providerSaldos.flatMap((saldo) => (
       saldo.entries.map((entry) => {
         const debt = Math.max(0, Number(entry.total) - Number(entry.paid || 0));
         return {
@@ -3684,10 +3717,23 @@ export default function ProjectDetail() {
           invoice: entry.invoice,
         };
       })
-    ))
+    )), ...thirdPartyBalances.map((row) => ({
+      id: `reintegro-${row.key}`,
+      collectionName: row.collectionName,
+      item: row.item,
+      projectId: project?.id,
+      projectName: project?.name || 'Proyecto actual',
+      area: row.area,
+      providerName: row.name,
+      providerCuit: '', cbu: '',
+      description: `Reintegro por ${row.description}`,
+      total: row.amount, paid: row.reimbursed, debt: row.debt,
+      paymentDate: row.item.paymentDate,
+      source: 'Reintegro a tercero', invoice: undefined,
+    }))]
     .filter((line) => line.debt > 0.01)
     .sort((a, b) => a.providerName.localeCompare(b.providerName, 'es'))
-  ), [project?.id, project?.name, providerSaldos]);
+  ), [project?.id, project?.name, providerSaldos, thirdPartyBalances]);
 
   const paymentScheduleCalendarDays = React.useMemo(() => (
     buildPaymentCalendarDays(paymentScheduleLines, paymentScheduleAnchor)
@@ -4006,7 +4052,11 @@ export default function ProjectDetail() {
   };
 
   const exportMainBudget = (format: 'xlsx' | 'csv') => {
-    const rows = budgetItems.map(item => ({
+    const rows = budgetItems.map(item => {
+      const providerPaid = getPaymentTotal(item);
+      const reimbursementDebt = (Array.isArray(item.paymentHistory) ? item.paymentHistory : [])
+        .reduce((sum: number, payment: Payment) => sum + getReimbursementBalanceCents(payment) / 100, 0);
+      return {
       Area: item.area || '',
       Proveedor: item.providerName || '',
       Descripcion: item.description || '',
@@ -4017,8 +4067,13 @@ export default function ProjectDetail() {
       'Fecha Pago': item.paymentDate ? formatDate(item.paymentDate) : '',
       'Rodaje a Pago': getPaymentLeadTimeLabel(item.paymentDate, getShootingEndDate(project)),
       Pagado: item.paid ? 'Si' : 'No',
+      'Pagado por empresa': providerPaid - reimbursementDebt,
+      'Deuda proveedor': Math.max(0, (Number(item.total) || 0) - providerPaid),
+      'Reintegros pendientes': reimbursementDebt,
+      Deuda: Math.max(0, (Number(item.total) || 0) - providerPaid) + reimbursementDebt,
       Orden: item.order || 0,
-    }));
+      };
+    });
 
     if (format === 'csv') {
       downloadCsv(rows, `presupuesto_principal_${project?.name || 'proyecto'}.csv`);
@@ -4030,6 +4085,8 @@ export default function ProjectDetail() {
   const exportAreaBudget = (format: 'xlsx' | 'csv') => {
     const rows = areaExpenses.map(item => {
       const paid = getPaymentTotal(item);
+      const reimbursementDebt = (Array.isArray(item.paymentHistory) ? item.paymentHistory : [])
+        .reduce((sum: number, payment: Payment) => sum + getReimbursementBalanceCents(payment) / 100, 0);
       return {
         Area: item.area || '',
         Subcategoria: cleanAreaExpenseSubcategory(item.subcategory),
@@ -4042,7 +4099,10 @@ export default function ProjectDetail() {
         'Fecha Pago': item.paymentDate ? formatDate(item.paymentDate) : '',
         'Rodaje a Pago': getPaymentLeadTimeLabel(item.paymentDate, getShootingEndDate(project)),
         Pagado: paid,
-        Deuda: (Number(item.total) || 0) - paid,
+        'Pagado por empresa': paid - reimbursementDebt,
+        'Deuda proveedor': Math.max(0, (Number(item.total) || 0) - paid),
+        'Reintegros pendientes': reimbursementDebt,
+        Deuda: Math.max(0, (Number(item.total) || 0) - paid) + reimbursementDebt,
         Factura: getExpenseInvoices(item).map((invoice) => invoice.url).filter(Boolean).join(' | '),
         Actualizado: formatExportDate(item.updatedAt),
       };
@@ -6535,11 +6595,13 @@ export default function ProjectDetail() {
                 <div className="max-h-80 divide-y divide-white/10 overflow-y-auto">
                   {generalCashMovements.map((movement) => {
                     const isPending = movement.type === 'entrega' && movement.status === 'pending';
-                    const movementLabel = movement.type === 'entrega' ? 'Entrega de caja' : 'Pago directo';
+                    const movementLabel = movement.type === 'entrega' ? 'Entrega de caja' : movement.type === 'reintegro' ? 'Reintegro a tercero' : 'Pago directo';
                     const expenseTarget = resolveCashMovementTarget(movement, budgetItems, areaExpenses);
                     const destination = movement.type === 'entrega'
                       ? `A ${formatPersonIdentity(movement.toUserName, movement.toUserEmail)}`
-                      : movement.description || movement.area || 'Gasto del proyecto';
+                      : movement.type === 'reintegro'
+                        ? `A ${movement.thirdPartyPayerName || 'persona acreedora'} · ${movement.description || movement.area || 'Gasto del proyecto'}`
+                        : movement.description || movement.area || 'Gasto del proyecto';
                     return (
                       <div key={`general-${movement.id}`} className={cn('flex items-center justify-between gap-4 px-5 py-3', isPending && 'bg-amber-500/10')}>
                         <div className="min-w-0">
@@ -6759,7 +6821,9 @@ export default function ProjectDetail() {
                                   ? (isPendingDelivery ? 'Entrega pendiente de recepción' : 'Entrega recibida')
                                   : movement.type === 'transferencia'
                                     ? (incoming ? 'Transferencia recibida' : 'Transferencia enviada')
-                                    : 'Pago en efectivo'}
+                                    : movement.type === 'reintegro'
+                                      ? `Reintegro a ${movement.thirdPartyPayerName || 'tercero'}`
+                                      : 'Pago en efectivo'}
                               </span>
                               {isPendingDelivery && <span className="rounded-full bg-amber-200 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-amber-900">Pendiente</span>}
                               {movement.type === 'entrega' && movement.status === 'confirmed' && <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-emerald-700">Confirmada</span>}
@@ -7127,6 +7191,7 @@ export default function ProjectDetail() {
               </section>
             </div>
 
+
             <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 divide-y lg:divide-y-0 lg:divide-x divide-slate-100">
                 {[
@@ -7186,6 +7251,21 @@ export default function ProjectDetail() {
                 <div className="mt-1 text-[8px] font-bold uppercase tracking-widest text-slate-400 sm:mt-2 sm:text-[9px]">Facturas / comprobantes</div>
               </div>
             </div>
+
+            {thirdPartyBalances.length > 0 && (
+              <section className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+                <h3 className="text-sm font-black text-amber-900">Reintegros a personas que pagaron gastos</h3>
+                <p className="mt-1 text-xs text-amber-800">El proveedor del gasto ya cobró. Estos importes se deben a quien adelantó el dinero.</p>
+                <div className="mt-3 space-y-2">
+                  {thirdPartyBalances.map((row) => (
+                    <div key={row.key} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white p-3 text-xs">
+                      <div><strong>{row.name}</strong><span className="ml-2 text-slate-500">{row.area} · {row.description}</span></div>
+                      <div className="flex items-center gap-3"><span>Adelantó ${row.amount.toLocaleString('es-AR')} · Reintegrado ${row.reimbursed.toLocaleString('es-AR')}</span><strong className="text-rose-700">Pendiente ${row.debt.toLocaleString('es-AR')}</strong><button type="button" onClick={() => openPaymentModal(row.item, row.collectionName)} className="font-bold text-slate-900 underline">Ver pagos</button></div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
 
 
             <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
@@ -8654,6 +8734,7 @@ export default function ProjectDetail() {
           isOpen={paymentModalOpen}
           canManagePayments={canManagePaymentForItem(selectedItemForPayment, selectedItemForPayment?.__paymentCollection || paymentType)}
           cashBoxOptions={paymentCashBoxOptions}
+          providers={providers}
           paymentType={paymentType}
           isDeletingPayment={isDeletingPayment}
           canEditExistingPayments={isProjectAdmin}
@@ -8669,6 +8750,7 @@ export default function ProjectDetail() {
           onCashMovementUpdated={(movementId, updates) => setCashMovements((current) => current.map((movement) => (
             movement.id === movementId ? { ...movement, ...updates } : movement
           )))}
+          onCashMovementDeleted={(movementId) => setCashMovements((current) => current.filter((movement) => movement.id !== movementId))}
         />
         {showDocumentUploadModal && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[260] flex items-center justify-center p-4">

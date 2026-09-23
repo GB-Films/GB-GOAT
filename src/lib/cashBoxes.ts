@@ -67,7 +67,7 @@ export const calculateGeneralCashSummary = (movements: any[]) => {
     .filter((movement) => movement.type === 'entrega' && movement.status === 'pending')
     .reduce((total, movement) => total + (Number(movement.amount) || 0), 0);
   const directPayments = generalMovements
-    .filter((movement) => movement.type === 'pago')
+    .filter((movement) => movement.type === 'pago' || movement.type === 'reintegro')
     .reduce((total, movement) => total + (Number(movement.amount) || 0), 0);
 
   return {

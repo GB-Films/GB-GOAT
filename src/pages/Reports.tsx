@@ -1,7 +1,7 @@
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, BarChart3, CalendarDays, DollarSign, Download, FileSpreadsheet, FileText, ReceiptText, Search, Wallet } from 'lucide-react';
-import { collection, doc, getDocs, orderBy, query, serverTimestamp, writeBatch } from 'firebase/firestore';
+import { collection, doc, getDocs, orderBy, query, runTransaction, serverTimestamp } from 'firebase/firestore';
 import { deleteObject, ref } from 'firebase/storage';
 import { db, storage } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
@@ -11,6 +11,8 @@ import { formatIdentifier, inferLegacyIdentifiers, normalizeProviderText, provid
 import { PaymentModal } from './project-detail/PaymentModal';
 import type { Payment, PaymentCollection } from './project-detail/types';
 import { calculateProjectFinance, calculateProjectResult, getItemTotal, getPaymentTotal, getStandaloneBudgetItems } from '../lib/projectFinance';
+import { getReimbursedCents, isThirdPartyPayment } from '../lib/reimbursements';
+import { assertCashPaymentLink, findCurrentPayment, samePaymentTarget } from '../lib/expenseEdits';
 import { PageHeader } from '../components/PageHeader';
 import { getPrimaryExpenseInvoice } from '../lib/invoices';
 
@@ -34,7 +36,7 @@ interface PayableLine {
   debt: number;
   paymentDate?: any;
   invoice?: any;
-  source: 'area' | 'budget';
+  source: 'area' | 'budget' | 'reimbursement';
 }
 
 type ReportPaymentScheduleLine = PaymentScheduleLine & {
@@ -178,6 +180,26 @@ const buildProjectReport = (
     }),
   ];
 
+  for (const line of [...payableLines]) {
+    (Array.isArray(line.item.paymentHistory) ? line.item.paymentHistory : []).forEach((payment: Payment, index: number) => {
+      if (!isThirdPartyPayment(payment)) return;
+      const total = Number(payment.amount) || 0;
+      const paid = getReimbursedCents(payment) / 100;
+      payableLines.push({
+        ...line,
+        id: `${line.id}-reintegro-${payment.id || index}`,
+        providerId: payment.thirdPartyPayerId,
+        providerName: payment.thirdPartyPayerName || 'Persona sin identificar',
+        providerCuit: '', cbu: '',
+        description: `Reintegro por ${line.description || 'gasto'}`,
+        total, paid, debt: Math.max(0, total - paid),
+        paymentDate: payment.date,
+        invoice: undefined,
+        source: 'reimbursement',
+      });
+    });
+  }
+
   return {
     id: project.id,
     name: project.name || 'Sin nombre',
@@ -198,12 +220,17 @@ const buildProjectReport = (
 };
 
 const recalculateProjectTotals = (project: ProjectReport): ProjectReport => {
-  const paid = project.payableLines.reduce((acc, line) => acc + line.paid, 0);
   const debt = project.payableLines.reduce((acc, line) => acc + line.debt, 0);
+  const providerPaid = project.payableLines
+    .filter((line) => line.source !== 'reimbursement')
+    .reduce((acc, line) => acc + line.paid, 0);
+  const reimbursementDebt = project.payableLines
+    .filter((line) => line.source === 'reimbursement')
+    .reduce((acc, line) => acc + line.debt, 0);
 
   return {
     ...project,
-    paid,
+    paid: Math.max(0, providerPaid - reimbursementDebt),
     debt,
     unpaidLines: project.payableLines.filter((line) => line.debt > 0.01).length,
   };
@@ -212,6 +239,7 @@ const recalculateProjectTotals = (project: ProjectReport): ProjectReport => {
 export default function Reports() {
   const { user, profile } = useAuth();
   const [projects, setProjects] = useState<ProjectReport[]>([]);
+  const [providers, setProviders] = useState<any[]>([]);
   const [activeView, setActiveView] = useState<ReportView>('resumen');
   const [loading, setLoading] = useState(true);
   const [projectSearch, setProjectSearch] = useState('');
@@ -234,6 +262,7 @@ export default function Reports() {
         ]);
         const projectRows = projectsSnap.docs.map((projectDoc) => ({ id: projectDoc.id, ...projectDoc.data() as any }));
         const providers = providersSnap.docs.map((providerDoc) => ({ id: providerDoc.id, ...providerDoc.data() }));
+        setProviders(providers);
         const providerById = new Map(providers.map((provider) => [provider.id, provider]));
 
         const reports = await Promise.all(
@@ -299,7 +328,7 @@ export default function Reports() {
         paid: line.paid,
         debt: line.debt,
         paymentDate: line.paymentDate,
-        source: line.source === 'area' ? 'Gestion por Areas' : 'Presupuesto Principal',
+        source: line.source === 'area' ? 'Gestion por Areas' : line.source === 'budget' ? 'Presupuesto Principal' : 'Reintegro a tercero',
         invoice: line.invoice,
       }))
     ))
@@ -385,7 +414,9 @@ export default function Reports() {
     setProjects((currentProjects) => currentProjects.map((project) => {
       if (selectedPaymentLine?.projectId && project.id !== selectedPaymentLine.projectId) return project;
       let didUpdateLine = false;
-      const nextPayableLines = project.payableLines.map((line) => {
+      const nextPayableLines = project.payableLines.filter((line) => (
+        !(line.source === 'reimbursement' && line.item.id === itemId && line.collectionName === collectionName)
+      )).map((line) => {
         if (line.id !== itemId || line.collectionName !== collectionName) return line;
         didUpdateLine = true;
 
@@ -406,12 +437,27 @@ export default function Reports() {
       });
 
       if (!didUpdateLine) return project;
+      const providerLine = nextPayableLines.find((line) => line.id === itemId && line.collectionName === collectionName);
+      if (providerLine) updatedHistory.forEach((payment, index) => {
+        if (!isThirdPartyPayment(payment)) return;
+        const total = Number(payment.amount) || 0;
+        const paid = getReimbursedCents(payment) / 100;
+        nextPayableLines.push({ ...providerLine,
+          id: `${itemId}-reintegro-${payment.id || index}`,
+          providerId: payment.thirdPartyPayerId, providerName: payment.thirdPartyPayerName,
+          providerCuit: '', cbu: '', description: `Reintegro por ${providerLine.description || 'gasto'}`,
+          total, paid, debt: Math.max(0, total - paid), paymentDate: payment.date,
+          invoice: undefined, source: 'reimbursement',
+        });
+      });
       return recalculateProjectTotals({ ...project, payableLines: nextPayableLines });
     }));
 
     setSelectedPaymentLine((current) => {
       if (!current || current.item?.id !== itemId || current.collectionName !== collectionName) return current;
-      const paid = updatedHistory.reduce((acc, payment) => acc + (Number(payment.amount) || 0), 0);
+      const paid = current.source === 'Reintegro a tercero'
+        ? updatedHistory.filter((payment) => isThirdPartyPayment(payment)).reduce((acc, payment) => acc + getReimbursedCents(payment) / 100, 0)
+        : updatedHistory.reduce((acc, payment) => acc + (Number(payment.amount) || 0), 0);
       const debt = Math.max(0, current.total - paid);
       return {
         ...current,
@@ -435,49 +481,45 @@ export default function Reports() {
     setIsDeletingPayment(paymentIndex);
 
     try {
-      const currentHistory = Array.isArray(selectedPaymentLine.item.paymentHistory)
-        ? [...selectedPaymentLine.item.paymentHistory]
-        : [];
+      const currentHistory = Array.isArray(selectedPaymentLine.item.paymentHistory) ? selectedPaymentLine.item.paymentHistory as Payment[] : [];
       const paymentToDelete = currentHistory[paymentIndex];
       if (!paymentToDelete) throw new Error('Índice de pago no válido.');
-
-      const updatedHistory = currentHistory.filter((payment: Payment, index: number) => {
-        if (paymentToDelete.id) return payment.id !== paymentToDelete.id;
-        return index !== paymentIndex;
+      const itemRef = doc(db, 'projects', selectedPaymentLine.projectId, selectedPaymentLine.collectionName, selectedPaymentLine.item.id);
+      const auditRef = doc(collection(db, 'projects', selectedPaymentLine.projectId, 'activityLog'));
+      const result = await runTransaction(db, async (transaction) => {
+        const snapshot = await transaction.get(itemRef);
+        if (!snapshot.exists() || !samePaymentTarget(selectedPaymentLine.item, snapshot.data())) throw new Error('EXPENSE_CHANGED');
+        const latest = snapshot.data();
+        const history = Array.isArray(latest.paymentHistory) ? latest.paymentHistory as Payment[] : [];
+        const { payment, index } = findCurrentPayment(history, paymentToDelete, paymentIndex);
+        if (payment.reimbursements?.length) throw new Error('REIMBURSEMENTS_EXIST');
+        const cashRef = payment.cashMovementId ? doc(db, 'projects', selectedPaymentLine.projectId, 'cashMovements', payment.cashMovementId) : null;
+        if (cashRef) {
+          const cashSnapshot = await transaction.get(cashRef);
+          if (!cashSnapshot.exists()) throw new Error('CASH_LINK_MISMATCH');
+          assertCashPaymentLink(cashSnapshot.data(), { collectionName: selectedPaymentLine.collectionName, itemId: selectedPaymentLine.item.id, payment });
+        }
+        const updatedHistory = history.filter((_, historyIndex) => historyIndex !== index);
+        const isFullyPaid = getPaymentTotal({ paymentHistory: updatedHistory }) >= (Number(latest.total) || 0) - 0.01;
+        transaction.update(itemRef, { paymentHistory: updatedHistory, paid: isFullyPaid, paymentLocked: true, lastFinancialAuditId: auditRef.id, updatedAt: serverTimestamp() });
+        if (cashRef) transaction.delete(cashRef);
+        transaction.set(auditRef, {
+          action: 'payment_deleted', collectionName: selectedPaymentLine.collectionName,
+          itemId: selectedPaymentLine.item.id, itemLabel: latest.description || latest.providerName || '',
+          paymentId: payment.id || '', paymentIndex: index, amount: Number(payment.amount) || 0,
+          cashMovementId: payment.cashMovementId || '', deletedCashMovementCount: cashRef ? 1 : 0,
+          deletedBy: user?.uid || '', deletedByEmail: currentUserEmail,
+          deletedByName: currentUserName, deletedByRole: profile?.role || 'colaborador',
+          createdAt: serverTimestamp(),
+        });
+        return { payment, updatedHistory, isFullyPaid };
       });
-      const totalPaid = updatedHistory.reduce((acc: number, payment: Payment) => acc + (Number(payment.amount) || 0), 0);
-      const isFullyPaid = totalPaid >= ((Number(selectedPaymentLine.item.total) || 0) - 0.01);
 
-      const batch = writeBatch(db);
-      batch.update(doc(db, 'projects', selectedPaymentLine.projectId, selectedPaymentLine.collectionName, selectedPaymentLine.item.id), {
-        paymentHistory: updatedHistory,
-        paid: isFullyPaid,
-        updatedAt: serverTimestamp(),
-      });
-      if (paymentToDelete.cashMovementId) {
-        batch.delete(doc(db, 'projects', selectedPaymentLine.projectId, 'cashMovements', paymentToDelete.cashMovementId));
-      }
-      batch.set(doc(collection(db, 'projects', selectedPaymentLine.projectId, 'activityLog')), {
-        action: 'payment_deleted',
-        collectionName: selectedPaymentLine.collectionName,
-        itemId: selectedPaymentLine.item.id,
-        itemLabel: selectedPaymentLine.item.description || selectedPaymentLine.item.providerName || '',
-        paymentId: paymentToDelete.id || '',
-        amount: Number(paymentToDelete.amount) || 0,
-        deletedCashMovementCount: paymentToDelete.cashMovementId ? 1 : 0,
-        deletedBy: user?.uid || '',
-        deletedByEmail: currentUserEmail,
-        deletedByName: currentUserName,
-        deletedByRole: profile?.role || 'colaborador',
-        createdAt: serverTimestamp(),
-      });
-      await batch.commit();
-
-      if (paymentToDelete.receipt?.path) {
-        deleteObject(ref(storage, paymentToDelete.receipt.path)).catch(() => {});
+      if (result.payment.receipt?.path) {
+        deleteObject(ref(storage, result.payment.receipt.path)).catch(() => {});
       }
 
-      updatePaymentState(selectedPaymentLine.item.id, selectedPaymentLine.collectionName, updatedHistory, isFullyPaid);
+      updatePaymentState(selectedPaymentLine.item.id, selectedPaymentLine.collectionName, result.updatedHistory, result.isFullyPaid);
     } catch (error: any) {
       console.error('Error deleting payment:', error);
       alert('Error al eliminar el pago: ' + (error.message || 'Error desconocido'));
@@ -976,6 +1018,7 @@ export default function Reports() {
         isOpen={Boolean(selectedPaymentLine)}
         canManagePayments={Boolean(selectedPaymentLine)}
         cashBoxOptions={[]}
+        providers={providers}
         paymentType={selectedPaymentLine?.collectionName || 'areaExpenses'}
         isDeletingPayment={isDeletingPayment}
         canEditExistingPayments={profile?.role === 'admin'}

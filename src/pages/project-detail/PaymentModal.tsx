@@ -12,6 +12,8 @@ import type { PaymentCashBoxOption } from '../../lib/cashBoxes';
 import { assertCashPaymentLink, findCurrentPayment, samePaymentTarget } from '../../lib/expenseEdits';
 import { buildPaymentAuditAppend } from '../../lib/paymentAudit';
 import { parsePaymentAmount } from '../../lib/paymentAmounts';
+import { providerDisplayName } from '../../lib/providerConstants';
+import { assertReimbursementAmount, assertReimbursementCashLink, getReimbursementBalanceCents, getReimbursedCents, isThirdPartyPayment } from '../../lib/reimbursements';
 import type { Payment, PaymentCollection } from './types';
 
 const formatDate = (dateString: string | any) => {
@@ -69,6 +71,7 @@ interface PaymentModalProps {
   isOpen: boolean;
   canManagePayments: boolean;
   cashBoxOptions: PaymentCashBoxOption[];
+  providers?: any[];
   paymentType: PaymentCollection;
   isDeletingPayment: number | null;
   canEditExistingPayments?: boolean;
@@ -88,6 +91,7 @@ interface PaymentModalProps {
   onDeletePayment: (paymentIndex: number) => Promise<void>;
   onCashMovementCreated?: (movement: any) => void;
   onCashMovementUpdated?: (movementId: string, updates: any) => void;
+  onCashMovementDeleted?: (movementId: string) => void;
 }
 
 export function PaymentModal({
@@ -96,6 +100,7 @@ export function PaymentModal({
   isOpen,
   canManagePayments,
   cashBoxOptions,
+  providers = [],
   paymentType,
   isDeletingPayment,
   canEditExistingPayments = false,
@@ -109,6 +114,7 @@ export function PaymentModal({
   onDeletePayment,
   onCashMovementCreated,
   onCashMovementUpdated,
+  onCashMovementDeleted,
 }: PaymentModalProps) {
   const amountRef = useRef<HTMLInputElement>(null);
   const [selectedReceipt, setSelectedReceipt] = useState<File | null>(null);
@@ -121,6 +127,10 @@ export function PaymentModal({
   const [amountInput, setAmountInput] = useState('');
   const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
   const [paymentError, setPaymentError] = useState('');
+  const [paymentFundingMode, setPaymentFundingMode] = useState<'company' | 'third_party'>('company');
+  const [thirdPartyPayerId, setThirdPartyPayerId] = useState('');
+  const [activeReimbursementId, setActiveReimbursementId] = useState('');
+  const [reimbursementError, setReimbursementError] = useState('');
 
   useEffect(() => {
     setSelectedReceipt(null);
@@ -133,6 +143,10 @@ export function PaymentModal({
     setAmountInput('');
     setIsSubmittingPayment(false);
     setPaymentError('');
+    setPaymentFundingMode('company');
+    setThirdPartyPayerId('');
+    setActiveReimbursementId('');
+    setReimbursementError('');
   }, [isOpen, item?.id]);
 
   useEffect(() => {
@@ -274,6 +288,9 @@ export function PaymentModal({
         ), 0);
         const nextTotalPaidCents = otherPaymentsTotalCents + toMoneyCents(nextAmount);
         if (nextTotalPaidCents > itemTotalCents) throw new Error('PAYMENT_EXCEEDS_TOTAL');
+        if (isThirdPartyPayment(latestPayment) && toMoneyCents(nextAmount) < getReimbursedCents(latestPayment)) {
+          throw new Error('PAYMENT_BELOW_REIMBURSEMENTS');
+        }
 
         const isFullyPaid = nextTotalPaidCents >= itemTotalCents;
         const updatedPayment = {
@@ -345,8 +362,145 @@ export function PaymentModal({
         alert('El pago no puede superar el valor total del gasto. Otro pago pudo haberse registrado mientras editabas.');
         return;
       }
+      if (error?.message === 'PAYMENT_BELOW_REIMBURSEMENTS') {
+        alert('El pago no puede quedar por debajo de lo ya reintegrado. Anulá primero los reintegros correspondientes.');
+        return;
+      }
       handleFirestoreError(error, 'update', `projects/${projectId}/${collectionName}/${item.id}`);
       alert('No se pudo actualizar el pago.');
+    }
+  };
+
+  const recordReimbursement = async (event: FormEvent<HTMLFormElement>, paymentIndex: number) => {
+    event.preventDefault();
+    if (!projectId || !canEditExistingPayments || !item?.id) return;
+    const selectedPayment = paymentHistory[paymentIndex] as Payment | undefined;
+    if (!selectedPayment || !isThirdPartyPayment(selectedPayment)) return;
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    const amount = parsePaymentAmount(formData.get('reimbursementAmount'));
+    const cashBox = cashBoxOptions.find((option) => option.id === formData.get('reimbursementCashBoxId'));
+    const dateText = String(formData.get('reimbursementDate') || '');
+    const detail = String(formData.get('reimbursementDetail') || '').trim();
+    try {
+      assertReimbursementAmount(selectedPayment, amount);
+      if (!cashBox || (!cashBox.unlimited && amount > cashBox.balance + 0.01)) {
+        throw new Error('REIMBURSEMENT_CASH_UNAVAILABLE');
+      }
+      const date = dateText ? new Date(`${dateText}T12:00:00`) : new Date();
+      if (Number.isNaN(date.getTime())) throw new Error('INVALID_REIMBURSEMENT_DATE');
+      const reimbursementId = crypto.randomUUID();
+      const cashRef = doc(collection(db, 'projects', projectId, 'cashMovements'));
+      const auditRef = doc(collection(db, 'projects', projectId, 'activityLog'));
+      const itemRef = doc(db, 'projects', projectId, collectionName, item.id);
+      setActiveReimbursementId(selectedPayment.id || String(paymentIndex));
+      setReimbursementError('');
+      const result = await runTransaction(db, async (transaction) => {
+        const snapshot = await transaction.get(itemRef);
+        if (!snapshot.exists() || !samePaymentTarget(item, snapshot.data())) throw new Error('ITEM_CHANGED');
+        const latest = snapshot.data();
+        const history = Array.isArray(latest.paymentHistory) ? latest.paymentHistory as Payment[] : [];
+        const { payment: currentPayment, index } = findCurrentPayment(history, selectedPayment, paymentIndex);
+        assertReimbursementAmount(currentPayment, amount);
+        const reimbursements = Array.isArray(currentPayment.reimbursements) ? currentPayment.reimbursements : [];
+        const nextReimbursedAmount = (getReimbursedCents(currentPayment) + toMoneyCents(amount)) / 100;
+        const reimbursement = {
+          id: reimbursementId, amount, date, detail, cashMovementId: cashRef.id,
+          cashAccount: cashBox.account,
+          createdBy: currentUserId, createdByEmail: currentUserEmail,
+        };
+        const updatedHistory = history.map((payment, currentIndex) => currentIndex === index
+          ? { ...currentPayment, reimbursements: [...reimbursements, reimbursement], reimbursedAmount: nextReimbursedAmount }
+          : payment);
+        transaction.update(itemRef, { paymentHistory: updatedHistory, lastFinancialAuditId: auditRef.id, updatedAt: serverTimestamp() });
+        const movement = {
+          type: 'reintegro', collectionName, itemId: item.id, paymentId: currentPayment.id,
+          paymentIndex: index, reimbursementId, thirdPartyPayerId: currentPayment.thirdPartyPayerId,
+          thirdPartyPayerName: currentPayment.thirdPartyPayerName,
+          area: latest.area || '', subcategory: latest.subcategory || '',
+          description: latest.description || '', amount, date, notes: detail,
+          cashAccount: cashBox.account, fromUserEmail: cashBox.ownerEmail,
+          fromUserName: cashBox.ownerName, createdBy: currentUserId,
+          createdByEmail: currentUserEmail, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+        };
+        transaction.set(cashRef, movement);
+        transaction.set(auditRef, {
+          action: 'reimbursement_recorded', collectionName, itemId: item.id,
+          paymentId: currentPayment.id, paymentIndex: index, reimbursementId,
+          reimbursementIndex: reimbursements.length, cashMovementId: cashRef.id,
+          thirdPartyPayerId: currentPayment.thirdPartyPayerId,
+          amount, oldReimbursedAmount: getReimbursedCents(currentPayment) / 100,
+          newReimbursedAmount: nextReimbursedAmount,
+          deletedBy: currentUserId, deletedByEmail: currentUserEmail,
+          deletedByName: currentUserName, deletedByRole: currentUserRole,
+          createdAt: serverTimestamp(),
+        });
+        return { updatedHistory, movement };
+      });
+      onCashMovementCreated?.({ id: cashRef.id, ...result.movement, createdAt: new Date(), updatedAt: new Date() });
+      onPaymentStateChange(item.id, collectionName, result.updatedHistory, Boolean(item.paid));
+      form.reset();
+    } catch (error: any) {
+      setReimbursementError(error?.message === 'INVALID_REIMBURSEMENT'
+        ? 'El reintegro supera el saldo pendiente o la persona acreedora no está identificada.'
+        : 'No se pudo registrar el reintegro. Actualizá y revisá el saldo antes de intentarlo otra vez.');
+      console.error('Error recording reimbursement:', error);
+    } finally {
+      setActiveReimbursementId('');
+    }
+  };
+
+  const deleteReimbursement = async (paymentIndex: number, reimbursementId: string) => {
+    if (!projectId || !canEditExistingPayments || !item?.id
+      || !window.confirm('¿Anular este reintegro y su salida de caja? La anulación quedará auditada.')) return;
+    const selectedPayment = paymentHistory[paymentIndex] as Payment | undefined;
+    const selectedReimbursement = selectedPayment?.reimbursements?.find((entry) => entry.id === reimbursementId);
+    if (!selectedPayment || !selectedReimbursement) return;
+    const itemRef = doc(db, 'projects', projectId, collectionName, item.id);
+    const auditRef = doc(collection(db, 'projects', projectId, 'activityLog'));
+    setActiveReimbursementId(reimbursementId);
+    setReimbursementError('');
+    try {
+      const result = await runTransaction(db, async (transaction) => {
+        const snapshot = await transaction.get(itemRef);
+        if (!snapshot.exists() || !samePaymentTarget(item, snapshot.data())) throw new Error('ITEM_CHANGED');
+        const history = Array.isArray(snapshot.data().paymentHistory) ? snapshot.data().paymentHistory as Payment[] : [];
+        const { payment: currentPayment, index } = findCurrentPayment(history, selectedPayment, paymentIndex);
+        const reimbursements = Array.isArray(currentPayment.reimbursements) ? currentPayment.reimbursements : [];
+        const reimbursementIndex = reimbursements.findIndex((entry) => entry.id === reimbursementId);
+        const reimbursement = reimbursements[reimbursementIndex];
+        if (!reimbursement || reimbursement.amount !== selectedReimbursement.amount
+          || reimbursement.cashMovementId !== selectedReimbursement.cashMovementId) throw new Error('REIMBURSEMENT_CHANGED');
+        const cashRef = doc(db, 'projects', projectId, 'cashMovements', reimbursement.cashMovementId);
+        const cashSnapshot = await transaction.get(cashRef);
+        if (!cashSnapshot.exists()) throw new Error('REIMBURSEMENT_CASH_MISMATCH');
+        assertReimbursementCashLink(cashSnapshot.data(), { collectionName, itemId: item.id, payment: currentPayment, reimbursement });
+        const nextReimbursedAmount = (getReimbursedCents(currentPayment) - toMoneyCents(reimbursement.amount)) / 100;
+        const updatedHistory = history.map((payment, currentIndex) => currentIndex === index
+          ? { ...currentPayment, reimbursements: reimbursements.filter((entry) => entry.id !== reimbursementId), reimbursedAmount: nextReimbursedAmount }
+          : payment);
+        transaction.update(itemRef, { paymentHistory: updatedHistory, lastFinancialAuditId: auditRef.id, updatedAt: serverTimestamp() });
+        transaction.delete(cashRef);
+        transaction.set(auditRef, {
+          action: 'reimbursement_deleted', collectionName, itemId: item.id,
+          paymentId: currentPayment.id, paymentIndex: index, reimbursementId,
+          reimbursementIndex, cashMovementId: reimbursement.cashMovementId,
+          thirdPartyPayerId: currentPayment.thirdPartyPayerId,
+          amount: reimbursement.amount, oldReimbursedAmount: getReimbursedCents(currentPayment) / 100,
+          newReimbursedAmount: nextReimbursedAmount,
+          deletedBy: currentUserId, deletedByEmail: currentUserEmail,
+          deletedByName: currentUserName, deletedByRole: currentUserRole,
+          createdAt: serverTimestamp(),
+        });
+        return { updatedHistory, cashMovementId: reimbursement.cashMovementId };
+      });
+      onCashMovementDeleted?.(result.cashMovementId);
+      onPaymentStateChange(item.id, collectionName, result.updatedHistory, Boolean(item.paid));
+    } catch (error) {
+      console.error('Error deleting reimbursement:', error);
+      setReimbursementError('No se pudo anular el reintegro. Actualizá y revisá el historial.');
+    } finally {
+      setActiveReimbursementId('');
     }
   };
 
@@ -413,9 +567,16 @@ export function PaymentModal({
               const amount = parsePaymentAmount(formData.get('amount'));
               const formReceiptFile = formData.get('receipt') as File | null;
               const receiptFile = selectedReceipt || (formReceiptFile && formReceiptFile.size > 0 ? formReceiptFile : null);
+              const useThirdParty = paymentFundingMode === 'third_party';
+              const thirdPartyPayer = providers.find((provider) => provider.id === thirdPartyPayerId);
               const requestedCashBoxId = String(formData.get('cashBoxId') || cashBoxOptions[0]?.id || '');
               const selectedCashBox = cashBoxOptions.find((option) => option.id === requestedCashBoxId);
-              const useCashBox = formData.get('useCashBox') === 'on' && Boolean(selectedCashBox);
+              const useCashBox = !useThirdParty && formData.get('useCashBox') === 'on' && Boolean(selectedCashBox);
+
+              if (useThirdParty && !thirdPartyPayer) {
+                setPaymentError('Seleccioná la persona que adelantó este pago.');
+                return;
+              }
               
               if (!amount || amount <= 0) {
                 setPaymentError('Ingresá un monto válido. Podés escribir 2530000 o 2.530.000.');
@@ -444,7 +605,7 @@ export function PaymentModal({
 
               const currentItemId = item.id;
               const isRemainingBalance = toMoneyCents(amount) === remainingBalanceCents;
-              const paymentId = Math.random().toString(36).substr(2, 9);
+              const paymentId = crypto.randomUUID();
 
               const newPayment: Payment = {
                 id: paymentId,
@@ -452,7 +613,13 @@ export function PaymentModal({
                 detail: formData.get('detail') as string,
                 date: customDate ? new Date(customDate + 'T12:00:00') : new Date(),
                 type: isRemainingBalance ? 'total' : 'partial',
-                method: useCashBox ? 'caja_efectivo' : 'otro',
+                method: useThirdParty ? 'tercero' : useCashBox ? 'caja_efectivo' : 'otro',
+                ...(useThirdParty && thirdPartyPayer ? {
+                  thirdPartyPayerId: thirdPartyPayer.id,
+                  thirdPartyPayerName: providerDisplayName(thirdPartyPayer),
+                  reimbursements: [],
+                  reimbursedAmount: 0,
+                } : {}),
                 ...(useCashBox && selectedCashBox ? {
                   cashAccount: selectedCashBox.account,
                   cashBoxLabel: selectedCashBox.label,
@@ -567,6 +734,8 @@ export function PaymentModal({
                 setAmountInput('');
                 setSelectedReceipt(null);
                 setPaymentDateInput(toDateInputValue());
+                setPaymentFundingMode('company');
+                setThirdPartyPayerId('');
               } catch (err: any) {
                 console.error("Error updating payment:", err);
                 if (newPayment.receipt?.path) deleteObject(ref(storage, newPayment.receipt.path)).catch(() => {});
@@ -638,7 +807,35 @@ export function PaymentModal({
                 <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1.5 tracking-widest">Detalle / Referencia</label>
                 <input name="detail" placeholder="Ej: Transferencia Banco X, Pago en efectivo..." className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded text-xs focus:outline-none focus:border-black transition-all" />
               </div>
-              {cashBoxOptions.length > 0 && (
+              <div className="rounded-xl border border-slate-200 p-3 space-y-2">
+                <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-500">¿Quién pagó?</label>
+                <select
+                  value={paymentFundingMode}
+                  onChange={(event) => setPaymentFundingMode(event.target.value as 'company' | 'third_party')}
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold"
+                >
+                  <option value="company">La empresa</option>
+                  <option value="third_party">Pagó otra persona</option>
+                </select>
+                {paymentFundingMode === 'third_party' && (
+                  <>
+                    <select
+                      value={thirdPartyPayerId}
+                      onChange={(event) => setThirdPartyPayerId(event.target.value)}
+                      required
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs"
+                    >
+                      <option value="">Seleccionar persona acreedora...</option>
+                      {providers
+                        .filter((provider) => provider.type !== 'empresa')
+                        .sort((a, b) => providerDisplayName(a).localeCompare(providerDisplayName(b), 'es'))
+                        .map((provider) => <option key={provider.id} value={provider.id}>{providerDisplayName(provider)}</option>)}
+                    </select>
+                    <p className="text-xs text-amber-700">El gasto quedará pagado al proveedor y pendiente de reintegro a esta persona. La caja de la empresa no se moverá todavía.</p>
+                  </>
+                )}
+              </div>
+              {paymentFundingMode === 'company' && cashBoxOptions.length > 0 && (
                 <div className="p-3 bg-amber-50 border border-amber-100 rounded-xl space-y-3">
                   <label className="flex items-center justify-between gap-4 cursor-pointer">
                     <div>
@@ -740,6 +937,8 @@ export function PaymentModal({
                   const paymentAuthor = payment.createdByName || payment.paidByName || payment.createdByEmail || payment.paidByEmail || '';
                   const cashOwner = payment.paidByName || payment.paidByEmail || payment.createdByName || payment.createdByEmail || '';
                   const wasPaidWithCashBox = payment.method === 'caja_efectivo';
+                  const isExternal = isThirdPartyPayment(payment);
+                  const reimbursementBalance = getReimbursementBalanceCents(payment) / 100;
                   const editableMaxAmount = Math.max(0, (toMoneyCents(item.total) - (totalPaidCents - toMoneyCents(payment.amount))) / 100);
                   return (
                   <div key={payment.id || idx} className="p-3 bg-slate-50 rounded-lg border border-slate-100">
@@ -757,7 +956,7 @@ export function PaymentModal({
                             name="editAmount"
                             type="number"
                             step="0.01"
-                            min="0.01"
+                            min={isExternal ? Math.max(0.01, getReimbursedCents(payment) / 100) : 0.01}
                             max={editableMaxAmount}
                             defaultValue={payment.amount}
                             className="px-3 py-2 bg-white border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black"
@@ -809,6 +1008,12 @@ export function PaymentModal({
                               </span>
                             </div>
                           )}
+                          {isExternal && (
+                            <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">
+                              <div className="font-bold">Pagó {payment.thirdPartyPayerName || 'persona sin identificar'}</div>
+                              <div>Reintegrado: ${(getReimbursedCents(payment) / 100).toLocaleString('es-AR')} · Pendiente: ${reimbursementBalance.toLocaleString('es-AR')}</div>
+                            </div>
+                          )}
                           {payment.receipt?.url && (
                             <a
                               href={payment.receipt.url}
@@ -839,7 +1044,7 @@ export function PaymentModal({
                               Editar
                             </button>
                           )}
-                          {canEditPaymentRecord?.(payment, idx) && (
+                          {canEditPaymentRecord?.(payment, idx) && (!isExternal || !payment.reimbursements?.length) && (
                             <button
                               type="button"
                               disabled={isDeletingPayment === idx}
@@ -865,10 +1070,37 @@ export function PaymentModal({
                         </div>
                       </div>
                     )}
+                    {isExternal && editingPaymentIndex !== idx && (
+                      <div className="mt-3 space-y-2 border-t border-slate-200 pt-3">
+                        {(payment.reimbursements || []).map((reimbursement) => (
+                          <div key={reimbursement.id} className="flex items-center justify-between gap-2 rounded bg-white p-2 text-xs">
+                            <span>Reintegro {formatDate(reimbursement.date)} · ${reimbursement.amount.toLocaleString('es-AR')} · {reimbursement.cashAccount === 'general' ? 'Caja General' : 'Caja personal'}{reimbursement.detail ? ` · ${reimbursement.detail}` : ''}</span>
+                            {canEditExistingPayments && <button type="button" disabled={Boolean(activeReimbursementId)} onClick={() => void deleteReimbursement(idx, reimbursement.id)} className="text-rose-600 disabled:opacity-40">Anular</button>}
+                          </div>
+                        ))}
+                        {canEditExistingPayments && reimbursementBalance > 0.009 && (
+                          <form onSubmit={(event) => void recordReimbursement(event, idx)} className="space-y-2 rounded-lg border border-slate-200 bg-white p-3">
+                            <div className="text-xs font-bold">Registrar reintegro a {payment.thirdPartyPayerName}</div>
+                            <div className="grid grid-cols-2 gap-2">
+                              <input name="reimbursementDate" type="date" required defaultValue={toDateInputValue()} className="rounded border border-slate-200 p-2 text-xs" />
+                              <input name="reimbursementAmount" type="number" min="0.01" max={reimbursementBalance} step="0.01" required placeholder="Importe" className="rounded border border-slate-200 p-2 text-xs" />
+                            </div>
+                            <select name="reimbursementCashBoxId" required defaultValue="" className="w-full rounded border border-slate-200 p-2 text-xs">
+                              <option value="">Seleccionar caja de salida...</option>
+                              {cashBoxOptions.map((option) => <option key={option.id} value={option.id}>{option.label} · {option.unlimited ? 'sin límite' : `$${option.balance.toLocaleString('es-AR')}`}</option>)}
+                            </select>
+                            <input name="reimbursementDetail" required placeholder="Referencia del pago real" className="w-full rounded border border-slate-200 p-2 text-xs" />
+                            <p className="text-[11px] text-slate-500">Sólo registrar cuando el dinero salió de esta caja. Los reintegros bancarios se registrarán desde Control Total cuando exista la cuenta pagadora verificable.</p>
+                            <button type="submit" disabled={Boolean(activeReimbursementId) || cashBoxOptions.length === 0} className="rounded bg-slate-900 px-3 py-2 text-xs font-bold text-white disabled:opacity-40">Registrar reintegro</button>
+                          </form>
+                        )}
+                      </div>
+                    )}
                   </div>
                   );
                 })}
               </div>
+              {reimbursementError && <p role="alert" className="mt-3 text-xs font-bold text-rose-600">{reimbursementError}</p>}
             </div>
           )}
         </div>

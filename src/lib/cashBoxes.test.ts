@@ -21,6 +21,15 @@ test('Caja General separa salidas confirmadas y entregas pendientes', () => {
   assert.equal(summary.movements.length, 3);
 });
 
+test('un reintegro efectivo descuenta Caja General una sola vez', () => {
+  const summary = calculateGeneralCashSummary([
+    { type: 'reintegro', cashAccount: 'general', amount: 40 },
+    { type: 'reintegro', cashAccount: 'personal', amount: 20 },
+  ]);
+  assert.equal(summary.directPayments, 40);
+  assert.equal(summary.totalOut, 40);
+});
+
 test('un administrador con caja asignada ve primero su caja y luego Caja General', () => {
   const options = buildPaymentCashBoxOptions({
     isProjectAdmin: true,

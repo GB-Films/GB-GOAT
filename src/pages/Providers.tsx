@@ -492,7 +492,8 @@ export default function Providers() {
     const cuit = String(formData.get('cuit') || '');
     const cbu = String(formData.get('bankAccount_cbu') || '').trim();
     const alias = String(formData.get('bankAccount_alias') || '').trim();
-    if (!cbu && !alias) {
+    const provisional = formData.get('provisional') === 'on';
+    if (!provisional && !cbu && !alias) {
       alert('Completá el CBU o el Alias.');
       return;
     }
@@ -504,6 +505,7 @@ export default function Providers() {
     const data: any = type === 'empresa'
       ? {
           type,
+          status: provisional ? 'provisional' : 'active',
           name: formData.get('businessName'),
           businessName: formData.get('businessName'),
           lastName: '',
@@ -522,6 +524,7 @@ export default function Providers() {
         }
       : {
           type,
+          status: provisional ? 'provisional' : 'active',
           name: formData.get('name'),
           lastName: formData.get('lastName'),
           fullName: `${formData.get('name') || ''} ${formData.get('lastName') || ''}`.trim(),
@@ -545,6 +548,16 @@ export default function Providers() {
 
     try {
       setSavingProvider(true);
+      const normalizedName = providerDisplayName(data).normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+      const freshProviders = await getDocs(collection(db, 'providers'));
+      if (freshProviders.docs.some((entry) => {
+        const existing = entry.data();
+        const names = [providerDisplayName(existing), existing.name, existing.businessName, existing.bankAccount_alias];
+        return names.some((name) => String(name || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase() === normalizedName);
+      })) {
+        alert('Ya existe un proveedor con ese nombre o alias. Revisá la ficha existente antes de crear otra.');
+        return;
+      }
       const duplicateMessage = await validateProviderIdentifiersAvailable(data);
       if (duplicateMessage) {
         alert(duplicateMessage);
@@ -720,8 +733,24 @@ export default function Providers() {
         const activeAreas = Array.isArray(project.activeAreas) ? project.activeAreas : [];
 
         const pushLine = (item: any, source: 'Presupuesto Principal' | 'Gestion por Areas') => {
-          if (item.providerId !== provider.id) return;
           if (source === 'Presupuesto Principal' && activeAreas.includes(item.area)) return;
+          (Array.isArray(item.paymentHistory) ? item.paymentHistory : []).forEach((payment: any, index: number) => {
+            if (payment.method !== 'tercero' || payment.thirdPartyPayerId !== provider.id) return;
+            const reimbursed = (Array.isArray(payment.reimbursements) ? payment.reimbursements : [])
+              .reduce((sum: number, entry: any) => sum + (Number(entry.amount) || 0), 0);
+            const amount = Number(payment.amount) || 0;
+            lines.push({
+              id: `${project.id}-${source}-${item.id}-reintegro-${payment.id || index}`,
+              projectId: project.id, projectName: project.name || 'Sin nombre',
+              area: item.area || 'Sin area', source: 'Reintegro a tercero',
+              description: `Reintegro por ${item.description || 'gasto'}`,
+              total: amount, paid: reimbursed, debt: Math.max(0, amount - reimbursed),
+              paymentDate: item.paymentDate || '',
+              payments: (payment.reimbursements || []).map((entry: any) => ({ id: entry.id, amount: entry.amount, detail: entry.detail || '', date: entry.date, loadedBy: entry.createdByEmail || '' })),
+              invoiceUrl: '', invoiceName: '', receipts: [],
+            });
+          });
+          if (item.providerId !== provider.id) return;
           const paid = getPaymentTotal(item);
           const payments = Array.isArray(item.paymentHistory)
             ? item.paymentHistory.map((payment: any, index: number) => ({
@@ -1395,6 +1424,7 @@ function ProviderDetailModal({ detail, loading, onClose }: { detail: any; loadin
 function ProviderManualModal({ saving, onClose, onSubmit }: { saving?: boolean; onClose: () => void; onSubmit: (e: React.FormEvent<HTMLFormElement>) => void }) {
   const [type, setType] = useState<'persona' | 'empresa'>('persona');
   const [category, setCategory] = useState('');
+  const [provisional, setProvisional] = useState(false);
   const categories = type === 'empresa' ? COMPANY_PROVIDER_CATEGORIES : PRODUCTION_AREA_CATEGORIES;
 
   return (
@@ -1411,28 +1441,32 @@ function ProviderManualModal({ saving, onClose, onSubmit }: { saving?: boolean; 
             <button type="button" onClick={() => setType('empresa')} className={`px-4 py-3 rounded border text-xs font-bold uppercase tracking-widest ${type === 'empresa' ? 'bg-black text-white border-black' : 'border-slate-200'}`}>Empresa</button>
           </div>
           <input type="hidden" name="type" value={type} />
+          <label className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+            <input type="checkbox" name="provisional" checked={provisional} onChange={(event) => setProvisional(event.target.checked)} />
+            Alta provisional: datos fiscales y bancarios aún no informados
+          </label>
 
           {type === 'persona' ? (
             <div className="grid grid-cols-2 gap-4">
               <Field label="Nombre" required><input name="name" required className={inputClass} /></Field>
               <Field label="Apellido" required><input name="lastName" required className={inputClass} /></Field>
-              <Field label="DNI" required><input name="dni" required className={inputClass} /></Field>
-              <Field label="CUIT / CUIL" required><input name="cuit" required className={inputClass} /></Field>
+              <Field label="DNI" required={!provisional}><input name="dni" required={!provisional} className={inputClass} /></Field>
+              <Field label="CUIT / CUIL" required={!provisional}><input name="cuit" required={!provisional} className={inputClass} /></Field>
               <Field label="Fecha Nacimiento"><DateInputField name="birthDate" /></Field>
               <Field label="Restricción alimentaria"><input name="dietaryRestriction" className={inputClass} /></Field>
             </div>
           ) : (
             <>
               <Field label="Razón Social" required><input name="businessName" required className={inputClass} /></Field>
-              <Field label="CUIT" required><input name="cuit" required className={inputClass} /></Field>
+              <Field label="CUIT" required={!provisional}><input name="cuit" required={!provisional} className={inputClass} /></Field>
             </>
           )}
 
           <div className="grid grid-cols-2 gap-4">
-            <Field label="Email" required><input name="email" type="email" required className={inputClass} /></Field>
-            <Field label="Teléfono" required><input name="phone" required className={inputClass} /></Field>
+            <Field label="Email" required={!provisional}><input name="email" type="email" required={!provisional} className={inputClass} /></Field>
+            <Field label="Teléfono" required={!provisional}><input name="phone" required={!provisional} className={inputClass} /></Field>
           </div>
-          <Field label="Domicilio" required><input name="address" required className={inputClass} /></Field>
+          <Field label="Domicilio" required={!provisional}><input name="address" required={!provisional} className={inputClass} /></Field>
           <div className="grid grid-cols-2 gap-4">
             <Field label="Categoría" required>
               <select name="category" value={category} onChange={(e) => setCategory(e.target.value)} required className={inputClass}>
@@ -1443,14 +1477,14 @@ function ProviderManualModal({ saving, onClose, onSubmit }: { saving?: boolean; 
             {category === 'Otra' && <Field label="Comentario Otra" required><input name="categoryOther" required className={inputClass} /></Field>}
           </div>
           <div>
-            <div className={labelClass}>Datos bancarios<span className="ml-1 text-red-500">*</span></div>
+            <div className={labelClass}>Datos bancarios{!provisional && <span className="ml-1 text-red-500">*</span>}</div>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <Field label="CBU">
                 <input name="bankAccount_cbu" inputMode="numeric" pattern="[0-9]{22}" maxLength={22} placeholder="22 números sin espacios" className={`${inputClass} font-mono`} />
               </Field>
               <Field label="Alias"><input name="bankAccount_alias" placeholder="Alias de la cuenta" className={inputClass} /></Field>
             </div>
-            <p className="mt-2 text-xs text-slate-400">Completá al menos uno de los dos datos bancarios.</p>
+            <p className="mt-2 text-xs text-slate-400">{provisional ? 'Podés completar estos datos cuando estén verificados.' : 'Completá al menos uno de los dos datos bancarios.'}</p>
           </div>
           <div className="flex gap-3 pt-4">
             <button type="button" onClick={onClose} className="flex-1 px-4 py-3 border border-slate-200 rounded text-xs font-bold tracking-widest uppercase hover:bg-slate-50 transition-colors">Cancelar</button>

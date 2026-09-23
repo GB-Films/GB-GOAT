@@ -1,10 +1,12 @@
+import type { ReimbursementRecord } from '../../lib/reimbursements';
+
 export interface Payment {
   id: string;
   amount: number;
   detail: string;
   date: any;
   type: 'partial' | 'total';
-  method?: 'caja_efectivo' | 'otro';
+  method?: 'caja_efectivo' | 'otro' | 'tercero';
   cashAccount?: 'general' | 'personal';
   cashBoxLabel?: string;
   createdByEmail?: string;
@@ -13,6 +15,10 @@ export interface Payment {
   createdByRole?: string;
   paidByEmail?: string;
   paidByName?: string;
+  thirdPartyPayerId?: string;
+  thirdPartyPayerName?: string;
+  reimbursements?: ReimbursementRecord[];
+  reimbursedAmount?: number;
   cashMovementId?: string;
   receipt?: {
     fileName: string;
@@ -80,7 +86,7 @@ export type PaymentCollection = 'budgetItems' | 'areaExpenses';
 
 export interface CashMovement {
   id: string;
-  type: 'entrega' | 'transferencia' | 'pago';
+  type: 'entrega' | 'transferencia' | 'pago' | 'reintegro';
   amount: number;
   cashAccount?: 'general' | 'personal';
   date: any;
@@ -94,6 +100,9 @@ export interface CashMovement {
   collectionName?: PaymentCollection;
   itemId?: string;
   paymentId?: string;
+  reimbursementId?: string;
+  thirdPartyPayerId?: string;
+  thirdPartyPayerName?: string;
   description?: string;
   notes?: string;
   createdByEmail?: string;
