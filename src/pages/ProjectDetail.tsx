@@ -66,7 +66,7 @@ import { getReimbursementBalanceCents, getReimbursedCents, isThirdPartyPayment }
 import { getFileExtension, sanitizeFileName, validateSpreadsheetImport } from '../lib/files';
 import { PROJECT_STATUSES } from '../lib/projects';
 import { getExpenseInvoices, getInvoiceDocumentKey, type ExpenseInvoiceDocument } from '../lib/invoices';
-import { buildPaymentCashBoxOptions, calculateGeneralCashSummary, GENERAL_CASH_ACCOUNT, isGeneralCashMovement } from '../lib/cashBoxes';
+import { buildPaymentCashBoxOptions, calculateCashBalances, calculateGeneralCashSummary, GENERAL_CASH_ACCOUNT } from '../lib/cashBoxes';
 import { buildLinkedProviderInviteExpiration } from '../lib/providerInvites';
 import { resolveCashMovementTarget } from '../lib/cashMovementTargets';
 import { assertCashPaymentLink, findCurrentPayment, hasRecordedPayment, prepareExpenseEdit, sameExpenseVersion, samePaymentTarget } from '../lib/expenseEdits';
@@ -710,9 +710,13 @@ export default function ProjectDetail() {
   const [cashMovements, setCashMovements] = useState<CashMovement[]>([]);
   const [cashRecipientEmail, setCashRecipientEmail] = useState('');
   const [cashTransferTargetEmail, setCashTransferTargetEmail] = useState('');
+  const [cashReturnRecipientEmail, setCashReturnRecipientEmail] = useState('');
   const [isCreatingCashDelivery, setIsCreatingCashDelivery] = useState(false);
+  const [isCreatingCashReturn, setIsCreatingCashReturn] = useState(false);
   const [cashDeliveryNotice, setCashDeliveryNotice] = useState<{ message: string } | null>(null);
   const [confirmingCashDeliveryId, setConfirmingCashDeliveryId] = useState('');
+  const [confirmingCashReturnId, setConfirmingCashReturnId] = useState('');
+  const [cancellingCashReturnId, setCancellingCashReturnId] = useState('');
   const [availableUsers, setAvailableUsers] = useState<any[]>([]);
   const [newCollaboratorSearch, setNewCollaboratorSearch] = useState('');
   const [selectedUserToAdd, setSelectedUserToAdd] = useState<any | null>(null);
@@ -899,7 +903,7 @@ export default function ProjectDetail() {
   }, [id, user]);
 
   useEffect(() => {
-    if (!isProjectAdmin) return;
+    if (!id || !user) return;
 
     const fetchUsers = async () => {
       try {
@@ -911,7 +915,7 @@ export default function ProjectDetail() {
     };
 
     fetchUsers();
-  }, [isProjectAdmin]);
+  }, [id, user]);
 
   useEffect(() => {
     if (!isProjectAdmin || !id) return;
@@ -2169,7 +2173,7 @@ export default function ProjectDetail() {
         collectionName,
         expenseId: currentItem.id,
         area: currentItem.area || '',
-        subcategory: cleanAreaExpenseSubcategory(currentItem.subcategory),
+        subcategory: cleanAreaExpenseSubcategory(collectionName === 'areaExpenses' ? (currentItem as AreaExpense).subcategory : ''),
         description: currentItem.description || '',
         expiresAt,
         expiresInDays: days,
@@ -3365,24 +3369,29 @@ export default function ProjectDetail() {
         });
       });
 
+    const ownerEmail = normalizeEmail(project?.createdByEmail);
+    if (ownerEmail && recipients.get(ownerEmail)?.role !== 'admin') {
+      recipients.set(ownerEmail, {
+        uid: project?.createdBy,
+        email: ownerEmail,
+        displayName: availableUsers.find((candidate) => normalizeEmail(candidate.email) === ownerEmail)?.displayName || ownerEmail,
+        role: 'admin',
+        allowedTabs: [...PROJECT_TAB_IDS],
+        allowedCategories: categories,
+      });
+    }
+
     return Array.from(recipients.values())
       .sort((a, b) => (a.displayName || a.email).localeCompare(b.displayName || b.email, 'es'));
-  }, [availableUsers, categories, collaborators]);
+  }, [availableUsers, categories, collaborators, project?.createdBy, project?.createdByEmail]);
 
-  const cashBalanceByEmail = React.useMemo(() => {
-    const balances = new Map<string, number>();
-    cashMovements.forEach((movement) => {
-      if (movement.type === 'entrega' && movement.status === 'pending') return;
-      const amount = Number(movement.amount) || 0;
-      const toEmail = normalizeEmail(movement.toUserEmail);
-      const fromEmail = normalizeEmail(movement.fromUserEmail);
-      if (toEmail) balances.set(toEmail, (balances.get(toEmail) || 0) + amount);
-      if (fromEmail && !isGeneralCashMovement(movement)) balances.set(fromEmail, (balances.get(fromEmail) || 0) - amount);
-    });
-    return balances;
-  }, [cashMovements]);
+  const cashBalanceByEmail = React.useMemo(() => calculateCashBalances(cashMovements), [cashMovements]);
 
   const currentCashBalance = cashBalanceByEmail.get(currentUserEmail) || 0;
+  const pendingReturnAmount = cashMovements
+    .filter((movement) => movement.type === 'devolucion' && movement.status === 'pending' && normalizeEmail(movement.fromUserEmail) === currentUserEmail)
+    .reduce((total, movement) => total + (Number(movement.amount) || 0), 0);
+  const availableReturnBalance = Math.max(0, currentCashBalance - pendingReturnAmount);
   const paymentCashBoxOptions = React.useMemo(() => buildPaymentCashBoxOptions({
     isProjectAdmin,
     hasPersonalCashBox: cashBalanceByEmail.has(currentUserEmail),
@@ -3411,6 +3420,14 @@ export default function ProjectDetail() {
         return bd - ad;
       })
   ), [cashMovements, currentUserEmail]);
+  const pendingCashReturns = React.useMemo(() => (
+    cashMovements.filter((movement) => movement.type === 'devolucion'
+      && movement.status === 'pending'
+      && normalizeEmail(movement.toUserEmail) === currentUserEmail)
+  ), [cashMovements, currentUserEmail]);
+  const cashReturnRecipients = React.useMemo(() => cashResponsibles.filter((responsible) =>
+    responsible.role === 'admin' && normalizeEmail(responsible.email) !== currentUserEmail
+  ), [cashResponsibles, currentUserEmail]);
   const productionTransferTargets = React.useMemo(() => (
     cashResponsibles.filter((responsible) => {
       if (responsible.role !== 'jefe_area') return false;
@@ -3436,7 +3453,8 @@ export default function ProjectDetail() {
         const email = normalizeEmail(responsible.email);
         const movements = cashMovements
           .filter((movement) => (
-            (normalizeEmail(movement.toUserEmail) === email || normalizeEmail(movement.fromUserEmail) === email)
+            (normalizeEmail(movement.fromUserEmail) === email
+              || (movement.type !== 'devolucion' && normalizeEmail(movement.toUserEmail) === email))
             && !((movement.type === 'pago' || movement.type === 'reintegro') && movement.cashAccount === GENERAL_CASH_ACCOUNT)
           ))
           .sort((a, b) => {
@@ -3447,6 +3465,7 @@ export default function ProjectDetail() {
         const received = movements
           .filter((movement) => (
             normalizeEmail(movement.toUserEmail) === email
+            && movement.type !== 'devolucion'
             && !(movement.type === 'entrega' && movement.status === 'pending')
           ))
           .reduce((acc, movement) => acc + (Number(movement.amount) || 0), 0);
@@ -3457,6 +3476,10 @@ export default function ProjectDetail() {
         const transferred = movements
           .filter((movement) => normalizeEmail(movement.fromUserEmail) === email && movement.type === 'transferencia')
           .reduce((acc, movement) => acc + (Number(movement.amount) || 0), 0);
+        const returned = movements
+          .filter((movement) => normalizeEmail(movement.fromUserEmail) === email
+            && movement.type === 'devolucion' && movement.status === 'confirmed')
+          .reduce((acc, movement) => acc + (Number(movement.amount) || 0), 0);
 
         return {
           responsible,
@@ -3465,6 +3488,7 @@ export default function ProjectDetail() {
           received,
           used,
           transferred,
+          returned,
           balance: cashBalanceByEmail.get(email) || 0,
         };
       })
@@ -3483,6 +3507,12 @@ export default function ProjectDetail() {
       setCashTransferTargetEmail(productionTransferTargets[0].email);
     }
   }, [cashTransferTargetEmail, productionTransferTargets]);
+
+  useEffect(() => {
+    if (!cashReturnRecipients.some((recipient) => recipient.email === cashReturnRecipientEmail)) {
+      setCashReturnRecipientEmail(cashReturnRecipients[0]?.email || '');
+    }
+  }, [cashReturnRecipientEmail, cashReturnRecipients]);
 
   const providerSaldosByArea = React.useMemo(() => {
     const allowedCategories = isProjectAdmin ? categories : safeArray(userPermissions?.allowedCategories);
@@ -4369,6 +4399,107 @@ export default function ProjectDetail() {
     }
   };
 
+  const createCashReturn = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!id || !user?.uid || isCreatingCashReturn) return;
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    const toEmail = normalizeEmail(formData.get('toUserEmail') as string);
+    const recipient = cashReturnRecipients.find((item) => item.email === toEmail);
+    const amount = Number(formData.get('amount'));
+    const date = parseProjectDate(String(formData.get('date') || ''));
+    const notes = String(formData.get('notes') || '').trim();
+    if (!recipient || !Number.isFinite(amount) || amount <= 0 || !date) {
+      alert('Elegí un administrador e ingresá una fecha y un monto válidos.');
+      return;
+    }
+    setIsCreatingCashReturn(true);
+    try {
+      const fresh = await getDocsFromServer(collection(db, 'projects', id, 'cashMovements'));
+      const movements = fresh.docs.map((entry) => entry.data() as CashMovement);
+      const balance = calculateCashBalances(movements).get(currentUserEmail) || 0;
+      const reserved = movements.filter((movement) => movement.type === 'devolucion'
+        && movement.status === 'pending' && normalizeEmail(movement.fromUserEmail) === currentUserEmail)
+        .reduce((total, movement) => total + (Number(movement.amount) || 0), 0);
+      if (amount > balance - reserved + 0.01) {
+        alert('La devolución supera tu saldo disponible, descontando otras devoluciones pendientes.');
+        return;
+      }
+      const payload = {
+        type: 'devolucion', cashAccount: GENERAL_CASH_ACCOUNT, status: 'pending',
+        amount, date, fromUserEmail: currentUserEmail, fromUserName: currentUserName,
+        ...(recipient.uid ? { toUserId: recipient.uid } : {}),
+        toUserEmail: recipient.email, toUserName: recipient.displayName || recipient.email,
+        notes, createdBy: user.uid, createdByEmail: currentUserEmail,
+        createdByName: currentUserName, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+      };
+      const ref = await addDoc(collection(db, 'projects', id, 'cashMovements'), payload);
+      setCashMovements((current) => [{ id: ref.id, ...payload, createdAt: new Date(), updatedAt: new Date() } as CashMovement, ...current]);
+      form.reset();
+      showExpenseConfirmation(`Devolución de $${amount.toLocaleString()} pendiente de confirmación por ${recipient.displayName || recipient.email}.`, 'warning');
+    } catch (error) {
+      console.error('Error creating cash return:', error);
+      alert('No se pudo registrar la devolución. Intentá nuevamente.');
+    } finally {
+      setIsCreatingCashReturn(false);
+    }
+  };
+
+  const confirmCashReturn = async (movement: CashMovement) => {
+    if (!id || !user?.uid || !isProjectAdmin || movement.type !== 'devolucion'
+      || movement.status !== 'pending' || normalizeEmail(movement.toUserEmail) !== currentUserEmail
+      || confirmingCashReturnId) return;
+    const amount = Number(movement.amount) || 0;
+    if (!window.confirm(`¿Confirmás que recibiste $${amount.toLocaleString()} de ${movement.fromUserName || movement.fromUserEmail} para Caja General? La caja asignada a esa persona se reducirá al confirmar.`)) return;
+    setConfirmingCashReturnId(movement.id);
+    try {
+      const fresh = await getDocsFromServer(collection(db, 'projects', id, 'cashMovements'));
+      const movements = fresh.docs.map((entry) => ({ id: entry.id, ...entry.data() } as CashMovement));
+      const latest = movements.find((entry) => entry.id === movement.id);
+      const balance = calculateCashBalances(movements).get(normalizeEmail(movement.fromUserEmail)) || 0;
+      if (!latest || latest.status !== 'pending' || amount > balance + 0.01) {
+        alert('El saldo o el estado de esta devolución cambió. Revisá la caja antes de confirmarla.');
+        return;
+      }
+      const updates = {
+        status: 'confirmed' as const, confirmedAt: serverTimestamp(),
+        confirmedBy: user.uid, confirmedByEmail: currentUserEmail,
+        confirmedByName: currentUserName, updatedAt: serverTimestamp(),
+      };
+      await updateDoc(doc(db, 'projects', id, 'cashMovements', movement.id), updates);
+      setCashMovements((current) => current.map((entry) => entry.id === movement.id
+        ? { ...entry, ...updates, confirmedAt: new Date(), updatedAt: new Date() } : entry));
+      showExpenseConfirmation(`Recibiste $${amount.toLocaleString()} y se descontaron de la caja de ${movement.fromUserName || movement.fromUserEmail}.`);
+    } catch (error) {
+      console.error('Error confirming cash return:', error);
+      alert('No se pudo confirmar la devolución. Intentá nuevamente.');
+    } finally {
+      setConfirmingCashReturnId('');
+    }
+  };
+
+  const cancelCashReturn = async (movement: CashMovement) => {
+    if (!id || !user?.uid || movement.type !== 'devolucion' || movement.status !== 'pending'
+      || normalizeEmail(movement.fromUserEmail) !== currentUserEmail || cancellingCashReturnId) return;
+    if (!window.confirm(`¿Cancelar la devolución pendiente de $${Number(movement.amount).toLocaleString()}? Quedará en el historial, sin modificar tu saldo.`)) return;
+    setCancellingCashReturnId(movement.id);
+    try {
+      const updates = {
+        status: 'cancelled' as const, cancelledAt: serverTimestamp(),
+        cancelledBy: user.uid, cancelledByEmail: currentUserEmail, updatedAt: serverTimestamp(),
+      };
+      await updateDoc(doc(db, 'projects', id, 'cashMovements', movement.id), updates);
+      setCashMovements((current) => current.map((entry) => entry.id === movement.id
+        ? { ...entry, ...updates, cancelledAt: new Date(), updatedAt: new Date() } : entry));
+      showExpenseConfirmation('Devolución pendiente cancelada. Tu saldo no cambió.');
+    } catch (error) {
+      console.error('Error cancelling cash return:', error);
+      alert('No se pudo cancelar la devolución. Intentá nuevamente.');
+    } finally {
+      setCancellingCashReturnId('');
+    }
+  };
+
   const editCashDelivery = async (movement: CashMovement) => {
     const canEditDelivery = isProjectAdmin || normalizeEmail(movement.createdByEmail) === currentUserEmail;
     if (!id || !canEditDelivery || movement.type !== 'entrega' || movement.status === 'confirmed') return;
@@ -4940,6 +5071,21 @@ export default function ProjectDetail() {
               </div>
             ))}
           </div>
+        </section>
+      )}
+
+      {pendingCashReturns.length > 0 && activeTab !== 'cajas' && (
+        <section className="mb-4 rounded-xl border-2 border-amber-300 bg-amber-50 p-4">
+          <h3 className="text-sm font-black text-amber-950">Devoluciones de caja para confirmar</h3>
+          {pendingCashReturns.map((movement) => (
+            <div key={movement.id} className="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs font-bold text-amber-900">
+              <span>${Number(movement.amount).toLocaleString()} de {movement.fromUserName || movement.fromUserEmail} · {formatDate(movement.date)}</span>
+              <button type="button" disabled={Boolean(confirmingCashReturnId)} onClick={() => confirmCashReturn(movement)}
+                className="rounded-lg bg-amber-950 px-4 py-2 text-white disabled:opacity-50">
+                {confirmingCashReturnId === movement.id ? 'Confirmando...' : 'Confirmar que recibí el dinero'}
+              </button>
+            </div>
+          ))}
         </section>
       )}
 
@@ -6489,13 +6635,13 @@ export default function ProjectDetail() {
                     {
                       label: 'Salió de Caja General',
                       value: generalCashSummary.totalOut,
-                      detail: 'Entregas confirmadas y pagos directos',
+                      detail: 'Entregas y pagos menos devoluciones confirmadas',
                       tone: 'text-slate-950',
                     },
                     {
                       label: 'Pendiente de confirmación',
-                      value: generalCashSummary.pendingDeliveries,
-                      detail: 'Todavía no integra ninguna caja personal',
+                      value: generalCashSummary.pendingDeliveries + generalCashSummary.pendingReturns,
+                      detail: 'Entregas y devoluciones a confirmar',
                       tone: 'text-amber-700',
                     },
                     {
@@ -6520,8 +6666,8 @@ export default function ProjectDetail() {
                     },
                     {
                       label: 'Pagado o transferido',
-                      value: (currentCashRow?.used || 0) + (currentCashRow?.transferred || 0),
-                      detail: 'Movimientos que redujeron tu caja',
+                      value: (currentCashRow?.used || 0) + (currentCashRow?.transferred || 0) + (currentCashRow?.returned || 0),
+                      detail: 'Pagos, transferencias y devoluciones confirmadas',
                       tone: 'text-slate-950',
                     },
                   ]
@@ -6568,23 +6714,41 @@ export default function ProjectDetail() {
               </section>
             )}
 
+            {pendingCashReturns.length > 0 && (
+              <section className="order-4 rounded-xl border-2 border-amber-300 bg-amber-50 p-5">
+                <h3 className="text-sm font-black text-amber-950">Devoluciones pendientes de tu recepción</h3>
+                <p className="mt-1 text-xs text-amber-800">Confirmá sólo después de recibir el efectivo. Hasta entonces, el saldo de la persona permanece igual.</p>
+                {pendingCashReturns.map((movement) => (
+                  <div key={movement.id} className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-amber-200 pt-3">
+                    <div className="text-xs font-bold text-amber-950">${Number(movement.amount).toLocaleString()} de {movement.fromUserName || movement.fromUserEmail} · {formatDate(movement.date)}</div>
+                    <button type="button" disabled={Boolean(confirmingCashReturnId)} onClick={() => confirmCashReturn(movement)}
+                      className="rounded-lg bg-amber-950 px-4 py-2 text-xs font-black text-white disabled:opacity-50">
+                      {confirmingCashReturnId === movement.id ? 'Confirmando...' : 'Confirmar que recibí el dinero'}
+                    </button>
+                  </div>
+                ))}
+              </section>
+            )}
+
             {isProjectAdmin && (
               <section className="order-6 overflow-hidden rounded-xl border border-slate-800 bg-slate-950 text-white shadow-xl">
                 <div className="flex flex-col gap-3 border-b border-white/10 px-5 py-4 md:flex-row md:items-center md:justify-between">
                   <div>
                     <h3 className="text-sm font-black">Caja General</h3>
-                    <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-slate-400">Sin saldo inicial ni límite · registro acumulado de salidas</p>
+                    <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-slate-400">Sin saldo inicial ni límite · salidas netas de devoluciones confirmadas</p>
                   </div>
                   <div className="text-right">
                     <div className="text-2xl font-black font-mono text-white">-${generalCashSummary.totalOut.toLocaleString()}</div>
-                    <div className="text-[9px] font-black uppercase tracking-widest text-slate-500">Total efectivamente salido</div>
+                    <div className="text-[9px] font-black uppercase tracking-widest text-slate-500">Salida neta registrada</div>
                   </div>
                 </div>
-                <div className="grid grid-cols-1 divide-y divide-white/10 border-b border-white/10 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+                <div className="grid grid-cols-1 divide-y divide-white/10 border-b border-white/10 sm:grid-cols-5 sm:divide-x sm:divide-y-0">
                   {[
                     { label: 'Entregas confirmadas', value: generalCashSummary.confirmedDeliveries, tone: 'text-blue-300' },
                     { label: 'Pagos directos', value: generalCashSummary.directPayments, tone: 'text-emerald-300' },
+                    { label: 'Devoluciones recibidas', value: generalCashSummary.confirmedReturns, tone: 'text-violet-300' },
                     { label: 'Entregas pendientes', value: generalCashSummary.pendingDeliveries, tone: 'text-amber-300' },
+                    { label: 'Devoluciones pendientes', value: generalCashSummary.pendingReturns, tone: 'text-amber-300' },
                   ].map((summaryItem) => (
                     <div key={summaryItem.label} className="px-5 py-4">
                       <div className="text-[9px] font-black uppercase tracking-widest text-slate-500">{summaryItem.label}</div>
@@ -6594,11 +6758,14 @@ export default function ProjectDetail() {
                 </div>
                 <div className="max-h-80 divide-y divide-white/10 overflow-y-auto">
                   {generalCashMovements.map((movement) => {
-                    const isPending = movement.type === 'entrega' && movement.status === 'pending';
-                    const movementLabel = movement.type === 'entrega' ? 'Entrega de caja' : movement.type === 'reintegro' ? 'Reintegro a tercero' : 'Pago directo';
+                    const isPending = (movement.type === 'entrega' || movement.type === 'devolucion') && movement.status === 'pending';
+                    const isCancelledReturn = movement.type === 'devolucion' && movement.status === 'cancelled';
+                    const movementLabel = movement.type === 'entrega' ? 'Entrega de caja' : movement.type === 'devolucion' ? 'Devolución a Caja General' : movement.type === 'reintegro' ? 'Reintegro a tercero' : 'Pago directo';
                     const expenseTarget = resolveCashMovementTarget(movement, budgetItems, areaExpenses);
                     const destination = movement.type === 'entrega'
                       ? `A ${formatPersonIdentity(movement.toUserName, movement.toUserEmail)}`
+                      : movement.type === 'devolucion'
+                        ? `De ${formatPersonIdentity(movement.fromUserName, movement.fromUserEmail)} · recibe ${formatPersonIdentity(movement.toUserName, movement.toUserEmail)}`
                       : movement.type === 'reintegro'
                         ? `A ${movement.thirdPartyPayerName || 'persona acreedora'} · ${movement.description || movement.area || 'Gasto del proyecto'}`
                         : movement.description || movement.area || 'Gasto del proyecto';
@@ -6608,7 +6775,8 @@ export default function ProjectDetail() {
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="text-xs font-black text-white">{movementLabel}</span>
                             {isPending && <span className="rounded-full bg-amber-300/15 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-amber-300">Pendiente</span>}
-                            {movement.type === 'entrega' && movement.status === 'confirmed' && <span className="rounded-full bg-emerald-300/15 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-emerald-300">Confirmada</span>}
+                            {isCancelledReturn && <span className="rounded-full bg-slate-400/15 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-slate-400">Cancelada</span>}
+                            {(movement.type === 'entrega' || movement.type === 'devolucion') && movement.status === 'confirmed' && <span className="rounded-full bg-emerald-300/15 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-emerald-300">Confirmada</span>}
                           </div>
                           <div className="mt-1 truncate text-[10px] text-slate-400">{destination} · {formatDate(movement.date || movement.createdAt)}</div>
                           {(movement.notes || movement.area) && <div className="mt-1 truncate text-[9px] text-slate-500">{movement.notes || movement.area}</div>}
@@ -6627,20 +6795,20 @@ export default function ProjectDetail() {
                               Gasto eliminado
                             </span>
                           )}
-                          {expenseTarget.status === 'unlinked' && (
+                            {(movement.type === 'pago' || movement.type === 'reintegro') && expenseTarget.status === 'unlinked' && (
                             <span className="mt-2 inline-flex rounded bg-white/5 px-2 py-1 text-[8px] font-black uppercase tracking-widest text-slate-500">
                               Pago anterior sin enlace
                             </span>
                           )}
                         </div>
-                        <div className={cn('shrink-0 text-sm font-black font-mono', isPending ? 'text-amber-300' : 'text-rose-300')}>
-                          {isPending ? 'Pend. ' : '-'}${Number(movement.amount || 0).toLocaleString()}
+                          <div className={cn('shrink-0 text-sm font-black font-mono', isCancelledReturn ? 'text-slate-500' : isPending ? 'text-amber-300' : movement.type === 'devolucion' ? 'text-emerald-300' : 'text-rose-300')}>
+                            {isCancelledReturn ? 'Cancel. ' : isPending ? 'Pend. ' : movement.type === 'devolucion' ? '+' : '-'}${Number(movement.amount || 0).toLocaleString()}
                         </div>
                       </div>
                     );
                   })}
                   {generalCashMovements.length === 0 && (
-                    <div className="px-5 py-10 text-center text-[10px] font-black uppercase tracking-widest text-slate-600">Todavía no hay salidas registradas</div>
+                      <div className="px-5 py-10 text-center text-[10px] font-black uppercase tracking-widest text-slate-600">Todavía no hay movimientos registrados</div>
                   )}
                 </div>
               </section>
@@ -6649,7 +6817,7 @@ export default function ProjectDetail() {
             <section className="order-5">
               <div className="mb-3">
                 <h3 className="text-sm font-black text-slate-900">Acciones de caja</h3>
-                <p className="mt-1 text-xs text-slate-500">Registrá una entrega o transferí saldo a otra persona del proyecto.</p>
+                  <p className="mt-1 text-xs text-slate-500">Registrá entregas, transferencias y devoluciones de saldo.</p>
               </div>
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
               {isProjectAdmin && (
@@ -6767,6 +6935,44 @@ export default function ProjectDetail() {
                   </button>
                 </form>
               )}
+              {cashBalanceByEmail.has(currentUserEmail) && (
+                <form onSubmit={createCashReturn} className="space-y-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                  <div>
+                    <h3 className="text-sm font-black text-slate-900">Devolver efectivo a Caja General</h3>
+                    <p className="mt-2 text-xs leading-5 text-slate-500">Podés devolver todo o parte de tu saldo. El administrador que reciba el dinero debe confirmarlo; hasta entonces tu saldo no cambia.</p>
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <div>
+                      <label htmlFor="cash-return-recipient" className="mb-2 block text-[10px] font-black text-slate-700">Administrador que recibe</label>
+                      <select id="cash-return-recipient" name="toUserEmail" value={cashReturnRecipientEmail}
+                        onChange={(event) => setCashReturnRecipientEmail(event.target.value)}
+                        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-bold" required>
+                        {cashReturnRecipients.length === 0 && <option value="">No hay otro administrador disponible</option>}
+                        {cashReturnRecipients.map((recipient) => <option key={recipient.email} value={recipient.email}>{formatCashResponsibleOption(recipient)}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label htmlFor="cash-return-amount" className="mb-2 block text-[10px] font-black text-slate-700">Monto a devolver · disponible ${availableReturnBalance.toLocaleString()}</label>
+                      <input id="cash-return-amount" name="amount" type="number" min="0.01" max={availableReturnBalance} step="0.01" required placeholder="$ 0"
+                        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-bold" />
+                    </div>
+                    <div>
+                      <label htmlFor="cash-return-date" className="mb-2 block text-[10px] font-black text-slate-700">Fecha de devolución</label>
+                      <input id="cash-return-date" name="date" type="date" defaultValue={toProjectDateInputValue(new Date())} required
+                        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-bold" />
+                    </div>
+                    <div>
+                      <label htmlFor="cash-return-notes" className="mb-2 block text-[10px] font-black text-slate-700">Nota (opcional)</label>
+                      <input id="cash-return-notes" name="notes" placeholder="Ej.: saldo no utilizado del rodaje"
+                        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs" />
+                    </div>
+                  </div>
+                  <button type="submit" disabled={isCreatingCashReturn || availableReturnBalance <= 0 || cashReturnRecipients.length === 0}
+                    className="w-full rounded-lg bg-slate-900 px-4 py-3 text-xs font-black uppercase text-white disabled:bg-slate-300">
+                    {isCreatingCashReturn ? 'Registrando devolución...' : 'Registrar devolución pendiente'}
+                  </button>
+                </form>
+              )}
               </div>
             </section>
 
@@ -6792,7 +6998,7 @@ export default function ProjectDetail() {
                       <div className="text-[9px] uppercase tracking-widest text-slate-400 font-bold">Saldo</div>
                     </div>
                   </div>
-                  <div className="grid grid-cols-3 divide-x divide-slate-100 border-b border-slate-100">
+                  <div className="grid grid-cols-2 divide-x divide-slate-100 border-b border-slate-100 sm:grid-cols-4">
                     <div className="p-4">
                       <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Recibido</div>
                       <div className="text-sm font-black text-slate-900 mt-1">${row.received.toLocaleString()}</div>
@@ -6805,11 +7011,16 @@ export default function ProjectDetail() {
                       <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Transferido</div>
                       <div className="text-sm font-black text-slate-900 mt-1">${row.transferred.toLocaleString()}</div>
                     </div>
+                    <div className="p-4">
+                      <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Devuelto</div>
+                      <div className="text-sm font-black text-slate-900 mt-1">${row.returned.toLocaleString()}</div>
+                    </div>
                   </div>
                   <div className="max-h-64 overflow-y-auto divide-y divide-slate-100">
                     {row.movements.map((movement) => {
                       const incoming = normalizeEmail(movement.toUserEmail) === row.email;
-                      const isPendingDelivery = movement.type === 'entrega' && movement.status === 'pending';
+                      const isPendingDelivery = (movement.type === 'entrega' || movement.type === 'devolucion') && movement.status === 'pending';
+                      const isCancelledReturn = movement.type === 'devolucion' && movement.status === 'cancelled';
                       const signedAmount = incoming ? Number(movement.amount) || 0 : -(Number(movement.amount) || 0);
                       const expenseTarget = resolveCashMovementTarget(movement, budgetItems, areaExpenses);
                       return (
@@ -6819,6 +7030,8 @@ export default function ProjectDetail() {
                               <span className="truncate">
                                 {movement.type === 'entrega'
                                   ? (isPendingDelivery ? 'Entrega pendiente de recepción' : 'Entrega recibida')
+                                  : movement.type === 'devolucion'
+                                    ? (isCancelledReturn ? 'Devolución cancelada' : isPendingDelivery ? 'Devolución pendiente de recepción' : 'Devolución confirmada por administrador')
                                   : movement.type === 'transferencia'
                                     ? (incoming ? 'Transferencia recibida' : 'Transferencia enviada')
                                     : movement.type === 'reintegro'
@@ -6826,7 +7039,8 @@ export default function ProjectDetail() {
                                       : 'Pago en efectivo'}
                               </span>
                               {isPendingDelivery && <span className="rounded-full bg-amber-200 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-amber-900">Pendiente</span>}
-                              {movement.type === 'entrega' && movement.status === 'confirmed' && <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-emerald-700">Confirmada</span>}
+                              {isCancelledReturn && <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-slate-600">Cancelada</span>}
+                              {(movement.type === 'entrega' || movement.type === 'devolucion') && movement.status === 'confirmed' && <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-emerald-700">Confirmada</span>}
                             </div>
                             <div className="text-[10px] text-slate-400 truncate">
                               {movement.description || movement.notes || movement.area || 'Movimiento de caja'} · {formatDate(movement.date || movement.createdAt)}
@@ -6846,16 +7060,22 @@ export default function ProjectDetail() {
                                 Gasto eliminado
                               </span>
                             )}
-                            {expenseTarget.status === 'unlinked' && (
+                            {(movement.type === 'pago' || movement.type === 'reintegro') && expenseTarget.status === 'unlinked' && (
                               <span className="mt-2 inline-flex rounded bg-slate-100 px-2 py-1 text-[8px] font-black uppercase tracking-widest text-slate-400">
                                 Pago anterior sin enlace
                               </span>
                             )}
                           </div>
                           <div className="shrink-0 text-right">
-                            <div className={cn("text-xs font-black font-mono", isPendingDelivery ? "text-amber-700" : signedAmount >= 0 ? "text-emerald-600" : "text-rose-600")}>
-                              {isPendingDelivery ? '' : signedAmount >= 0 ? '+' : '-'}${Math.abs(signedAmount).toLocaleString()}
+                            <div className={cn("text-xs font-black font-mono", isCancelledReturn ? 'text-slate-400' : isPendingDelivery ? "text-amber-700" : signedAmount >= 0 ? "text-emerald-600" : "text-rose-600")}>
+                              {isCancelledReturn ? 'Cancel. ' : isPendingDelivery ? '' : signedAmount >= 0 ? '+' : '-'}${Math.abs(signedAmount).toLocaleString()}
                             </div>
+                            {movement.type === 'devolucion' && movement.status === 'pending' && normalizeEmail(movement.fromUserEmail) === currentUserEmail && (
+                              <button type="button" disabled={Boolean(cancellingCashReturnId)} onClick={() => cancelCashReturn(movement)}
+                                className="mt-2 rounded border border-rose-200 px-2 py-1 text-[8px] font-black uppercase text-rose-700 disabled:opacity-50">
+                                {cancellingCashReturnId === movement.id ? 'Cancelando...' : 'Cancelar devolución'}
+                              </button>
+                            )}
                             {(isProjectAdmin || normalizeEmail(movement.createdByEmail) === currentUserEmail) && movement.type === 'entrega' && (
                               <div className="mt-2 flex justify-end gap-1">
                                 {movement.status !== 'confirmed' && (

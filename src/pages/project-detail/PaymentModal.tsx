@@ -842,7 +842,7 @@ export function PaymentModal({
                       <div className="text-[10px] font-bold uppercase tracking-widest text-amber-700">Usar caja en efectivo</div>
                       <div className="text-xs text-amber-700/70 mt-1">Elegí la caja que financiará este pago</div>
                     </div>
-                    <input name="useCashBox" type="checkbox" defaultChecked className="w-4 h-4 accent-amber-600" />
+                    <input name="useCashBox" type="checkbox" className="w-4 h-4 accent-amber-600" />
                   </label>
                   <select
                     name="cashBoxId"

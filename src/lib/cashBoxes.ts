@@ -55,8 +55,26 @@ export const buildPaymentCashBoxOptions = ({
 };
 
 export const isGeneralCashMovement = (movement?: any | null) => (
-  movement?.cashAccount === GENERAL_CASH_ACCOUNT || movement?.type === 'entrega'
+  movement?.cashAccount === GENERAL_CASH_ACCOUNT || movement?.type === 'entrega' || movement?.type === 'devolucion'
 );
+
+export const calculateCashBalances = (movements: any[]): Map<string, number> => {
+  const balances = new Map<string, number>();
+  const email = (value: unknown) => String(value || '').trim().toLowerCase();
+  for (const movement of movements) {
+    if (movement.type === 'entrega' && movement.status === 'pending') continue;
+    if (movement.type === 'devolucion' && movement.status !== 'confirmed') continue;
+    const amount = Number(movement.amount) || 0;
+    const toEmail = email(movement.toUserEmail);
+    const fromEmail = email(movement.fromUserEmail);
+    // Una devolución entra al registro de Caja General, no a la caja personal del administrador.
+    if (toEmail && movement.type !== 'devolucion') balances.set(toEmail, (balances.get(toEmail) || 0) + amount);
+    if (fromEmail && (movement.type === 'devolucion' || !isGeneralCashMovement(movement))) {
+      balances.set(fromEmail, (balances.get(fromEmail) || 0) - amount);
+    }
+  }
+  return balances;
+};
 
 export const calculateGeneralCashSummary = (movements: any[]) => {
   const generalMovements = movements.filter(isGeneralCashMovement);
@@ -69,12 +87,20 @@ export const calculateGeneralCashSummary = (movements: any[]) => {
   const directPayments = generalMovements
     .filter((movement) => movement.type === 'pago' || movement.type === 'reintegro')
     .reduce((total, movement) => total + (Number(movement.amount) || 0), 0);
+  const confirmedReturns = generalMovements
+    .filter((movement) => movement.type === 'devolucion' && movement.status === 'confirmed')
+    .reduce((total, movement) => total + (Number(movement.amount) || 0), 0);
+  const pendingReturns = generalMovements
+    .filter((movement) => movement.type === 'devolucion' && movement.status === 'pending')
+    .reduce((total, movement) => total + (Number(movement.amount) || 0), 0);
 
   return {
     movements: generalMovements,
     confirmedDeliveries,
     pendingDeliveries,
     directPayments,
-    totalOut: confirmedDeliveries + directPayments,
+    confirmedReturns,
+    pendingReturns,
+    totalOut: confirmedDeliveries + directPayments - confirmedReturns,
   };
 };

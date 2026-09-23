@@ -86,7 +86,7 @@ export type PaymentCollection = 'budgetItems' | 'areaExpenses';
 
 export interface CashMovement {
   id: string;
-  type: 'entrega' | 'transferencia' | 'pago' | 'reintegro';
+  type: 'entrega' | 'devolucion' | 'transferencia' | 'pago' | 'reintegro';
   amount: number;
   cashAccount?: 'general' | 'personal';
   date: any;
@@ -108,11 +108,14 @@ export interface CashMovement {
   createdByEmail?: string;
   createdBy?: string;
   createdByName?: string;
-  status?: 'pending' | 'confirmed';
+  status?: 'pending' | 'confirmed' | 'cancelled';
   confirmedAt?: any;
   confirmedBy?: string;
   confirmedByEmail?: string;
   confirmedByName?: string;
+  cancelledAt?: any;
+  cancelledBy?: string;
+  cancelledByEmail?: string;
   createdAt?: any;
   updatedAt?: any;
 }

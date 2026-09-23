@@ -111,6 +111,43 @@ try {
     });
   });
 
+  const cashReturn = {
+    type: 'devolucion', cashAccount: 'general', status: 'pending', amount: 40, date,
+    fromUserEmail: collaboratorEmail, fromUserName: 'Colaborador',
+    toUserId: adminId, toUserEmail: adminEmail, toUserName: 'Admin', notes: '',
+    createdBy: collaboratorId, createdByEmail: collaboratorEmail, createdByName: 'Colaborador',
+    createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+  };
+  await assertFails(setDoc(doc(adminDb, movementPath('return-impersonated')), cashReturn));
+  await assertFails(setDoc(doc(collaboratorDb, movementPath('return-to-self')), {
+    ...cashReturn, toUserId: collaboratorId, toUserEmail: collaboratorEmail,
+  }));
+  await assertSucceeds(setDoc(doc(collaboratorDb, movementPath('return-confirmed')), cashReturn));
+  await assertFails(updateDoc(doc(collaboratorDb, movementPath('return-confirmed')), {
+    status: 'confirmed', confirmedBy: collaboratorId, confirmedByEmail: collaboratorEmail,
+    confirmedByName: 'Colaborador', confirmedAt: serverTimestamp(), updatedAt: serverTimestamp(),
+  }));
+  await assertFails(updateDoc(doc(adminDb, movementPath('return-confirmed')), { amount: 20 }));
+  await assertSucceeds(updateDoc(doc(adminDb, movementPath('return-confirmed')), {
+    status: 'confirmed', confirmedBy: adminId, confirmedByEmail: adminEmail,
+    confirmedByName: 'Admin', confirmedAt: serverTimestamp(), updatedAt: serverTimestamp(),
+  }));
+  await assertFails(deleteDoc(doc(adminDb, movementPath('return-confirmed'))));
+  await assertFails(updateDoc(doc(adminDb, movementPath('return-confirmed')), { status: 'pending' }));
+  await assertSucceeds(setDoc(doc(collaboratorDb, movementPath('return-cancelled')), cashReturn));
+  await assertFails(updateDoc(doc(adminDb, movementPath('return-cancelled')), {
+    status: 'cancelled', cancelledBy: adminId, cancelledByEmail: adminEmail,
+    cancelledAt: serverTimestamp(), updatedAt: serverTimestamp(),
+  }));
+  await assertSucceeds(updateDoc(doc(collaboratorDb, movementPath('return-cancelled')), {
+    status: 'cancelled', cancelledBy: collaboratorId, cancelledByEmail: collaboratorEmail,
+    cancelledAt: serverTimestamp(), updatedAt: serverTimestamp(),
+  }));
+  await assertFails(updateDoc(doc(adminDb, movementPath('return-cancelled')), {
+    status: 'confirmed', confirmedBy: adminId, confirmedByEmail: adminEmail,
+    confirmedByName: 'Admin', confirmedAt: serverTimestamp(), updatedAt: serverTimestamp(),
+  }));
+
   await assertFails(updateDoc(doc(adminDb, itemPath('areaExpenses', 'paid-area')), { description: 'Otra cosa' }));
   const externalPayment = payment('external-1', 100, {
     method: 'tercero', thirdPartyPayerId: 'payer-1', thirdPartyPayerName: 'Persona Ejemplo',

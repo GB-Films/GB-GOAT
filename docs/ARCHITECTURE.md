@@ -10,7 +10,7 @@ GB GOAT organiza el ciclo completo de una producción audiovisual: cliente y pro
 - `projects/{projectId}/budgetItems` contiene las líneas de Presu Ppal. Su edición financiera es administrativa.
 - `projects/{projectId}/areaExpenses` contiene la ejecución operativa por área y subcategoría.
 - `projects/{projectId}/collaborators` contiene roles y alcances exclusivos de ese proyecto.
-- `projects/{projectId}/cashMovements` registra entregas, transferencias y movimientos asociados a pagos.
+- `projects/{projectId}/cashMovements` registra entregas, devoluciones, transferencias y movimientos asociados a pagos.
 - `providers`, `providerIdentifiers` y `clients` son catálogos globales.
 - `providerInvites`, `invoiceUploadInvites` y `userInvites` son accesos temporales con propósito limitado.
 
@@ -37,6 +37,7 @@ Cuando un área está activa, los reportes financieros toman sus gastos desde `a
 - Un colaborador autorizado puede crear gastos en su alcance y anexar pagos o comprobantes.
 - El historial existente es inmutable para colaboradores.
 - Corregir o eliminar pagos requiere administración del proyecto y una auditoría en la misma operación. La identidad de un gasto que recibió pagos no puede cambiarse ni eliminarse, incluso por administración.
+- Las devoluciones de caja nacen pendientes: sólo el administrador destinatario puede confirmar la recepción y entonces se reduce el saldo de la persona. El emisor puede cancelar una devolución pendiente, conservando el registro. Caja General muestra salidas netas, sin saldo inicial.
 - Los archivos financieros se crean dentro del alcance de la fila y no pueden reemplazarse o borrarse por un colaborador.
 
 ## Límites conocidos

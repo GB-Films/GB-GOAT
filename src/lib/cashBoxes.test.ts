@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildPaymentCashBoxOptions, calculateGeneralCashSummary, isGeneralCashMovement } from './cashBoxes';
+import { buildPaymentCashBoxOptions, calculateCashBalances, calculateGeneralCashSummary, isGeneralCashMovement } from './cashBoxes';
 
 test('las entregas legacy pertenecen a Caja General', () => {
   assert.equal(isGeneralCashMovement({ type: 'entrega' }), true);
@@ -28,6 +28,23 @@ test('un reintegro efectivo descuenta Caja General una sola vez', () => {
   ]);
   assert.equal(summary.directPayments, 40);
   assert.equal(summary.totalOut, 40);
+});
+
+test('una devolución pendiente no mueve cajas y una confirmada reduce sólo la caja de origen', () => {
+  const deliveries = [{ type: 'entrega', status: 'confirmed', toUserEmail: 'Tecnica@ejemplo.com', amount: 100 }];
+  const pending = { type: 'devolucion', status: 'pending', cashAccount: 'general', fromUserEmail: 'tecnica@ejemplo.com', toUserEmail: 'admin@ejemplo.com', amount: 40 };
+  assert.equal(calculateCashBalances([...deliveries, pending]).get('tecnica@ejemplo.com'), 100);
+  assert.equal(calculateGeneralCashSummary([...deliveries, pending]).totalOut, 100);
+  const confirmed = { ...pending, status: 'confirmed' };
+  const balances = calculateCashBalances([...deliveries, confirmed]);
+  assert.equal(balances.get('tecnica@ejemplo.com'), 60);
+  assert.equal(balances.has('admin@ejemplo.com'), false);
+  const summary = calculateGeneralCashSummary([...deliveries, confirmed]);
+  assert.equal(summary.confirmedReturns, 40);
+  assert.equal(summary.totalOut, 60);
+  const cancelled = { ...pending, status: 'cancelled' };
+  assert.equal(calculateCashBalances([...deliveries, cancelled]).get('tecnica@ejemplo.com'), 100);
+  assert.equal(calculateGeneralCashSummary([...deliveries, cancelled]).totalOut, 100);
 });
 
 test('un administrador con caja asignada ve primero su caja y luego Caja General', () => {

@@ -16,11 +16,11 @@ export type CashMovementTarget<T extends ExpenseItem = ExpenseItem> =
   | { status: 'missing'; collectionName: ExpenseCollectionName; itemId: string }
   | { status: 'found'; collectionName: ExpenseCollectionName; item: T };
 
-export const resolveCashMovementTarget = <T extends ExpenseItem>(
+export const resolveCashMovementTarget = <B extends ExpenseItem, A extends ExpenseItem>(
   movement: CashMovementReference,
-  budgetItems: T[],
-  areaExpenses: T[],
-): CashMovementTarget<T> => {
+  budgetItems: B[],
+  areaExpenses: A[],
+): CashMovementTarget<B | A> => {
   if (movement.type !== 'pago') return { status: 'not-payment' };
   if (!movement.collectionName || !movement.itemId) return { status: 'unlinked' };
 

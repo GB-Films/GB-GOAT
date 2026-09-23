@@ -130,6 +130,8 @@ export default function Projects() {
       createdBy: profile?.uid,
       createdByEmail: normalizeEmail(profile?.email),
       collaboratorEmails: [],
+      categories: ['Ejecutiva', 'Producción de Campo', 'Post Producción'],
+      executiveCategoryDefaultApplied: true,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     };

@@ -614,6 +614,31 @@ service cloud.firestore {
             )
           )
           || (
+            hasProjectAccess(projectId)
+            && request.resource.data.type == 'devolucion'
+            && request.resource.data.status == 'pending'
+            && request.resource.data.cashAccount == 'general'
+            && request.resource.data.createdBy == request.auth.uid
+            && request.resource.data.createdByEmail == userEmail()
+            && request.resource.data.fromUserEmail == userEmail()
+            && request.resource.data.toUserEmail != userEmail()
+            && request.resource.data.createdAt == request.time
+            && request.resource.data.updatedAt == request.time
+            && request.resource.data.keys().hasOnly([
+              'type', 'cashAccount', 'status', 'amount', 'date', 'fromUserEmail',
+              'fromUserName', 'toUserId', 'toUserEmail', 'toUserName', 'notes',
+              'createdBy', 'createdByEmail', 'createdByName', 'createdAt', 'updatedAt'
+            ])
+            && (
+              projectDoc(projectId).get('createdByEmail', '') == request.resource.data.toUserEmail
+              || (
+                hasCollaboratorDocByEmail(projectId, request.resource.data.toUserEmail)
+                && collaboratorDocByEmail(projectId, request.resource.data.toUserEmail).role == 'admin'
+              )
+              || isAppAdminRecipient(request.resource.data.get('toUserId', ''), request.resource.data.toUserEmail)
+            )
+          )
+          || (
             isProjectProductionLead(projectId)
             && request.resource.data.type == 'transferencia'
             && request.resource.data.fromUserEmail == userEmail()
@@ -648,7 +673,7 @@ service cloud.firestore {
 
     function canDeleteCashMovement(projectId, movementId) {
       return isProjectAdmin(projectId)
-        && ((resource.data.type != 'pago' && resource.data.type != 'reintegro')
+        && ((resource.data.type != 'pago' && resource.data.type != 'reintegro' && resource.data.type != 'devolucion')
           || (resource.data.type == 'pago' && cashPaymentHasAudit(projectId, movementId, 'payment_deleted'))
           || (resource.data.type == 'reintegro' && reimbursementCashHasDeletionAudit(projectId, movementId)));
     }
@@ -656,6 +681,39 @@ service cloud.firestore {
     function canUpdateCashMovement(projectId, movementId) {
       return cashMovementBaseIsValid()
         && (
+          (
+            resource.data.type == 'devolucion'
+            && resource.data.status == 'pending'
+            && resource.data.toUserEmail == userEmail()
+            && isProjectAdmin(projectId)
+            && request.resource.data.type == resource.data.type
+            && request.resource.data.status == 'confirmed'
+            && request.resource.data.confirmedBy == request.auth.uid
+            && request.resource.data.confirmedByEmail == userEmail()
+            && request.resource.data.confirmedByName is string
+            && request.resource.data.confirmedAt == request.time
+            && request.resource.data.updatedAt == request.time
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'confirmedAt', 'confirmedBy', 'confirmedByEmail',
+              'confirmedByName', 'updatedAt'
+            ])
+          )
+          || (
+            resource.data.type == 'devolucion'
+            && resource.data.status == 'pending'
+            && resource.data.createdBy == request.auth.uid
+            && resource.data.fromUserEmail == userEmail()
+            && request.resource.data.type == resource.data.type
+            && request.resource.data.status == 'cancelled'
+            && request.resource.data.cancelledBy == request.auth.uid
+            && request.resource.data.cancelledByEmail == userEmail()
+            && request.resource.data.cancelledAt == request.time
+            && request.resource.data.updatedAt == request.time
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'cancelledAt', 'cancelledBy', 'cancelledByEmail', 'updatedAt'
+            ])
+          )
+          ||
           (
             resource.data.type == 'entrega'
             && resource.data.status == 'pending'
