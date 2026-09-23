@@ -1,6 +1,6 @@
 # Alta de proyectos desde Control Total
 
-En **Nuevo Proyecto**, un administrador puede elegir un proyecto de la pestaña `Proyectos` de Control Total. GOAT solicita a su cuenta de Google permiso de lectura y consulta el maestro sólo en ese momento. La cuenta debe tener acceso a la planilla y la API de Google Sheets debe estar habilitada en el proyecto de Google Cloud de GOAT. GOAT no guarda el token ni una copia completa de la planilla.
+En **Nuevo Proyecto**, un administrador puede elegir un proyecto de la pestaña `Proyectos` de Control Total. GOAT solicita a su cuenta de Google permiso de lectura y consulta el maestro sólo en ese momento. La cuenta debe tener acceso a la planilla y la API de Google Sheets debe estar habilitada en el proyecto de Google Cloud de GOAT. GOAT primero consulta la columna de IDs, sin límite fijo de filas, y después lee los datos únicamente de las filas G. No guarda el token ni una copia completa de la planilla.
 
 El selector incluye únicamente códigos `G`. El nombre visible se crea sin el código, mientras que `projectCode` conserva el código (por ejemplo `G LO 0001`), y `controlTotalProjectId` guarda el texto original de `ProyectoID`. También se copian `Cliente` a `clientName`, `Marca` a `brandName`, `Empresa`, `Servicio`, unidad dueña, condición, fechas de confirmación y entrega, moneda e importe del contrato, el estado de origen y la fecha de importación. GOAT conserva un enlace a la fila de origen como referencia. No se crean proyectos `B`, ya que GOAT gestiona producción.
 

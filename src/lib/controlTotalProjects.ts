@@ -1,6 +1,8 @@
 export const CONTROL_TOTAL_SPREADSHEET_ID = '1YBEXhP3ZrcjW0DnvSVZyxVPTK4QLxrDVUu3ZMrpCdHY';
 export const CONTROL_TOTAL_PROJECTS_SHEET_ID = 293971582;
-export const CONTROL_TOTAL_PROJECTS_RANGE = "'Proyectos'!A4:P834";
+export const CONTROL_TOTAL_PROJECT_IDS_RANGE = "'Proyectos'!A4:A";
+export const CONTROL_TOTAL_PROJECT_HEADER_RANGE = "'Proyectos'!A4:P4";
+export const controlTotalProjectRowRange = (row: number) => `'Proyectos'!A${row}:P${row}`;
 
 export type ControlTotalProject = {
   projectCode: string;
