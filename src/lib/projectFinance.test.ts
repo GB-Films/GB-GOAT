@@ -36,6 +36,14 @@ test('la deuda nunca es negativa aunque exista un sobrepago histórico', () => {
   assert.equal(getItemDebt(item), 0);
 });
 
+test('un contrato USD importado conserva presupuesto GOAT cero hasta su carga manual', () => {
+  const project = { budgetTotal: 0, controlTotalContractCurrency: 'USD' };
+  const finance = calculateProjectFinance(project, [{ area: 'Producción', total: 500 }], []);
+  assert.equal(finance.committedBudget, 500);
+  assert.equal(finance.budgetTotal, 0);
+  assert.equal(calculateProjectResult(project, [{ area: 'Producción', total: 500 }], []).saleValue, 0);
+});
+
 test('un gasto pagado por tercero sigue siendo costo y deuda hasta reintegrarlo', () => {
   const project = { budgetTotal: 100 };
   const item = { area: 'Transporte', total: 100, paymentHistory: [

@@ -86,7 +86,8 @@ export const calculateProjectResult = (project: any, budgetItems: any[], areaExp
 };
 export const calculateProjectFinance = (project: any, budgetItems: any[], areaExpenses: any[]) => {
   const committedBudget = budgetItems.reduce((total, item) => total + getItemTotal(item), 0);
-  const budgetTotal = Number(project?.budgetTotal) || committedBudget;
+  const pendingUsdBudget = project?.controlTotalContractCurrency === 'USD' && Number(project?.budgetTotal) === 0;
+  const budgetTotal = pendingUsdBudget ? 0 : Number(project?.budgetTotal) || committedBudget;
   const entries = getProjectExpenseEntries(project, budgetItems, areaExpenses);
   const spent = entries.reduce((total, entry) => total + getItemTotal(entry.item), 0);
   const paid = entries.reduce((total, entry) => total + getCompanyPaid(entry.item), 0);

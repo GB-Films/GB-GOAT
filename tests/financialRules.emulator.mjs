@@ -16,6 +16,10 @@ const projectId = 'project-test';
 const date = Timestamp.fromDate(new Date('2026-09-23T12:00:00Z'));
 const adminDb = testEnv.authenticatedContext(adminId, { email: adminEmail }).firestore();
 const collaboratorDb = testEnv.authenticatedContext(collaboratorId, { email: collaboratorEmail }).firestore();
+const curatorId = 'control-total-curator-test';
+const curatorEmail = 'tomas@granberta.com';
+const curatorDb = testEnv.authenticatedContext(curatorId, { email: curatorEmail }).firestore();
+const catalogPath = 'integrations/controlTotalProjectCatalog';
 const itemPath = (collectionName, itemId) => `projects/${projectId}/${collectionName}/${itemId}`;
 const movementPath = (movementId) => `projects/${projectId}/cashMovements/${movementId}`;
 
@@ -72,6 +76,7 @@ try {
     const db = context.firestore();
     await setDoc(doc(db, `users/${adminId}`), { email: adminEmail, role: 'admin' });
     await setDoc(doc(db, `users/${collaboratorId}`), { email: collaboratorEmail, role: 'colaborador' });
+    await setDoc(doc(db, `users/${curatorId}`), { email: curatorEmail, role: 'admin' });
     await setDoc(doc(db, 'providers/payer-1'), { type: 'persona', name: 'Persona', lastName: 'Ejemplo' });
     await setDoc(doc(db, `projects/${projectId}`), {
       createdBy: adminId,
@@ -110,6 +115,19 @@ try {
       amount: 50, date, notes: 'correction-1', updatedAt: date,
     });
   });
+
+  const catalog = {
+    sourceSpreadsheetId: '1YBEXhP3ZrcjW0DnvSVZyxVPTK4QLxrDVUu3ZMrpCdHY',
+    projects: [{ projectCode: 'G LO 0001', name: 'Garnier Fructis' }],
+    updatedAt: serverTimestamp(),
+    updatedByEmail: curatorEmail,
+  };
+  await assertFails(getDoc(doc(collaboratorDb, catalogPath)));
+  await assertFails(setDoc(doc(adminDb, catalogPath), { ...catalog, updatedByEmail: adminEmail }));
+  await assertFails(setDoc(doc(curatorDb, catalogPath), { ...catalog, sourceSpreadsheetId: 'another-sheet' }));
+  await assertSucceeds(setDoc(doc(curatorDb, catalogPath), catalog));
+  await assertSucceeds(getDoc(doc(adminDb, catalogPath)));
+  await assertFails(deleteDoc(doc(curatorDb, catalogPath)));
 
   const cashReturn = {
     type: 'devolucion', cashAccount: 'general', status: 'pending', amount: 40, date,

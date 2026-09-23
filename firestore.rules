@@ -25,6 +25,11 @@ service cloud.firestore {
         );
     }
 
+    function canPublishControlTotalCatalog() {
+      return isAppAdmin()
+        && userEmail() in ['info@granbertafilms.com', 'tomas@granberta.com'];
+    }
+
     function projectDoc(projectId) {
       return get(/databases/$(database)/documents/projects/$(projectId)).data;
     }
@@ -915,6 +920,21 @@ service cloud.firestore {
     function userInviteMatchesSignedInEmail(token) {
       return userInviteIsPending(token)
         && get(/databases/$(database)/documents/userInvites/$(token)).data.email == userEmail();
+    }
+
+    // Curated G-project snapshot. Other administrators never read Control Total itself.
+    match /integrations/controlTotalProjectCatalog {
+      allow get: if isAppAdmin();
+      allow list, delete: if false;
+      allow create, update: if canPublishControlTotalCatalog()
+        && request.resource.data.keys().hasOnly(['sourceSpreadsheetId', 'projects', 'updatedAt', 'updatedByEmail'])
+        && request.resource.data.keys().hasAll(['sourceSpreadsheetId', 'projects', 'updatedAt', 'updatedByEmail'])
+        && request.resource.data.sourceSpreadsheetId == '1YBEXhP3ZrcjW0DnvSVZyxVPTK4QLxrDVUu3ZMrpCdHY'
+        && request.resource.data.projects is list
+        && request.resource.data.projects.size() > 0
+        && request.resource.data.projects.size() <= 500
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.updatedByEmail == userEmail();
     }
 
     match /users/{userId} {

@@ -4280,8 +4280,9 @@ export default function ProjectDetail() {
     };
   }, [areaSummaryRows]);
 
+  const pendingUsdBudget = project?.controlTotalContractCurrency === 'USD' && Number(project?.budgetTotal) === 0;
   const summaryBudgetTotal = isProjectAdmin
-    ? (Number(project?.budgetTotal) || areaSummaryTotals.assigned)
+    ? (pendingUsdBudget ? 0 : Number(project?.budgetTotal) || areaSummaryTotals.assigned)
     : areaSummaryTotals.assigned;
   const summaryIncidenceTotal = isProjectAdmin ? incidenceTotal : 0;
   const summaryProjectedCost = areaSummaryTotals.actualCost + summaryIncidenceTotal;
@@ -5113,6 +5114,9 @@ export default function ProjectDetail() {
                         )}
                         {project.controlTotalUrl && <a href={project.controlTotalUrl} target="_blank" rel="noopener noreferrer" className="text-blue-700 underline">Ver en Control Total</a>}
                       </div>
+                    )}
+                    {pendingUsdBudget && isProjectAdmin && (
+                      <p className="mt-2 text-xs font-semibold text-amber-800">Contrato en USD: presupuesto GOAT pendiente de carga manual en ARS. El resultado todavía no es comparable.</p>
                     )}
                     <div className="mt-3 flex flex-wrap items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-slate-500">
                       <span className={cn("rounded-full border px-2.5 py-1", statusColors[project.status || 'Presupuesto'] || 'bg-emerald-100 text-emerald-700 border-emerald-200')}>

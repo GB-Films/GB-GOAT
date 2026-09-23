@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { collection, query, getDocs, addDoc, serverTimestamp, where, or, doc, updateDoc, runTransaction } from 'firebase/firestore';
+import { collection, query, getDocs, getDoc, setDoc, addDoc, serverTimestamp, where, or, doc, updateDoc, runTransaction } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { handleFirestoreError } from '../lib/firestoreUtils';
 import { useAuth } from '../context/AuthContext';
@@ -10,7 +10,9 @@ import { motion, AnimatePresence } from 'motion/react';
 import { normalizeEmail } from '../lib/identity';
 import { PageHeader } from '../components/PageHeader';
 import { readControlTotalProjects } from '../lib/readControlTotalProjects';
-import { controlTotalProjectUrl, type ControlTotalProject } from '../lib/controlTotalProjects';
+import { CONTROL_TOTAL_SPREADSHEET_ID, controlTotalProjectUrl, type ControlTotalProject } from '../lib/controlTotalProjects';
+
+const projectCatalogRef = doc(db, 'integrations', 'controlTotalProjectCatalog');
 
 const statusColors: Record<string, string> = {
   'Presupuesto': 'bg-slate-100 text-slate-700',
@@ -29,12 +31,14 @@ export default function Projects() {
   const [sourceProjects, setSourceProjects] = useState<ControlTotalProject[]>([]);
   const [sourceLoading, setSourceLoading] = useState(false);
   const [sourceError, setSourceError] = useState('');
+  const [catalogUpdatedAt, setCatalogUpdatedAt] = useState<Date | null>(null);
   const [selectedCode, setSelectedCode] = useState('');
   const [creating, setCreating] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [localPinnedProjectIds, setLocalPinnedProjectIds] = useState<string[]>([]);
   const { profile, user } = useAuth();
   const isAppAdmin = profile?.role === 'admin';
+  const canRefreshCatalog = ['info@granbertafilms.com', 'tomas@granberta.com'].includes(normalizeEmail(user?.email || '')) && isAppAdmin;
   const pinnedProjectIds = localPinnedProjectIds;
 
   useEffect(() => {
@@ -128,14 +132,43 @@ export default function Projects() {
   );
 
   const loadSourceProjects = async () => {
-    if (!isAppAdmin || !user) return;
+    if (!isAppAdmin) return;
     setSourceLoading(true);
     setSourceError('');
     try {
-      setSourceProjects(await readControlTotalProjects(user));
+      const snapshot = await getDoc(projectCatalogRef);
+      const data = snapshot.data();
+      const catalog = data?.projects;
+      setSourceProjects(Array.isArray(catalog) ? catalog.filter((project): project is ControlTotalProject =>
+        typeof project?.projectCode === 'string' && project.projectCode.startsWith('G ')
+      ) : []);
+      setCatalogUpdatedAt(data?.updatedAt?.toDate?.() || null);
     } catch (error) {
       setSourceProjects([]);
-      setSourceError(error instanceof Error ? error.message : 'No se pudo leer Control Total.');
+      setSourceError(error instanceof Error ? error.message : 'No se pudo leer el catálogo de proyectos G.');
+    } finally {
+      setSourceLoading(false);
+    }
+  };
+
+  const refreshSourceProjects = async () => {
+    if (!canRefreshCatalog || !user) return;
+    setSourceLoading(true);
+    setSourceError('');
+    try {
+      const catalog = await readControlTotalProjects(user);
+      if (catalog.length === 0) throw new Error('Control Total no devolvió proyectos G. No se reemplazó el catálogo existente.');
+      await setDoc(projectCatalogRef, {
+        sourceSpreadsheetId: CONTROL_TOTAL_SPREADSHEET_ID,
+        projects: catalog,
+        updatedAt: serverTimestamp(),
+        updatedByEmail: normalizeEmail(user.email || ''),
+      });
+      setSourceProjects(catalog);
+      setCatalogUpdatedAt(new Date());
+      setSelectedCode('');
+    } catch (error) {
+      setSourceError(error instanceof Error ? error.message : 'No se pudo actualizar el catálogo desde Control Total.');
     } finally {
       setSourceLoading(false);
     }
@@ -370,14 +403,17 @@ export default function Projects() {
                       ))}
                     </select>
                     {sourceError && <p role="alert" className="text-xs text-red-700">{sourceError}</p>}
-                    {!sourceLoading && sourceProjects.length === 0 && <button type="button" onClick={() => void loadSourceProjects()} className="text-xs underline">Volver a conectar con Control Total</button>}
+                    <p className="text-[11px] text-slate-500">Catálogo G: {catalogUpdatedAt ? `actualizado el ${catalogUpdatedAt.toLocaleString('es-AR')}` : 'aún no publicado'}.</p>
+                    {!sourceLoading && sourceProjects.length === 0 && !canRefreshCatalog && <p className="text-xs text-amber-800">Pedile a Tomás o a info@granbertafilms.com que actualice el catálogo.</p>}
+                    {!sourceLoading && sourceProjects.length === 0 && <button type="button" onClick={() => void loadSourceProjects()} className="text-xs underline">Volver a cargar el catálogo</button>}
+                    {canRefreshCatalog && <button type="button" onClick={() => void refreshSourceProjects()} disabled={sourceLoading} className="block text-xs font-semibold text-blue-700 underline disabled:opacity-50">Actualizar desde Control Total</button>}
                     {selectedSource && (
                       <div className="rounded border border-slate-200 bg-slate-50 p-3 text-xs space-y-1">
                         <div><b>Nombre en GOAT:</b> {selectedSource.name}</div>
                         <div><b>Código:</b> {selectedSource.projectCode}</div>
                         <div><b>Cliente:</b> {selectedSource.client || 'Sin dato'} · <b>Marca:</b> {selectedSource.brand || 'Sin dato'}</div>
                         <div><b>Contrato:</b> {selectedSource.contractAmount === null ? 'Sin importe' : `${selectedSource.contractCurrency} ${selectedSource.contractAmount.toLocaleString('es-AR')}`}</div>
-                        <a href={controlTotalProjectUrl(selectedSource)} target="_blank" rel="noopener noreferrer" className="inline-block text-blue-700 underline">Ver fila de origen</a>
+                        {canRefreshCatalog && <a href={controlTotalProjectUrl(selectedSource)} target="_blank" rel="noopener noreferrer" className="inline-block text-blue-700 underline">Ver fila de origen</a>}
                       </div>
                     )}
                   </div>
@@ -404,10 +440,10 @@ export default function Projects() {
                   </div>}
                   <div>
                     <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Presupuesto GOAT (ARS)</label>
-                    <input key={`${creationMode}-${selectedCode}`} name="budgetTotal" type="number" min={selectedSource?.contractCurrency === 'USD' ? '0.01' : '0'} step="0.01" required={selectedSource?.contractCurrency === 'USD'} defaultValue={selectedSource?.contractCurrency === 'ARS' ? selectedSource.contractAmount ?? undefined : undefined} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all" placeholder="0" />
+                    <input key={`${creationMode}-${selectedCode}`} name="budgetTotal" type="number" min="0" step="0.01" readOnly={selectedSource?.contractCurrency === 'USD'} defaultValue={selectedSource?.contractCurrency === 'ARS' ? selectedSource.contractAmount ?? undefined : selectedSource?.contractCurrency === 'USD' ? 0 : undefined} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all" placeholder="0" />
                   </div>
                 </div>
-                {selectedSource?.contractCurrency === 'USD' && <p className="text-xs text-amber-800">El contrato USD queda guardado como referencia. GOAT compara este presupuesto con costos en ARS: ingresá aquí su valor en ARS para calcular resultados.</p>}
+                {selectedSource?.contractCurrency === 'USD' && <p className="text-xs text-amber-800">El contrato en USD queda guardado como referencia. El presupuesto de GOAT se crea en ARS 0 y se completa manualmente después.</p>}
                 <div className="flex gap-3 pt-4">
                   <button type="button" onClick={() => setShowNewModal(false)} className="flex-1 px-4 py-3 border border-slate-200 rounded text-xs font-bold tracking-widest uppercase hover:bg-slate-50 transition-colors">Cancelar</button>
                   <button type="submit" disabled={creating || sourceLoading || (creationMode === 'controlTotal' && !selectedSource)} className="flex-1 px-4 py-3 bg-black text-white rounded text-xs font-bold tracking-widest uppercase hover:bg-slate-800 transition-colors disabled:opacity-50">{creating ? 'Creando...' : 'Confirmar'}</button>
