@@ -1,4 +1,4 @@
-import { GoogleAuthProvider, reauthenticateWithPopup, type User } from 'firebase/auth';
+import { GoogleAuthProvider, reauthenticateWithPopup, type User, type UserCredential } from 'firebase/auth';
 import {
   CONTROL_TOTAL_PROJECTS_RANGE,
   CONTROL_TOTAL_SPREADSHEET_ID,
@@ -12,7 +12,27 @@ export const readControlTotalProjects = async (user: User): Promise<ControlTotal
   const provider = new GoogleAuthProvider();
   provider.addScope('https://www.googleapis.com/auth/spreadsheets.readonly');
   if (user.email) provider.setCustomParameters({ login_hint: user.email });
-  const result = await reauthenticateWithPopup(user, provider);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let result: UserCredential;
+  try {
+    result = await Promise.race([
+      reauthenticateWithPopup(user, provider),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('GOOGLE_POPUP_TIMEOUT')), 45000);
+      }),
+    ]);
+  } catch (error) {
+    const code = (error as { code?: string })?.code || (error as Error)?.message;
+    if (code === 'GOOGLE_POPUP_TIMEOUT' || code === 'auth/popup-blocked' || code === 'auth/operation-not-supported-in-this-environment') {
+      throw new Error('La ventana de Google no respondió. Abrí GOAT en Chrome o Safari, permití ventanas emergentes y reintentá.');
+    }
+    if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+      throw new Error('Se canceló el permiso de lectura. Podés reintentar cuando quieras.');
+    }
+    throw error;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
   const token = GoogleAuthProvider.credentialFromResult(result)?.accessToken;
   if (!token) throw new Error('Google no entregó acceso de lectura a la planilla.');
 
