@@ -111,6 +111,10 @@ export default function Login() {
         <p className="mt-8 text-center text-xs text-slate-400">
           Usa tu cuenta corporativa para acceder a tus proyectos
         </p>
+        <nav aria-label="Información de GB GOAT" className="mt-4 flex justify-center gap-4 text-xs text-slate-600">
+          <a href={`${(import.meta as any).env.BASE_URL}about.html`} className="underline underline-offset-2 hover:text-slate-900">Sobre GB GOAT</a>
+          <a href={`${(import.meta as any).env.BASE_URL}privacy.html`} className="underline underline-offset-2 hover:text-slate-900">Privacidad</a>
+        </nav>
       </motion.div>
     </div>
   );
