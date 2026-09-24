@@ -49,7 +49,7 @@ export default function Projects() {
     .filter((project) => {
       const term = searchTerm.trim().toLowerCase();
       if (!term) return true;
-      return [project.name, project.projectCode, project.clientName, project.brandName, project.status, project.description]
+      return [project.name, project.projectCode, project.clientName, project.companyName, project.brandName, project.status, project.description]
         .filter(Boolean)
         .join(' ')
         .toLowerCase()
@@ -201,8 +201,8 @@ export default function Projects() {
       name: source?.name || formData.get('name'),
       description: formData.get('description'),
       clientName: source?.client || formData.get('clientName') || '',
-      brandName: source?.brand || '',
-      companyName: source?.company || '',
+      brandName: source?.brand || formData.get('brandName') || '',
+      companyName: source?.company || formData.get('companyName') || '',
       serviceName: source?.service || '',
       budgetTotal,
       ...(source ? {
@@ -342,11 +342,11 @@ export default function Projects() {
                 </h3>
                 {project.projectCode && <div className="text-[9px] font-bold text-slate-400 mb-1">{project.projectCode}</div>}
                 
-                {project.clientName && (
-                  <div className="text-[8px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0 sm:mb-4 truncate">
-                    Cliente: {project.clientName}
-                  </div>
-                )}
+                <div className="text-[8px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0 sm:mb-4 space-y-0.5">
+                  {project.clientName && <div className="truncate">Cliente: {project.clientName}</div>}
+                  {project.companyName && <div className="truncate">Empresa: {project.companyName}</div>}
+                  {project.brandName && <div className="truncate">Marca: {project.brandName}</div>}
+                </div>
                 
                 <p className="hidden sm:block text-xs text-slate-400 line-clamp-2 mb-8 font-medium font-sans">
                   {project.description || 'Sin descripción detallada disponible.'}
@@ -411,7 +411,7 @@ export default function Projects() {
                       <div className="rounded border border-slate-200 bg-slate-50 p-3 text-xs space-y-1">
                         <div><b>Nombre en GOAT:</b> {selectedSource.name}</div>
                         <div><b>Código:</b> {selectedSource.projectCode}</div>
-                        <div><b>Cliente:</b> {selectedSource.client || 'Sin dato'} · <b>Marca:</b> {selectedSource.brand || 'Sin dato'}</div>
+                        <div><b>Cliente:</b> {selectedSource.client || 'Sin dato'} · <b>Empresa:</b> {selectedSource.company || 'Sin dato'} · <b>Marca:</b> {selectedSource.brand || 'Sin dato'}</div>
                         <div><b>Contrato:</b> {selectedSource.contractAmount === null ? 'Sin importe' : `${selectedSource.contractCurrency} ${selectedSource.contractAmount.toLocaleString('es-AR')}`}</div>
                         {canRefreshCatalog && <a href={controlTotalProjectUrl(selectedSource)} target="_blank" rel="noopener noreferrer" className="inline-block text-blue-700 underline">Ver fila de origen</a>}
                       </div>
@@ -443,6 +443,16 @@ export default function Projects() {
                     <input key={`${creationMode}-${selectedCode}`} name="budgetTotal" type="number" min="0" step="0.01" readOnly={selectedSource?.contractCurrency === 'USD'} defaultValue={selectedSource?.contractCurrency === 'ARS' ? selectedSource.contractAmount ?? undefined : selectedSource?.contractCurrency === 'USD' ? 0 : undefined} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all" placeholder="0" />
                   </div>
                 </div>
+                {creationMode === 'manual' && <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Empresa</label>
+                    <input name="companyName" className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all" placeholder="Sin dato" />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Marca</label>
+                    <input name="brandName" className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all" placeholder="Sin dato" />
+                  </div>
+                </div>}
                 {selectedSource?.contractCurrency === 'USD' && <p className="text-xs text-amber-800">El contrato en USD queda guardado como referencia. El presupuesto de GOAT se crea en ARS 0 y se completa manualmente después.</p>}
                 <div className="flex gap-3 pt-4">
                   <button type="button" onClick={() => setShowNewModal(false)} className="flex-1 px-4 py-3 border border-slate-200 rounded text-xs font-bold tracking-widest uppercase hover:bg-slate-50 transition-colors">Cancelar</button>

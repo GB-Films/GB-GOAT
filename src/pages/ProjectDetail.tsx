@@ -5103,9 +5103,9 @@ export default function ProjectDetail() {
                   <div>
                     <div className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-400">Resumen del proyecto</div>
                     <h2 className="mt-2 text-2xl font-black tracking-[-0.04em] text-slate-950 sm:text-4xl">{project.name}</h2>
-                    {project.projectCode && (
+                    {(project.projectCode || project.companyName || project.brandName) && (
                       <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-500">
-                        <span className="font-bold">{project.projectCode}</span>
+                        {project.projectCode && <span className="font-bold">{project.projectCode}</span>}
                         {project.brandName && <span>Marca: {project.brandName}</span>}
                         {project.companyName && <span>Empresa: {project.companyName}</span>}
                         {project.serviceName && <span>Servicio: {project.serviceName}</span>}
@@ -9108,8 +9108,8 @@ export default function ProjectDetail() {
                   description: formData.get('description'),
                   clientName: formData.get('clientName'),
                   brandName: formData.get('brandName'),
+                  companyName: formData.get('companyName'),
                   ...(project.projectCode ? {
-                    companyName: formData.get('companyName'),
                     serviceName: formData.get('serviceName'),
                   } : {}),
                   budgetTotal: Number(formData.get('budgetTotal')),
@@ -9145,19 +9145,19 @@ export default function ProjectDetail() {
                     <input name="budgetTotal" type="number" defaultValue={project.budgetTotal} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all" />
                   </div>
                 </div>
-                <div>
-                  <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Marca</label>
-                  <input name="brandName" defaultValue={project.brandName || ''} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all" />
-                </div>
-                {project.projectCode && <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Empresa</label>
                     <input name="companyName" defaultValue={project.companyName || ''} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all" />
                   </div>
                   <div>
+                    <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Marca</label>
+                    <input name="brandName" defaultValue={project.brandName || ''} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all" />
+                  </div>
+                </div>
+                {project.projectCode && <div>
                     <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Servicio</label>
                     <input name="serviceName" defaultValue={project.serviceName || ''} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all" />
-                  </div>
                 </div>}
                 <div>
                   <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Resumen del Proyecto</label>
