@@ -9130,15 +9130,10 @@ export default function ProjectDetail() {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Cliente</label>
-                    <select name="clientName" defaultValue={project.clientName} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all appearance-none">
-                      <option value="">Sin cliente</option>
-                      {project.clientName && !clients.some((client: any) => client.businessName === project.clientName) && (
-                        <option value={project.clientName}>{project.clientName}</option>
-                      )}
-                      {clients.map(client => (
-                        <option key={client.id} value={client.businessName}>{client.businessName}</option>
-                      ))}
-                    </select>
+                    <input name="clientName" list="goat-project-clients" defaultValue={project.clientName || ''} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all" placeholder="Sin cliente" />
+                    <datalist id="goat-project-clients">
+                      {clients.map(client => <option key={client.id} value={client.businessName} />)}
+                    </datalist>
                   </div>
                   <div>
                     <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Presupuesto Estimado</label>
