@@ -68,6 +68,19 @@ service firebase.storage {
       return isProjectAdmin(projectId) || isProjectCollaborator(projectId);
     }
 
+    // Storage permits at most two distinct Firestore document reads per request.
+    function canReadProjectFile(projectId) {
+      return isSignedIn()
+        && (
+          isAppAdmin()
+          || isProjectOwner(projectId)
+          || (
+            projectDoc(projectId).keys().hasAny(['collaboratorEmails'])
+            && userEmail() in projectDoc(projectId).collaboratorEmails
+          )
+        );
+    }
+
     function canWriteProjectDocument(projectId) {
       return isProjectAdmin(projectId)
         || (
@@ -154,15 +167,55 @@ service firebase.storage {
         && request.resource.metadata.area is string
         && request.resource.metadata.collectionName in ['budgetItems', 'areaExpenses']
         && request.resource.metadata.expenseId is string
-        && invoiceMetadataMatchesExpense(
-          projectId,
-          request.resource.metadata.collectionName,
-          request.resource.metadata.expenseId
-        )
-        && canWritePaymentReceipt(
-          projectId,
-          request.resource.metadata.collectionName,
-          request.resource.metadata.expenseId
+        && (
+          // Metadata selects a route but never grants access by itself. Each
+          // route independently verifies both the user and the expense.
+          (request.resource.metadata.keys().hasAny(['uploadAccessScope']) && (
+            (
+              request.resource.metadata.uploadAccessScope == 'global_admin'
+              && isAppAdmin()
+              && invoiceMetadataMatchesExpense(projectId, request.resource.metadata.collectionName, request.resource.metadata.expenseId)
+            )
+            || (
+              request.resource.metadata.uploadAccessScope == 'project_owner'
+              && isProjectOwner(projectId)
+              && invoiceMetadataMatchesExpense(projectId, request.resource.metadata.collectionName, request.resource.metadata.expenseId)
+            )
+            || (
+              request.resource.metadata.uploadAccessScope == 'project_admin'
+              && hasCollaboratorDoc(projectId)
+              && collaboratorDoc(projectId).role == 'admin'
+              && invoiceMetadataMatchesExpense(projectId, request.resource.metadata.collectionName, request.resource.metadata.expenseId)
+            )
+            || (
+              request.resource.metadata.uploadAccessScope == 'area_editor'
+              && request.resource.metadata.collectionName == 'areaExpenses'
+              && firestore.exists(/databases/(default)/documents/projects/$(projectId)/areaExpenses/$(request.resource.metadata.expenseId))
+              && hasCollaboratorDoc(projectId)
+              && collaboratorDoc(projectId).canEditBudgetAreas == true
+              && 'areas' in collaboratorDoc(projectId).allowedTabs
+              && (
+                request.resource.metadata.area in collaboratorDoc(projectId).allowedCategories
+                || (
+                  firestore.get(/databases/(default)/documents/projects/$(projectId)/areaExpenses/$(request.resource.metadata.expenseId)).data.keys().hasAny(['subcategory'])
+                  && 'allowedSubcategories' in collaboratorDoc(projectId)
+                  && firestore.get(/databases/(default)/documents/projects/$(projectId)/areaExpenses/$(request.resource.metadata.expenseId)).data.subcategory is string
+                  && firestore.get(/databases/(default)/documents/projects/$(projectId)/areaExpenses/$(request.resource.metadata.expenseId)).data.subcategory != ''
+                  && areaSubcategoryKey(
+                    request.resource.metadata.area,
+                    firestore.get(/databases/(default)/documents/projects/$(projectId)/areaExpenses/$(request.resource.metadata.expenseId)).data.subcategory
+                  ) in collaboratorDoc(projectId).allowedSubcategories
+                )
+              )
+              && invoiceMetadataMatchesExpense(projectId, 'areaExpenses', request.resource.metadata.expenseId)
+            )
+          ))
+          || (
+            // Existing cached clients retain their previous behavior.
+            !request.resource.metadata.keys().hasAny(['uploadAccessScope'])
+            && invoiceMetadataMatchesExpense(projectId, request.resource.metadata.collectionName, request.resource.metadata.expenseId)
+            && canWritePaymentReceipt(projectId, request.resource.metadata.collectionName, request.resource.metadata.expenseId)
+          )
         );
     }
 
@@ -210,7 +263,7 @@ service firebase.storage {
     }
 
     match /projects/{projectId}/areas/{areaFolder}/facturas/{fileName} {
-      allow read: if hasProjectAccess(projectId) || publicInvoiceUploadInviteCanRead(projectId);
+      allow read: if canReadProjectFile(projectId) || publicInvoiceUploadInviteCanRead(projectId);
       allow create: if (
           canWriteInvoiceFromRequest(projectId, areaFolder)
           || publicInvoiceUploadInviteIsPending(projectId, areaFolder)

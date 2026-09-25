@@ -24,7 +24,7 @@ export function handleFirestoreError(error: any, operationType: FirestoreErrorIn
       userId: user?.uid || 'anonymous',
       email: user?.email || 'none',
       emailVerified: user?.emailVerified || false,
-      isAnonymous: user?.isAnonymous || true,
+      isAnonymous: user?.isAnonymous ?? true,
       providerInfo: user?.providerData || []
     }
   };

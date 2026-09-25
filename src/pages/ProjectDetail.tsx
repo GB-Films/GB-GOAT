@@ -1960,6 +1960,7 @@ export default function ProjectDetail() {
 
     const uploadKey = `${collectionName}-${expense.id}`;
     setUploadingInvoices(prev => ({ ...prev, [uploadKey]: true }));
+    let fileUploaded = false;
 
     try {
       const areaFolder = sanitizeFileName(expense.area || 'sin-area') || 'sin-area';
@@ -1972,6 +1973,13 @@ export default function ProjectDetail() {
       const path = `projects/${id}/areas/${areaFolder}/facturas/${fileName}`;
       const storageRef = ref(storage, path);
       const contentType = getInvoiceContentType(file);
+      const uploadAccessScope = isGlobalAdmin
+        ? 'global_admin'
+        : isOwner
+          ? 'project_owner'
+          : isProjectAdmin
+            ? 'project_admin'
+            : 'area_editor';
 
       await uploadBytes(storageRef, file, {
         contentType,
@@ -1979,12 +1987,14 @@ export default function ProjectDetail() {
           projectId: id,
           expenseId: expense.id,
           collectionName,
+          uploadAccessScope,
           area: expense.area || '',
           areaFolder,
           originalFileName: file.name,
           uploadedBy: user?.email || user?.uid || 'unknown',
         },
       });
+      fileUploaded = true;
 
       const url = await getDownloadURL(storageRef);
       const invoice = {
@@ -2023,8 +2033,15 @@ export default function ProjectDetail() {
       });
     } catch (error: any) {
       console.error('Error uploading invoice:', error);
-      handleFirestoreError(error, 'update', `projects/${id}/${collectionName}/${expense.id}`);
-      alert('No se pudo subir la factura. Revisá que Firebase Storage esté activado y que las reglas permitan este tipo de archivo.');
+      if (error?.code === 'storage/unauthorized') {
+        alert(fileUploaded
+          ? 'La factura se subió, pero Firebase Storage no permitió leerla para vincularla a la fila. Avisá a un administrador con el nombre del archivo para evitar duplicados.'
+          : 'Firebase Storage rechazó la factura por permisos. No se adjuntó a la fila. Avisá a un administrador para que revise las reglas de Storage.');
+      } else if (error?.code === 'permission-denied') {
+        alert('La factura se subió, pero Firestore no permitió vincularla a la fila. Avisá a un administrador con el nombre del archivo para evitar duplicados.');
+      } else {
+        alert(`No se pudo completar la carga de la factura${fileUploaded ? ' después de subir el archivo; verificá antes de reintentar para evitar duplicados' : ''}: ${error?.message || 'error desconocido'}`);
+      }
     } finally {
       setUploadingInvoices(prev => ({ ...prev, [uploadKey]: false }));
     }
