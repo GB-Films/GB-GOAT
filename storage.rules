@@ -126,6 +126,57 @@ service firebase.storage {
         ) || isProjectAdmin(projectId);
     }
 
+    // Select a single authorization route so Storage stays within its
+    // two-Firestore-document lookup limit. Metadata identifies the route;
+    // it never grants access without the matching role and expense record.
+    function canWritePaymentReceiptFromRequest(projectId, collectionName, itemId) {
+      return isSignedIn()
+        && collectionName in ['budgetItems', 'areaExpenses']
+        && request.resource.metadata.projectId == projectId
+        && request.resource.metadata.collectionName == collectionName
+        && request.resource.metadata.itemId == itemId
+        && request.resource.metadata.paymentId is string
+        && (
+          (
+            request.resource.metadata.keys().hasAny(['uploadAccessScope'])
+            && firestore.exists(/databases/(default)/documents/projects/$(projectId)/$(collectionName)/$(itemId))
+            && (
+              (request.resource.metadata.uploadAccessScope == 'global_admin'
+                && isAppAdmin())
+              || (request.resource.metadata.uploadAccessScope == 'project_owner'
+                && isProjectOwner(projectId))
+              || (request.resource.metadata.uploadAccessScope == 'project_admin'
+                && hasCollaboratorDoc(projectId)
+                && collaboratorDoc(projectId).role == 'admin')
+              || (request.resource.metadata.uploadAccessScope == 'area_editor'
+                && collectionName == 'areaExpenses'
+                && hasCollaboratorDoc(projectId)
+                && collaboratorDoc(projectId).canEditBudgetAreas == true
+                && 'areas' in collaboratorDoc(projectId).allowedTabs
+                && (
+                  (
+                    collaboratorDoc(projectId).keys().hasAny(['allowedCategories'])
+                    && firestore.get(/databases/(default)/documents/projects/$(projectId)/areaExpenses/$(itemId)).data.area
+                      in collaboratorDoc(projectId).allowedCategories
+                  )
+                  || (
+                    firestore.get(/databases/(default)/documents/projects/$(projectId)/areaExpenses/$(itemId)).data.keys().hasAny(['subcategory'])
+                    && firestore.get(/databases/(default)/documents/projects/$(projectId)/areaExpenses/$(itemId)).data.subcategory is string
+                    && firestore.get(/databases/(default)/documents/projects/$(projectId)/areaExpenses/$(itemId)).data.subcategory != ''
+                    && collaboratorDoc(projectId).keys().hasAny(['allowedSubcategories'])
+                    && areaSubcategoryKey(
+                      firestore.get(/databases/(default)/documents/projects/$(projectId)/areaExpenses/$(itemId)).data.area,
+                      firestore.get(/databases/(default)/documents/projects/$(projectId)/areaExpenses/$(itemId)).data.subcategory
+                    ) in collaboratorDoc(projectId).allowedSubcategories
+                  )
+                ))
+            )
+          )
+          || (!request.resource.metadata.keys().hasAny(['uploadAccessScope'])
+            && canWritePaymentReceipt(projectId, collectionName, itemId))
+        );
+    }
+
     function invoiceMetadataMatchesExpense(projectId, collectionName, expenseId) {
       return (
           collectionName == 'budgetItems'
@@ -275,8 +326,7 @@ service firebase.storage {
 
     match /projects/{projectId}/{collectionName}/{itemId}/comprobantes/{fileName} {
       allow read: if hasProjectAccess(projectId);
-      allow create: if canWritePaymentReceipt(projectId, collectionName, itemId)
-        && collectionName in ['budgetItems', 'areaExpenses']
+      allow create: if canWritePaymentReceiptFromRequest(projectId, collectionName, itemId)
         && request.resource.size <= 2 * 1024 * 1024
         && (
           request.resource.contentType == 'application/pdf'

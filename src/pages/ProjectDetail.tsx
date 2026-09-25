@@ -8986,6 +8986,7 @@ export default function ProjectDetail() {
           item={selectedItemForPayment}
           isOpen={paymentModalOpen}
           canManagePayments={canManagePaymentForItem(selectedItemForPayment, selectedItemForPayment?.__paymentCollection || paymentType)}
+          uploadAccessScope={isGlobalAdmin ? 'global_admin' : isOwner ? 'project_owner' : isProjectAdmin ? 'project_admin' : 'area_editor'}
           cashBoxOptions={paymentCashBoxOptions}
           providers={providers}
           paymentType={paymentType}

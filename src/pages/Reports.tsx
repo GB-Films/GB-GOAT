@@ -1017,6 +1017,7 @@ export default function Reports() {
         item={selectedPaymentLine?.item || null}
         isOpen={Boolean(selectedPaymentLine)}
         canManagePayments={Boolean(selectedPaymentLine)}
+        uploadAccessScope={profile?.role === 'admin' ? 'global_admin' : undefined}
         cashBoxOptions={[]}
         providers={providers}
         paymentType={selectedPaymentLine?.collectionName || 'areaExpenses'}

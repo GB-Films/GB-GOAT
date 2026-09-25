@@ -11,7 +11,8 @@
     "lint": "tsc --noEmit && npm run lint:rules",
     "lint:rules": "node scripts/validate-rules.mjs",
     "test": "tsx --test src/**/*.test.ts",
-    "test:rules": "firebase emulators:exec --only firestore --project demo-gb-goat-financial-rules \"node tests/financialRules.emulator.mjs\""
+    "test:rules": "firebase emulators:exec --only firestore --project demo-gb-goat-financial-rules \"node tests/financialRules.emulator.mjs\"",
+    "test:storage": "firebase emulators:exec --only firestore,storage --project demo-gb-goat-storage-receipts \"node tests/storagePaymentReceipts.emulator.mjs\""
   },
   "dependencies": {
     "@hello-pangea/dnd": "^18.0.1",

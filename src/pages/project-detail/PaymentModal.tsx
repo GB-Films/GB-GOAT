@@ -70,6 +70,7 @@ interface PaymentModalProps {
   item: any | null;
   isOpen: boolean;
   canManagePayments: boolean;
+  uploadAccessScope?: 'global_admin' | 'project_owner' | 'project_admin' | 'area_editor';
   cashBoxOptions: PaymentCashBoxOption[];
   providers?: any[];
   paymentType: PaymentCollection;
@@ -99,6 +100,7 @@ export function PaymentModal({
   item,
   isOpen,
   canManagePayments,
+  uploadAccessScope,
   cashBoxOptions,
   providers = [],
   paymentType,
@@ -236,6 +238,7 @@ export function PaymentModal({
             projectId,
             collectionName,
             itemId: item.id,
+            ...(uploadAccessScope ? { uploadAccessScope } : {}),
             paymentId: currentPayment.id || '',
             originalFileName: editReceipt.name,
           },
@@ -654,6 +657,7 @@ export function PaymentModal({
                       projectId,
                       collectionName,
                       itemId: currentItemId,
+                      ...(uploadAccessScope ? { uploadAccessScope } : {}),
                       paymentId,
                       originalFileName: receiptFile.name,
                     },
