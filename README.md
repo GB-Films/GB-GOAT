@@ -33,6 +33,14 @@ Un push a `main` ejecuta las validaciones y publica la interfaz en GitHub Pages.
 firebase deploy --only firestore:rules,storage --project gb-goat
 ```
 
+La actualización del catálogo G de Control Total usa una función de Firebase separada. Antes de desplegarla, compartir Control Total como lector con `goat-catalog-reader@gb-goat.iam.gserviceaccount.com` y verificar que sólo esa planilla esté compartida con la identidad técnica. La función no usa claves descargadas ni permisos propios de Firestore. Las dos cuentas curadoras publican el resultado con sus permisos de GOAT.
+
+```bash
+npm ci --prefix functions
+npm test --prefix functions
+firebase deploy --only functions:refreshControlTotalProjectCatalog,firestore:rules --project gb-goat
+```
+
 ## Estructura
 
 - `src/components`: componentes visuales compartidos.
