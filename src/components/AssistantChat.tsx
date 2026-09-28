@@ -13,9 +13,11 @@ import {
 import { buildAssistantTools } from '../lib/assistantTools';
 import {
   listAssistantProjects,
+  loadAssistantClients,
   loadAssistantProjectFinance,
   loadAssistantProjectContext,
   loadAssistantProviders,
+  loadAssistantUsers,
   type AssistantProjectHandle,
 } from '../lib/assistantData';
 import { hasGlobalRole, PROVIDER_ACCESS_ROLES } from '../lib/roles';
@@ -81,6 +83,9 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
     listProjects,
     loadProject: (projectId) => loadAssistantProjectContext({ projectId, uid, email, globalRole }),
     loadProjectFinance: loadAssistantProjectFinance,
+    loadClients: loadAssistantClients,
+    loadUsers: loadAssistantUsers,
+    isAppAdmin: globalRole === 'admin',
     loadProviders: loadAssistantProviders,
     canAccessProviders: hasGlobalRole(globalRole, PROVIDER_ACCESS_ROLES),
     currentProjectId: currentProjectId || null,

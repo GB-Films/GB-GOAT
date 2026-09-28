@@ -10,6 +10,7 @@ import {
   type AssistantProjectHandle,
 } from './assistantData';
 import { calculateCashBalances, calculateGeneralCashSummary } from './cashBoxes';
+import { buildPaymentCalendarDays, getOverdueLines, getTodayLines, getUnscheduledLines, sumDebt } from './paymentSchedule';
 import { calculateProjectResult } from './projectFinance';
 import { collection, doc, getDocs, runTransaction, serverTimestamp } from 'firebase/firestore';
 import { db } from './firebase';
@@ -53,6 +54,11 @@ export type AssistantProvider = {
   type?: string;
   category?: string;
   cuit?: string;
+  email?: string;
+  phone?: string;
+  address?: string;
+  bankAccount_alias?: string;
+  bankAccount_cbu?: string;
 };
 
 export type AssistantCollaborator = {
@@ -126,7 +132,10 @@ export type AssistantToolsOptions = {
   loadProject: (projectId: string) => Promise<AssistantProjectContext | null>;
   loadProviders?: () => Promise<AssistantProvider[]>;
   loadProjectFinance?: (projectId: string) => Promise<AssistantProjectFinance | null>;
+  loadClients?: () => Promise<Array<{ id: string; businessName?: string; contactName?: string; email?: string; phone?: string; cuit?: string }>>;
+  loadUsers?: () => Promise<Array<{ id: string; email?: string; displayName?: string; role?: string }>>;
   canAccessProviders?: boolean;
+  isAppAdmin?: boolean;
   currentProjectId?: string | null;
   userId?: string;
   userEmail?: string;
@@ -195,7 +204,10 @@ export const buildAssistantTools = ({
   loadProject,
   loadProviders,
   loadProjectFinance,
+  loadClients,
+  loadUsers,
   canAccessProviders = false,
+  isAppAdmin = false,
   currentProjectId = null,
   userId = '',
   userEmail = '',
@@ -588,6 +600,13 @@ export const buildAssistantTools = ({
             tipo: provider.type || '',
             categoria: provider.category || '',
             cuit: provider.cuit || '',
+            ...(canAccessProviders ? {
+              email: provider.email || '',
+              telefono: provider.phone || '',
+              direccion: provider.address || '',
+              alias: provider.bankAccount_alias || '',
+              cbu: provider.bankAccount_cbu || '',
+            } : {}),
           }));
         return { total: rows.length, proveedores: rows };
       },
@@ -1292,6 +1311,148 @@ export const buildAssistantTools = ({
             lineasPendientes: row.pendingLines,
           })),
           alertas: alerts,
+        };
+      },
+    });
+  }
+
+  tools.push({
+    name: 'listar_equipo',
+    description: 'Lista el equipo del proyecto: responsable, colaboradores con su rol y el personal cargado por rubro (proveedores asignados a partidas).',
+    parameters: projectOptionsSchema(),
+    run: async (args) => {
+      const resolved = await resolveProject(args?.proyecto);
+      if ('error' in resolved) return resolved;
+      const context = resolved.context;
+      if (!context.capabilities.tabs.includes('equipo')) {
+        return { error: 'El usuario no tiene acceso a la pestaña Equipo en este proyecto.' };
+      }
+      const staffByArea = context.capabilities.areas.map((scope) => ({
+        area: scope.area,
+        personas: visibleBudgetItems(context)
+          .filter((item) => item.area === scope.area && (item.providerName || (item as any).providerId))
+          .map((item) => ({
+            proveedor: item.providerName || 'Sin asignar',
+            detalle: item.description || '',
+            total: round2(Number(item.total) || 0),
+          })),
+      })).filter((group) => group.personas.length > 0);
+
+      return {
+        proyecto: context.projectName || context.projectId,
+        colaboradores: [...context.collaborators],
+        personalPorRubro: staffByArea,
+      };
+    },
+  });
+
+  if (isAppAdmin && loadClients) {
+    let clientsCache: Array<{ id: string; businessName?: string; contactName?: string; email?: string; phone?: string; cuit?: string }> | null = null;
+    tools.push({
+      name: 'listar_clientes',
+      description: 'Lista los clientes de la base global (sólo administradores de la aplicación).',
+      parameters: {
+        type: 'object',
+        properties: { texto: { type: 'string' }, limite: { type: 'number' } },
+      },
+      run: async (args) => {
+        if (!clientsCache) clientsCache = await loadClients();
+        const text = asText(args?.texto);
+        const rows = clientsCache
+          .filter((client) => (
+            !text
+            || [client.businessName, client.contactName, client.email, client.cuit]
+              .filter(Boolean)
+              .some((value) => asText(value).includes(text))
+          ))
+          .slice(0, limitOf(args?.limite))
+          .map((client) => ({
+            id: client.id,
+            nombre: client.businessName || client.contactName || client.id,
+            contacto: client.contactName || '',
+            email: client.email || '',
+            telefono: client.phone || '',
+            cuit: client.cuit || '',
+          }));
+        return { total: rows.length, clientes: rows };
+      },
+    });
+  }
+
+  if (isAppAdmin && loadUsers) {
+    let usersCache: Array<{ id: string; email?: string; displayName?: string; role?: string }> | null = null;
+    tools.push({
+      name: 'listar_usuarios',
+      description: 'Lista los usuarios dados de alta en la app con su rol global (sólo administradores de la aplicación).',
+      parameters: {
+        type: 'object',
+        properties: { texto: { type: 'string' }, rol: { type: 'string' }, limite: { type: 'number' } },
+      },
+      run: async (args) => {
+        if (!usersCache) usersCache = await loadUsers();
+        const text = asText(args?.texto);
+        const role = asText(args?.rol);
+        const rows = usersCache
+          .filter((entry) => (
+            (!role || asText(entry.role) === role)
+            && (!text || [entry.displayName, entry.email].filter(Boolean).some((value) => asText(value).includes(text)))
+          ))
+          .slice(0, limitOf(args?.limite))
+          .map((entry) => ({
+            nombre: entry.displayName || entry.email || entry.id,
+            email: entry.email || '',
+            rol: entry.role || 'colaborador',
+          }));
+        return { total: rows.length, usuarios: rows };
+      },
+    });
+  }
+
+  if (isAppAdmin && loadProjectFinance) {
+    tools.push({
+      name: 'reportes_pagos',
+      description: 'Reporte de pagos de todos los proyectos: vencidos, de hoy, del mes en curso y sin fecha programada, con el detalle por proyecto.',
+      parameters: {
+        type: 'object',
+        properties: { limite: { type: 'number', description: 'Máximo de proyectos a analizar (por defecto 25)' } },
+      },
+      run: async (args) => {
+        const projects = await getProjects();
+        const limit = limitOf(args?.limite, 25, 40);
+        const lines: any[] = [];
+        for (const project of projects.slice(0, limit)) {
+          const finance = await loadProjectFinance(project.id);
+          if (!finance) continue;
+          lines.push(...finance.payableLines.filter((line) => line.debt > 0.009));
+        }
+
+        const todayLines = getTodayLines(lines as any);
+        const overdueLines = getOverdueLines(lines as any);
+        const unscheduledLines = getUnscheduledLines(lines as any);
+        const calendar = buildPaymentCalendarDays(lines as any, new Date());
+        const monthLines = calendar.filter((bucket) => bucket.isCurrentMonth).flatMap((bucket) => bucket.lines);
+
+        const byProject = projects.slice(0, limit).map((project) => {
+          const projectLines = lines.filter((line) => line.projectId === project.id);
+          return {
+            proyecto: project.name,
+            vencido: round2(sumDebt(getOverdueLines(projectLines as any))),
+            hoy: round2(sumDebt(getTodayLines(projectLines as any))),
+            delMes: round2(sumDebt(monthLines.filter((line: any) => line.projectId === project.id))),
+            sinFecha: round2(sumDebt(getUnscheduledLines(projectLines as any))),
+            lineas: projectLines.length,
+          };
+        }).filter((row) => row.vencido > 0 || row.hoy > 0 || row.delMes > 0 || row.sinFecha > 0);
+
+        return {
+          proyectosAnalizados: Math.min(projects.length, limit),
+          proyectosVisibles: projects.length,
+          totalPendiente: round2(sumDebt(lines as any)),
+          vencidos: { cantidad: overdueLines.length, monto: round2(sumDebt(overdueLines)) },
+          deHoy: { cantidad: todayLines.length, monto: round2(sumDebt(todayLines)) },
+          mesEnCurso: { cantidad: monthLines.length, monto: round2(sumDebt(monthLines)) },
+          sinFechaProgramada: { cantidad: unscheduledLines.length, monto: round2(sumDebt(unscheduledLines)) },
+          porProyecto: byProject.slice(0, 20),
         };
       },
     });

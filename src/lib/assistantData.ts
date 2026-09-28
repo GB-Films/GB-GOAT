@@ -3,7 +3,8 @@ import { db } from './firebase';
 import { normalizeEmail, normalizeSearchText } from './identity';
 import { buildAssistantCapabilities } from './assistantCapabilities';
 import type { AssistantProjectContext, AssistantProvider } from './assistantTools';
-import { calculateProjectFinance } from './projectFinance';
+import { calculateProjectFinance, getItemTotal, getPaymentTotal, getStandaloneBudgetItems } from './projectFinance';
+import { getReimbursedCents, isThirdPartyPayment } from './reimbursements';
 
 export type AssistantProjectHandle = {
   id: string;
@@ -19,10 +20,26 @@ export type AssistantProjectFinance = {
   budgetTotal: number;
   spent: number;
   paid: number;
+  margin: number;
   debt: number;
   pendingLines: number;
   usagePercent: number;
   overBudget: number;
+  payableLines: AssistantPayableLine[];
+};
+
+export type AssistantPayableLine = {
+  id: string;
+  projectId: string;
+  projectName: string;
+  area: string;
+  providerName: string;
+  description: string;
+  total: number;
+  paid: number;
+  debt: number;
+  paymentDate: string;
+  source: 'area' | 'budget' | 'reimbursement';
 };
 
 // Lista los proyectos a los que el usuario tiene acceso, con las mismas dos
@@ -183,19 +200,73 @@ export const loadAssistantProjectFinance = async (projectId: string): Promise<As
       getDocs(collection(db, 'projects', projectId, 'budgetItems')),
       getDocs(collection(db, 'projects', projectId, 'areaExpenses')),
     ]);
-    const finance = calculateProjectFinance(project, mapDocs(budgetSnap.docs), mapDocs(areaSnap.docs));
+    const budgetItems = mapDocs(budgetSnap.docs);
+    const areaExpenses = mapDocs(areaSnap.docs);
+    const finance = calculateProjectFinance(project, budgetItems, areaExpenses);
+    const projectName = String(project.name || 'Proyecto sin nombre');
+    const payableLines: AssistantPayableLine[] = [
+      ...areaExpenses.map((item) => ({
+        id: item.id,
+        projectId,
+        projectName,
+        area: String(item.area || 'Sin area'),
+        providerName: String(item.providerName || ''),
+        description: String(item.description || ''),
+        total: getItemTotal(item),
+        paid: getPaymentTotal(item),
+        debt: Math.max(0, getItemTotal(item) - getPaymentTotal(item)),
+        paymentDate: String(item.paymentDate || ''),
+        source: 'area' as const,
+      })),
+      ...getStandaloneBudgetItems(project, budgetItems).map((item: any) => ({
+        id: item.id,
+        projectId,
+        projectName,
+        area: String(item.area || 'Sin area'),
+        providerName: String(item.providerName || ''),
+        description: String(item.description || ''),
+        total: getItemTotal(item),
+        paid: getPaymentTotal(item),
+        debt: Math.max(0, getItemTotal(item) - getPaymentTotal(item)),
+        paymentDate: String(item.paymentDate || ''),
+        source: 'budget' as const,
+      })),
+    ];
+    // Reintegros a terceros: deuda con la persona que adelantó el pago.
+    [...areaExpenses, ...getStandaloneBudgetItems(project, budgetItems)].forEach((item: any) => {
+      (Array.isArray(item.paymentHistory) ? item.paymentHistory : []).forEach((payment: any, index: number) => {
+        if (!isThirdPartyPayment(payment)) return;
+        const total = Number(payment.amount) || 0;
+        const paid = getReimbursedCents(payment) / 100;
+        payableLines.push({
+          id: `${item.id}-reintegro-${payment.id || index}`,
+          projectId,
+          projectName,
+          area: String(item.area || 'Sin area'),
+          providerName: String(payment.thirdPartyPayerName || 'Persona sin identificar'),
+          description: `Reintegro por ${item.description || 'gasto'}`,
+          total,
+          paid,
+          debt: Math.max(0, total - paid),
+          paymentDate: String(payment.date || ''),
+          source: 'reimbursement',
+        });
+      });
+    });
     return {
       projectId,
-      name: String(project.name || 'Proyecto sin nombre'),
+      name: projectName,
       status: String(project.status || ''),
       clientName: String(project.clientName || ''),
       budgetTotal: Number(finance.budgetTotal) || 0,
       spent: Number(finance.spent) || 0,
       paid: Number(finance.paid) || 0,
+      margin: Number(finance.margin) || 0,
       debt: Number(finance.debt) || 0,
       pendingLines: Number(finance.unpaidLines) || 0,
       usagePercent: Number(finance.usagePercent) || 0,
       overBudget: Number(finance.overBudget) || 0,
+      payableLines,
     };
   } catch (error) {
     console.warn('No pude calcular las finanzas del proyecto para el asistente:', error);
@@ -209,6 +280,42 @@ export const loadAssistantProviders = async (): Promise<AssistantProvider[]> => 
     return mapDocs(snapshot.docs);
   } catch (error) {
     console.warn('No pude cargar los proveedores para el asistente:', error);
+    return [];
+  }
+};
+
+export type AssistantClient = {
+  id: string;
+  businessName?: string;
+  contactName?: string;
+  email?: string;
+  phone?: string;
+  cuit?: string;
+};
+
+export type AssistantUser = {
+  id: string;
+  email?: string;
+  displayName?: string;
+  role?: string;
+};
+
+export const loadAssistantClients = async (): Promise<AssistantClient[]> => {
+  try {
+    const snapshot = await getDocs(collection(db, 'clients'));
+    return mapDocs(snapshot.docs);
+  } catch (error) {
+    console.warn('No pude cargar los clientes para el asistente:', error);
+    return [];
+  }
+};
+
+export const loadAssistantUsers = async (): Promise<AssistantUser[]> => {
+  try {
+    const snapshot = await getDocs(collection(db, 'users'));
+    return mapDocs(snapshot.docs);
+  } catch (error) {
+    console.warn('No pude cargar los usuarios para el asistente:', error);
     return [];
   }
 };

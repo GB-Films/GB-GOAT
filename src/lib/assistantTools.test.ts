@@ -363,7 +363,8 @@ test('el resumen general suma los proyectos visibles y marca alertas', async () 
     loadProjectFinance: async (projectId) => (projectId === 'proj-1'
       ? {
         projectId, name: 'Largometraje', status: 'Rodaje', clientName: 'Cliente A',
-        budgetTotal: 10000, spent: 9000, paid: 4000, debt: 5000, pendingLines: 3, usagePercent: 90, overBudget: 0,
+        budgetTotal: 10000, spent: 9000, paid: 4000, margin: 1000, debt: 5000, pendingLines: 3, usagePercent: 90, overBudget: 0,
+        payableLines: [],
       }
       : null),
   });
@@ -375,4 +376,93 @@ test('el resumen general suma los proyectos visibles y marca alertas', async () 
   assert.equal(summary.totales.deuda, 5000);
   assert.equal(summary.proyectos[0].nombre, 'Largometraje');
   assert.deepEqual(summary.alertas[0].motivos, ['al 90% del presupuesto', 'deuda $5.000']);
+});
+
+test('lista el equipo del proyecto con el personal por rubro', async () => {
+  const context = buildContext();
+  context.collaborators = [{ email: 'area@example.com', displayName: 'Jefa de Área', role: 'jefe_area' }];
+  const adminCapabilities = buildAssistantCapabilities({ ...baseProject, userId: 'owner-uid' });
+  const tools = buildTools({ loadProject: async () => ({ ...context, capabilities: adminCapabilities }) });
+
+  const team = await runTool(tools, 'listar_equipo');
+
+  assert.equal(team.colaboradores.length, 1);
+  assert.deepEqual(team.personalPorRubro[0], {
+    area: 'Arte',
+    personas: [{ proveedor: 'Rental Sur', detalle: 'Cámara', total: 1000 }],
+  });
+});
+
+test('clientes y usuarios sólo están para administradores de la aplicación', () => {
+  const withoutAdmin = buildTools().map((tool) => tool.name);
+  assert.ok(!withoutAdmin.includes('listar_clientes'));
+  assert.ok(!withoutAdmin.includes('listar_usuarios'));
+  assert.ok(!withoutAdmin.includes('reportes_pagos'));
+
+  const withAdmin = buildTools({
+    isAppAdmin: true,
+    loadClients: async () => [{ id: 'c1', businessName: 'Gran Berta Films', contactName: 'Ana', email: 'ana@x.com' }],
+    loadUsers: async () => [{ id: 'u1', email: 'ana@x.com', displayName: 'Ana', role: 'admin' }],
+    loadProjectFinance: async () => null,
+  }).map((tool) => tool.name);
+  assert.ok(withAdmin.includes('listar_clientes'));
+  assert.ok(withAdmin.includes('listar_usuarios'));
+  assert.ok(withAdmin.includes('reportes_pagos'));
+});
+
+test('busca clientes y usuarios con filtros', async () => {
+  const tools = buildTools({
+    isAppAdmin: true,
+    loadClients: async () => [
+      { id: 'c1', businessName: 'Gran Berta Films', contactName: 'Ana', email: 'ana@x.com' },
+      { id: 'c2', businessName: 'Cervecería Quilmes', contactName: 'Luis' },
+    ],
+    loadUsers: async () => [
+      { id: 'u1', email: 'ana@x.com', displayName: 'Ana', role: 'admin' },
+      { id: 'u2', email: 'jefe@x.com', displayName: 'Jefe', role: 'jefe_produccion' },
+    ],
+  });
+
+  const clients = await runTool(tools, 'listar_clientes', { texto: 'quilmes' });
+  assert.equal(clients.total, 1);
+  assert.equal(clients.clientes[0].nombre, 'Cervecería Quilmes');
+
+  const admins = await runTool(tools, 'listar_usuarios', { rol: 'admin' });
+  assert.equal(admins.total, 1);
+  assert.equal(admins.usuarios[0].nombre, 'Ana');
+});
+
+test('el reporte de pagos separa vencidos, hoy, mes y sin fecha', async () => {
+  const today = new Date();
+  const todayKey = today.toISOString().slice(0, 10);
+  const tools = buildTools({
+    isAppAdmin: true,
+    loadProjectFinance: async (projectId) => (projectId === 'proj-1' ? {
+      projectId,
+      name: 'Largometraje',
+      status: 'Rodaje',
+      clientName: 'Cliente A',
+      budgetTotal: 10000,
+      spent: 5000,
+      paid: 2000,
+      margin: 5000,
+      debt: 3000,
+      pendingLines: 3,
+      usagePercent: 50,
+      overBudget: 0,
+      payableLines: [
+        { id: 'l1', projectId, projectName: 'Largometraje', area: 'Arte', providerName: 'Rental', description: 'Cámara', total: 1000, paid: 0, debt: 1000, paymentDate: '2026-01-01', source: 'budget' as const },
+        { id: 'l2', projectId, projectName: 'Largometraje', area: 'Arte', providerName: 'Ferretería', description: 'Pintura', total: 500, paid: 0, debt: 500, paymentDate: todayKey, source: 'area' as const },
+        { id: 'l3', projectId, projectName: 'Largometraje', area: 'Vestuario', providerName: 'Zapatería', description: 'Botas', total: 1500, paid: 0, debt: 1500, paymentDate: '', source: 'area' as const },
+      ],
+    } : null),
+  });
+
+  const report = await runTool(tools, 'reportes_pagos');
+
+  assert.equal(report.totalPendiente, 3000);
+  assert.equal(report.vencidos.cantidad, 1);
+  assert.equal(report.deHoy.monto, 500);
+  assert.equal(report.sinFechaProgramada.monto, 1500);
+  assert.equal(report.porProyecto[0].proyecto, 'Largometraje');
 });
