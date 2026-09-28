@@ -1,0 +1,16 @@
+{
+  "name": "gb-goat-functions",
+  "private": true,
+  "description": "Cloud Functions de GB GOAT (proxy del asistente con IA)",
+  "main": "index.js",
+  "engines": {
+    "node": "22"
+  },
+  "scripts": {
+    "logs": "firebase functions:log"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.0.2",
+    "firebase-functions": "^6.1.2"
+  }
+}

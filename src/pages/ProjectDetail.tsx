@@ -47,6 +47,8 @@ import { buildPaymentCalendarDays, formatDateKey, formatPeriodLabel, getOverdueL
 import { BudgetRowCell } from './project-detail/BudgetRowCell';
 import { DRAGGING_EXPENSE_ROW_CLASS, ExpenseDragHandle } from './project-detail/ExpenseDragHandle';
 import { PaymentModal } from './project-detail/PaymentModal';
+import { AssistantChat } from '../components/AssistantChat';
+import { buildAssistantCapabilities } from '../lib/assistantCapabilities';
 import { ExpenseInvoiceCell, ExpenseReceiptsCell, InvoiceDropOverlay } from './project-detail/ExpenseFileCells';
 import type { AreaExpense, BudgetItem, CashMovement, Collaborator, Payment, PaymentCollection } from './project-detail/types';
 import { formatIdentifier, inferLegacyIdentifiers, normalizeDigits, providerDisplayName } from '../lib/providerConstants';
@@ -5092,6 +5094,29 @@ export default function ProjectDetail() {
   if (loading) return <div className="p-8 text-center text-slate-500 font-mono text-xs uppercase tracking-widest">Analizando proyecto...</div>;
   if (!project) return <div className="p-8 text-center text-slate-900 font-bold uppercase tracking-widest">Proyecto no encontrado</div>;
 
+  const assistantCapabilities = buildAssistantCapabilities({
+    projectId: project.id || id || '',
+    projectName: project.name || '',
+    projectCreatedBy: project.createdBy || '',
+    categories,
+    activeAreas,
+    userId: user?.uid || '',
+    globalRole: profile?.role || null,
+    collaborator: userPermissions,
+  });
+  const assistantContext = {
+    projectId: project.id || id || '',
+    projectName: project.name || '',
+    userEmail: normalizeEmail(user?.email),
+    categories,
+    activeAreas,
+    budgetItems,
+    areaExpenses,
+    cashMovements,
+    collaborators,
+    providers,
+  };
+
   return (
     <div className="mx-auto max-w-[1600px] text-[11px] sm:text-xs">
       <AnimatePresence>
@@ -9413,6 +9438,12 @@ export default function ProjectDetail() {
           </div>
         )}
       </AnimatePresence>
+
+      <AssistantChat
+        capabilities={assistantCapabilities}
+        context={assistantContext}
+        onOpenTab={(tab) => setActiveTab(tab)}
+      />
 
     </div>
   );

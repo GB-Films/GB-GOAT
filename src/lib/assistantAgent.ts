@@ -1,0 +1,125 @@
+import { getApp } from 'firebase/app';
+import { getFunctions, httpsCallable } from 'firebase/functions';
+import { describeAssistantScope, type AssistantCapabilities } from './assistantCapabilities';
+import { assistantToolsForModel, type AssistantTool } from './assistantTools';
+
+export type AssistantToolCall = {
+  id: string;
+  type: 'function';
+  function: { name: string; arguments: string };
+};
+
+export type AssistantMessage = {
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  content: string;
+  tool_calls?: AssistantToolCall[];
+  tool_call_id?: string;
+};
+
+export type AssistantModelCaller = (input: {
+  messages: AssistantMessage[];
+  tools: ReturnType<typeof assistantToolsForModel>;
+}) => Promise<{ message: AssistantMessage }>;
+
+export const ASSISTANT_FUNCTIONS_REGION = 'us-central1';
+
+// Único punto de contacto con el modelo: pasa por la Cloud Function, que es la
+// que guarda la API key de DeepSeek y aplica la cuota diaria por usuario.
+export const callDeepSeekAssistant: AssistantModelCaller = async ({ messages, tools }) => {
+  const callable = httpsCallable(getFunctions(getApp(), ASSISTANT_FUNCTIONS_REGION), 'assistantChat');
+  const result = await callable({ messages, tools });
+  const data = (result?.data || {}) as any;
+  return {
+    message: {
+      role: 'assistant',
+      content: typeof data?.message?.content === 'string' ? data.message.content : '',
+      tool_calls: Array.isArray(data?.message?.tool_calls) ? data.message.tool_calls : [],
+    },
+  };
+};
+
+export const buildAssistantSystemPrompt = ({
+  projectName,
+  capabilities,
+  today = new Date(),
+}: {
+  projectName: string;
+  capabilities: AssistantCapabilities;
+  today?: Date;
+}) => [
+  'Sos el asistente interno de GB GOAT, la herramienta de gestión de producción de Gran Berta Films.',
+  'Hablás en español rioplatense, claro y directo. Cuando necesitás números, primero consultás las herramientas y nunca inventás cifras.',
+  `Hoy es ${today.toISOString().slice(0, 10)}.`,
+  describeAssistantScope(capabilities),
+  'Reglas:',
+  '- Trabajás únicamente con la información que este usuario puede ver. Si te piden algo fuera de su alcance, explicá que no tiene permiso.',
+  '- Todavía no modificás datos: solo consultás, resumís y analizás. Si te piden una acción de escritura, contá qué habría que hacer y aclarás que esa función llega más adelante.',
+  '- Cuando informes plata, usá el formato $1.234.567 y aclarás el área o la partida.',
+  '- Si una herramienta devuelve un error o no hay datos, decilo con claridad en vez de suponer.',
+].join('\n');
+
+export const runAssistantTurn = async ({
+  history,
+  userText,
+  tools,
+  callModel,
+  maxRounds = 4,
+}: {
+  history: AssistantMessage[];
+  userText: string;
+  tools: AssistantTool[];
+  callModel: AssistantModelCaller;
+  maxRounds?: number;
+}) => {
+  const messages: AssistantMessage[] = [...history, { role: 'user', content: userText }];
+  const actions: Array<{ name: string; args: any }> = [];
+  const toolSchemas = assistantToolsForModel(tools);
+
+  for (let round = 0; round < maxRounds; round += 1) {
+    const { message } = await callModel({ messages, tools: toolSchemas });
+    const assistantMessage: AssistantMessage = {
+      role: 'assistant',
+      content: message.content || '',
+      ...(message.tool_calls && message.tool_calls.length > 0 ? { tool_calls: message.tool_calls } : {}),
+    };
+    messages.push(assistantMessage);
+
+    if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
+      return { messages, reply: assistantMessage.content, actions };
+    }
+
+    for (const call of assistantMessage.tool_calls) {
+      const tool = tools.find((entry) => entry.name === call.function?.name);
+      let args: any = {};
+      if (call.function?.arguments) {
+        try {
+          args = JSON.parse(call.function.arguments);
+        } catch {
+          args = {};
+        }
+      }
+      let output: unknown;
+      if (!tool) {
+        output = { error: `La herramienta ${call.function?.name || 'desconocida'} no está disponible para este usuario.` };
+      } else {
+        actions.push({ name: tool.name, args });
+        try {
+          output = tool.run(args);
+        } catch (error: any) {
+          output = { error: error?.message || 'Error al ejecutar la consulta.' };
+        }
+      }
+      messages.push({
+        role: 'tool',
+        tool_call_id: call.id,
+        content: JSON.stringify(output ?? null).slice(0, 30_000),
+      });
+    }
+  }
+
+  return {
+    messages,
+    reply: 'No pude terminar la consulta con los datos disponibles. Probá preguntarlo de otra forma.',
+    actions,
+  };
+};
