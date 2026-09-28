@@ -15,7 +15,7 @@ const REASONING_EFFORT = process.env.DEEPSEEK_REASONING_EFFORT || 'high';
 const DAILY_MESSAGE_LIMIT = Math.max(1, Number(process.env.ASSISTANT_DAILY_LIMIT) || 300);
 const MAX_MESSAGES = 40;
 const MAX_MESSAGE_CHARS = 120_000;
-const MAX_TOOLS = 24;
+const MAX_TOOLS = Math.max(1, Number(process.env.ASSISTANT_MAX_TOOLS) || 64);
 const MAX_PAYLOAD_BYTES = 400_000;
 const REQUEST_TIMEOUT_MS = 90_000;
 
