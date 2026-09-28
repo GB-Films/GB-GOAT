@@ -740,6 +740,7 @@ export default function ProjectDetail() {
   const [generatingProviderInviteLinks, setGeneratingProviderInviteLinks] = useState<Record<string, boolean>>({});
   const [dragOverExpenseId, setDragOverExpenseId] = useState<string | null>(null);
   const [isDeletingProject, setIsDeletingProject] = useState(false);
+  const [deletingAreaName, setDeletingAreaName] = useState<string | null>(null);
   const [showExportModal, setShowExportModal] = useState(false);
   const [locationDraft, setLocationDraft] = useState('');
   const [isSavingLocation, setIsSavingLocation] = useState(false);
@@ -1007,7 +1008,7 @@ export default function ProjectDetail() {
     transaction: Transaction,
     items: any[],
     collectionName: PaymentCollection,
-    reason: 'row_deleted' | 'category_deleted' | 'budget_replaced',
+    reason: 'row_deleted' | 'category_deleted' | 'budget_replaced' | 'area_deleted',
   ) => {
     if (items.length > 498) throw new Error('TOO_MANY_EXPENSES');
     const refs = items.map((item) => doc(db, 'projects', id!, collectionName, item.id));
@@ -1046,7 +1047,7 @@ export default function ProjectDetail() {
   const deleteExpenseRows = async (
     items: any[],
     collectionName: PaymentCollection,
-    reason: 'row_deleted' | 'category_deleted' | 'budget_replaced' = 'row_deleted',
+    reason: 'row_deleted' | 'category_deleted' | 'budget_replaced' | 'area_deleted' = 'row_deleted',
   ) => {
     if (items.length === 0) return;
     await assertNoLinkedCashMovements(items, collectionName);
@@ -1393,6 +1394,149 @@ export default function ProjectDetail() {
     setSelectedAreaTabs((current) => current.filter((area) => area !== areaName));
     if (id) {
       await updateDoc(doc(db, 'projects', id), { activeAreas: newActiveAreas });
+    }
+  };
+
+  // Elimina todo lo cargado en la gestión del área y la saca de Gestión por
+  // Áreas. La categoría se conserva para poder activarla otra vez más adelante.
+  // Comparte el permiso de la activación (sólo administradores del proyecto) y
+  // pide doble confirmación porque el borrado es definitivo.
+  const deleteActiveArea = async (areaName: string) => {
+    if (!id || !isProjectAdmin || deletingAreaName) return;
+    try {
+      const projectRef = doc(db, 'projects', id);
+      const baselineProject = await getDocFromServer(projectRef);
+      if (!baselineProject.exists()) throw new Error('PROJECT_MISSING');
+      const baselineData = baselineProject.data();
+      const baselineActiveAreas = safeArray(baselineData.activeAreas);
+      if (!baselineActiveAreas.includes(areaName)) throw new Error('AREA_CHANGED');
+
+      const [budgetSnapshot, areaSnapshot] = await Promise.all([
+        getDocsFromServer(collection(db, 'projects', id, 'budgetItems')),
+        getDocsFromServer(collection(db, 'projects', id, 'areaExpenses')),
+      ]);
+      const budgetItemsInArea = budgetSnapshot.docs
+        .map((entry) => ({ id: entry.id, ...entry.data() } as BudgetItem))
+        .filter((item) => item.area === areaName);
+      const areaExpensesInArea = areaSnapshot.docs
+        .map((entry) => ({ id: entry.id, ...entry.data() } as AreaExpense))
+        .filter((expense) => expense.area === areaName);
+      const rowsToDelete: any[] = [...areaExpensesInArea, ...budgetItemsInArea];
+      if (rowsToDelete.some((row) => hasRecordedPayment(row))) throw new Error('PAID_EXPENSE_LOCKED');
+      await assertNoLinkedCashMovements(areaExpensesInArea, 'areaExpenses');
+      await assertNoLinkedCashMovements(budgetItemsInArea, 'budgetItems');
+
+      const storedSubcategories = baselineData.areaExpenseSubcategories && typeof baselineData.areaExpenseSubcategories === 'object'
+        ? baselineData.areaExpenseSubcategories[areaName]
+        : [];
+      const subcategories = safeArray(storedSubcategories);
+      const loadedTotal = areaExpensesInArea.reduce((acc, item) => acc + (Number(item.total) || 0), 0);
+      const assignedTotal = budgetItemsInArea.reduce((acc, item) => acc + (Number(item.total) || 0), 0);
+
+      const firstConfirmation = confirm(
+        `¿Eliminar el área "${areaName}" y toda su información cargada?\n\n` +
+        'Se van a borrar:\n' +
+        `- ${areaExpensesInArea.length} gastos de Gestión por Áreas ($${loadedTotal.toLocaleString()})\n` +
+        `- ${budgetItemsInArea.length} partidas del presupuesto del área ($${assignedTotal.toLocaleString()})\n` +
+        `- ${subcategories.length} subcategorías con sus presupuestos\n` +
+        '- Los permisos de colaboradores sobre esas subcategorías\n\n' +
+        'El área dejará de aparecer en Gestión por Áreas y vas a poder activarla otra vez cuando quieras. ' +
+        'Esta acción no se puede deshacer.'
+      );
+      if (!firstConfirmation) return;
+      if (!confirm(`Confirmación final: ¿eliminar definitivamente el área "${areaName}"?`)) return;
+
+      const nextActiveAreas = baselineActiveAreas.filter((activeArea) => activeArea !== areaName);
+      const nextSubcategoriesMap = { ...(baselineData.areaExpenseSubcategories || {}) };
+      delete nextSubcategoriesMap[areaName];
+      const nextSubcategoryBudgets = { ...(baselineData.areaExpenseSubcategoryBudgets || {}) };
+      Object.keys(nextSubcategoryBudgets).forEach((key) => {
+        if (areaFromSubcategoryKey(key) === areaName) delete nextSubcategoryBudgets[key];
+      });
+      const collaboratorsToUpdate = collaborators.filter((collaborator) => (
+        safeArray(collaborator.allowedSubcategories).some((key) => areaFromSubcategoryKey(key) === areaName)
+      ));
+      const nextCollaborators = collaborators.map((collaborator) => (
+        collaboratorsToUpdate.some((entry) => entry.email === collaborator.email)
+          ? {
+              ...collaborator,
+              allowedSubcategories: safeArray(collaborator.allowedSubcategories).filter((key) => areaFromSubcategoryKey(key) !== areaName),
+            }
+          : collaborator
+      ));
+
+      setDeletingAreaName(areaName);
+      // Las filas se borran en lotes (una transacción por lote) para no superar
+      // los límites de Firestore en áreas grandes. Cada lote aborta si alguna
+      // fila cambió o recibió un pago mientras se eliminaba.
+      const rowsByCollection: Array<{ collectionName: PaymentCollection; items: any[] }> = [
+        { collectionName: 'areaExpenses', items: areaExpensesInArea },
+        { collectionName: 'budgetItems', items: budgetItemsInArea },
+      ];
+      for (const group of rowsByCollection) {
+        for (let start = 0; start < group.items.length; start += 400) {
+          const batch = group.items.slice(start, start + 400);
+          await runTransaction(db, async (transaction) => {
+            const projectSnapshot = group.collectionName === 'budgetItems' ? await transaction.get(projectRef) : null;
+            await queueExpenseRowsDeletion(transaction, batch, group.collectionName, 'area_deleted');
+            if (projectSnapshot?.exists()) {
+              transaction.update(projectRef, {
+                budgetRevision: (Number(projectSnapshot.data().budgetRevision) || 0) + 1,
+                updatedAt: serverTimestamp(),
+              });
+            }
+          });
+        }
+      }
+
+      const nextRevision = await runTransaction(db, async (transaction) => {
+        const projectSnapshot = await transaction.get(projectRef);
+        if (!projectSnapshot.exists()
+          || JSON.stringify(safeArray(projectSnapshot.data().activeAreas)) !== JSON.stringify(baselineActiveAreas)) {
+          throw new Error('AREA_CHANGED');
+        }
+        const revision = Number(projectSnapshot.data().budgetRevision) || 0;
+        transaction.update(projectRef, {
+          activeAreas: nextActiveAreas,
+          areaExpenseSubcategories: nextSubcategoriesMap,
+          areaExpenseSubcategoryBudgets: nextSubcategoryBudgets,
+          updatedAt: serverTimestamp(),
+        });
+        collaboratorsToUpdate.forEach((collaborator) => {
+          transaction.update(
+            doc(db, 'projects', id, 'collaborators', normalizeEmail(collaborator.email)),
+            {
+              allowedSubcategories: safeArray(collaborator.allowedSubcategories).filter((key) => areaFromSubcategoryKey(key) !== areaName),
+              updatedAt: serverTimestamp(),
+            },
+          );
+        });
+        return revision;
+      });
+
+      setProject((current: any) => current ? {
+        ...current,
+        activeAreas: nextActiveAreas,
+        areaExpenseSubcategories: nextSubcategoriesMap,
+        areaExpenseSubcategoryBudgets: nextSubcategoryBudgets,
+        budgetRevision: nextRevision,
+      } : current);
+      setActiveAreas(nextActiveAreas);
+      setSelectedAreaTabs((current) => current.filter((area) => area !== areaName));
+      setAreaExpenses((current) => current.filter((expense) => expense.area !== areaName));
+      setBudgetItems((current) => current.filter((item) => item.area !== areaName));
+      setCollaborators(nextCollaborators);
+      showExpenseConfirmation(`Área "${areaName}" eliminada. Podés activarla otra vez cuando quieras.`);
+    } catch (error) {
+      console.error('Error deleting area:', error);
+      const code = error instanceof Error ? error.message : '';
+      if (code === 'PAID_EXPENSE_LOCKED' || code === 'EXPENSE_HAS_CASH_MOVEMENT') {
+        alert(`No se puede eliminar el área "${areaName}": tiene pagos registrados que forman parte del historial financiero.\n\nPodés desactivar la gestión del área para que deje de figurar en Gestión por Áreas.`);
+      } else {
+        alert(`No se pudo eliminar el área "${areaName}". Actualizá la página y revisá la información antes de volver a intentar.`);
+      }
+    } finally {
+      setDeletingAreaName(null);
     }
   };
 
@@ -6085,13 +6229,24 @@ export default function ProjectDetail() {
                         <span className="truncate">{areaRow.area}</span>
                       </h3>
                       {isProjectAdmin && (
-                        <button 
-                          onClick={() => removeActiveArea(areaRow.area)}
-                          className="hidden sm:inline text-[9px] text-slate-400 hover:text-red-300 font-bold uppercase tracking-widest transition-colors"
-                          title="Desactivar gestión de esta área"
-                        >
-                          Desactivar Gestión
-                        </button>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <button 
+                            onClick={() => removeActiveArea(areaRow.area)}
+                            className="hidden sm:inline text-[9px] text-slate-400 hover:text-red-300 font-bold uppercase tracking-widest transition-colors"
+                            title="Desactivar gestión de esta área"
+                          >
+                            Desactivar Gestión
+                          </button>
+                          <button
+                            onClick={() => deleteActiveArea(areaRow.area)}
+                            disabled={deletingAreaName === areaRow.area}
+                            className="inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-widest text-red-300 transition-colors hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-50"
+                            title="Eliminar el área y toda su información cargada"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                            {deletingAreaName === areaRow.area ? 'Eliminando...' : 'Eliminar Área'}
+                          </button>
+                        </div>
                       )}
                     </div>
                      <div className="flex w-full flex-wrap items-center justify-between gap-1.5 sm:w-auto sm:justify-end sm:gap-2">
