@@ -99,7 +99,7 @@ export function assertCashPaymentLink(
 export function prepareExpenseEdit(
   latest: ExpenseRecord,
   updates: Record<string, unknown>,
-  options: { isProjectAdmin: boolean; expectedUpdatedAt?: ExpenseRecord['updatedAt'] },
+  options: { isProjectAdmin: boolean; expectedUpdatedAt?: ExpenseRecord['updatedAt']; confirmedPaidProviderCorrection?: boolean },
 ) {
   if (!sameVersion(latest.updatedAt, options.expectedUpdatedAt)) {
     throw new Error('EXPENSE_CHANGED');
@@ -108,7 +108,15 @@ export function prepareExpenseEdit(
   const history = Array.isArray(latest.paymentHistory) ? latest.paymentHistory : [];
   const hasPayment = hasRecordedPayment(latest);
   if (hasPayment && FINANCIAL_IDENTITY_FIELDS.some((field) => field in updates)) {
-    throw new Error('PAID_EXPENSE_LOCKED');
+    const providerOnly = Object.keys(updates).every((field) => field === 'providerId' || field === 'providerName');
+    const newProviderId = updates.providerId;
+    const newProviderName = updates.providerName;
+    if (!options.isProjectAdmin || !options.confirmedPaidProviderCorrection || !providerOnly
+      || typeof newProviderId !== 'string' || !newProviderId.trim()
+      || typeof newProviderName !== 'string' || !newProviderName.trim()
+      || (newProviderId === latest.providerId && newProviderName === latest.providerName)) {
+      throw new Error('PAID_EXPENSE_LOCKED');
+    }
   }
 
   const next = { ...updates };

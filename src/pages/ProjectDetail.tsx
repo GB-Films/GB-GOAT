@@ -1471,27 +1471,82 @@ export default function ProjectDetail() {
       const currentExpense = areaExpenses.find(e => e.id === expenseId);
       if (!currentExpense) return;
 
-      const nextArea = updates.area || currentExpense.area;
-      const nextSubcategory = updates.subcategory !== undefined ? updates.subcategory : currentExpense.subcategory;
+      const paidProviderCorrection = hasRecordedPayment(currentExpense)
+        && 'providerId' in updates && 'providerName' in updates;
+      let submittedUpdates = updates;
+      if (paidProviderCorrection) {
+        if (!isProjectAdmin) throw new Error('PAID_EXPENSE_LOCKED');
+        if (getPendingProviderInviteLink(currentExpense)) throw new Error('PENDING_PROVIDER_INVITE');
+        const chosenProvider = providers.find((provider) => provider.id === updates.providerId);
+        if (!chosenProvider || providerDisplayName(chosenProvider) !== updates.providerName) {
+          throw new Error('PROVIDER_CHANGED');
+        }
+        if (currentExpense.providerId === updates.providerId && currentExpense.providerName === updates.providerName) return;
+        submittedUpdates = { providerId: updates.providerId, providerName: updates.providerName };
+        const paidAmount = getPaymentTotal(currentExpense);
+        if (!confirm(
+          `¿Confirmás cambiar el proveedor de este gasto ya pagado?\n\n`
+          + `Gasto: ${currentExpense.description || 'Sin descripción'}\n`
+          + `Proveedor anterior: ${currentExpense.providerName || 'Sin proveedor'}\n`
+          + `Proveedor nuevo: ${updates.providerName}\n`
+          + `Importe del gasto: $${(Number(currentExpense.total) || 0).toLocaleString('es-AR')}\n`
+          + `Pagos registrados: $${paidAmount.toLocaleString('es-AR')}\n\n`
+          + 'No se modificarán los pagos ni la caja. La corrección quedará registrada en la actividad del proyecto.'
+        )) return;
+      }
+
+      const nextArea = submittedUpdates.area || currentExpense.area;
+      const nextSubcategory = submittedUpdates.subcategory !== undefined ? submittedUpdates.subcategory : currentExpense.subcategory;
       if (!canEditAreaExpense(currentExpense) || !canEditAreaSubcategory(nextArea, nextSubcategory)) return;
-      const nextTotal = updates.total !== undefined ? Number(updates.total) : Number(currentExpense.total) || 0;
+      const nextTotal = submittedUpdates.total !== undefined ? Number(submittedUpdates.total) : Number(currentExpense.total) || 0;
       const budgetWarning = getAreaExpenseBudgetWarning(nextArea, nextTotal, expenseId);
       const docRef = doc(db, 'projects', id, 'areaExpenses', expenseId);
+      const auditRef = paidProviderCorrection ? doc(collection(db, 'projects', id, 'activityLog')) : null;
       await runTransaction(db, async (transaction) => {
         const latestSnap = await transaction.get(docRef);
         if (!latestSnap.exists()) throw new Error('EXPENSE_MISSING');
-        const nextUpdates = prepareExpenseEdit(latestSnap.data(), updates, {
+        const latest = latestSnap.data();
+        const nextUpdates = prepareExpenseEdit(latest, submittedUpdates, {
           isProjectAdmin, expectedUpdatedAt: currentExpense.updatedAt,
+          confirmedPaidProviderCorrection: paidProviderCorrection,
         });
-        const assignedUpdates = await cancelPendingProviderInviteIfAssigning(transaction, latestSnap.data(), nextUpdates);
-        transaction.update(docRef, { ...assignedUpdates, updatedAt: serverTimestamp() });
+        const assignedUpdates = paidProviderCorrection
+          ? nextUpdates
+          : await cancelPendingProviderInviteIfAssigning(transaction, latest, nextUpdates);
+        if (auditRef) {
+          if (getPendingProviderInviteLink(latest)) throw new Error('PENDING_PROVIDER_INVITE');
+          transaction.set(auditRef, {
+            action: 'paid_provider_corrected',
+            collectionName: 'areaExpenses',
+            itemId: expenseId,
+            previousProviderId: latest.providerId || '',
+            previousProviderName: latest.providerName || '',
+            providerId: assignedUpdates.providerId,
+            providerName: assignedUpdates.providerName,
+            amount: Number(latest.total) || 0,
+            paymentCount: Array.isArray(latest.paymentHistory) ? latest.paymentHistory.length : 0,
+            deletedBy: user?.uid || '',
+            deletedByEmail: currentUserEmail,
+            deletedByName: currentUserName,
+            deletedByRole: currentProjectRole,
+            createdAt: serverTimestamp(),
+          });
+        }
+        transaction.update(docRef, {
+          ...assignedUpdates,
+          ...(auditRef ? { lastProviderCorrectionAuditId: auditRef.id } : {}),
+          updatedAt: serverTimestamp(),
+        });
       });
       const saved = await getDocFromServer(docRef);
       if (saved.exists()) setAreaExpenses(expenses => expenses.map(e => e.id === expenseId ? { id: e.id, ...saved.data() } as AreaExpense : e));
+      if (paidProviderCorrection) showExpenseConfirmation(`Proveedor corregido a ${submittedUpdates.providerName}; pagos conservados.`);
       if (budgetWarning) showExpenseConfirmation(budgetWarning, 'warning');
     } catch (e) {
       console.error("Error updating area expense:", e);
-      alert('El gasto cambió, ya recibió un pago o no se pudo cerrar su invitación. Actualizá y revisá la fila antes de intentarlo otra vez.');
+      alert(e instanceof Error && e.message === 'PENDING_PROVIDER_INVITE'
+        ? 'Este gasto tiene una invitación de alta pendiente. Cancelala antes de corregir el proveedor.'
+        : 'No se pudo guardar la corrección: el gasto cambió o no se pudo validar el proveedor. Actualizá y revisá la fila antes de intentarlo otra vez.');
     }
   };
 

@@ -78,6 +78,8 @@ try {
     await setDoc(doc(db, `users/${collaboratorId}`), { email: collaboratorEmail, role: 'colaborador' });
     await setDoc(doc(db, `users/${curatorId}`), { email: curatorEmail, role: 'admin' });
     await setDoc(doc(db, 'providers/payer-1'), { type: 'persona', name: 'Persona', lastName: 'Ejemplo' });
+    await setDoc(doc(db, 'providers/provider-1'), { type: 'persona', name: 'Proveedor' });
+    await setDoc(doc(db, 'providers/provider-2'), { type: 'empresa', businessName: 'Varios' });
     await setDoc(doc(db, `projects/${projectId}`), {
       createdBy: adminId,
       collaboratorEmails: [collaboratorEmail],
@@ -235,6 +237,49 @@ try {
   }));
   await assertSucceeds(reverseSettlement.commit());
   await assertFails(updateDoc(doc(collaboratorDb, itemPath('areaExpenses', 'paid-area')), { providerId: 'other' }));
+  await assertFails(updateDoc(doc(adminDb, itemPath('areaExpenses', 'paid-area')), {
+    providerId: 'provider-2', providerName: 'Varios',
+  }));
+  const correctionAuditPath = `projects/${projectId}/activityLog/paid-provider-correction-1`;
+  const providerCorrectionAudit = {
+    action: 'paid_provider_corrected', collectionName: 'areaExpenses', itemId: 'paid-area',
+    previousProviderId: 'provider-1', previousProviderName: 'Proveedor',
+    providerId: 'provider-2', providerName: 'Varios', amount: 100, paymentCount: 1,
+    deletedBy: adminId, deletedByEmail: adminEmail, deletedByName: 'Admin', deletedByRole: 'admin',
+    createdAt: serverTimestamp(),
+  };
+  await assertFails(setDoc(doc(adminDb, correctionAuditPath), providerCorrectionAudit));
+  const mixedCorrection = writeBatch(adminDb);
+  mixedCorrection.update(doc(adminDb, itemPath('areaExpenses', 'paid-area')), {
+    providerId: 'provider-2', providerName: 'Varios', total: 101,
+    lastProviderCorrectionAuditId: 'paid-provider-correction-1', updatedAt: serverTimestamp(),
+  });
+  mixedCorrection.set(doc(adminDb, correctionAuditPath), { ...providerCorrectionAudit, amount: 101 });
+  await assertFails(mixedCorrection.commit());
+  const collaboratorCorrection = writeBatch(collaboratorDb);
+  collaboratorCorrection.update(doc(collaboratorDb, itemPath('areaExpenses', 'paid-area')), {
+    providerId: 'provider-2', providerName: 'Varios',
+    lastProviderCorrectionAuditId: 'paid-provider-correction-1', updatedAt: serverTimestamp(),
+  });
+  collaboratorCorrection.set(doc(collaboratorDb, correctionAuditPath), {
+    ...providerCorrectionAudit, deletedBy: collaboratorId, deletedByEmail: collaboratorEmail,
+  });
+  await assertFails(collaboratorCorrection.commit());
+  const providerCorrection = writeBatch(adminDb);
+  providerCorrection.update(doc(adminDb, itemPath('areaExpenses', 'paid-area')), {
+    providerId: 'provider-2', providerName: 'Varios',
+    lastProviderCorrectionAuditId: 'paid-provider-correction-1', updatedAt: serverTimestamp(),
+  });
+  providerCorrection.set(doc(adminDb, correctionAuditPath), providerCorrectionAudit);
+  await assertSucceeds(providerCorrection.commit());
+  const correctedExpense = (await getDoc(doc(adminDb, itemPath('areaExpenses', 'paid-area')))).data();
+  if (correctedExpense.providerId !== 'provider-2' || correctedExpense.total !== 100
+    || correctedExpense.paymentHistory.length !== 1 || correctedExpense.paymentHistory[0].amount !== 50) {
+    throw new Error('Provider correction changed financial data');
+  }
+  await assertFails(updateDoc(doc(adminDb, itemPath('areaExpenses', 'paid-area')), {
+    lastProviderCorrectionAuditId: 'forged-pointer',
+  }));
   await assertFails(updateDoc(doc(adminDb, itemPath('budgetItems', 'paid-budget')), { total: 20 }));
   await assertFails(updateDoc(doc(adminDb, itemPath('areaExpenses', 'paid-area')), { paymentLocked: false, paymentHistory: [] }));
   await assertFails(updateDoc(doc(adminDb, itemPath('areaExpenses', 'paid-area')), { paid: false, paymentHistory: [] }));

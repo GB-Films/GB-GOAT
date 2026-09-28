@@ -20,6 +20,25 @@ test('an admin cannot repurpose an expense after payment', () => {
   }), /PAID_EXPENSE_LOCKED/);
 });
 
+test('only a confirmed admin can correct the provider of a paid expense', () => {
+  const change = { providerId: 'varios', providerName: 'Varios' };
+  assert.throws(() => prepareExpenseEdit(paidGimbal, change, {
+    isProjectAdmin: true, expectedUpdatedAt: paidGimbal.updatedAt,
+  }), /PAID_EXPENSE_LOCKED/);
+  assert.throws(() => prepareExpenseEdit(paidGimbal, change, {
+    isProjectAdmin: false, confirmedPaidProviderCorrection: true, expectedUpdatedAt: paidGimbal.updatedAt,
+  }), /PAID_EXPENSE_LOCKED/);
+  assert.deepEqual(prepareExpenseEdit(paidGimbal, change, {
+    isProjectAdmin: true, confirmedPaidProviderCorrection: true, expectedUpdatedAt: paidGimbal.updatedAt,
+  }), change);
+  assert.throws(() => prepareExpenseEdit(paidGimbal, { ...change, unitPrice: 1 }, {
+    isProjectAdmin: true, confirmedPaidProviderCorrection: true, expectedUpdatedAt: paidGimbal.updatedAt,
+  }), /PAID_EXPENSE_LOCKED/);
+  assert.throws(() => prepareExpenseEdit(paidGimbal, { providerId: '', providerName: '' }, {
+    isProjectAdmin: true, confirmedPaidProviderCorrection: true, expectedUpdatedAt: paidGimbal.updatedAt,
+  }), /PAID_EXPENSE_LOCKED/);
+});
+
 test('stale edits fail instead of overwriting a concurrent change', () => {
   assert.throws(() => prepareExpenseEdit(paidGimbal, { paymentDate: '2026-09-23' }, {
     isProjectAdmin: true, expectedUpdatedAt: { seconds: 9, nanoseconds: 1 },
