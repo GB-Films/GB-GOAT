@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertTriangle, Check, FileSpreadsheet, Loader2, Paperclip, Send, Sparkles, X } from 'lucide-react';
+import { AlertTriangle, Check, FileSpreadsheet, FileText, Loader2, Paperclip, Send, Sparkles, X } from 'lucide-react';
 import { cn } from '../lib/utils';
 import {
   buildAssistantSystemPrompt,
@@ -11,6 +11,7 @@ import {
   type AssistantPendingAction,
 } from '../lib/assistantAgent';
 import { buildAssistantTools } from '../lib/assistantTools';
+import { formatPdfForAssistant, readAssistantPdf, type AssistantPdf } from '../lib/assistantPdf';
 import {
   listAssistantProjects,
   loadAssistantClients,
@@ -37,6 +38,10 @@ type VisibleMessage = {
   attachmentName?: string;
 };
 
+type ChatAttachment =
+  | { kind: 'table'; fileName: string; totalRows: number; truncated: boolean; text: string; spreadsheet: AssistantSpreadsheet }
+  | { kind: 'pdf'; fileName: string; pageCount: number; truncated: boolean; text: string; pdf: AssistantPdf };
+
 type AssistantChatProps = {
   uid: string;
   email: string;
@@ -61,8 +66,9 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
   const [projects, setProjects] = useState<AssistantProjectHandle[]>([]);
   const [engine, setEngine] = useState('');
   const [pendingAction, setPendingAction] = useState<AssistantPendingAction | null>(null);
-  const [attachment, setAttachment] = useState<{ spreadsheet: AssistantSpreadsheet; text: string } | null>(null);
+  const [attachment, setAttachment] = useState<ChatAttachment | null>(null);
   const [attachmentBusy, setAttachmentBusy] = useState(false);
+  const pendingFileRef = useRef<File | null>(null);
   const historyRef = useRef<AssistantMessage[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -85,6 +91,7 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
     loadProjectFinance: loadAssistantProjectFinance,
     loadClients: loadAssistantClients,
     loadUsers: loadAssistantUsers,
+    getPendingFile: () => pendingFileRef.current,
     isAppAdmin: globalRole === 'admin',
     loadProviders: loadAssistantProviders,
     canAccessProviders: hasGlobalRole(globalRole, PROVIDER_ACCESS_ROLES),
@@ -142,7 +149,7 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
       id: `u-${Date.now()}`,
       role: 'user',
       content: text,
-      attachmentName: attached?.spreadsheet.fileName,
+      attachmentName: attached?.fileName,
     }]);
 
     const promptText = attached
@@ -233,8 +240,30 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
     setError('');
     setAttachmentBusy(true);
     try {
-      const spreadsheet = await readAssistantSpreadsheet(file);
-      setAttachment({ spreadsheet, text: formatSpreadsheetForAssistant(spreadsheet) });
+      const isPdf = /\.pdf$/i.test(file.name) || file.type === 'application/pdf';
+      if (isPdf) {
+        const pdf = await readAssistantPdf(file);
+        pendingFileRef.current = file;
+        setAttachment({
+          kind: 'pdf',
+          fileName: pdf.fileName,
+          pageCount: pdf.pageCount,
+          truncated: pdf.truncated,
+          text: formatPdfForAssistant(pdf),
+          pdf,
+        });
+      } else {
+        const spreadsheet = await readAssistantSpreadsheet(file);
+        pendingFileRef.current = file;
+        setAttachment({
+          kind: 'table',
+          fileName: spreadsheet.fileName,
+          totalRows: spreadsheet.totalRows,
+          truncated: spreadsheet.truncated,
+          text: formatSpreadsheetForAssistant(spreadsheet),
+          spreadsheet,
+        });
+      }
     } catch (attachmentError: any) {
       setAttachment(null);
       setError(String(attachmentError?.message || 'No se pudo leer la planilla.'));
@@ -412,10 +441,15 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
             {attachment && (
               <div className="mb-2 flex items-center justify-between gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-2">
                 <span className="flex min-w-0 items-center gap-2 text-[10px] font-black uppercase tracking-widest text-emerald-700">
-                  <FileSpreadsheet className="h-3.5 w-3.5 shrink-0" />
+                  {attachment.kind === 'pdf'
+                    ? <FileText className="h-3.5 w-3.5 shrink-0" />
+                    : <FileSpreadsheet className="h-3.5 w-3.5 shrink-0" />}
                   <span className="truncate">
-                    {attachment.spreadsheet.fileName} · {attachment.spreadsheet.totalRows} filas
-                    {attachment.spreadsheet.truncated ? ' (recortada)' : ''}
+                    {attachment.fileName} ·{' '}
+                    {attachment.kind === 'pdf'
+                      ? `${attachment.pageCount} página${attachment.pageCount === 1 ? '' : 's'}`
+                      : `${attachment.totalRows} filas`}
+                    {attachment.truncated ? ' (recortada)' : ''}
                   </span>
                 </span>
                 <button
@@ -432,7 +466,7 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
+                accept=".xlsx,.xls,.csv,.pdf,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
                 className="hidden"
                 onChange={(event) => handleAttachmentPick(event.target.files?.[0])}
               />
@@ -441,7 +475,7 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
                 onClick={() => fileInputRef.current?.click()}
                 disabled={busy || attachmentBusy}
                 className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200 text-slate-500 transition-colors hover:border-slate-900 hover:text-slate-900 disabled:text-slate-300"
-                title="Adjuntar planilla (Excel o CSV)"
+                title="Adjuntar planilla (Excel/CSV) o PDF"
               >
                 {attachmentBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}
               </button>

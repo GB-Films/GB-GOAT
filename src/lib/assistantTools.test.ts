@@ -611,3 +611,19 @@ test('activar y eliminar áreas respetan pagos y estado', async () => {
   const inactive = await runTool(tools, 'desactivar_area', { area: 'Locaciones' });
   assert.match(String((inactive as any).error), /no está activa/);
 });
+
+test('adjuntar factura pide el archivo y respeta permisos', async () => {
+  const tools = buildTools();
+  const tool = tools.find((entry) => entry.name === 'adjuntar_factura');
+
+  assert.equal(tool?.requiresConfirmation, true);
+
+  const withoutFile = await tool?.run({ fila: 'a1' });
+  assert.match(String((withoutFile as any).error), /No hay ningún archivo adjunto/);
+
+  const withFile = buildTools({
+    getPendingFile: () => new File(['pdf'], 'factura.pdf', { type: 'application/pdf' }),
+  });
+  const denied = await withFile.find((entry) => entry.name === 'adjuntar_factura')?.run({ fila: 'a4' });
+  assert.match(String((denied as any).error), /no tiene permiso|No encontré ninguna fila/);
+});

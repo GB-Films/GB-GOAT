@@ -15,7 +15,12 @@ import { buildPaymentCalendarDays, getOverdueLines, getTodayLines, getUnschedule
 import { hasRecordedPayment, sameExpenseVersion, samePaymentTarget } from './expenseEdits';
 import { buildLinkedProviderInviteExpiration } from './providerInvites';
 import { Timestamp, updateDoc, writeBatch } from 'firebase/firestore';
+import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { normalizeEmail } from './identity';
+import { storage } from './firebase';
+import { getExpenseInvoices } from './invoices';
+import { sanitizeFileName } from './files';
+import { validateMaxUploadSize } from './uploadLimits';
 import { calculateProjectResult } from './projectFinance';
 import { collection, doc, getDocs, runTransaction, serverTimestamp } from 'firebase/firestore';
 import { db } from './firebase';
@@ -146,6 +151,7 @@ export type AssistantToolsOptions = {
   loadProjectFinance?: (projectId: string) => Promise<AssistantProjectFinance | null>;
   loadClients?: () => Promise<Array<{ id: string; businessName?: string; contactName?: string; email?: string; phone?: string; cuit?: string }>>;
   loadUsers?: () => Promise<Array<{ id: string; email?: string; displayName?: string; role?: string }>>;
+  getPendingFile?: () => File | null;
   canAccessProviders?: boolean;
   isAppAdmin?: boolean;
   currentProjectId?: string | null;
@@ -229,6 +235,7 @@ export const buildAssistantTools = ({
   loadProjectFinance,
   loadClients,
   loadUsers,
+  getPendingFile,
   canAccessProviders = false,
   isAppAdmin = false,
   currentProjectId = null,
@@ -1999,6 +2006,112 @@ export const buildAssistantTools = ({
         return {
           ok: true,
           mensaje: `Área "${area}" eliminada con ${rows.length} filas. La categoría quedó disponible para volver a activarla.`,
+        };
+      },
+    });
+
+    tools.push({
+      name: 'adjuntar_factura',
+      description: 'Adjunta el archivo que el usuario compartió en el chat (PDF, JPG o PNG) como factura de una fila de gasto. Siempre requiere confirmación.',
+      requiresConfirmation: true,
+      summarize: (args) => {
+        const pendingName = getPendingFile?.()?.name || 'el archivo adjunto';
+        return `Adjuntar "${pendingName}" como factura de "${String(args?.fila || '').trim()}"`;
+      },
+      parameters: projectOptionsSchema({ fila: { type: 'string', description: 'Id de la fila, proveedor o descripción del gasto' } }),
+      run: async (args) => {
+        const file = getPendingFile?.() || null;
+        if (!file) {
+          return { error: 'No hay ningún archivo adjunto en esta conversación. Pedile al usuario que adjunte el PDF (o la imagen) de nuevo.' };
+        }
+        const resolved = await resolveProject(args?.proyecto);
+        if ('error' in resolved) return resolved;
+        const context = resolved.context;
+        const found = findRow(context, args?.fila);
+        if ('error' in found) return found;
+        const { collectionName, item } = found;
+        const canUpload = collectionName === 'budgetItems'
+          ? context.capabilities.can.editMainBudget && !context.activeAreas.includes(item.area)
+          : canAssistantEditSubcategory(context.capabilities, item.area, item.subcategory);
+        if (!canUpload) return { error: 'El usuario no tiene permiso para adjuntar facturas en esa fila.' };
+
+        const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png'];
+        const isAllowedByType = allowedTypes.includes(file.type);
+        const isAllowedByName = /\.(pdf|jpe?g|png)$/i.test(file.name);
+        if (!isAllowedByType && !isAllowedByName) return { error: 'La factura debe ser un PDF, JPG o PNG.' };
+        const sizeError = validateMaxUploadSize(file, 'factura');
+        if (sizeError) return { error: sizeError };
+
+        const extension = (() => {
+          const fromName = String(file.name.split('.').pop() || '').toLowerCase();
+          if (['pdf', 'jpg', 'jpeg', 'png'].includes(fromName)) return fromName === 'jpeg' ? 'jpg' : fromName;
+          if (file.type === 'image/jpeg') return 'jpg';
+          if (file.type === 'image/png') return 'png';
+          return 'pdf';
+        })();
+        const contentType = isAllowedByType
+          ? file.type
+          : extension === 'jpg' ? 'image/jpeg' : extension === 'png' ? 'image/png' : 'application/pdf';
+        const areaFolder = sanitizeFileName(item.area || 'sin-area') || 'sin-area';
+        const invoiceId = globalThis.crypto?.randomUUID?.() || `factura-${Date.now()}`;
+        const baseName = sanitizeFileName(item.providerName || item.description || item.area || 'factura')
+          .replace(/\.[^.]+$/, '')
+          .slice(0, 70) || 'factura';
+        const fileName = `factura-${baseName}-${String(item.id).slice(0, 8)}-${sanitizeFileName(invoiceId).slice(0, 12)}.${extension}`;
+        const path = `projects/${context.projectId}/areas/${areaFolder}/facturas/${fileName}`;
+        const uploadScope = context.capabilities.isAppAdmin
+          ? 'global_admin'
+          : context.capabilities.isProjectOwner
+            ? 'project_owner'
+            : context.capabilities.isProjectAdmin ? 'project_admin' : 'area_editor';
+
+        const storageRef = ref(storage, path);
+        await uploadBytes(storageRef, file, {
+          contentType,
+          customMetadata: {
+            projectId: context.projectId,
+            expenseId: item.id,
+            collectionName,
+            uploadAccessScope: uploadScope,
+            area: item.area || '',
+            areaFolder,
+            originalFileName: file.name,
+            uploadedBy: userEmail,
+          },
+        });
+        const url = await getDownloadURL(storageRef);
+        const invoice = {
+          id: invoiceId,
+          fileName,
+          originalFileName: file.name,
+          url,
+          path,
+          contentType,
+          size: file.size,
+          uploadedAt: Timestamp.now(),
+          uploadedBy: userEmail,
+        };
+
+        const rowRef = doc(db, 'projects', context.projectId, collectionName, item.id);
+        await runTransaction(db, async (transaction) => {
+          const snapshot = await transaction.get(rowRef);
+          if (!snapshot.exists()) throw new Error('La fila ya no existe.');
+          const data = snapshot.data();
+          const storedInvoices = Array.isArray(data.invoices) ? data.invoices : [];
+          const nextStoredInvoices = [...storedInvoices, invoice];
+          transaction.update(rowRef, {
+            ...(!data.invoice?.url && storedInvoices.length === 0 ? { invoice } : {}),
+            invoices: nextStoredInvoices,
+            invoiceStatus: 'pendiente',
+            updatedAt: serverTimestamp(),
+          });
+        });
+        projectCache.delete(context.projectId);
+        return {
+          ok: true,
+          mensaje: `Factura "${file.name}" adjuntada a ${rowLabel(item, item.subcategory)}. Queda con estado pendiente, como cuando se sube desde la app.`,
+          archivo: fileName,
+          link: url,
         };
       },
     });
