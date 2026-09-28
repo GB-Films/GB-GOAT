@@ -45,6 +45,7 @@ import { cn } from '../lib/utils';
 import { validateMaxUploadSize } from '../lib/uploadLimits';
 import { buildPaymentCalendarDays, formatDateKey, formatPeriodLabel, getOverdueLines, getTodayLines, getUnscheduledLines, sumDebt, type PaymentScheduleLine } from '../lib/paymentSchedule';
 import { BudgetRowCell } from './project-detail/BudgetRowCell';
+import { DRAGGING_EXPENSE_ROW_CLASS, ExpenseDragHandle } from './project-detail/ExpenseDragHandle';
 import { PaymentModal } from './project-detail/PaymentModal';
 import { ExpenseInvoiceCell, ExpenseReceiptsCell, InvoiceDropOverlay } from './project-detail/ExpenseFileCells';
 import type { AreaExpense, BudgetItem, CashMovement, Collaborator, Payment, PaymentCollection } from './project-detail/types';
@@ -103,7 +104,6 @@ const DOCUMENT_FAMILIES = [
 const MANUAL_DOCUMENT_FAMILIES = DOCUMENT_FAMILIES.filter((family) => family.id !== 'todos' && family.id !== 'finanzas');
 
 const DEFAULT_AREA_EXPENSE_SUBCATEGORY = 'Sin subcategoria';
-const AREA_EXPENSE_DRAG_TYPE = 'application/gb-goat-area-expense';
 
 const isFileDrag = (event: React.DragEvent<HTMLElement>) => (
   Array.from(event.dataTransfer.types || []).includes('Files')
@@ -250,6 +250,30 @@ const cleanAreaExpenseSubcategory = (value: any) => {
 };
 const areaSubcategoryKey = (area: any, subcategory: any) => `${String(area || '').trim()}||${cleanAreaExpenseSubcategory(subcategory)}`;
 const areaFromSubcategoryKey = (key: string) => key.split('||')[0] || '';
+
+// Identificadores de arrastre de gastos por área. Se usan con @hello-pangea/dnd,
+// la misma librería que ordena las partidas de Presu Ppal.
+const AREA_EXPENSE_GROUP_DROPPABLE_PREFIX = 'area-expense-group';
+const AREA_EXPENSE_AREA_DROPPABLE_PREFIX = 'area-expense-area';
+
+const areaExpenseGroupDroppableId = (area: string, subcategory: string) => (
+  `${AREA_EXPENSE_GROUP_DROPPABLE_PREFIX}|${encodeURIComponent(String(area || '').trim())}|${encodeURIComponent(cleanAreaExpenseSubcategory(subcategory))}`
+);
+
+const areaExpenseAreaDroppableId = (area: string) => (
+  `${AREA_EXPENSE_AREA_DROPPABLE_PREFIX}|${encodeURIComponent(String(area || '').trim())}`
+);
+
+const parseAreaExpenseDroppableId = (droppableId: string) => {
+  const [prefix, area, subcategory] = String(droppableId || '').split('|');
+  if (prefix === AREA_EXPENSE_AREA_DROPPABLE_PREFIX && area) {
+    return { area: decodeURIComponent(area), subcategory: '', appendOnly: true };
+  }
+  if (prefix === AREA_EXPENSE_GROUP_DROPPABLE_PREFIX && area && subcategory !== undefined) {
+    return { area: decodeURIComponent(area), subcategory: decodeURIComponent(subcategory), appendOnly: false };
+  }
+  return null;
+};
 
 const sortAreaExpenses = (expenses: AreaExpense[], sortKey: AreaExpenseSortKey) => {
   return [...expenses].sort((a, b) => {
@@ -704,8 +728,6 @@ export default function ProjectDetail() {
   const [areaExpenseSort, setAreaExpenseSort] = useState<AreaExpenseSortKey>('manual');
   const [areaExpenseSearch, setAreaExpenseSearch] = useState('');
   const [providerSearch, setProviderSearch] = useState('');
-  const [draggedAreaExpenseId, setDraggedAreaExpenseId] = useState<string | null>(null);
-  const [dragOverAreaTarget, setDragOverAreaTarget] = useState<string | null>(null);
   const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
   const [cashMovements, setCashMovements] = useState<CashMovement[]>([]);
   const [cashRecipientEmail, setCashRecipientEmail] = useState('');
@@ -2048,29 +2070,29 @@ export default function ProjectDetail() {
     }
   };
 
-  const startAreaExpenseDrag = (event: React.DragEvent<HTMLDivElement>, expense: AreaExpense) => {
-    if (!canEditAreaExpense(expense)) return;
-    setDraggedAreaExpenseId(expense.id);
-    event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData(AREA_EXPENSE_DRAG_TYPE, expense.id);
-    event.dataTransfer.setData('text/plain', expense.id);
+  // Mismo comportamiento que Presu Ppal: la fila se arrastra desde el grip y se
+  // suelta sobre otra subcategoría, otra área o una posición puntual.
+  const onAreaExpenseDragEnd = async (result: any) => {
+    const { destination, draggableId } = result || {};
+    if (!destination || !id) return;
+    const target = parseAreaExpenseDroppableId(destination.droppableId);
+    const expense = areaExpenses.find((item) => item.id === draggableId);
+    if (!target || !expense || !canEditAreaExpense(expense)) return;
+    if (!canEditAreaSubcategory(target.area, target.subcategory)) return;
+
+    const targetExpenses = target.appendOnly
+      ? []
+      : areaDashboardRows
+        .find((row) => row.area === target.area)
+        ?.subcategoryGroups
+        .find((group) => cleanAreaExpenseSubcategory(group.subcategory) === target.subcategory)
+        ?.expenses || [];
+    const remainingExpenses = targetExpenses.filter((item) => item.id !== expense.id);
+    const beforeExpenseId = remainingExpenses[destination.index]?.id;
+
     setAreaExpenseSort('manual');
+    await moveAreaExpense(expense, target.area, target.subcategory, beforeExpenseId);
   };
-
-  const finishAreaExpenseDrop = async (area: string, subcategory = '', beforeExpenseId?: string) => {
-    const expenseId = draggedAreaExpenseId;
-    setDraggedAreaExpenseId(null);
-    setDragOverAreaTarget(null);
-    if (!expenseId) return;
-
-    const expense = areaExpenses.find((item) => item.id === expenseId);
-    if (!expense || !canEditAreaExpense(expense) || !canEditAreaSubcategory(area, subcategory)) return;
-    await moveAreaExpense(expense, area, subcategory, beforeExpenseId);
-  };
-
-  const isAreaExpenseDrag = (event: React.DragEvent<HTMLElement>) => (
-    draggedAreaExpenseId || Array.from(event.dataTransfer.types).includes(AREA_EXPENSE_DRAG_TYPE)
-  );
 
   const updateScheduledPaymentDate = async (item: any, collectionName: PaymentCollection, paymentDate: string) => {
     if (!item?.id) return;
@@ -5906,14 +5928,16 @@ export default function ProjectDetail() {
                                                       dragOverExpenseId === item.id
                                                         ? "bg-emerald-50 ring-2 ring-inset ring-emerald-400"
                                                         : "bg-white hover:bg-slate-50",
-                                                      snapshot.isDragging && "z-50 rounded-lg border-y border-slate-200 bg-slate-50 shadow-xl"
+                                                      snapshot.isDragging && DRAGGING_EXPENSE_ROW_CLASS
                                                     )}
                                                   >
                                                     {dragOverExpenseId === item.id && <InvoiceDropOverlay />}
                                                     <div className="flex w-full items-center">
-                                                      <div {...provided.dragHandleProps} className={cn("mr-2 text-slate-300", canEditMainBudget ? "hover:text-slate-500 cursor-grab active:cursor-grabbing" : "opacity-30")}>
-                                                        <GripVertical className="w-4 h-4" />
-                                                      </div>
+                                                      <ExpenseDragHandle
+                                                        dragHandleProps={provided.dragHandleProps}
+                                                        disabled={!canEditMainBudget}
+                                                        className="mr-2"
+                                                      />
                                                       <div className="grid w-full grid-cols-[minmax(142px,1.45fr)_minmax(180px,1.6fr)_78px_100px_76px_92px_96px_104px_150px_78px] items-center gap-2">
                                                         <div>
                                                           <BudgetRowCell 
@@ -6192,29 +6216,26 @@ export default function ProjectDetail() {
                 </div>
 
                 <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+                <DragDropContext onDragEnd={onAreaExpenseDragEnd}>
                 {selectedAreaDashboardRows.map((areaRow) => (
                 <div
                   key={areaRow.area}
-                  onDragOver={(event) => {
-                    if (!isAreaExpenseDrag(event) || !canEditArea(areaRow.area)) return;
-                    event.preventDefault();
-                    event.dataTransfer.dropEffect = 'move';
-                    setDragOverAreaTarget(`area:${areaRow.area}`);
-                  }}
-                  onDragLeave={(event) => {
-                    if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragOverAreaTarget(null);
-                  }}
-                  onDrop={(event) => {
-                    if (!isAreaExpenseDrag(event)) return;
-                    event.preventDefault();
-                    finishAreaExpenseDrop(areaRow.area);
-                  }}
-                  className={cn(
-                    "border-b border-slate-100 last:border-0 transition-colors",
-                    dragOverAreaTarget === `area:${areaRow.area}` && "bg-emerald-50/50"
-                  )}
+                  className="border-b border-slate-100 last:border-0 transition-colors"
                 >
-                  <div className="flex flex-col gap-2 border-l-4 border-emerald-400 bg-slate-900 px-2 py-2 text-white shadow-sm sm:flex-row sm:items-center sm:justify-between sm:px-4 sm:py-3">
+                  <Droppable
+                    droppableId={areaExpenseAreaDroppableId(areaRow.area)}
+                    type="area-expense"
+                    isDropDisabled={!canEditAreaSubcategory(areaRow.area, '')}
+                  >
+                    {(headerProvided, headerSnapshot) => (
+                  <div
+                    ref={headerProvided.innerRef}
+                    {...headerProvided.droppableProps}
+                    className={cn(
+                      "flex flex-col gap-2 border-l-4 border-emerald-400 bg-slate-900 px-2 py-2 text-white shadow-sm transition-shadow sm:flex-row sm:items-center sm:justify-between sm:px-4 sm:py-3",
+                      headerSnapshot.isDraggingOver && "ring-2 ring-inset ring-emerald-400"
+                    )}
+                  >
                     <div className="flex min-w-0 items-center gap-1.5 sm:gap-3">
                        <button
                          type="button"
@@ -6283,6 +6304,8 @@ export default function ProjectDetail() {
                       </button>
                     </div>
                   </div>
+                    )}
+                  </Droppable>
                   {!collapsedCategories[areaRow.area] && (
                   <>
                   <div className="divide-y divide-slate-100 md:hidden">
@@ -6537,26 +6560,7 @@ export default function ProjectDetail() {
                         return (
                           <div
                             key={subcategoryKey}
-                            onDragOver={(event) => {
-                              if (!isAreaExpenseDrag(event) || !canEditArea(areaRow.area)) return;
-                              event.preventDefault();
-                              event.stopPropagation();
-                              event.dataTransfer.dropEffect = 'move';
-                              setDragOverAreaTarget(`subcategory:${subcategoryKey}`);
-                            }}
-                            onDragLeave={(event) => {
-                              if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragOverAreaTarget(null);
-                            }}
-                            onDrop={(event) => {
-                              if (!isAreaExpenseDrag(event)) return;
-                              event.preventDefault();
-                              event.stopPropagation();
-                              finishAreaExpenseDrop(areaRow.area, subcategoryGroup.subcategory);
-                            }}
-                            className={cn(
-                              "bg-slate-50 transition-colors",
-                              dragOverAreaTarget === `subcategory:${subcategoryKey}` && "bg-emerald-50"
-                            )}
+                            className="bg-slate-50"
                           >
                             <div className={cn(
                               "flex items-center justify-between gap-3 border-b px-6 py-2.5",
@@ -6658,29 +6662,34 @@ export default function ProjectDetail() {
                               )}
                             </div>
                             {!isSubcategoryCollapsed && (
-                              <div className="divide-y divide-slate-200 bg-slate-50">
-                      {subcategoryGroup.expenses.map((item) => (
+                              <Droppable
+                                droppableId={areaExpenseGroupDroppableId(areaRow.area, subcategoryGroup.subcategory)}
+                                type="area-expense"
+                                isDropDisabled={!canEditThisSubcategory}
+                              >
+                                {(groupProvided, groupSnapshot) => (
+                              <div
+                                ref={groupProvided.innerRef}
+                                {...groupProvided.droppableProps}
+                                className={cn(
+                                  "divide-y divide-slate-200 bg-slate-50 transition-colors",
+                                  groupSnapshot.isDraggingOver && "bg-emerald-50/60"
+                                )}
+                              >
+                      {subcategoryGroup.expenses.map((item, itemIndex) => {
+                          const DraggableComponent = Draggable as any;
+                          return (
+                          <DraggableComponent key={item.id} draggableId={item.id} index={itemIndex} isDragDisabled={!canEditAreaExpense(item)}>
+                            {(rowProvided: any, rowSnapshot: any) => (
                           <div
-                            key={item.id}
+                            ref={rowProvided.innerRef}
+                            {...rowProvided.draggableProps}
                             onDragEnter={(event) => {
-                              if (isAreaExpenseDrag(event)) {
-                                event.preventDefault();
-                                event.stopPropagation();
-                                setDragOverAreaTarget(`item:${item.id}`);
-                                return;
-                              }
                               if (!isFileDrag(event)) return;
                               event.preventDefault();
                               if (canUploadAreaFiles(item.area, item.subcategory)) setDragOverExpenseId(item.id);
                             }}
                             onDragOver={(event) => {
-                              if (isAreaExpenseDrag(event)) {
-                                event.preventDefault();
-                                event.stopPropagation();
-                                event.dataTransfer.dropEffect = 'move';
-                                setDragOverAreaTarget(`item:${item.id}`);
-                                return;
-                              }
                               if (!isFileDrag(event)) return;
                               event.preventDefault();
                               event.dataTransfer.dropEffect = canUploadAreaFiles(item.area, item.subcategory) ? 'copy' : 'none';
@@ -6692,42 +6701,24 @@ export default function ProjectDetail() {
                               }
                             }}
                             onDrop={(event) => {
-                              if (isAreaExpenseDrag(event)) {
-                                event.preventDefault();
-                                event.stopPropagation();
-                                finishAreaExpenseDrop(item.area, item.subcategory, item.id);
-                                return;
-                              }
                               if (isFileDrag(event) && canUploadAreaFiles(item.area, item.subcategory)) handleInvoiceDrop(event, item);
                             }}
                             className={cn(
                               "relative grid min-w-[1360px] grid-cols-[minmax(160px,1.45fr)_minmax(180px,1.6fr)_78px_100px_76px_92px_96px_104px_150px_78px] px-6 py-3 items-center gap-2 transition-colors group",
                               dragOverExpenseId === item.id
                                 ? "bg-emerald-50 ring-2 ring-inset ring-emerald-400"
-                                : dragOverAreaTarget === `item:${item.id}`
-                                  ? "border-t-2 border-t-blue-500 bg-blue-50"
-                                : draggedAreaExpenseId === item.id
-                                  ? "bg-slate-100 opacity-70"
-                                : "bg-white hover:bg-slate-50"
+                                : "bg-white hover:bg-slate-50",
+                              rowSnapshot.isDragging && DRAGGING_EXPENSE_ROW_CLASS
                             )}
                           >
                             {dragOverExpenseId === item.id && <InvoiceDropOverlay />}
                             <div>
                               <div className="flex items-start gap-2">
-                                {canEditAreaExpense(item) && (
-                                  <div
-                                    draggable
-                                    onDragStart={(event) => startAreaExpenseDrag(event, item)}
-                                    onDragEnd={() => {
-                                      setDraggedAreaExpenseId(null);
-                                      setDragOverAreaTarget(null);
-                                    }}
-                                    className="pt-1 text-slate-300 group-hover:text-slate-500 cursor-grab active:cursor-grabbing"
-                                    title="Arrastrar gasto"
-                                  >
-                                    <GripVertical className="w-3.5 h-3.5" />
-                                  </div>
-                                )}
+                                <ExpenseDragHandle
+                                  dragHandleProps={rowProvided.dragHandleProps}
+                                  disabled={!canEditAreaExpense(item)}
+                                  className="pt-1"
+                                />
                                 <BudgetRowCell
                                   item={item}
                                   providers={providers}
@@ -6796,7 +6787,11 @@ export default function ProjectDetail() {
                                )}
                             </div>
                           </div>
-                        ))}
+                            )}
+                          </DraggableComponent>
+                          );
+                        })}
+                        {groupProvided.placeholder}
                         {canEditThisSubcategory && (
                           <button
                             type="button"
@@ -6811,6 +6806,8 @@ export default function ProjectDetail() {
                           </button>
                         )}
                               </div>
+                                )}
+                              </Droppable>
                             )}
                           </div>
                         );
@@ -6824,8 +6821,9 @@ export default function ProjectDetail() {
                   </div>
                   </>
                   )}
-                </div>
+                 </div>
                 ))}
+                </DragDropContext>
                 </div>
               </div>
             )}
