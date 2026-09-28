@@ -11,6 +11,9 @@ import {
 } from './assistantData';
 import { calculateCashBalances, calculateGeneralCashSummary } from './cashBoxes';
 import { buildPaymentCalendarDays, getOverdueLines, getTodayLines, getUnscheduledLines, sumDebt } from './paymentSchedule';
+import { hasRecordedPayment, sameExpenseVersion, samePaymentTarget } from './expenseEdits';
+import { buildLinkedProviderInviteExpiration } from './providerInvites';
+import { Timestamp, writeBatch } from 'firebase/firestore';
 import { calculateProjectResult } from './projectFinance';
 import { collection, doc, getDocs, runTransaction, serverTimestamp } from 'firebase/firestore';
 import { db } from './firebase';
@@ -19,6 +22,8 @@ import { cleanAreaExpenseSubcategory } from './projectAccess';
 export type AssistantBudgetItem = {
   id: string;
   area: string;
+  providerId?: string;
+  subcategory?: string;
   providerName?: string;
   description?: string;
   quantity?: number;
@@ -29,6 +34,9 @@ export type AssistantBudgetItem = {
   paymentHistory?: any[];
   paymentLocked?: boolean;
   order?: number;
+  updatedAt?: any;
+  createdAt?: any;
+  providerInviteLink?: { token?: string; link?: string; status?: string } | null;
 };
 
 export type AssistantAreaExpense = AssistantBudgetItem & { subcategory?: string };
@@ -195,6 +203,17 @@ const projectOptionsSchema = (extra: Record<string, unknown> = {}) => ({
     ...extra,
   },
 });
+
+const generateAssistantInviteToken = () => {
+  const bytes = new Uint8Array(20);
+  window.crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+};
+
+const buildAssistantInviteLink = (token: string) => {
+  const baseUrl = ((import.meta as any).env?.BASE_URL || '/');
+  return `${window.location.origin}${baseUrl}#/alta-proveedor/${token}`;
+};
 
 // Herramientas de sólo lectura: cada una resuelve el proyecto pedido, lo carga
 // con la sesión del usuario (las reglas de Firestore son el filtro real) y
@@ -704,6 +723,33 @@ export const buildAssistantTools = ({
       return { quantity, unitPrice, total: round2(quantity * unitPrice) };
     };
 
+    const findRow = (context: AssistantProjectContext, reference: unknown) => {
+      const text = asText(reference).trim();
+      if (!text) return { error: 'Falta decir qué fila hay que tocar (id, proveedor o descripción).' };
+      const candidates = [
+        ...visibleBudgetItems(context).map((item) => ({ collectionName: 'budgetItems' as const, item })),
+        ...visibleAreaExpenses(context).map((item) => ({ collectionName: 'areaExpenses' as const, item })),
+      ];
+      const byId = candidates.find((entry) => entry.item.id === String(reference).trim());
+      if (byId) return byId;
+      const matches = candidates.filter((entry) => (
+        [entry.item.providerName, entry.item.description, (entry.item as AssistantAreaExpense).subcategory, entry.item.area]
+          .filter(Boolean)
+          .some((value) => asText(value).includes(text))
+      ));
+      if (matches.length === 1) return matches[0];
+      if (matches.length === 0) return { error: `No encontré ninguna fila que coincida con "${reference}".` };
+      return {
+        error: `Hay ${matches.length} filas que coinciden con "${reference}". Decime cuál: ${matches.slice(0, 6).map((entry) => (
+          `"${entry.item.description || entry.item.providerName || entry.item.id}" (${entry.item.area}${(entry.item as AssistantAreaExpense).subcategory ? ` › ${(entry.item as AssistantAreaExpense).subcategory}` : ''})`
+        )).join('; ')}.`,
+      };
+    };
+
+    const rowLabel = (row: AssistantBudgetItem, subcategory?: string) => (
+      `"${row.description || row.providerName || row.id}" (${row.area}${subcategory ? ` › ${subcategory}` : ''})`
+    );
+
     const amountError = (quantity: number, unitPrice: number) => {
       if (!Number.isFinite(quantity) || quantity <= 0) return { error: 'Falta la cantidad (tiene que ser mayor a cero).' };
       if (!Number.isFinite(unitPrice) || unitPrice <= 0) return { error: 'Falta el precio unitario (tiene que ser mayor a cero).' };
@@ -1048,6 +1094,370 @@ export const buildAssistantTools = ({
             proveedor: row.providerName,
             total: row.total,
           })),
+        };
+      },
+    });
+
+    const canEditRow = (context: AssistantProjectContext, collectionName: 'budgetItems' | 'areaExpenses', row: AssistantBudgetItem & { subcategory?: string }) => (
+      collectionName === 'budgetItems'
+        ? context.capabilities.can.editMainBudget
+        : canAssistantEditSubcategory(context.capabilities, row.area, row.subcategory)
+    );
+
+    tools.push({
+      name: 'editar_fila',
+      description: 'Edita una partida del presupuesto o un gasto de área (descripción, proveedor, cantidad, precio unitario o unidad). Siempre requiere confirmación del usuario.',
+      requiresConfirmation: true,
+      summarize: (args) => {
+        const changes = [
+          args?.descripcion !== undefined ? `descripción "${String(args.descripcion)}"` : '',
+          args?.proveedor !== undefined ? `proveedor "${String(args.proveedor)}"` : '',
+          args?.cantidad !== undefined ? `cantidad ${Number(args.cantidad)}` : '',
+          args?.precioUnitario !== undefined ? `precio $${Number(args.precioUnitario).toLocaleString('es-AR')}` : '',
+          args?.unidad !== undefined ? `unidad "${String(args.unidad)}"` : '',
+        ].filter(Boolean).join(', ');
+        return `Editar "${String(args?.fila || '').trim()}": ${changes || 'sin cambios'}`;
+      },
+      parameters: projectOptionsSchema({
+        fila: { type: 'string', description: 'Id de la fila, proveedor o descripción que la identifique' },
+        descripcion: { type: 'string' },
+        proveedor: { type: 'string' },
+        cantidad: { type: 'number' },
+        precioUnitario: { type: 'number' },
+        unidad: { type: 'string' },
+      }),
+      run: async (args) => {
+        const resolved = await resolveProject(args?.proyecto);
+        if ('error' in resolved) return resolved;
+        const context = resolved.context;
+        const found = findRow(context, args?.fila);
+        if ('error' in found) return found;
+        const { collectionName, item } = found;
+        if (!canEditRow(context, collectionName, item)) {
+          return { error: 'El usuario no tiene permiso para editar esa fila.' };
+        }
+        const paid = hasRecordedPayment(item);
+        const changesProvider = args?.proveedor !== undefined;
+        const changesIdentity = ['descripcion', 'cantidad', 'precioUnitario', 'unidad']
+          .some((field) => args?.[field] !== undefined);
+        if (paid && changesIdentity) {
+          return { error: 'Esa fila tiene pagos registrados: sólo un administrador puede corregir el proveedor, y no se pueden cambiar importes ni descripción.' };
+        }
+        if (paid && changesProvider && !context.capabilities.isProjectAdmin) {
+          return { error: 'Esa fila tiene pagos registrados: sólo un administrador puede corregir el proveedor.' };
+        }
+
+        const updates: any = {};
+        if (args?.descripcion !== undefined) updates.description = String(args.descripcion).trim();
+        if (args?.unidad !== undefined) updates.unit = String(args.unidad).trim() || 'Unidad';
+        if (args?.cantidad !== undefined) updates.quantity = Number(args.cantidad);
+        if (args?.precioUnitario !== undefined) updates.unitPrice = Number(args.precioUnitario);
+        if (updates.quantity !== undefined || updates.unitPrice !== undefined) {
+          const quantity = Number(updates.quantity ?? item.quantity ?? 0);
+          const unitPrice = Number(updates.unitPrice ?? item.unitPrice ?? 0);
+          if (!Number.isFinite(quantity) || !Number.isFinite(unitPrice) || quantity < 0 || unitPrice < 0) {
+            return { error: 'Cantidad y precio tienen que ser números mayores o iguales a cero.' };
+          }
+          updates.total = round2(quantity * unitPrice);
+          const paidTotal = Array.isArray(item.paymentHistory)
+            ? item.paymentHistory.reduce((acc, payment: any) => acc + (Number(payment?.amount) || 0), 0)
+            : 0;
+          if (updates.total + 0.009 < paidTotal) {
+            return { error: 'El total quedaría por debajo de lo ya pagado. Revisá el importe o los pagos.' };
+          }
+        }
+        if (args?.proveedor !== undefined) {
+          const providerName = String(args.proveedor).trim();
+          const provider = providerName ? await findProviderByName(providerName) : null;
+          if (providerName && !provider) {
+            return { error: `No encontré el proveedor "${providerName}" en la base. Escribí el nombre como figura en Proveedores o creálo desde la app.` };
+          }
+          if (paid && !provider) return { error: 'Una fila con pagos no puede quedar sin proveedor.' };
+          updates.providerId = provider?.id || '';
+          updates.providerName = provider ? providerLabel(provider) : '';
+        }
+        if (Object.keys(updates).length === 0) return { error: 'No hay cambios para aplicar.' };
+
+        const rowRef = doc(db, 'projects', context.projectId, collectionName, item.id);
+        await runTransaction(db, async (transaction) => {
+          const snapshot = await transaction.get(rowRef);
+          if (!snapshot.exists()) throw new Error('La fila ya no existe.');
+          const latest = snapshot.data();
+          if (!sameExpenseVersion(latest.updatedAt, item.updatedAt) || !samePaymentTarget(latest, item)) {
+            throw new Error('La fila cambió mientras se editaba.');
+          }
+          transaction.update(rowRef, { ...updates, updatedAt: serverTimestamp() });
+        });
+        projectCache.delete(context.projectId);
+        return { ok: true, mensaje: `Fila editada: ${rowLabel({ ...item, ...updates }, item.subcategory)}.`, cambios: updates };
+      },
+    });
+
+    tools.push({
+      name: 'mover_fila',
+      description: 'Mueve una partida a otra categoría del presupuesto, o un gasto de área a otra área o subcategoría. Siempre requiere confirmación del usuario.',
+      requiresConfirmation: true,
+      summarize: (args) => (
+        `Mover "${String(args?.fila || '').trim()}" a ${String(args?.area || '').trim()}`
+        + `${cleanAreaExpenseSubcategory(args?.subcategoria) ? ` › ${cleanAreaExpenseSubcategory(args?.subcategoria)}` : ''}`
+      ),
+      parameters: projectOptionsSchema({
+        fila: { type: 'string' },
+        area: { type: 'string', description: 'Área o categoría destino' },
+        subcategoria: { type: 'string', description: 'Subcategoría destino (sólo gastos de área)' },
+      }),
+      run: async (args) => {
+        const resolved = await resolveProject(args?.proyecto);
+        if ('error' in resolved) return resolved;
+        const context = resolved.context;
+        const found = findRow(context, args?.fila);
+        if ('error' in found) return found;
+        const { collectionName, item } = found;
+        if (!canEditRow(context, collectionName, item)) {
+          return { error: 'El usuario no tiene permiso para mover esa fila.' };
+        }
+        if (hasRecordedPayment(item)) {
+          return { error: 'Esa fila tiene pagos registrados y no se puede mover.' };
+        }
+        const area = String(args?.area || '').trim();
+        const subcategory = cleanAreaExpenseSubcategory(args?.subcategoria);
+        if (!area || !context.categories.includes(area)) return { error: `El área "${area}" no existe en este proyecto.` };
+
+        if (collectionName === 'budgetItems') {
+          if (!context.capabilities.can.editMainBudget) return { error: 'El usuario no puede mover partidas del presupuesto principal.' };
+          if (context.activeAreas.includes(area)) {
+            return { error: `El área "${area}" está activa en Gestión por Áreas: esa partida se carga desde la sección de áreas.` };
+          }
+          if (area === item.area) return { error: 'La partida ya está en esa categoría.' };
+          const order = await nextOrder(context.projectId, 'budgetItems', area);
+          const rowRef = doc(db, 'projects', context.projectId, 'budgetItems', item.id);
+          await runTransaction(db, async (transaction) => {
+            const projectRef = doc(db, 'projects', context.projectId);
+            const projectSnapshot = await transaction.get(projectRef);
+            const snapshot = await transaction.get(rowRef);
+            if (!projectSnapshot.exists() || !snapshot.exists()) throw new Error('La fila ya no existe.');
+            if ((Array.isArray(projectSnapshot.data().activeAreas) ? projectSnapshot.data().activeAreas : []).includes(area)) {
+              throw new Error('El área destino quedó activa.');
+            }
+            transaction.update(rowRef, { area, order, updatedAt: serverTimestamp() });
+            transaction.update(projectRef, {
+              budgetRevision: (Number(projectSnapshot.data().budgetRevision) || 0) + 1,
+              updatedAt: serverTimestamp(),
+            });
+          });
+          projectCache.delete(context.projectId);
+          return { ok: true, mensaje: `${rowLabel(item)} se movió a ${area}.` };
+        }
+
+        if (!canAssistantEditSubcategory(context.capabilities, area, subcategory)) {
+          return { error: `El usuario no tiene permiso para cargar en ${area}${subcategory ? ` › ${subcategory}` : ''}.` };
+        }
+        const order = await nextOrder(context.projectId, 'areaExpenses', area, subcategory);
+        const rowRef = doc(db, 'projects', context.projectId, 'areaExpenses', item.id);
+        await runTransaction(db, async (transaction) => {
+          const snapshot = await transaction.get(rowRef);
+          if (!snapshot.exists()) throw new Error('La fila ya no existe.');
+          transaction.update(rowRef, { area, subcategory, order, updatedAt: serverTimestamp() });
+        });
+        projectCache.delete(context.projectId);
+        return { ok: true, mensaje: `${rowLabel(item, item.subcategory)} se movió a ${area}${subcategory ? ` › ${subcategory}` : ''}.` };
+      },
+    });
+
+    tools.push({
+      name: 'borrar_fila',
+      description: 'Elimina una partida del presupuesto o un gasto de área. No permite borrar filas con pagos. Siempre requiere confirmación del usuario.',
+      requiresConfirmation: true,
+      summarize: (args) => `Eliminar "${String(args?.fila || '').trim()}"`,
+      parameters: projectOptionsSchema({ fila: { type: 'string' } }),
+      run: async (args) => {
+        const resolved = await resolveProject(args?.proyecto);
+        if ('error' in resolved) return resolved;
+        const context = resolved.context;
+        const found = findRow(context, args?.fila);
+        if ('error' in found) return found;
+        const { collectionName, item } = found;
+        if (!canEditRow(context, collectionName, item)) {
+          return { error: 'El usuario no tiene permiso para borrar esa fila.' };
+        }
+        if (hasRecordedPayment(item)) {
+          return { error: 'Esa fila tiene pagos registrados: no se puede borrar. Sólo un administrador puede corregir o eliminar el pago primero.' };
+        }
+        const rowRef = doc(db, 'projects', context.projectId, collectionName, item.id);
+        if (collectionName === 'budgetItems') {
+          await runTransaction(db, async (transaction) => {
+            const projectRef = doc(db, 'projects', context.projectId);
+            const projectSnapshot = await transaction.get(projectRef);
+            const snapshot = await transaction.get(rowRef);
+            if (!projectSnapshot.exists() || !snapshot.exists()) throw new Error('La fila ya no existe.');
+            transaction.delete(rowRef);
+            transaction.update(projectRef, {
+              budgetRevision: (Number(projectSnapshot.data().budgetRevision) || 0) + 1,
+              updatedAt: serverTimestamp(),
+            });
+          });
+        } else {
+          await runTransaction(db, async (transaction) => {
+            const snapshot = await transaction.get(rowRef);
+            if (!snapshot.exists()) throw new Error('La fila ya no existe.');
+            transaction.delete(rowRef);
+          });
+        }
+        projectCache.delete(context.projectId);
+        return { ok: true, mensaje: `Se eliminó ${rowLabel(item, item.subcategory)}.` };
+      },
+    });
+
+    tools.push({
+      name: 'asignar_proveedor',
+      description: 'Asigna un proveedor de la base a una fila (o lo quita si se pide desvincular). Siempre requiere confirmación del usuario.',
+      requiresConfirmation: true,
+      summarize: (args) => (
+        args?.quitar
+          ? `Quitar el proveedor de "${String(args?.fila || '').trim()}"`
+          : `Asignar ${String(args?.proveedor || '').trim()} a "${String(args?.fila || '').trim()}"`
+      ),
+      parameters: projectOptionsSchema({
+        fila: { type: 'string' },
+        proveedor: { type: 'string', description: 'Nombre del proveedor en la base' },
+        quitar: { type: 'boolean', description: 'true para desvincular el proveedor actual' },
+      }),
+      run: async (args) => {
+        const resolved = await resolveProject(args?.proyecto);
+        if ('error' in resolved) return resolved;
+        const context = resolved.context;
+        const found = findRow(context, args?.fila);
+        if ('error' in found) return found;
+        const { collectionName, item } = found;
+        if (!canEditRow(context, collectionName, item)) {
+          return { error: 'El usuario no tiene permiso para cambiar el proveedor de esa fila.' };
+        }
+        const paid = hasRecordedPayment(item);
+        const updates: any = {};
+        if (args?.quitar) {
+          if (paid) return { error: 'Esa fila tiene pagos registrados: no puede quedar sin proveedor.' };
+          updates.providerId = '';
+          updates.providerName = '';
+        } else {
+          const providerName = String(args?.proveedor || '').trim();
+          if (!providerName) return { error: 'Falta el nombre del proveedor.' };
+          const provider = await findProviderByName(providerName);
+          if (!provider) {
+            return { error: `No encontré el proveedor "${providerName}" en la base. Escribí el nombre como figura en Proveedores o creálo desde la app.` };
+          }
+          if (paid && !context.capabilities.isProjectAdmin) {
+            return { error: 'Esa fila tiene pagos registrados: sólo un administrador puede corregir el proveedor.' };
+          }
+          updates.providerId = provider.id;
+          updates.providerName = providerLabel(provider);
+        }
+
+        const rowRef = doc(db, 'projects', context.projectId, collectionName, item.id);
+        const pendingInvite = (item as any).providerInviteLink;
+        const inviteRef = pendingInvite?.status === 'pending' && pendingInvite.token
+          ? doc(db, 'providerInvites', pendingInvite.token)
+          : null;
+        await runTransaction(db, async (transaction) => {
+          const snapshot = await transaction.get(rowRef);
+          if (!snapshot.exists()) throw new Error('La fila ya no existe.');
+          const latest = snapshot.data();
+          if (!sameExpenseVersion(latest.updatedAt, item.updatedAt) || !samePaymentTarget(latest, item)) {
+            throw new Error('La fila cambió mientras se asignaba el proveedor.');
+          }
+          transaction.update(rowRef, {
+            ...updates,
+            ...(inviteRef ? { providerInviteLink: null } : {}),
+            updatedAt: serverTimestamp(),
+          });
+          if (inviteRef) {
+            transaction.update(inviteRef, {
+              status: 'cancelled',
+              cancelledAt: serverTimestamp(),
+              cancelledBy: userId,
+              cancelledByEmail: userEmail,
+              updatedAt: serverTimestamp(),
+            });
+          }
+        });
+        projectCache.delete(context.projectId);
+        return {
+          ok: true,
+          mensaje: args?.quitar
+            ? `Se quitó el proveedor de ${rowLabel(item, item.subcategory)}.`
+            : `Proveedor ${updates.providerName} asignado a ${rowLabel(item, item.subcategory)}.`,
+        };
+      },
+    });
+
+    tools.push({
+      name: 'generar_link_proveedor',
+      description: 'Genera el link de alta de proveedor para una fila sin proveedor (un solo uso, vence en 7 días y se asigna solo a esa fila). Siempre requiere confirmación del usuario.',
+      requiresConfirmation: true,
+      summarize: (args) => `Generar link de alta de proveedor para "${String(args?.fila || '').trim()}"`,
+      parameters: projectOptionsSchema({ fila: { type: 'string' } }),
+      run: async (args) => {
+        const resolved = await resolveProject(args?.proyecto);
+        if ('error' in resolved) return resolved;
+        const context = resolved.context;
+        const found = findRow(context, args?.fila);
+        if ('error' in found) return found;
+        const { collectionName, item } = found;
+        if (!canEditRow(context, collectionName, item)) {
+          return { error: 'El usuario no tiene permiso para generar el link en esa fila.' };
+        }
+        if (item.providerId || item.providerName) {
+          return { error: 'Esa fila ya tiene un proveedor asignado.' };
+        }
+        const existingInvite = (item as any).providerInviteLink;
+        if (existingInvite?.status === 'pending' && existingInvite.token) {
+          const link = existingInvite.link || buildAssistantInviteLink(existingInvite.token);
+          return { ok: true, mensaje: `Ya hay un link pendiente para esa fila: ${link}`, link };
+        }
+
+        const token = generateAssistantInviteToken();
+        const link = buildAssistantInviteLink(token);
+        const days = 7;
+        const expiresAt = Timestamp.fromDate(buildLinkedProviderInviteExpiration(days));
+        const inviteRef = doc(db, 'providerInvites', token);
+        const rowRef = doc(db, 'projects', context.projectId, collectionName, item.id);
+        const batch = writeBatch(db);
+        batch.set(inviteRef, {
+          token,
+          status: 'pending',
+          used: false,
+          mode: 'single_use',
+          projectId: context.projectId,
+          projectName: context.projectName || '',
+          collectionName,
+          expenseId: item.id,
+          area: item.area || '',
+          subcategory: cleanAreaExpenseSubcategory((item as AssistantAreaExpense).subcategory),
+          description: item.description || '',
+          expiresAt,
+          expiresInDays: days,
+          createdBy: userId,
+          createdByEmail: userEmail,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+        batch.update(rowRef, {
+          providerInviteLink: {
+            token,
+            link,
+            status: 'pending',
+            createdBy: userId,
+            createdByEmail: userEmail,
+            createdAt: serverTimestamp(),
+            expiresAt,
+          },
+          updatedAt: serverTimestamp(),
+        });
+        await batch.commit();
+        projectCache.delete(context.projectId);
+        return {
+          ok: true,
+          mensaje: `Link de alta generado para ${rowLabel(item, item.subcategory)} (un solo uso, vence en 7 días): ${link}`,
+          link,
         };
       },
     });

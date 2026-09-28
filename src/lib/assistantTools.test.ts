@@ -466,3 +466,54 @@ test('el reporte de pagos separa vencidos, hoy, mes y sin fecha', async () => {
   assert.equal(report.sinFechaProgramada.monto, 1500);
   assert.equal(report.porProyecto[0].proyecto, 'Largometraje');
 });
+
+test('las nuevas acciones de fila están y piden confirmación', () => {
+  const names = buildTools().map((tool) => tool.name);
+  ['editar_fila', 'mover_fila', 'borrar_fila', 'asignar_proveedor', 'generar_link_proveedor'].forEach((name) => {
+    const tool = buildTools().find((entry) => entry.name === name);
+    assert.ok(names.includes(name), `Falta la herramienta ${name}`);
+    assert.equal(tool?.requiresConfirmation, true, `${name} debería pedir confirmación`);
+  });
+});
+
+test('no deja editar importes ni borrar filas con pagos', async () => {
+  const adminCapabilities = buildAssistantCapabilities({ ...baseProject, userId: 'owner-uid' });
+  const context = {
+    ...buildContext(),
+    capabilities: adminCapabilities,
+    budgetItems: [
+      { id: 'b1', area: 'Arte', providerName: 'Rental Sur', description: 'Cámara', total: 1000, paymentHistory: [{ amount: 400 }], paymentLocked: true, order: 0 },
+    ],
+  };
+  const tools = buildTools({ loadProject: async () => context });
+
+  const edited = await runTool(tools, 'editar_fila', { fila: 'b1', precioUnitario: 2000 });
+  assert.match(String((edited as any).error), /pagos registrados/);
+
+  const deleted = await runTool(tools, 'borrar_fila', { fila: 'b1' });
+  assert.match(String((deleted as any).error), /no se puede borrar/);
+
+  const cleared = await runTool(tools, 'asignar_proveedor', { fila: 'b1', quitar: true });
+  assert.match(String((cleared as any).error), /no puede quedar sin proveedor/);
+});
+
+test('respeta los permisos al mover filas', async () => {
+  const adminCapabilities = buildAssistantCapabilities({ ...baseProject, userId: 'owner-uid' });
+  const adminContext = { ...buildContext(), capabilities: adminCapabilities };
+  const adminTools = buildTools({ loadProject: async () => adminContext });
+
+  // El área Arte está activa: no se puede mover una partida ahí.
+  const toActive = await runTool(adminTools, 'mover_fila', { fila: 'b1', area: 'Arte' });
+  assert.match(String((toActive as any).error), /está activa|ya está en esa categoría/);
+
+  // Un jefe de área no puede mover gastos a un área que no tiene asignada.
+  const areaTools = buildTools();
+  const foreign = await runTool(areaTools, 'mover_fila', { fila: 'a1', area: 'Locaciones' });
+  assert.match(String((foreign as any).error), /no tiene permiso/);
+});
+
+test('el link de proveedor no se genera si la fila ya tiene proveedor', async () => {
+  const result = await runTool(buildTools(), 'generar_link_proveedor', { fila: 'a1' });
+
+  assert.match(String((result as any).error), /ya tiene un proveedor/);
+});

@@ -123,9 +123,9 @@ test('el prompt del sistema explica el alcance, el formato y las confirmaciones'
   assert.match(prompt, /español rioplatense/);
   assert.match(prompt, /proyecto "Largometraje"/);
   assert.match(prompt, /Proyectos a los que tiene acceso: Largometraje, Spot/);
-  assert.match(prompt, /la app le pide confirmación al usuario antes de guardar/);
+  assert.match(prompt, /piden confirmación al usuario/);
   assert.match(prompt, /panel angosto/);
-  assert.match(prompt, /borrar, pagar o cambiar permisos/);
+  assert.match(prompt, /pagos, reintegros, activación o eliminación de áreas/);
 });
 
 test('las acciones de escritura quedan pendientes de confirmación', async () => {
