@@ -706,6 +706,179 @@ export const buildAssistantTools = ({
         };
       },
     });
+
+    tools.push({
+      name: 'cargar_gastos_lote',
+      description: 'Carga varios gastos de Gestión por Áreas de una sola vez (por ejemplo los de una planilla). Siempre requiere confirmación del usuario antes de guardar.',
+      requiresConfirmation: true,
+      summarize: (args) => {
+        const rows = Array.isArray(args?.filas) ? args.filas : [];
+        const byArea = new Map<string, number>();
+        let total = 0;
+        rows.forEach((row: any) => {
+          const area = String(row?.area || '(sin área)').trim();
+          byArea.set(area, (byArea.get(area) || 0) + 1);
+          total += readAmounts(row).total;
+        });
+        const detail = Array.from(byArea.entries()).map(([area, count]) => `${area}: ${count}`).join(', ');
+        const preview = rows.slice(0, 6).map((row: any, index: number) => (
+          `${index + 1}. ${String(row?.descripcion || '').trim()}`
+          + `${row?.proveedor ? ` — ${String(row.proveedor).trim()}` : ''}`
+          + ` — $${readAmounts(row).total.toLocaleString('es-AR')}`
+        )).join('\n');
+        const extra = rows.length > 6 ? `\n…y ${rows.length - 6} más` : '';
+        return `Cargar ${rows.length} gastos en Gestión por Áreas (${detail || 'sin áreas'}) por $${total.toLocaleString('es-AR')}\n${preview}${extra}`;
+      },
+      parameters: projectOptionsSchema({
+        filas: {
+          type: 'array',
+          description: 'Gastos a cargar',
+          items: {
+            type: 'object',
+            properties: {
+              area: { type: 'string' },
+              subcategoria: { type: 'string' },
+              descripcion: { type: 'string' },
+              proveedor: { type: 'string' },
+              cantidad: { type: 'number' },
+              precioUnitario: { type: 'number' },
+            },
+            required: ['area', 'descripcion', 'precioUnitario'],
+          },
+        },
+      }),
+      run: async (args) => {
+        const resolved = await resolveProject(args?.proyecto);
+        if ('error' in resolved) return resolved;
+        const context = resolved.context;
+        const rows = Array.isArray(args?.filas) ? args.filas : [];
+        if (rows.length === 0) return { error: 'No hay filas para cargar.' };
+        if (rows.length > 300) return { error: `Son ${rows.length} filas y el máximo por carga es 300.` };
+
+        const problems: Array<{ fila: number; problema: string }> = [];
+        const prepared: Array<{
+          area: string;
+          subcategory: string;
+          description: string;
+          quantity: number;
+          unitPrice: number;
+          total: number;
+          providerId: string;
+          providerName: string;
+        }> = [];
+
+        rows.forEach((row: any, index: number) => {
+          const position = index + 1;
+          const area = String(row?.area || '').trim();
+          const subcategory = cleanAreaExpenseSubcategory(row?.subcategoria);
+          const description = String(row?.descripcion || '').trim();
+          if (!area || !context.categories.includes(area)) {
+            problems.push({ fila: position, problema: `El área "${area || '(vacía)'}" no existe en el proyecto.` });
+            return;
+          }
+          if (!context.activeAreas.includes(area)) {
+            problems.push({ fila: position, problema: `El área "${area}" no está activa en Gestión por Áreas.` });
+            return;
+          }
+          if (!canAssistantEditSubcategory(context.capabilities, area, subcategory)) {
+            problems.push({ fila: position, problema: `El usuario no tiene permiso para cargar en ${area}${subcategory ? ` › ${subcategory}` : ''}.` });
+            return;
+          }
+          if (!description) {
+            problems.push({ fila: position, problema: 'Falta la descripción.' });
+            return;
+          }
+          const { quantity, unitPrice, total } = readAmounts(row);
+          const amountsIssue = amountError(quantity, unitPrice);
+          if (amountsIssue) {
+            problems.push({ fila: position, problema: amountsIssue.error });
+            return;
+          }
+          prepared.push({
+            area,
+            subcategory,
+            description,
+            quantity,
+            unitPrice,
+            total,
+            providerId: '',
+            providerName: String(row?.proveedor || '').trim(),
+          });
+        });
+
+        if (problems.length > 0) {
+          return {
+            error: 'No cargué nada porque hay filas con problemas. Preguntale al usuario cómo resolverlas.',
+            problemas: problems.slice(0, 40),
+          };
+        }
+
+        for (const row of prepared) {
+          const provider = await findProviderByName(row.providerName);
+          if (provider) {
+            row.providerId = provider.id;
+            row.providerName = providerLabel(provider);
+          }
+        }
+
+        const snapshot = await getDocs(collection(db, 'projects', context.projectId, 'areaExpenses'));
+        const nextOrder = new Map<string, number>();
+        snapshot.docs.forEach((entry) => {
+          const item = entry.data() as AssistantAreaExpense;
+          const key = `${item.area}||${cleanAreaExpenseSubcategory(item.subcategory)}`;
+          nextOrder.set(key, Math.max(nextOrder.get(key) ?? -1, Number(item.order) || 0));
+        });
+
+        const refs = prepared.map(() => doc(collection(db, 'projects', context.projectId, 'areaExpenses')));
+        await runTransaction(db, async (transaction) => {
+          prepared.forEach((row, index) => {
+            const key = `${row.area}||${row.subcategory}`;
+            const order = (nextOrder.get(key) ?? -1) + 1;
+            nextOrder.set(key, order);
+            transaction.set(refs[index], {
+              projectId: context.projectId,
+              area: row.area,
+              subcategory: row.subcategory,
+              providerId: row.providerId,
+              providerName: row.providerName,
+              description: row.description,
+              unit: 'Unidad',
+              quantity: row.quantity,
+              unitPrice: row.unitPrice,
+              total: row.total,
+              order,
+              invoice: null,
+              invoices: [],
+              invoiceStatus: null,
+              otherReceipts: [],
+              paymentHistory: [],
+              paid: false,
+              paymentLocked: false,
+              paymentAuthorIds: [],
+              createdBy: userId,
+              createdByEmail: userEmail,
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+            });
+          });
+        });
+
+        const total = prepared.reduce((acc, row) => acc + row.total, 0);
+        return {
+          ok: true,
+          mensaje: `Se cargaron ${prepared.length} gastos en Gestión por Áreas por $${round2(total).toLocaleString('es-AR')}.`,
+          cargados: prepared.length,
+          total: round2(total),
+          detalle: prepared.slice(0, 20).map((row) => ({
+            area: row.area,
+            subcategoria: row.subcategory,
+            descripcion: row.description,
+            proveedor: row.providerName,
+            total: row.total,
+          })),
+        };
+      },
+    });
   }
 
   return tools;

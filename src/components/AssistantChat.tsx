@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertTriangle, Check, Loader2, Send, Sparkles, X } from 'lucide-react';
+import { AlertTriangle, Check, FileSpreadsheet, Loader2, Paperclip, Send, Sparkles, X } from 'lucide-react';
 import { cn } from '../lib/utils';
 import {
   buildAssistantSystemPrompt,
@@ -18,6 +18,7 @@ import {
   type AssistantProjectHandle,
 } from '../lib/assistantData';
 import { hasGlobalRole, PROVIDER_ACCESS_ROLES } from '../lib/roles';
+import { formatSpreadsheetForAssistant, readAssistantSpreadsheet, type AssistantSpreadsheet } from '../lib/assistantSpreadsheet';
 import { AssistantMessageText } from './AssistantMessageText';
 
 type VisibleMessage = {
@@ -25,6 +26,7 @@ type VisibleMessage = {
   role: 'user' | 'assistant';
   content: string;
   actions?: string[];
+  attachmentName?: string;
 };
 
 type AssistantChatProps = {
@@ -50,8 +52,11 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
   const [projects, setProjects] = useState<AssistantProjectHandle[]>([]);
   const [engine, setEngine] = useState('');
   const [pendingAction, setPendingAction] = useState<AssistantPendingAction | null>(null);
+  const [attachment, setAttachment] = useState<{ spreadsheet: AssistantSpreadsheet; text: string } | null>(null);
+  const [attachmentBusy, setAttachmentBusy] = useState(false);
   const historyRef = useRef<AssistantMessage[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const listProjects = useMemo(
     () => () => listAssistantProjects({ uid, email, isAppAdmin: globalRole === 'admin' }),
@@ -113,17 +118,28 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
 
   const handleSend = async (rawText: string) => {
     const text = rawText.trim();
-    if (!text || busy) return;
+    if ((!text && !attachment) || busy) return;
+    const attached = attachment;
     setInput('');
     setError('');
     setBusy(true);
     setPendingAction(null);
-    setVisible((current) => [...current, { id: `u-${Date.now()}`, role: 'user', content: text }]);
+    setAttachment(null);
+    setVisible((current) => [...current, {
+      id: `u-${Date.now()}`,
+      role: 'user',
+      content: text,
+      attachmentName: attached?.spreadsheet.fileName,
+    }]);
+
+    const promptText = attached
+      ? `${text || 'Te adjunto una planilla para que la uses.'}\n\n${attached.text}`
+      : text;
 
     try {
       const result = await runAssistantTurn({
         history: [{ role: 'system', content: systemPrompt }, ...historyRef.current],
-        userText: text,
+        userText: promptText,
         tools,
         callModel: callDeepSeekAssistant,
       });
@@ -197,6 +213,22 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
     setError('');
     setBusy(true);
     await finishPendingAction(pending, { error: 'El usuario canceló la acción.' });
+  };
+
+  const handleAttachmentPick = async (file?: File | null) => {
+    if (!file) return;
+    setError('');
+    setAttachmentBusy(true);
+    try {
+      const spreadsheet = await readAssistantSpreadsheet(file);
+      setAttachment({ spreadsheet, text: formatSpreadsheetForAssistant(spreadsheet) });
+    } catch (attachmentError: any) {
+      setAttachment(null);
+      setError(String(attachmentError?.message || 'No se pudo leer la planilla.'));
+    } finally {
+      setAttachmentBusy(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
   };
 
   const readsOf = (actions: string[] = []) => actions.filter((name) => !name.startsWith('crear_') && name !== 'ir_a_pantalla');
@@ -287,8 +319,14 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
                     message.role === 'user' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-800',
                   )}
                 >
+                  {message.attachmentName && (
+                    <span className="mb-1.5 inline-flex items-center gap-1.5 rounded bg-white/15 px-2 py-1 text-[9px] font-black uppercase tracking-widest">
+                      <FileSpreadsheet className="h-3 w-3" />
+                      {message.attachmentName}
+                    </span>
+                  )}
                   {message.role === 'user'
-                    ? message.content
+                    ? (message.content && <span className="block">{message.content}</span>)
                     : <AssistantMessageText text={message.content} />}
                   {message.role === 'assistant' && message.actions && message.actions.length > 0 && (
                     <div className="mt-2 space-y-0.5 text-[9px] font-bold uppercase tracking-widest text-slate-400">
@@ -349,7 +387,42 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
           )}
 
           <div className="border-t border-slate-100 p-3">
+            {attachment && (
+              <div className="mb-2 flex items-center justify-between gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-2">
+                <span className="flex min-w-0 items-center gap-2 text-[10px] font-black uppercase tracking-widest text-emerald-700">
+                  <FileSpreadsheet className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">
+                    {attachment.spreadsheet.fileName} · {attachment.spreadsheet.totalRows} filas
+                    {attachment.spreadsheet.truncated ? ' (recortada)' : ''}
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setAttachment(null)}
+                  className="shrink-0 rounded p-1 text-emerald-700 transition-colors hover:text-emerald-900"
+                  title="Quitar la planilla"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
             <div className="flex items-end gap-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
+                className="hidden"
+                onChange={(event) => handleAttachmentPick(event.target.files?.[0])}
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={busy || attachmentBusy}
+                className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200 text-slate-500 transition-colors hover:border-slate-900 hover:text-slate-900 disabled:text-slate-300"
+                title="Adjuntar planilla (Excel o CSV)"
+              >
+                {attachmentBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}
+              </button>
               <textarea
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
@@ -367,7 +440,7 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
               <button
                 type="button"
                 onClick={() => handleSend(input)}
-                disabled={busy || !input.trim()}
+                disabled={busy || (!input.trim() && !attachment)}
                 className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-slate-900 text-white transition-colors hover:bg-black disabled:bg-slate-300"
                 title="Enviar"
               >
@@ -375,7 +448,7 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
               </button>
             </div>
             <div className="mt-1.5 flex items-center justify-between gap-2 text-[9px] font-bold uppercase tracking-widest text-slate-300">
-              <span>Responde sólo con la información que vos podés ver</span>
+              <span>La planilla no se guarda: se usa sólo en esta charla</span>
               {engine && <span className="shrink-0">{engine}</span>}
             </div>
           </div>

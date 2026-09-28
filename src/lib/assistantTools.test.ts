@@ -197,3 +197,39 @@ test('las acciones de escritura piden confirmación y respetan los permisos', as
   const missingPrice = await createExpense?.run({ area: 'Arte', descripcion: 'Pintura', cantidad: 1 });
   assert.match(String((missingPrice as any).error), /precio unitario/);
 });
+
+test('la carga en lote avisa los problemas antes de escribir nada', async () => {
+  // Locaciones queda activa pero fuera del alcance del usuario, para probar el
+  // mensaje de permisos además del de área inactiva.
+  const context = buildContext();
+  context.activeAreas = ['Arte', 'Locaciones'];
+  const tools = buildTools({ loadProject: async () => context });
+  const batch = tools.find((tool) => tool.name === 'cargar_gastos_lote');
+
+  assert.equal(batch?.requiresConfirmation, true);
+  assert.match(
+    String(batch?.summarize?.({
+      filas: [
+        { area: 'Arte', descripcion: 'Pintura', cantidad: 2, precioUnitario: 1500 },
+        { area: 'Arte', descripcion: 'Rodillo', cantidad: 1, precioUnitario: 500 },
+      ],
+    })),
+    /Cargar 2 gastos en Gestión por Áreas \(Arte: 2\)/,
+  );
+
+  const result = await batch?.run({
+    filas: [
+      { area: 'Arte', descripcion: '', cantidad: 1, precioUnitario: 100 },
+      { area: 'Locaciones', descripcion: 'Estudio', cantidad: 1, precioUnitario: 100 },
+      { area: 'Vestuario', subcategoria: 'Zapatos', descripcion: 'Botas', cantidad: 1, precioUnitario: 100 },
+      { area: 'Arte', descripcion: 'Sin precio', cantidad: 1 },
+    ],
+  }) as any;
+
+  assert.match(result.error, /No cargué nada/);
+  assert.deepEqual(result.problemas.map((problem: any) => problem.fila), [1, 2, 3, 4]);
+  assert.match(result.problemas[0].problema, /descripción/);
+  assert.match(result.problemas[1].problema, /no tiene permiso/);
+  assert.match(result.problemas[2].problema, /no está activa/);
+  assert.match(result.problemas[3].problema, /precio unitario/);
+});
