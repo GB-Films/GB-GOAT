@@ -3,11 +3,26 @@ import { db } from './firebase';
 import { normalizeEmail, normalizeSearchText } from './identity';
 import { buildAssistantCapabilities } from './assistantCapabilities';
 import type { AssistantProjectContext, AssistantProvider } from './assistantTools';
+import { calculateProjectFinance } from './projectFinance';
 
 export type AssistantProjectHandle = {
   id: string;
   name: string;
   clientName?: string;
+};
+
+export type AssistantProjectFinance = {
+  projectId: string;
+  name: string;
+  status: string;
+  clientName: string;
+  budgetTotal: number;
+  spent: number;
+  paid: number;
+  debt: number;
+  pendingLines: number;
+  usagePercent: number;
+  overBudget: number;
 };
 
 // Lista los proyectos a los que el usuario tiene acceso, con las mismas dos
@@ -121,6 +136,9 @@ export const loadAssistantProjectContext = async ({
     const collaborators = canSeeCollaborators
       ? mapDocs((await getDocs(collection(db, 'projects', projectId, 'collaborators'))).docs)
       : [];
+    const documents = capabilities.tabs.includes('documentos')
+      ? mapDocs((await getDocs(collection(db, 'projects', projectId, 'projectDocuments'))).docs)
+      : [];
 
     return {
       projectId,
@@ -147,9 +165,40 @@ export const loadAssistantProjectContext = async ({
       areaExpenses: mapDocs(areaSnap.docs),
       cashMovements: mapDocs(cashSnap.docs),
       collaborators,
+      documents,
     };
   } catch (error) {
     console.warn('No pude cargar el proyecto para el asistente:', error);
+    return null;
+  }
+};
+
+// Cálculo liviano por proyecto para el resumen general (mismo criterio que el Dashboard).
+export const loadAssistantProjectFinance = async (projectId: string): Promise<AssistantProjectFinance | null> => {
+  try {
+    const projectSnap = await getDoc(doc(db, 'projects', projectId));
+    if (!projectSnap.exists()) return null;
+    const project: any = { id: projectId, ...projectSnap.data() };
+    const [budgetSnap, areaSnap] = await Promise.all([
+      getDocs(collection(db, 'projects', projectId, 'budgetItems')),
+      getDocs(collection(db, 'projects', projectId, 'areaExpenses')),
+    ]);
+    const finance = calculateProjectFinance(project, mapDocs(budgetSnap.docs), mapDocs(areaSnap.docs));
+    return {
+      projectId,
+      name: String(project.name || 'Proyecto sin nombre'),
+      status: String(project.status || ''),
+      clientName: String(project.clientName || ''),
+      budgetTotal: Number(finance.budgetTotal) || 0,
+      spent: Number(finance.spent) || 0,
+      paid: Number(finance.paid) || 0,
+      debt: Number(finance.debt) || 0,
+      pendingLines: Number(finance.unpaidLines) || 0,
+      usagePercent: Number(finance.usagePercent) || 0,
+      overBudget: Number(finance.overBudget) || 0,
+    };
+  } catch (error) {
+    console.warn('No pude calcular las finanzas del proyecto para el asistente:', error);
     return null;
   }
 };

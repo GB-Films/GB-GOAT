@@ -60,6 +60,7 @@ const buildContext = (): AssistantProjectContext => ({
     { id: 'c2', type: 'pago', amount: 100, status: 'confirmed', toUserEmail: 'otro@example.com' },
   ],
   collaborators: [],
+  documents: [],
 });
 
 const buildTools = (options: Partial<Parameters<typeof buildAssistantTools>[0]> = {}) => buildAssistantTools({
@@ -318,4 +319,60 @@ test('los pagos próximos separan vencidos de los que vienen', async () => {
   assert.equal(upcoming.vencidos, 1);
   assert.equal(upcoming.pagos[1].vencido, false);
   assert.equal(upcoming.pagos[0].saldo, 600);
+});
+
+test('lista los documentos del proyecto con filtros', async () => {
+  const context = buildContext();
+  context.documents = [
+    { id: 'd1', family: 'contratos', type: 'Contrato proveedor', title: 'Contrato Rental', area: 'Arte', expirationDate: '2026-01-01', url: 'https://x/1' },
+    { id: 'd2', family: 'seguros', type: 'ART', title: 'Seguro producción', area: '', expirationDate: '2030-01-01', url: 'https://x/2' },
+  ];
+  const tools = buildTools({ loadProject: async () => context });
+
+  const all = await runTool(tools, 'listar_documentos');
+  assert.equal(all.total, 2);
+  assert.deepEqual(all.porFamilia, { contratos: 1, seguros: 1 });
+  assert.equal(all.documentos[0].vencido, true);
+
+  const contracts = await runTool(tools, 'listar_documentos', { familia: 'contratos' });
+  assert.equal(contracts.total, 1);
+  assert.equal(contracts.documentos[0].titulo, 'Contrato Rental');
+});
+
+test('los saldos de caja se acotan a la caja del usuario', async () => {
+  const result = await runTool(buildTools(), 'saldos_cajas');
+
+  assert.equal(result.alcance, 'sólo la caja del usuario');
+  assert.deepEqual(result.saldosPorResponsable, [
+    { persona: 'area@example.com', email: 'area@example.com', saldo: 500 },
+  ]);
+  assert.equal(result.entregasPendientes.length, 0);
+});
+
+test('un administrador ve el resumen completo de cajas', async () => {
+  const adminCapabilities = buildAssistantCapabilities({ ...baseProject, userId: 'owner-uid' });
+  const context = { ...buildContext(), capabilities: adminCapabilities };
+  const result = await runTool(buildTools({ loadProject: async () => context }), 'saldos_cajas');
+
+  assert.equal(result.alcance, 'todo el equipo');
+  assert.equal(result.cajaGeneral.entregasConfirmadas, 500);
+});
+
+test('el resumen general suma los proyectos visibles y marca alertas', async () => {
+  const tools = buildTools({
+    loadProjectFinance: async (projectId) => (projectId === 'proj-1'
+      ? {
+        projectId, name: 'Largometraje', status: 'Rodaje', clientName: 'Cliente A',
+        budgetTotal: 10000, spent: 9000, paid: 4000, debt: 5000, pendingLines: 3, usagePercent: 90, overBudget: 0,
+      }
+      : null),
+  });
+
+  const summary = await runTool(tools, 'dashboard_proyectos');
+
+  assert.equal(summary.proyectosIncluidos, 1);
+  assert.equal(summary.totales.presupuesto, 10000);
+  assert.equal(summary.totales.deuda, 5000);
+  assert.equal(summary.proyectos[0].nombre, 'Largometraje');
+  assert.deepEqual(summary.alertas[0].motivos, ['al 90% del presupuesto', 'deuda $5.000']);
 });

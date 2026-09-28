@@ -4,7 +4,12 @@ import {
   type AssistantCapabilities,
 } from './assistantCapabilities';
 import { listAssistantHelpTopics, searchAssistantHelp } from './assistantHelp';
-import { findProjectByReference, type AssistantProjectHandle } from './assistantData';
+import {
+  findProjectByReference,
+  type AssistantProjectFinance,
+  type AssistantProjectHandle,
+} from './assistantData';
+import { calculateCashBalances, calculateGeneralCashSummary } from './cashBoxes';
 import { calculateProjectResult } from './projectFinance';
 import { collection, doc, getDocs, runTransaction, serverTimestamp } from 'firebase/firestore';
 import { db } from './firebase';
@@ -58,6 +63,23 @@ export type AssistantCollaborator = {
   allowedSubcategories?: string[];
 };
 
+export type AssistantProjectDocument = {
+  id: string;
+  family?: string;
+  type?: string;
+  subtype?: string;
+  title?: string;
+  providerName?: string;
+  area?: string;
+  expirationDate?: string;
+  notes?: string;
+  fileName?: string;
+  originalFileName?: string;
+  url?: string;
+  uploadedBy?: string;
+  createdAt?: any;
+};
+
 export type AssistantProjectContext = {
   projectId: string;
   projectName: string;
@@ -81,6 +103,7 @@ export type AssistantProjectContext = {
   areaExpenses: AssistantAreaExpense[];
   cashMovements: AssistantCashMovement[];
   collaborators: AssistantCollaborator[];
+  documents: AssistantProjectDocument[];
 };
 
 export type AssistantTool = {
@@ -102,6 +125,7 @@ export type AssistantToolsOptions = {
   listProjects: () => Promise<AssistantProjectHandle[]>;
   loadProject: (projectId: string) => Promise<AssistantProjectContext | null>;
   loadProviders?: () => Promise<AssistantProvider[]>;
+  loadProjectFinance?: (projectId: string) => Promise<AssistantProjectFinance | null>;
   canAccessProviders?: boolean;
   currentProjectId?: string | null;
   userId?: string;
@@ -170,6 +194,7 @@ export const buildAssistantTools = ({
   listProjects,
   loadProject,
   loadProviders,
+  loadProjectFinance,
   canAccessProviders = false,
   currentProjectId = null,
   userId = '',
@@ -1080,6 +1105,197 @@ export const buildAssistantTools = ({
       };
     },
   });
+
+  tools.push({
+    name: 'saldos_cajas',
+    description: 'Muestra los saldos de caja por responsable, las entregas pendientes de confirmación y el resumen de Caja General.',
+    parameters: projectOptionsSchema(),
+    run: async (args) => {
+      const resolved = await resolveProject(args?.proyecto);
+      if ('error' in resolved) return resolved;
+      const context = resolved.context;
+      if (!context.capabilities.tabs.includes('cajas')) {
+        return { error: 'El usuario no tiene acceso a la pestaña Cajas en este proyecto.' };
+      }
+
+      const seeAll = context.capabilities.can.seeFullCash;
+      const ownEmail = asText(context.userEmail);
+      const movements = seeAll
+        ? context.cashMovements
+        : context.cashMovements.filter((movement) => (
+          asText(movement.fromUserEmail) === ownEmail || asText(movement.toUserEmail) === ownEmail
+        ));
+
+      const general = calculateGeneralCashSummary(movements);
+      const balances = calculateCashBalances(movements);
+      const nameByEmail = new Map<string, string>();
+      movements.forEach((movement) => {
+        const to = asText(movement.toUserEmail);
+        const from = asText(movement.fromUserEmail);
+        if (to && movement.toUserName) nameByEmail.set(to, movement.toUserName);
+        if (from && movement.fromUserName) nameByEmail.set(from, movement.fromUserName);
+      });
+
+      return {
+        proyecto: context.projectName || context.projectId,
+        alcance: seeAll ? 'todo el equipo' : 'sólo la caja del usuario',
+        cajaGeneral: {
+          salioDeCajaGeneral: round2(general.totalOut),
+          entregasConfirmadas: round2(general.confirmedDeliveries),
+          entregasPendientesDeConfirmacion: round2(general.pendingDeliveries),
+          devolucionesConfirmadas: round2(general.confirmedReturns),
+          devolucionesPendientes: round2(general.pendingReturns),
+          pagosDirectosDeCajaGeneral: round2(general.directPayments),
+        },
+        saldosPorResponsable: Array.from(balances.entries())
+          .filter(([, balance]) => Math.abs(balance) > 0.009)
+          .map(([email, balance]) => ({
+            persona: nameByEmail.get(email) || email,
+            email,
+            saldo: round2(balance),
+          }))
+          .sort((a, b) => b.saldo - a.saldo),
+        entregasPendientes: movements
+          .filter((movement) => movement.type === 'entrega' && movement.status === 'pending')
+          .map((movement) => ({
+            para: movement.toUserName || movement.toUserEmail || '',
+            monto: round2(Number(movement.amount) || 0),
+          })),
+      };
+    },
+  });
+
+  tools.push({
+    name: 'listar_documentos',
+    description: 'Lista los documentos del proyecto (contratos, seguros, locaciones, finanzas) con filtros por familia, tipo, área o texto.',
+    parameters: projectOptionsSchema({
+      familia: { type: 'string', description: 'contratos, seguros, locaciones o finanzas' },
+      tipo: { type: 'string' },
+      area: { type: 'string' },
+      texto: { type: 'string' },
+      limite: { type: 'number' },
+    }),
+    run: async (args) => {
+      const resolved = await resolveProject(args?.proyecto);
+      if ('error' in resolved) return resolved;
+      const context = resolved.context;
+      if (!context.capabilities.tabs.includes('documentos')) {
+        return { error: 'El usuario no tiene acceso a la pestaña Documentos en este proyecto.' };
+      }
+      const family = asText(args?.familia);
+      const type = asText(args?.tipo);
+      const area = asText(args?.area);
+      const text = asText(args?.texto);
+      const today = new Date().toISOString().slice(0, 10);
+
+      const rows = context.documents
+        .filter((document) => (
+          (!family || asText(document.family) === family)
+          && (!type || asText(document.type) === type || asText(document.subtype) === type)
+          && (!area || asText(document.area) === area)
+          && (!text || [document.title, document.providerName, document.area, document.notes, document.originalFileName]
+            .filter(Boolean)
+            .some((value) => asText(value).includes(text)))
+        ))
+        .slice(0, limitOf(args?.limite, 25, 60))
+        .map((document) => ({
+          titulo: document.title || document.originalFileName || document.fileName || 'Documento',
+          familia: document.family || '',
+          tipo: document.type || document.subtype || '',
+          area: document.area || '',
+          proveedor: document.providerName || '',
+          vence: document.expirationDate || '',
+          vencido: Boolean(document.expirationDate && String(document.expirationDate).slice(0, 10) < today),
+          notas: document.notes || '',
+          archivo: document.originalFileName || document.fileName || '',
+          link: document.url || '',
+        }));
+
+      return {
+        proyecto: context.projectName || context.projectId,
+        total: rows.length,
+        documentos: rows,
+        porFamilia: context.documents.reduce((acc, document) => {
+          const key = document.family || 'otros';
+          acc[key] = (acc[key] || 0) + 1;
+          return acc;
+        }, {} as Record<string, number>),
+      };
+    },
+  });
+
+  if (loadProjectFinance) {
+    tools.push({
+      name: 'dashboard_proyectos',
+      description: 'Resumen general de todos los proyectos visibles para el usuario: presupuesto, gastado, pagado, deuda y alertas por proyecto.',
+      parameters: {
+        type: 'object',
+        properties: {
+          estado: { type: 'string', description: 'Filtrar por estado del proyecto (por ejemplo Rodaje, Aprobado)' },
+          texto: { type: 'string', description: 'Filtrar por nombre de proyecto o cliente' },
+          limite: { type: 'number', description: 'Máximo de proyectos a detallar (por defecto 25)' },
+        },
+      },
+      run: async (args) => {
+        const projects = await getProjects();
+        const status = asText(args?.estado);
+        const text = asText(args?.texto);
+        const limit = limitOf(args?.limite, 25, 40);
+        const selected = projects
+          .filter((project) => !text || asText(project.name).includes(text) || asText(project.clientName || '').includes(text))
+          .slice(0, limit + 1);
+
+        const rows: AssistantProjectFinance[] = [];
+        for (const project of selected.slice(0, limit)) {
+          const finance = await loadProjectFinance(project.id);
+          if (!finance) continue;
+          if (status && !asText(finance.status).includes(status)) continue;
+          rows.push(finance);
+        }
+
+        const totals = rows.reduce((acc, row) => ({
+          presupuesto: acc.presupuesto + row.budgetTotal,
+          gastado: acc.gastado + row.spent,
+          pagado: acc.pagado + row.paid,
+          deuda: acc.deuda + row.debt,
+        }), { presupuesto: 0, gastado: 0, pagado: 0, deuda: 0 });
+
+        const alerts = rows
+          .map((row) => {
+            const motivos: string[] = [];
+            if (row.overBudget > 0.009) motivos.push(`excedido por $${round2(row.overBudget).toLocaleString('es-AR')}`);
+            else if (row.usagePercent >= 85) motivos.push(`al ${Math.round(row.usagePercent)}% del presupuesto`);
+            if (row.debt > 0.009) motivos.push(`deuda $${round2(row.debt).toLocaleString('es-AR')}`);
+            return motivos.length > 0 ? { proyecto: row.name, estado: row.status, motivos } : null;
+          })
+          .filter(Boolean);
+
+        return {
+          proyectosIncluidos: rows.length,
+          proyectosVisibles: projects.length,
+          recortado: projects.length > limit,
+          totales: {
+            presupuesto: round2(totals.presupuesto),
+            gastado: round2(totals.gastado),
+            pagado: round2(totals.pagado),
+            deuda: round2(totals.deuda),
+          },
+          proyectos: rows.map((row) => ({
+            nombre: row.name,
+            estado: row.status,
+            cliente: row.clientName,
+            presupuesto: round2(row.budgetTotal),
+            gastado: round2(row.spent),
+            pagado: round2(row.paid),
+            deuda: round2(row.debt),
+            usoPorcentaje: Math.round(row.usagePercent * 10) / 10,
+            lineasPendientes: row.pendingLines,
+          })),
+          alertas: alerts,
+        };
+      },
+    });
+  }
 
   return tools;
 };

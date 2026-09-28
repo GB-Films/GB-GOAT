@@ -13,6 +13,7 @@ import {
 import { buildAssistantTools } from '../lib/assistantTools';
 import {
   listAssistantProjects,
+  loadAssistantProjectFinance,
   loadAssistantProjectContext,
   loadAssistantProviders,
   type AssistantProjectHandle,
@@ -79,6 +80,7 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
   const tools = useMemo(() => buildAssistantTools({
     listProjects,
     loadProject: (projectId) => loadAssistantProjectContext({ projectId, uid, email, globalRole }),
+    loadProjectFinance: loadAssistantProjectFinance,
     loadProviders: loadAssistantProviders,
     canAccessProviders: hasGlobalRole(globalRole, PROVIDER_ACCESS_ROLES),
     currentProjectId: currentProjectId || null,
