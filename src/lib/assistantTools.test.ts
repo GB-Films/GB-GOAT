@@ -233,3 +233,24 @@ test('la carga en lote avisa los problemas antes de escribir nada', async () => 
   assert.match(result.problemas[2].problema, /no está activa/);
   assert.match(result.problemas[3].problema, /precio unitario/);
 });
+
+test('la ayuda de la app está disponible sin permisos de proyecto', async () => {
+  const tools = buildTools({ loadProject: async () => null });
+  const help = await runTool(tools, 'consultar_ayuda', { tema: 'cómo cargo un gasto' });
+
+  assert.ok(help.secciones.length > 0);
+  assert.match(JSON.stringify(help.secciones), /cargar/i);
+});
+
+test('que_puedo_hacer explica el rol, las áreas y lo que falta pedir', async () => {
+  const result = await runTool(buildTools(), 'que_puedo_hacer');
+
+  assert.equal(result.rol, 'jefe_area');
+  assert.match(result.resumen, /jefe de área/);
+  assert.deepEqual(result.areas, [
+    { area: 'Arte', acceso: 'completa' },
+    { area: 'Vestuario', acceso: ['Zapatos'] },
+  ]);
+  assert.ok(result.sinAcceso.includes('Resultado'));
+  assert.match(result.comoAmpliar, /Pedile|pedirle/i);
+});

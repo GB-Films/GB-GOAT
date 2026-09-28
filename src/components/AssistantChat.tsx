@@ -39,7 +39,8 @@ type AssistantChatProps = {
 const SUGGESTIONS = [
   '¿Qué proyectos tengo?',
   '¿Cómo viene el presupuesto?',
-  '¿Qué pagos están pendientes?',
+  '¿Cómo cargo un gasto?',
+  '¿Qué puedo hacer con mi usuario?',
 ];
 
 export function AssistantChat({ uid, email, globalRole, currentProjectId }: AssistantChatProps) {

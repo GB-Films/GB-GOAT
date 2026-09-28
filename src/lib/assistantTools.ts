@@ -3,6 +3,7 @@ import {
   describeAssistantScope,
   type AssistantCapabilities,
 } from './assistantCapabilities';
+import { listAssistantHelpTopics, searchAssistantHelp } from './assistantHelp';
 import { findProjectByReference, type AssistantProjectHandle } from './assistantData';
 import { collection, doc, getDocs, runTransaction, serverTimestamp } from 'firebase/firestore';
 import { db } from './firebase';
@@ -880,6 +881,78 @@ export const buildAssistantTools = ({
       },
     });
   }
+
+  tools.push({
+    name: 'consultar_ayuda',
+    description: 'Devuelve la ayuda de GB GOAT: cómo funciona cada pestaña, cómo se cargan los gastos, proveedores, pagos, cajas, permisos y problemas frecuentes. No depende de los permisos del usuario.',
+    parameters: {
+      type: 'object',
+      properties: {
+        tema: { type: 'string', description: 'Tema o pregunta, por ejemplo "cargar un gasto", "link de proveedor", "pagos", "permisos"' },
+      },
+    },
+    run: (args) => {
+      const sections = searchAssistantHelp(args?.tema);
+      const query = String(args?.tema || '').trim();
+      return {
+        ...(query ? {} : { temasDisponibles: listAssistantHelpTopics() }),
+        secciones: sections.map((section) => ({
+          id: section.id,
+          titulo: section.title,
+          contenido: section.content,
+        })),
+      };
+    },
+  });
+
+  tools.push({
+    name: 'que_puedo_hacer',
+    description: 'Explica en lenguaje simple qué puede hacer el usuario en un proyecto (rol, pestañas, áreas) y qué tiene que pedir si le falta algo.',
+    parameters: projectOptionsSchema(),
+    run: async (args) => {
+      const projects = await getProjects();
+      const resolved = await resolveProject(args?.proyecto);
+      if ('error' in resolved) {
+        return {
+          error: resolved.error,
+          proyectos: projects.map((project) => ({ id: project.id, nombre: project.name })),
+          nota: 'Cada proyecto tiene sus propios permisos: pedí el detalle de uno en particular.',
+        };
+      }
+
+      const context = resolved.context;
+      const capabilities = context.capabilities;
+      const tabLabels: Record<string, string> = {
+        presupuesto: 'Presu Ppal',
+        areas: 'Áreas',
+        cajas: 'Cajas',
+        saldos: 'Finanzas',
+        documentos: 'Documentos',
+        resultado: 'Resultado',
+        proveedores: 'Proveedores',
+        equipo: 'Equipo',
+        permisos: 'Permisos',
+      };
+      const missingTabs = Object.keys(tabLabels)
+        .filter((tabId) => !capabilities.tabs.includes(tabId))
+        .map((tabId) => tabLabels[tabId]);
+
+      return {
+        proyecto: context.projectName || context.projectId,
+        rol: capabilities.role || 'sin rol asignado',
+        resumen: describeAssistantScope(capabilities),
+        areas: capabilities.areas.map((scope) => ({
+          area: scope.area,
+          acceso: scope.canEditArea ? 'completa' : scope.canEditSubcategories,
+        })),
+        pestanasHabilitadas: capabilities.tabs,
+        sinAcceso: missingTabs,
+        comoAmpliar: missingTabs.length > 0
+          ? `Para tener ${missingTabs.join(', ')} hay que pedirle a un administrador del proyecto que habilite esas pestañas desde Permisos.`
+          : 'Tenés acceso a todas las pestañas del proyecto.',
+      };
+    },
+  });
 
   return tools;
 };
