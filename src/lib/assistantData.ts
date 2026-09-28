@@ -12,7 +12,15 @@ export type AssistantProjectHandle = {
 
 // Lista los proyectos a los que el usuario tiene acceso, con las mismas dos
 // consultas que usa la pantalla de Proyectos (dueño o colaborador invitado).
-export const listAssistantProjects = async ({ uid, email }: { uid: string; email: string }): Promise<AssistantProjectHandle[]> => {
+export const listAssistantProjects = async ({
+  uid,
+  email,
+  isAppAdmin = false,
+}: {
+  uid: string;
+  email: string;
+  isAppAdmin?: boolean;
+}): Promise<AssistantProjectHandle[]> => {
   const results = new Map<string, AssistantProjectHandle>();
   const normalizedEmail = normalizeEmail(email);
   const collect = (docs: Array<{ id: string; data: () => any }>) => {
@@ -25,6 +33,18 @@ export const listAssistantProjects = async ({ uid, email }: { uid: string; email
       });
     });
   };
+
+  // Los administradores de la aplicación ven todos los proyectos, igual que en
+  // la pantalla de Proyectos; el resto ve los propios y los compartidos.
+  if (isAppAdmin) {
+    try {
+      const all = await getDocs(collection(db, 'projects'));
+      collect(all.docs);
+      return Array.from(results.values()).sort((a, b) => a.name.localeCompare(b.name, 'es'));
+    } catch (error) {
+      console.warn('No pude listar todos los proyectos para el asistente:', error);
+    }
+  }
 
   if (uid) {
     try {

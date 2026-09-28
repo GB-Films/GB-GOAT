@@ -45,12 +45,13 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
   const [error, setError] = useState('');
   const [visible, setVisible] = useState<VisibleMessage[]>([]);
   const [projects, setProjects] = useState<AssistantProjectHandle[]>([]);
+  const [engine, setEngine] = useState('');
   const historyRef = useRef<AssistantMessage[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const listProjects = useMemo(
-    () => () => listAssistantProjects({ uid, email }),
-    [email, uid],
+    () => () => listAssistantProjects({ uid, email, isAppAdmin: globalRole === 'admin' }),
+    [email, globalRole, uid],
   );
 
   const projectNames = useMemo(() => projects.map((project) => project.name), [projects]);
@@ -102,13 +103,14 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
     setVisible((current) => [...current, { id: `u-${Date.now()}`, role: 'user', content: text }]);
 
     try {
-      const { messages, reply, actions } = await runAssistantTurn({
+      const { messages, reply, actions, model, reasoningEffort } = await runAssistantTurn({
         history: [{ role: 'system', content: systemPrompt }, ...historyRef.current],
         userText: text,
         tools,
         callModel: callDeepSeekAssistant,
       });
       historyRef.current = messages.filter((message) => message.role !== 'system');
+      if (model) setEngine(`${model}${reasoningEffort ? ` · esfuerzo ${reasoningEffort}` : ''}`);
       setVisible((current) => [...current, {
         id: `a-${Date.now()}`,
         role: 'assistant',
@@ -264,8 +266,9 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
                 {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
               </button>
             </div>
-            <div className="mt-1.5 text-[9px] font-bold uppercase tracking-widest text-slate-300">
-              Responde sólo con la información que vos podés ver
+            <div className="mt-1.5 flex items-center justify-between gap-2 text-[9px] font-bold uppercase tracking-widest text-slate-300">
+              <span>Responde sólo con la información que vos podés ver</span>
+              {engine && <span className="shrink-0">{engine}</span>}
             </div>
           </div>
         </div>

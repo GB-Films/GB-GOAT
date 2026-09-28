@@ -18,7 +18,7 @@ export type AssistantMessage = {
 export type AssistantModelCaller = (input: {
   messages: AssistantMessage[];
   tools: ReturnType<typeof assistantToolsForModel>;
-}) => Promise<{ message: AssistantMessage }>;
+}) => Promise<{ message: AssistantMessage; model?: string; reasoningEffort?: string }>;
 
 export const ASSISTANT_FUNCTIONS_REGION = 'us-central1';
 
@@ -34,6 +34,8 @@ export const callDeepSeekAssistant: AssistantModelCaller = async ({ messages, to
       content: typeof data?.message?.content === 'string' ? data.message.content : '',
       tool_calls: Array.isArray(data?.message?.tool_calls) ? data.message.tool_calls : [],
     },
+    model: typeof data?.model === 'string' ? data.model : undefined,
+    reasoningEffort: typeof data?.reasoningEffort === 'string' ? data.reasoningEffort : undefined,
   };
 };
 
@@ -85,9 +87,14 @@ export const runAssistantTurn = async ({
   const messages: AssistantMessage[] = [...history, { role: 'user', content: userText }];
   const actions: Array<{ name: string; args: any; output: unknown }> = [];
   const toolSchemas = assistantToolsForModel(tools);
+  let model: string | undefined;
+  let reasoningEffort: string | undefined;
 
   for (let round = 0; round < maxRounds; round += 1) {
-    const { message } = await callModel({ messages, tools: toolSchemas });
+    const response = await callModel({ messages, tools: toolSchemas });
+    const { message } = response;
+    model = response.model || model;
+    reasoningEffort = response.reasoningEffort || reasoningEffort;
     const assistantMessage: AssistantMessage = {
       role: 'assistant',
       content: message.content || '',
@@ -96,7 +103,7 @@ export const runAssistantTurn = async ({
     messages.push(assistantMessage);
 
     if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
-      return { messages, reply: assistantMessage.content, actions };
+      return { messages, reply: assistantMessage.content, actions, model, reasoningEffort };
     }
 
     for (const call of assistantMessage.tool_calls) {
@@ -132,5 +139,7 @@ export const runAssistantTurn = async ({
     messages,
     reply: 'No pude terminar la consulta con los datos disponibles. Probá preguntarlo de otra forma.',
     actions,
+    model,
+    reasoningEffort,
   };
 };

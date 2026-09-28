@@ -11,6 +11,7 @@ const deepseekApiKey = defineSecret('DEEPSEEK_API_KEY');
 
 const DEEPSEEK_BASE_URL = 'https://api.deepseek.com/v1';
 const DEFAULT_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-flash';
+const REASONING_EFFORT = process.env.DEEPSEEK_REASONING_EFFORT || 'high';
 const DAILY_MESSAGE_LIMIT = Math.max(1, Number(process.env.ASSISTANT_DAILY_LIMIT) || 300);
 const MAX_MESSAGES = 40;
 const MAX_MESSAGE_CHARS = 12_000;
@@ -116,6 +117,7 @@ exports.assistantChat = onCall(
           messages,
           ...(tools.length > 0 ? { tools, tool_choice: 'auto' } : {}),
           temperature: 0.3,
+          reasoning_effort: REASONING_EFFORT,
           max_tokens: 4096,
           stream: false,
         }),
@@ -147,6 +149,7 @@ exports.assistantChat = onCall(
 
     return {
       model: payload?.model || DEFAULT_MODEL,
+      reasoningEffort: REASONING_EFFORT,
       message: {
         role: message.role || 'assistant',
         content: typeof message.content === 'string' ? message.content : '',
