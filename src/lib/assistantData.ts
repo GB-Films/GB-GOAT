@@ -172,6 +172,12 @@ export const loadAssistantProjectContext = async ({
         shootingEndDate: String(project.shootingEndDate || ''),
         location: String(project.location || ''),
         projectCode: String(project.projectCode || ''),
+        areaExpenseSubcategories: project.areaExpenseSubcategories && typeof project.areaExpenseSubcategories === 'object'
+          ? project.areaExpenseSubcategories
+          : {},
+        areaExpenseSubcategoryBudgets: project.areaExpenseSubcategoryBudgets && typeof project.areaExpenseSubcategoryBudgets === 'object'
+          ? project.areaExpenseSubcategoryBudgets
+          : {},
         resultIncidences: project.resultIncidences && typeof project.resultIncidences === 'object'
           ? project.resultIncidences
           : {},

@@ -517,3 +517,97 @@ test('el link de proveedor no se genera si la fila ya tiene proveedor', async ()
 
   assert.match(String((result as any).error), /ya tiene un proveedor/);
 });
+
+test('las acciones de estructura están y piden confirmación', () => {
+  const estructura = [
+    'crear_categoria', 'renombrar_categoria', 'borrar_categoria',
+    'guardar_subcategoria', 'borrar_subcategoria',
+    'activar_area', 'desactivar_area', 'eliminar_area',
+  ];
+  const tools = buildTools();
+  estructura.forEach((name) => {
+    const tool = tools.find((entry) => entry.name === name);
+    assert.ok(tool, `Falta la herramienta ${name}`);
+    assert.equal(tool?.requiresConfirmation, true, `${name} debería pedir confirmación`);
+  });
+});
+
+test('los pagos y cajas no son acciones del asistente', () => {
+  const names = buildTools({ isAppAdmin: true }).map((tool) => tool.name);
+  ['registrar_pago', 'borrar_pago', 'registrar_reintegro', 'crear_entrega', 'confirmar_caja'].forEach((name) => {
+    assert.ok(!names.includes(name), `No debería existir ${name}`);
+  });
+});
+
+test('las categorías respetan permisos y áreas activas', async () => {
+  const duplicate = await runTool(buildTools(), 'crear_categoria', { categoria: 'Arte' });
+  assert.match(String((duplicate as any).error), /no puede crear categorías/);
+
+  const adminCapabilities = buildAssistantCapabilities({ ...baseProject, userId: 'owner-uid' });
+  const context = {
+    ...buildContext(),
+    capabilities: adminCapabilities,
+    budgetItems: [
+      { id: 'b1', area: 'Arte', providerName: 'Rental Sur', description: 'Cámara', total: 1000, order: 0 },
+      { id: 'b2', area: 'Locaciones', providerName: 'Estudio Norte', description: 'Estudio', total: 5000, paymentHistory: [{ amount: 100 }], paymentLocked: true, order: 1 },
+    ],
+  };
+  const tools = buildTools({ loadProject: async () => context });
+
+  const repeated = await runTool(tools, 'crear_categoria', { categoria: 'Arte' });
+  assert.match(String((repeated as any).error), /Ya existe/);
+
+  const renameActive = await runTool(tools, 'renombrar_categoria', { categoria: 'Arte', nuevoNombre: 'Arte 2' });
+  assert.match(String((renameActive as any).error), /está activa/);
+
+  const deleteWithPayments = await runTool(tools, 'borrar_categoria', { categoria: 'Locaciones' });
+  assert.match(String((deleteWithPayments as any).error), /pagos registrados/);
+});
+
+test('las subcategorías requieren permiso y no se renombran con pagos', async () => {
+  const areaTools = buildTools();
+  const denied = await runTool(areaTools, 'guardar_subcategoria', { area: 'Arte', subcategoria: 'Nueva', presupuesto: 100 });
+  assert.match(String((denied as any).error), /no tiene permiso/);
+
+  const adminCapabilities = buildAssistantCapabilities({ ...baseProject, userId: 'owner-uid' });
+  const context = {
+    ...buildContext(),
+    capabilities: adminCapabilities,
+    meta: { ...buildContext().meta, areaExpenseSubcategories: { Arte: ['Utilería'] } },
+    areaExpenses: [
+      { id: 'a1', area: 'Arte', subcategory: 'Utilería', description: 'Pintura', total: 300, paymentHistory: [{ amount: 100 }] },
+    ],
+  };
+  const tools = buildTools({ loadProject: async () => context });
+  const rename = await runTool(tools, 'guardar_subcategoria', {
+    area: 'Arte',
+    subcategoria: 'Utiles',
+    subcategoriaOriginal: 'Utilería',
+    presupuesto: 100,
+  });
+  assert.match(String((rename as any).error), /pagos registrados/);
+
+  const remove = await runTool(tools, 'borrar_subcategoria', { area: 'Arte', subcategoria: 'Utilería' });
+  assert.match(String((remove as any).error), /pagos registrados/);
+});
+
+test('activar y eliminar áreas respetan pagos y estado', async () => {
+  const adminCapabilities = buildAssistantCapabilities({ ...baseProject, userId: 'owner-uid' });
+  const context = {
+    ...buildContext(),
+    capabilities: adminCapabilities,
+    areaExpenses: [
+      { id: 'a1', area: 'Arte', subcategory: 'Utilería', description: 'Pintura', total: 300, paymentHistory: [{ amount: 100 }] },
+    ],
+  };
+  const tools = buildTools({ loadProject: async () => context });
+
+  const alreadyActive = await runTool(tools, 'activar_area', { area: 'Arte' });
+  assert.match(String((alreadyActive as any).error), /ya está activa/);
+
+  const stillActive = await runTool(tools, 'eliminar_area', { area: 'Arte' });
+  assert.match(String((stillActive as any).error), /pagos registrados/);
+
+  const inactive = await runTool(tools, 'desactivar_area', { area: 'Locaciones' });
+  assert.match(String((inactive as any).error), /no está activa/);
+});

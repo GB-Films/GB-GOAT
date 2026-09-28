@@ -1,4 +1,5 @@
 import {
+  canAssistantEditArea,
   canAssistantEditSubcategory,
   describeAssistantScope,
   type AssistantCapabilities,
@@ -13,7 +14,8 @@ import { calculateCashBalances, calculateGeneralCashSummary } from './cashBoxes'
 import { buildPaymentCalendarDays, getOverdueLines, getTodayLines, getUnscheduledLines, sumDebt } from './paymentSchedule';
 import { hasRecordedPayment, sameExpenseVersion, samePaymentTarget } from './expenseEdits';
 import { buildLinkedProviderInviteExpiration } from './providerInvites';
-import { Timestamp, writeBatch } from 'firebase/firestore';
+import { Timestamp, updateDoc, writeBatch } from 'firebase/firestore';
+import { normalizeEmail } from './identity';
 import { calculateProjectResult } from './projectFinance';
 import { collection, doc, getDocs, runTransaction, serverTimestamp } from 'firebase/firestore';
 import { db } from './firebase';
@@ -110,6 +112,8 @@ export type AssistantProjectContext = {
     location?: string;
     projectCode?: string;
     resultIncidences?: Record<string, unknown>;
+    areaExpenseSubcategories?: Record<string, string[]>;
+    areaExpenseSubcategoryBudgets?: Record<string, any>;
   };
   categories: string[];
   activeAreas: string[];
@@ -1458,6 +1462,543 @@ export const buildAssistantTools = ({
           ok: true,
           mensaje: `Link de alta generado para ${rowLabel(item, item.subcategory)} (un solo uso, vence en 7 días): ${link}`,
           link,
+        };
+      },
+    });
+
+    const subcategoryKeyOf = (area: string, subcategory: string) => `${area}||${cleanAreaExpenseSubcategory(subcategory)}`;
+    const storedSubcategories = (context: AssistantProjectContext, area: string) => {
+      const stored = context.meta.areaExpenseSubcategories?.[area];
+      return Array.isArray(stored) ? stored.map((item) => cleanAreaExpenseSubcategory(item)).filter(Boolean) : [];
+    };
+    const writeAudit = (
+      transaction: any,
+      context: AssistantProjectContext,
+      items: Array<{ id: string; area?: string; providerName?: string; total?: number }>,
+      collectionName: 'budgetItems' | 'areaExpenses',
+      reason: string,
+    ) => {
+      if (items.length === 0) return;
+      const auditRef = doc(collection(db, 'projects', context.projectId, 'activityLog'));
+      transaction.set(auditRef, {
+        action: 'expense_rows_deleted',
+        reason,
+        collectionName,
+        itemId: items.length === 1 ? items[0].id : '',
+        itemCount: items.length,
+        itemLabel: `${items.length} filas`,
+        area: items.length === 1 ? (items[0].area || '') : '',
+        providerName: '',
+        amount: round2(items.reduce((acc, item) => acc + (Number(item.total) || 0), 0)),
+        paymentCount: 0,
+        deletedCashMovementCount: 0,
+        deletedBy: userId,
+        deletedByEmail: userEmail,
+        deletedByName: '',
+        deletedByRole: '',
+        createdAt: serverTimestamp(),
+      });
+    };
+    const deleteRowsInTransaction = async (
+      context: AssistantProjectContext,
+      rows: Array<{ id: string; area?: string; total?: number }>,
+      collectionName: 'budgetItems' | 'areaExpenses',
+      reason: string,
+    ) => {
+      const projectRef = doc(db, 'projects', context.projectId);
+      await runTransaction(db, async (transaction) => {
+        const projectSnapshot = await transaction.get(projectRef);
+        if (!projectSnapshot.exists()) throw new Error('El proyecto ya no existe.');
+        rows.forEach((row) => {
+          transaction.delete(doc(db, 'projects', context.projectId, collectionName, row.id));
+        });
+        writeAudit(transaction, context, rows, collectionName, reason);
+        if (collectionName === 'budgetItems') {
+          transaction.update(projectRef, {
+            budgetRevision: (Number(projectSnapshot.data().budgetRevision) || 0) + 1,
+            updatedAt: serverTimestamp(),
+          });
+        }
+      });
+    };
+
+    tools.push({
+      name: 'crear_categoria',
+      description: 'Crea una categoría nueva en el Presupuesto Principal. Siempre requiere confirmación del usuario.',
+      requiresConfirmation: true,
+      summarize: (args) => `Crear la categoría "${String(args?.categoria || '').trim()}" en Presu Ppal`,
+      parameters: projectOptionsSchema({ categoria: { type: 'string' } }),
+      run: async (args) => {
+        const resolved = await resolveProject(args?.proyecto);
+        if ('error' in resolved) return resolved;
+        const context = resolved.context;
+        if (!context.capabilities.can.editMainBudget) return { error: 'El usuario no puede crear categorías en este proyecto.' };
+        const name = String(args?.categoria || '').trim();
+        if (!name) return { error: 'Falta el nombre de la categoría.' };
+        if (context.categories.some((category) => asText(category) === asText(name))) {
+          return { error: `Ya existe una categoría "${name}".` };
+        }
+        await updateDoc(doc(db, 'projects', context.projectId), {
+          categories: [...context.categories, name],
+          updatedAt: serverTimestamp(),
+        });
+        projectCache.delete(context.projectId);
+        return { ok: true, mensaje: `Categoría "${name}" creada en Presu Ppal.` };
+      },
+    });
+
+    tools.push({
+      name: 'renombrar_categoria',
+      description: 'Renombra una categoría del Presupuesto Principal y actualiza sus partidas y permisos. Siempre requiere confirmación.',
+      requiresConfirmation: true,
+      summarize: (args) => `Renombrar "${String(args?.categoria || '').trim()}" a "${String(args?.nuevoNombre || '').trim()}"`,
+      parameters: projectOptionsSchema({ categoria: { type: 'string' }, nuevoNombre: { type: 'string' } }),
+      run: async (args) => {
+        const resolved = await resolveProject(args?.proyecto);
+        if ('error' in resolved) return resolved;
+        const context = resolved.context;
+        if (!context.capabilities.can.editMainBudget) return { error: 'El usuario no puede renombrar categorías en este proyecto.' };
+        const current = context.categories.find((category) => asText(category) === asText(args?.categoria));
+        if (!current) return { error: `No existe la categoría "${args?.categoria}".` };
+        if (context.activeAreas.includes(current)) {
+          return { error: `"${current}" está activa en Gestión por Áreas: no se puede renombrar desde Presu Ppal.` };
+        }
+        const nextName = String(args?.nuevoNombre || '').trim();
+        if (!nextName) return { error: 'Falta el nuevo nombre.' };
+        if (context.categories.some((category) => category !== current && asText(category) === asText(nextName))) {
+          return { error: `Ya existe una categoría "${nextName}".` };
+        }
+        const items = context.budgetItems.filter((item) => item.area === current);
+        if (items.length > 400) return { error: 'La categoría tiene demasiadas filas para renombrarla desde el asistente; hacelo desde la app.' };
+        const collaboratorsToUpdate = context.collaborators.filter((collaborator) => (
+          (Array.isArray(collaborator.allowedCategories) ? collaborator.allowedCategories : []).includes(current)
+          || (Array.isArray(collaborator.allowedSubcategories) ? collaborator.allowedSubcategories : []).some((key) => key.split('||')[0] === current)
+        ));
+
+        const projectRef = doc(db, 'projects', context.projectId);
+        await runTransaction(db, async (transaction) => {
+          const projectSnapshot = await transaction.get(projectRef);
+          if (!projectSnapshot.exists()) throw new Error('El proyecto ya no existe.');
+          if ((Array.isArray(projectSnapshot.data().activeAreas) ? projectSnapshot.data().activeAreas : []).includes(current)) {
+            throw new Error('El área quedó activa mientras se renombraba.');
+          }
+          items.forEach((item) => {
+            transaction.update(doc(db, 'projects', context.projectId, 'budgetItems', item.id), {
+              area: nextName,
+              updatedAt: serverTimestamp(),
+            });
+          });
+          transaction.update(projectRef, {
+            categories: context.categories.map((category) => (category === current ? nextName : category)),
+            budgetRevision: (Number(projectSnapshot.data().budgetRevision) || 0) + (items.length > 0 ? 1 : 0),
+            updatedAt: serverTimestamp(),
+          });
+          collaboratorsToUpdate.forEach((collaborator) => {
+            transaction.update(doc(db, 'projects', context.projectId, 'collaborators', normalizeEmail(collaborator.email)), {
+              allowedCategories: (Array.isArray(collaborator.allowedCategories) ? collaborator.allowedCategories : [])
+                .map((category) => (category === current ? nextName : category)),
+              allowedSubcategories: (Array.isArray(collaborator.allowedSubcategories) ? collaborator.allowedSubcategories : [])
+                .map((key) => (key.split('||')[0] === current ? `${nextName}||${key.split('||')[1] || ''}` : key)),
+              updatedAt: serverTimestamp(),
+            });
+          });
+        });
+        projectCache.delete(context.projectId);
+        return { ok: true, mensaje: `Categoría "${current}" renombrada a "${nextName}".` };
+      },
+    });
+
+    tools.push({
+      name: 'borrar_categoria',
+      description: 'Elimina una categoría del Presupuesto Principal con todas sus partidas y permisos. No permite categorías activas ni con pagos. Siempre requiere confirmación.',
+      requiresConfirmation: true,
+      summarize: (args) => `Eliminar la categoría "${String(args?.categoria || '').trim()}" y todas sus partidas`,
+      parameters: projectOptionsSchema({ categoria: { type: 'string' } }),
+      run: async (args) => {
+        const resolved = await resolveProject(args?.proyecto);
+        if ('error' in resolved) return resolved;
+        const context = resolved.context;
+        if (!context.capabilities.can.editMainBudget) return { error: 'El usuario no puede borrar categorías en este proyecto.' };
+        const current = context.categories.find((category) => asText(category) === asText(args?.categoria));
+        if (!current) return { error: `No existe la categoría "${args?.categoria}".` };
+        if (context.activeAreas.includes(current)) {
+          return { error: `"${current}" está activa en Gestión por Áreas: primero desactivá o eliminá el área.` };
+        }
+        const items = context.budgetItems.filter((item) => item.area === current);
+        if (items.some((item) => hasRecordedPayment(item))) {
+          return { error: `La categoría "${current}" tiene partidas con pagos registrados: no se puede borrar.` };
+        }
+        if (items.length > 400) return { error: 'La categoría tiene demasiadas partidas para borrarla desde el asistente; hacelo desde la app.' };
+
+        await deleteRowsInTransaction(context, items, 'budgetItems', 'category_deleted');
+        await updateDoc(doc(db, 'projects', context.projectId), {
+          categories: context.categories.filter((category) => category !== current),
+          updatedAt: serverTimestamp(),
+        });
+        for (const collaborator of context.collaborators) {
+          const allowedCategories = Array.isArray(collaborator.allowedCategories) ? collaborator.allowedCategories : [];
+          const allowedSubcategories = Array.isArray(collaborator.allowedSubcategories) ? collaborator.allowedSubcategories : [];
+          if (!allowedCategories.includes(current) && !allowedSubcategories.some((key) => key.split('||')[0] === current)) continue;
+          await updateDoc(doc(db, 'projects', context.projectId, 'collaborators', normalizeEmail(collaborator.email)), {
+            allowedCategories: allowedCategories.filter((category) => category !== current),
+            allowedSubcategories: allowedSubcategories.filter((key) => key.split('||')[0] !== current),
+            updatedAt: serverTimestamp(),
+          });
+        }
+        projectCache.delete(context.projectId);
+        return { ok: true, mensaje: `Categoría "${current}" eliminada con ${items.length} partidas.` };
+      },
+    });
+
+    tools.push({
+      name: 'guardar_subcategoria',
+      description: 'Crea o edita una subcategoría de un área con su presupuesto y notas (también sirve para renombrarla). Siempre requiere confirmación.',
+      requiresConfirmation: true,
+      summarize: (args) => {
+        const area = String(args?.area || '').trim();
+        const name = cleanAreaExpenseSubcategory(args?.subcategoria);
+        const original = cleanAreaExpenseSubcategory(args?.subcategoriaOriginal);
+        const budget = Number(args?.presupuesto);
+        return [
+          original ? `Renombrar "${original}" a "${name}"` : `Crear la subcategoría "${name}"`,
+          `en ${area}`,
+          Number.isFinite(budget) && budget > 0 ? `con presupuesto $${budget.toLocaleString('es-AR')}` : '',
+        ].filter(Boolean).join(' ');
+      },
+      parameters: projectOptionsSchema({
+        area: { type: 'string' },
+        subcategoria: { type: 'string', description: 'Nombre nuevo, o el mismo si sólo cambia el presupuesto' },
+        subcategoriaOriginal: { type: 'string', description: 'Nombre actual, sólo al editar' },
+        presupuesto: { type: 'number' },
+        notas: { type: 'string' },
+      }),
+      run: async (args) => {
+        const resolved = await resolveProject(args?.proyecto);
+        if ('error' in resolved) return resolved;
+        const context = resolved.context;
+        const area = String(args?.area || '').trim();
+        if (!area || !context.categories.includes(area)) return { error: `El área "${area}" no existe en este proyecto.` };
+        const canManage = (context.capabilities.isProjectAdmin || context.capabilities.isProductionLead)
+          && canAssistantEditArea(context.capabilities, area);
+        if (!canManage) return { error: `El usuario no tiene permiso para administrar subcategorías en ${area}.` };
+
+        const name = cleanAreaExpenseSubcategory(args?.subcategoria);
+        if (!name) return { error: 'Falta el nombre de la subcategoría.' };
+        const original = cleanAreaExpenseSubcategory(args?.subcategoriaOriginal);
+        const isRename = Boolean(original && asText(original) !== asText(name));
+        const existing = storedSubcategories(context, area);
+        if ((!original || isRename) && existing.some((item) => asText(item) === asText(name))) {
+          return { error: `La subcategoría "${name}" ya existe en ${area}.` };
+        }
+
+        const affectedExpenses = isRename
+          ? context.areaExpenses.filter((expense) => expense.area === area && cleanAreaExpenseSubcategory(expense.subcategory) === original)
+          : [];
+        if (affectedExpenses.some((expense) => hasRecordedPayment(expense))) {
+          return { error: `La subcategoría "${original}" tiene gastos con pagos registrados: no se puede renombrar.` };
+        }
+        if (affectedExpenses.length > 400) return { error: 'La subcategoría tiene demasiados gastos para renombrarla desde el asistente.' };
+
+        const budget = Math.max(0, Number(args?.presupuesto) || 0);
+        const currentBudgets = { ...(context.meta.areaExpenseSubcategoryBudgets || {}) };
+        if (isRename) delete currentBudgets[subcategoryKeyOf(area, original)];
+        const nextBudgets = {
+          ...currentBudgets,
+          [subcategoryKeyOf(area, name)]: {
+            area,
+            subcategory: name,
+            budget,
+            notes: String(args?.notas || '').trim(),
+            updatedAt: new Date(),
+            updatedByEmail: userEmail,
+          },
+        };
+        const nextSubcategories = Array.from(new Set([
+          ...existing.filter((item) => !isRename || asText(item) !== asText(original)),
+          name,
+        ]));
+        const oldPermissionKey = isRename ? subcategoryKeyOf(area, original) : '';
+        const nextPermissionKey = subcategoryKeyOf(area, name);
+        const collaboratorsToUpdate = oldPermissionKey
+          ? context.collaborators.filter((collaborator) => (
+            Array.isArray(collaborator.allowedSubcategories) && collaborator.allowedSubcategories.includes(oldPermissionKey)
+          ))
+          : [];
+
+        const projectRef = doc(db, 'projects', context.projectId);
+        await runTransaction(db, async (transaction) => {
+          const projectSnapshot = await transaction.get(projectRef);
+          if (!projectSnapshot.exists()) throw new Error('El proyecto ya no existe.');
+          affectedExpenses.forEach((expense) => {
+            transaction.update(doc(db, 'projects', context.projectId, 'areaExpenses', expense.id), {
+              subcategory: name,
+              updatedAt: serverTimestamp(),
+            });
+          });
+          transaction.update(projectRef, {
+            areaExpenseSubcategories: {
+              ...(context.meta.areaExpenseSubcategories || {}),
+              [area]: nextSubcategories,
+            },
+            areaExpenseSubcategoryBudgets: nextBudgets,
+            updatedAt: serverTimestamp(),
+          });
+          collaboratorsToUpdate.forEach((collaborator) => {
+            transaction.update(doc(db, 'projects', context.projectId, 'collaborators', normalizeEmail(collaborator.email)), {
+              allowedSubcategories: Array.from(new Set(
+                (Array.isArray(collaborator.allowedSubcategories) ? collaborator.allowedSubcategories : [])
+                  .map((key) => (key === oldPermissionKey ? nextPermissionKey : key)),
+              )),
+              updatedAt: serverTimestamp(),
+            });
+          });
+        });
+        projectCache.delete(context.projectId);
+        return {
+          ok: true,
+          mensaje: isRename
+            ? `Subcategoría "${original}" renombrada a "${name}" en ${area}${affectedExpenses.length > 0 ? ` (${affectedExpenses.length} gastos actualizados)` : ''}.`
+            : `Subcategoría "${name}" guardada en ${area} con presupuesto $${budget.toLocaleString('es-AR')}.`,
+        };
+      },
+    });
+
+    tools.push({
+      name: 'borrar_subcategoria',
+      description: 'Elimina una subcategoría de un área: sus gastos quedan como "Sin subcategoría". Siempre requiere confirmación.',
+      requiresConfirmation: true,
+      summarize: (args) => `Eliminar la subcategoría "${String(args?.subcategoria || '').trim()}" de ${String(args?.area || '').trim()}`,
+      parameters: projectOptionsSchema({ area: { type: 'string' }, subcategoria: { type: 'string' } }),
+      run: async (args) => {
+        const resolved = await resolveProject(args?.proyecto);
+        if ('error' in resolved) return resolved;
+        const context = resolved.context;
+        const area = String(args?.area || '').trim();
+        const subcategory = cleanAreaExpenseSubcategory(args?.subcategoria);
+        if (!area || !subcategory) return { error: 'Faltan el área o la subcategoría.' };
+        const canManage = (context.capabilities.isProjectAdmin || context.capabilities.isProductionLead)
+          && canAssistantEditArea(context.capabilities, area);
+        if (!canManage) return { error: `El usuario no tiene permiso para administrar subcategorías en ${area}.` };
+        const existing = storedSubcategories(context, area);
+        if (!existing.some((item) => asText(item) === asText(subcategory))) {
+          return { error: `La subcategoría "${subcategory}" no existe en ${area}.` };
+        }
+        const affectedExpenses = context.areaExpenses.filter((expense) => (
+          expense.area === area && cleanAreaExpenseSubcategory(expense.subcategory) === subcategory
+        ));
+        if (affectedExpenses.some((expense) => hasRecordedPayment(expense))) {
+          return { error: `La subcategoría "${subcategory}" tiene gastos con pagos registrados: no se puede eliminar.` };
+        }
+        const permissionKey = subcategoryKeyOf(area, subcategory);
+        const collaboratorsToUpdate = context.collaborators.filter((collaborator) => (
+          Array.isArray(collaborator.allowedSubcategories) && collaborator.allowedSubcategories.includes(permissionKey)
+        ));
+        const nextBudgets = { ...(context.meta.areaExpenseSubcategoryBudgets || {}) };
+        delete nextBudgets[permissionKey];
+
+        const projectRef = doc(db, 'projects', context.projectId);
+        await runTransaction(db, async (transaction) => {
+          const projectSnapshot = await transaction.get(projectRef);
+          if (!projectSnapshot.exists()) throw new Error('El proyecto ya no existe.');
+          affectedExpenses.forEach((expense) => {
+            transaction.update(doc(db, 'projects', context.projectId, 'areaExpenses', expense.id), {
+              subcategory: '',
+              updatedAt: serverTimestamp(),
+            });
+          });
+          transaction.update(projectRef, {
+            areaExpenseSubcategories: {
+              ...(context.meta.areaExpenseSubcategories || {}),
+              [area]: existing.filter((item) => asText(item) !== asText(subcategory)),
+            },
+            areaExpenseSubcategoryBudgets: nextBudgets,
+            updatedAt: serverTimestamp(),
+          });
+          collaboratorsToUpdate.forEach((collaborator) => {
+            transaction.update(doc(db, 'projects', context.projectId, 'collaborators', normalizeEmail(collaborator.email)), {
+              allowedSubcategories: (Array.isArray(collaborator.allowedSubcategories) ? collaborator.allowedSubcategories : [])
+                .filter((key) => key !== permissionKey),
+              updatedAt: serverTimestamp(),
+            });
+          });
+        });
+        projectCache.delete(context.projectId);
+        return {
+          ok: true,
+          mensaje: `Subcategoría "${subcategory}" eliminada de ${area}${affectedExpenses.length > 0 ? `; ${affectedExpenses.length} gastos quedaron sin subcategoría` : ''}.`,
+        };
+      },
+    });
+
+    tools.push({
+      name: 'activar_area',
+      description: 'Activa una categoría como área de gestión: migra sus partidas sin pagos y la muestra en Gestión por Áreas. Siempre requiere confirmación.',
+      requiresConfirmation: true,
+      summarize: (args) => `Activar el área "${String(args?.area || '').trim()}"`,
+      parameters: projectOptionsSchema({ area: { type: 'string' } }),
+      run: async (args) => {
+        const resolved = await resolveProject(args?.proyecto);
+        if ('error' in resolved) return resolved;
+        const context = resolved.context;
+        if (!context.capabilities.can.activateAreas) return { error: 'El usuario no puede activar áreas en este proyecto.' };
+        const area = String(args?.area || '').trim();
+        if (!context.categories.includes(area)) return { error: `El área "${area}" no existe en este proyecto.` };
+        if (context.activeAreas.includes(area)) return { error: `El área "${area}" ya está activa.` };
+        const items = context.budgetItems.filter((item) => item.area === area);
+        if (items.some((item) => hasRecordedPayment(item))) {
+          return { error: `El área "${area}" tiene partidas con pagos registrados: primero hay que resolver esos pagos.` };
+        }
+        if (items.length > 380) return { error: 'El área tiene demasiadas partidas para activarla desde el asistente; hacelo desde la app.' };
+        const alreadyMigrated = new Set(context.areaExpenses
+          .filter((expense) => expense.area === area && (expense as any).sourceBudgetItemId)
+          .map((expense) => (expense as any).sourceBudgetItemId));
+        const itemsToMigrate = items.filter((item) => !alreadyMigrated.has(item.id));
+
+        const projectRef = doc(db, 'projects', context.projectId);
+        const expenseRefs = itemsToMigrate.map(() => doc(collection(db, 'projects', context.projectId, 'areaExpenses')));
+        await runTransaction(db, async (transaction) => {
+          const projectSnapshot = await transaction.get(projectRef);
+          if (!projectSnapshot.exists()) throw new Error('El proyecto ya no existe.');
+          const currentActive = Array.isArray(projectSnapshot.data().activeAreas) ? projectSnapshot.data().activeAreas : [];
+          if (currentActive.includes(area)) throw new Error('El área ya estaba activa.');
+          const itemRefs = itemsToMigrate.map((item) => doc(db, 'projects', context.projectId, 'budgetItems', item.id));
+          const snapshots = await Promise.all(itemRefs.map((itemRef) => transaction.get(itemRef)));
+          snapshots.forEach((snapshot, index) => {
+            if (!snapshot.exists() || !sameExpenseVersion(snapshot.data().updatedAt, itemsToMigrate[index].updatedAt)) {
+              throw new Error('Una partida cambió mientras se activaba el área.');
+            }
+            if (hasRecordedPayment(snapshot.data())) throw new Error('Una partida recibió un pago.');
+          });
+          itemsToMigrate.forEach((item, index) => {
+            transaction.set(expenseRefs[index], {
+              projectId: context.projectId,
+              area,
+              subcategory: '',
+              providerId: item.providerId || '',
+              providerName: item.providerName || '',
+              description: item.description || '',
+              unit: (item as any).unit || 'Unidad',
+              quantity: Number(item.quantity) || 0,
+              unitPrice: Number(item.unitPrice) || 0,
+              total: Number(item.total) || 0,
+              order: Number(item.order) || index,
+              invoice: (item as any).invoice || null,
+              invoices: Array.isArray((item as any).invoices) ? (item as any).invoices : [],
+              invoiceStatus: (item as any).invoiceStatus || null,
+              otherReceipts: Array.isArray((item as any).otherReceipts) ? (item as any).otherReceipts : [],
+              paymentHistory: [],
+              paid: false,
+              paymentDate: item.paymentDate || '',
+              paymentLocked: false,
+              paymentAuthorIds: [],
+              sourceBudgetItemId: item.id,
+              createdBy: userId,
+              createdByEmail: userEmail,
+              migratedFromBudgetAt: serverTimestamp(),
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+            });
+          });
+          transaction.update(projectRef, {
+            activeAreas: [...currentActive, area],
+            updatedAt: serverTimestamp(),
+          });
+        });
+        projectCache.delete(context.projectId);
+        return {
+          ok: true,
+          mensaje: `Área "${area}" activada${itemsToMigrate.length > 0 ? ` con ${itemsToMigrate.length} partidas migradas` : ''}.`,
+        };
+      },
+    });
+
+    tools.push({
+      name: 'desactivar_area',
+      description: 'Desactiva la gestión de un área: la saca de Gestión por Áreas sin borrar nada. Siempre requiere confirmación.',
+      requiresConfirmation: true,
+      summarize: (args) => `Desactivar la gestión del área "${String(args?.area || '').trim()}"`,
+      parameters: projectOptionsSchema({ area: { type: 'string' } }),
+      run: async (args) => {
+        const resolved = await resolveProject(args?.proyecto);
+        if ('error' in resolved) return resolved;
+        const context = resolved.context;
+        if (!context.capabilities.can.activateAreas) return { error: 'El usuario no puede desactivar áreas en este proyecto.' };
+        const area = String(args?.area || '').trim();
+        if (!context.activeAreas.includes(area)) return { error: `El área "${area}" no está activa.` };
+        await updateDoc(doc(db, 'projects', context.projectId), {
+          activeAreas: context.activeAreas.filter((activeArea) => activeArea !== area),
+          updatedAt: serverTimestamp(),
+        });
+        projectCache.delete(context.projectId);
+        return {
+          ok: true,
+          mensaje: `Gestión del área "${area}" desactivada. Los datos quedaron guardados: si se vuelve a activar, reaparecen.`,
+        };
+      },
+    });
+
+    tools.push({
+      name: 'eliminar_area',
+      description: 'Elimina el área y todo lo cargado en su gestión (gastos, partidas, subcategorías y permisos de subcategoría). La categoría queda para volver a activarla. No permite áreas con pagos. Siempre requiere confirmación.',
+      requiresConfirmation: true,
+      summarize: (args) => `Eliminar el área "${String(args?.area || '').trim()}" con todo lo cargado`,
+      parameters: projectOptionsSchema({ area: { type: 'string' } }),
+      run: async (args) => {
+        const resolved = await resolveProject(args?.proyecto);
+        if ('error' in resolved) return resolved;
+        const context = resolved.context;
+        if (!context.capabilities.can.deleteAreas) return { error: 'El usuario no puede eliminar áreas en este proyecto.' };
+        const area = String(args?.area || '').trim();
+        if (!context.activeAreas.includes(area)) return { error: `El área "${area}" no está activa.` };
+        const areaExpenses = context.areaExpenses.filter((expense) => expense.area === area);
+        const budgetItems = context.budgetItems.filter((item) => item.area === area);
+        const rows = [...areaExpenses, ...budgetItems];
+        if (rows.some((row) => hasRecordedPayment(row))) {
+          return { error: `El área "${area}" tiene pagos registrados: no se puede eliminar. Podés desactivarla para que deje de figurar.` };
+        }
+        if (rows.length > 400) return { error: 'El área tiene demasiadas filas para eliminarla desde el asistente; hacelo desde la app.' };
+
+        const nextSubcategories = { ...(context.meta.areaExpenseSubcategories || {}) };
+        delete nextSubcategories[area];
+        const nextBudgets = { ...(context.meta.areaExpenseSubcategoryBudgets || {}) };
+        Object.keys(nextBudgets).forEach((key) => {
+          if (key.split('||')[0] === area) delete nextBudgets[key];
+        });
+        const collaboratorsToUpdate = context.collaborators.filter((collaborator) => (
+          (Array.isArray(collaborator.allowedSubcategories) ? collaborator.allowedSubcategories : [])
+            .some((key) => key.split('||')[0] === area)
+        ));
+        const projectRef = doc(db, 'projects', context.projectId);
+        await runTransaction(db, async (transaction) => {
+          const projectSnapshot = await transaction.get(projectRef);
+          if (!projectSnapshot.exists()) throw new Error('El proyecto ya no existe.');
+          areaExpenses.forEach((expense) => {
+            transaction.delete(doc(db, 'projects', context.projectId, 'areaExpenses', expense.id));
+          });
+          if (areaExpenses.length > 0) writeAudit(transaction, context, areaExpenses, 'areaExpenses', 'area_deleted');
+          budgetItems.forEach((item) => {
+            transaction.delete(doc(db, 'projects', context.projectId, 'budgetItems', item.id));
+          });
+          if (budgetItems.length > 0) writeAudit(transaction, context, budgetItems, 'budgetItems', 'area_deleted');
+          transaction.update(projectRef, {
+            activeAreas: context.activeAreas.filter((activeArea) => activeArea !== area),
+            areaExpenseSubcategories: nextSubcategories,
+            areaExpenseSubcategoryBudgets: nextBudgets,
+            ...(budgetItems.length > 0 ? { budgetRevision: (Number(projectSnapshot.data().budgetRevision) || 0) + 1 } : {}),
+            updatedAt: serverTimestamp(),
+          });
+          collaboratorsToUpdate.forEach((collaborator) => {
+            transaction.update(doc(db, 'projects', context.projectId, 'collaborators', normalizeEmail(collaborator.email)), {
+              allowedSubcategories: (Array.isArray(collaborator.allowedSubcategories) ? collaborator.allowedSubcategories : [])
+                .filter((key) => key.split('||')[0] !== area),
+              updatedAt: serverTimestamp(),
+            });
+          });
+        });
+        projectCache.delete(context.projectId);
+        return {
+          ok: true,
+          mensaje: `Área "${area}" eliminada con ${rows.length} filas. La categoría quedó disponible para volver a activarla.`,
         };
       },
     });
