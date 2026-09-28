@@ -33,6 +33,16 @@ const buildContext = (): AssistantProjectContext => ({
   projectName: baseProject.projectName,
   userEmail: 'area@example.com',
   capabilities: areaLeadCapabilities,
+  meta: {
+    clientName: 'Cliente A',
+    companyName: 'Gran Berta Films',
+    status: 'Rodaje',
+    budgetTotal: 10000,
+    shootingStartDate: '2026-10-01',
+    shootingEndDate: '2026-10-20',
+    location: 'Buenos Aires',
+    resultIncidences: { imprevistos: 5, margen: 10 },
+  },
   categories: baseProject.categories,
   activeAreas: baseProject.activeAreas,
   budgetItems: [
@@ -253,4 +263,59 @@ test('que_puedo_hacer explica el rol, las áreas y lo que falta pedir', async ()
   ]);
   assert.ok(result.sinAcceso.includes('Resultado'));
   assert.match(result.comoAmpliar, /Pedile|pedirle/i);
+});
+
+test('datos_proyecto devuelve cliente, fechas y presupuesto estimado', async () => {
+  const data = await runTool(buildTools(), 'datos_proyecto');
+
+  assert.equal(data.cliente, 'Cliente A');
+  assert.equal(data.estado, 'Rodaje');
+  assert.equal(data.presupuestoEstimado, 10000);
+  assert.equal(data.rodajeHasta, '2026-10-20');
+});
+
+test('el Resultado sólo se comparte con administradores', async () => {
+  const denied = await runTool(buildTools(), 'resultado_proyecto');
+  assert.match(denied.error, /no tiene permiso/i);
+});
+
+test('el Resultado calcula margen, incidencias y costos por área', async () => {
+  const adminCapabilities = buildAssistantCapabilities({ ...baseProject, userId: 'owner-uid' });
+  const context = { ...buildContext(), capabilities: adminCapabilities };
+  const tools = buildTools({ loadProject: async () => context });
+
+  const result = await runTool(tools, 'resultado_proyecto');
+
+  assert.equal(result.venta, 10000);
+  assert.equal(result.costosDirectos, 1550);
+  assert.equal(result.incidenciasDeGasto, 500);
+  assert.equal(result.costoTotal, 2050);
+  assert.equal(result.margenEstimado, 7950);
+  assert.equal(result.margen, 8950);
+  assert.equal(result.margenPorcentaje, 89.5);
+  assert.deepEqual(result.costosPorArea, [
+    { area: 'Arte', costo: 300 },
+    { area: 'Vestuario', costo: 350 },
+    { area: 'Locaciones', costo: 900 },
+  ]);
+  assert.ok(result.incidencias.some((incidence: any) => incidence.incidencia === 'Imprevistos' && incidence.monto === 500));
+});
+
+test('los pagos próximos separan vencidos de los que vienen', async () => {
+  const context = buildContext();
+  const today = new Date();
+  const inTenDays = new Date(today.getTime() + 10 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  context.budgetItems = [
+    { id: 'b1', area: 'Arte', total: 1000, paymentHistory: [{ amount: 400 }], paymentDate: '2026-09-20' },
+    { id: 'b2', area: 'Arte', total: 500, paymentDate: inTenDays },
+  ];
+  context.areaExpenses = [];
+  const tools = buildTools({ loadProject: async () => context });
+
+  const upcoming = await runTool(tools, 'pagos_proximos', { dias: 30 });
+
+  assert.equal(upcoming.total, 2);
+  assert.equal(upcoming.vencidos, 1);
+  assert.equal(upcoming.pagos[1].vencido, false);
+  assert.equal(upcoming.pagos[0].saldo, 600);
 });

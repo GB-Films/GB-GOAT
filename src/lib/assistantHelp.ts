@@ -217,7 +217,7 @@ export const ASSISTANT_HELP_SECTIONS: AssistantHelpSection[] = [
     keywords: ['asistente', 'bot', 'que podes hacer', 'como funcionas', 'planilla', 'excel', 'puedo pedirte'],
     content: [
       'El asistente puede:',
-      'Consultar y resumir la información que vos podés ver (proyectos, áreas, gastos, pagos, cajas, proveedores).',
+      'Consultar y resumir la información que vos podés ver: proyectos, datos generales, áreas, gastos, pagos, próximos vencimientos, cajas y proveedores. Si sos administrador del proyecto, también el Resultado y el margen.',
       'Explicar cómo funciona cualquier parte de la app, aunque no tengas permiso para ver esos datos.',
       'Crear partidas y gastos de área, y cargar planillas de Excel o CSV: siempre pide confirmación antes de guardar.',
       'Llevarte a una pantalla ("abrí Áreas de tal proyecto").',

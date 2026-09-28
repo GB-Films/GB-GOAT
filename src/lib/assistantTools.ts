@@ -5,6 +5,7 @@ import {
 } from './assistantCapabilities';
 import { listAssistantHelpTopics, searchAssistantHelp } from './assistantHelp';
 import { findProjectByReference, type AssistantProjectHandle } from './assistantData';
+import { calculateProjectResult } from './projectFinance';
 import { collection, doc, getDocs, runTransaction, serverTimestamp } from 'firebase/firestore';
 import { db } from './firebase';
 import { cleanAreaExpenseSubcategory } from './projectAccess';
@@ -62,6 +63,18 @@ export type AssistantProjectContext = {
   projectName: string;
   userEmail: string;
   capabilities: AssistantCapabilities;
+  meta: {
+    clientName?: string;
+    companyName?: string;
+    brandName?: string;
+    status?: string;
+    budgetTotal?: number;
+    shootingStartDate?: string;
+    shootingEndDate?: string;
+    location?: string;
+    projectCode?: string;
+    resultIncidences?: Record<string, unknown>;
+  };
   categories: string[];
   activeAreas: string[];
   budgetItems: AssistantBudgetItem[];
@@ -285,6 +298,74 @@ export const buildAssistantTools = ({
       },
     },
     {
+      name: 'datos_proyecto',
+      description: 'Devuelve los datos generales del proyecto: cliente, empresa, marca, estado, fechas de rodaje, locación y presupuesto estimado.',
+      parameters: projectOptionsSchema(),
+      run: async (args) => {
+        const resolved = await resolveProject(args?.proyecto);
+        if ('error' in resolved) return resolved;
+        const context = resolved.context;
+        return {
+          proyecto: context.projectName || context.projectId,
+          cliente: context.meta.clientName || '',
+          empresa: context.meta.companyName || '',
+          marca: context.meta.brandName || '',
+          estado: context.meta.status || '',
+          codigo: context.meta.projectCode || '',
+          rodajeDesde: context.meta.shootingStartDate || '',
+          rodajeHasta: context.meta.shootingEndDate || '',
+          locacion: context.meta.location || '',
+          presupuestoEstimado: round2(Number(context.meta.budgetTotal) || 0),
+        };
+      },
+    },
+    {
+      name: 'resultado_proyecto',
+      description: 'Devuelve el Resultado del proyecto: venta, costos por área, incidencias (imprevistos, impuestos, financiación), costo total, margen estimado y margen final con porcentaje. Sólo administradores del proyecto.',
+      parameters: projectOptionsSchema(),
+      run: async (args) => {
+        const resolved = await resolveProject(args?.proyecto);
+        if ('error' in resolved) return resolved;
+        const context = resolved.context;
+        if (!context.capabilities.can.viewResults) {
+          return { error: 'El usuario no tiene permiso para ver el Resultado de este proyecto.' };
+        }
+        const result = calculateProjectResult(
+          {
+            categories: context.categories,
+            budgetTotal: context.meta.budgetTotal,
+            resultIncidences: context.meta.resultIncidences || {},
+          },
+          context.budgetItems,
+          context.areaExpenses,
+        );
+        const incidenceLabels: Record<string, string> = {
+          imprevistos: 'Imprevistos',
+          impuestos: 'Impuestos',
+          financiacion: 'Financiación',
+          margen: 'Margen',
+        };
+        const incidencias = Object.entries(context.meta.resultIncidences || {}).map(([id, value]) => ({
+          incidencia: incidenceLabels[id] || id,
+          porcentaje: Number(value) || 0,
+          monto: round2(Number(context.meta.budgetTotal || 0) * ((Number(value) || 0) / 100)),
+        }));
+        return {
+          proyecto: context.projectName || context.projectId,
+          venta: round2(result.saleValue),
+          costosPorArea: result.categoryTotals.map((entry) => ({ area: entry.area, costo: round2(entry.total) })),
+          costosDirectos: round2(result.directCostTotal),
+          incidencias,
+          incidenciasDeGasto: round2(result.expenseIncidenceTotal),
+          costoTotal: round2(result.totalCost),
+          margenEstimado: round2(result.estimatedMargin),
+          margen: round2(result.margin),
+          margenPorcentaje: Math.round(result.marginPercent * 10) / 10,
+          nota: 'El margen incluye la incidencia de margen cargada y los costos directos por área (gastos reales si el área tiene movimientos, si no el presupuesto asignado).',
+        };
+      },
+    },
+    {
       name: 'resumen_area',
       description: 'Devuelve el asignado, gastado y saldo de un área, con el detalle de sus subcategorías.',
       parameters: projectOptionsSchema({ area: { type: 'string', description: 'Nombre del área' } }),
@@ -387,6 +468,52 @@ export const buildAssistantTools = ({
           .slice(0, limitOf(args?.limite))
           .map((item) => compactItem(item, (item as AssistantAreaExpense).subcategory));
         return { proyecto: context.projectName || context.projectId, total: rows.length, pendientes: rows };
+      },
+    },
+    {
+      name: 'pagos_proximos',
+      description: 'Lista los pagos pendientes con fecha programada: vencidos y los que vencen en los próximos días (por defecto 30).',
+      parameters: projectOptionsSchema({
+        area: { type: 'string' },
+        dias: { type: 'number', description: 'Cantidad de días hacia adelante (por defecto 30)' },
+        limite: { type: 'number' },
+      }),
+      run: async (args) => {
+        const resolved = await resolveProject(args?.proyecto);
+        if ('error' in resolved) return resolved;
+        const context = resolved.context;
+        if (!context.capabilities.tabs.includes('saldos')) {
+          return { error: 'El usuario no tiene acceso a la pestaña Finanzas en este proyecto.' };
+        }
+        const area = asText(args?.area);
+        const days = Math.max(1, Math.min(180, Number(args?.dias) || 30));
+        const today = new Date();
+        const limit = new Date(today.getTime() + days * 24 * 60 * 60 * 1000);
+        const todayKey = today.toISOString().slice(0, 10);
+        const limitKey = limit.toISOString().slice(0, 10);
+
+        const rows = [...visibleBudgetItems(context), ...visibleAreaExpenses(context)]
+          .filter((item) => !area || asText(item.area) === area)
+          .filter((item) => (Number(item.total) || 0) - paidAmount(item) > 0.009)
+          .filter((item) => {
+            const date = String(item.paymentDate || '').slice(0, 10);
+            return Boolean(date) && date <= limitKey;
+          })
+          .sort((a, b) => String(a.paymentDate).localeCompare(String(b.paymentDate)));
+
+        const compact = rows.slice(0, limitOf(args?.limite, 25, 60)).map((item) => ({
+          ...compactItem(item, (item as AssistantAreaExpense).subcategory),
+          vencido: String(item.paymentDate || '').slice(0, 10) < todayKey,
+        }));
+
+        return {
+          proyecto: context.projectName || context.projectId,
+          hoy: todayKey,
+          hasta: limitKey,
+          vencidos: compact.filter((row) => row.vencido).length,
+          total: compact.length,
+          pagos: compact,
+        };
       },
     },
     {

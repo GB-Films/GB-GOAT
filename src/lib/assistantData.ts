@@ -127,6 +127,20 @@ export const loadAssistantProjectContext = async ({
       projectName: String(project.name || ''),
       userEmail: normalizedEmail,
       capabilities,
+      meta: {
+        clientName: String(project.clientName || ''),
+        companyName: String(project.companyName || ''),
+        brandName: String(project.brandName || ''),
+        status: String(project.status || ''),
+        budgetTotal: Number(project.budgetTotal) || 0,
+        shootingStartDate: String(project.shootingStartDate || ''),
+        shootingEndDate: String(project.shootingEndDate || ''),
+        location: String(project.location || ''),
+        projectCode: String(project.projectCode || ''),
+        resultIncidences: project.resultIncidences && typeof project.resultIncidences === 'object'
+          ? project.resultIncidences
+          : {},
+      },
       categories: Array.isArray(project.categories) ? project.categories : [],
       activeAreas: Array.isArray(project.activeAreas) ? project.activeAreas : [],
       budgetItems: mapDocs(budgetSnap.docs),
