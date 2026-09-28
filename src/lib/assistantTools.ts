@@ -1,5 +1,11 @@
-import { describeAssistantScope, type AssistantCapabilities } from './assistantCapabilities';
+import {
+  canAssistantEditSubcategory,
+  describeAssistantScope,
+  type AssistantCapabilities,
+} from './assistantCapabilities';
 import { findProjectByReference, type AssistantProjectHandle } from './assistantData';
+import { collection, doc, getDocs, runTransaction, serverTimestamp } from 'firebase/firestore';
+import { db } from './firebase';
 import { cleanAreaExpenseSubcategory } from './projectAccess';
 
 export type AssistantBudgetItem = {
@@ -71,6 +77,10 @@ export type AssistantTool = {
     properties: Record<string, unknown>;
     required?: string[];
   };
+  // Las acciones que escriben datos no se ejecutan solas: la app pide
+  // confirmación y recién ahí corre `run`.
+  requiresConfirmation?: boolean;
+  summarize?: (args: any) => string;
   run: (args: any) => unknown | Promise<unknown>;
 };
 
@@ -80,6 +90,9 @@ export type AssistantToolsOptions = {
   loadProviders?: () => Promise<AssistantProvider[]>;
   canAccessProviders?: boolean;
   currentProjectId?: string | null;
+  userId?: string;
+  userEmail?: string;
+  enableActions?: boolean;
 };
 
 const asText = (value: unknown) => String(value || '').toLowerCase();
@@ -145,6 +158,9 @@ export const buildAssistantTools = ({
   loadProviders,
   canAccessProviders = false,
   currentProjectId = null,
+  userId = '',
+  userEmail = '',
+  enableActions = true,
 }: AssistantToolsOptions): AssistantTool[] => {
   let projectsCache: AssistantProjectHandle[] | null = null;
   const projectCache = new Map<string, AssistantProjectContext | null>();
@@ -158,6 +174,12 @@ export const buildAssistantTools = ({
   const getProjectContext = async (projectId: string) => {
     if (!projectCache.has(projectId)) projectCache.set(projectId, await loadProject(projectId));
     return projectCache.get(projectId) || null;
+  };
+
+  const getProviders = async () => {
+    if (!loadProviders) return [] as AssistantProvider[];
+    if (!providersCache) providersCache = await loadProviders();
+    return providersCache;
   };
 
   const resolveProject = async (reference: unknown): Promise<{ context: AssistantProjectContext } | { error: string }> => {
@@ -397,9 +419,9 @@ export const buildAssistantTools = ({
         properties: { texto: { type: 'string' }, limite: { type: 'number' } },
       },
       run: async (args) => {
-        if (!providersCache) providersCache = await loadProviders();
+        const providers = await getProviders();
         const text = asText(args?.texto);
-        const rows = providersCache
+        const rows = providers
           .filter((provider) => (
             !text
             || [providerLabel(provider), provider.cuit, provider.category]
@@ -478,6 +500,213 @@ export const buildAssistantTools = ({
       };
     },
   });
+
+  if (enableActions) {
+    const findProviderByName = async (name: string) => {
+      const text = asText(name).trim();
+      if (!text) return null;
+      const providers = await getProviders();
+      return providers.find((provider) => asText(providerLabel(provider)) === text)
+        || providers.find((provider) => asText(providerLabel(provider)).includes(text))
+        || null;
+    };
+
+    const nextOrder = async (
+      projectId: string,
+      collectionName: 'budgetItems' | 'areaExpenses',
+      area: string,
+      subcategory?: string,
+    ) => {
+      const snapshot = await getDocs(collection(db, 'projects', projectId, collectionName));
+      const orders = snapshot.docs
+        .map((entry) => entry.data() as AssistantBudgetItem & { subcategory?: string })
+        .filter((item) => item.area === area
+          && (subcategory === undefined || cleanAreaExpenseSubcategory(item.subcategory) === subcategory))
+        .map((item) => Number(item.order) || 0);
+      return orders.length > 0 ? Math.max(...orders) + 1 : 0;
+    };
+
+    const readAmounts = (args: any) => {
+      const quantity = Number(args?.cantidad ?? 1);
+      const unitPrice = Number(args?.precioUnitario ?? args?.precio ?? 0);
+      return { quantity, unitPrice, total: round2(quantity * unitPrice) };
+    };
+
+    const amountError = (quantity: number, unitPrice: number) => {
+      if (!Number.isFinite(quantity) || quantity <= 0) return { error: 'Falta la cantidad (tiene que ser mayor a cero).' };
+      if (!Number.isFinite(unitPrice) || unitPrice <= 0) return { error: 'Falta el precio unitario (tiene que ser mayor a cero).' };
+      return null;
+    };
+
+    tools.push({
+      name: 'crear_partida',
+      description: 'Crea una partida nueva en el Presupuesto Principal de un proyecto. Siempre requiere confirmación del usuario antes de guardar.',
+      requiresConfirmation: true,
+      summarize: (args) => {
+        const { quantity, unitPrice, total } = readAmounts(args);
+        const provider = String(args?.proveedor || '').trim();
+        return [
+          `Crear partida en ${String(args?.area || '(sin área)').trim()}`,
+          `"${String(args?.descripcion || '').trim()}"`,
+          provider ? `Proveedor: ${provider}` : '',
+          `${quantity} × $${unitPrice.toLocaleString('es-AR')} = $${total.toLocaleString('es-AR')}`,
+        ].filter(Boolean).join(' · ');
+      },
+      parameters: projectOptionsSchema({
+        area: { type: 'string', description: 'Área o categoría del presupuesto principal' },
+        descripcion: { type: 'string', description: 'Detalle de la partida' },
+        proveedor: { type: 'string', description: 'Nombre del proveedor (opcional)' },
+        cantidad: { type: 'number', description: 'Cantidad' },
+        precioUnitario: { type: 'number', description: 'Precio unitario en pesos' },
+      }),
+      run: async (args) => {
+        const resolved = await resolveProject(args?.proyecto);
+        if ('error' in resolved) return resolved;
+        const context = resolved.context;
+        if (!context.capabilities.can.editMainBudget) {
+          return { error: 'El usuario no puede editar el presupuesto principal de este proyecto.' };
+        }
+        const area = String(args?.area || '').trim();
+        if (!area || !context.categories.includes(area)) {
+          return { error: `El área "${area}" no existe en este proyecto.` };
+        }
+        if (context.activeAreas.includes(area)) {
+          return { error: `El área "${area}" está activa en Gestión por Áreas: ese gasto se carga desde la pestaña Áreas.` };
+        }
+        const description = String(args?.descripcion || '').trim();
+        if (!description) return { error: 'Falta la descripción de la partida.' };
+        const { quantity, unitPrice, total } = readAmounts(args);
+        const amountsIssue = amountError(quantity, unitPrice);
+        if (amountsIssue) return amountsIssue;
+        const provider = await findProviderByName(String(args?.proveedor || ''));
+        const order = await nextOrder(context.projectId, 'budgetItems', area);
+        const itemRef = doc(collection(db, 'projects', context.projectId, 'budgetItems'));
+
+        await runTransaction(db, async (transaction) => {
+          const projectRef = doc(db, 'projects', context.projectId);
+          const projectSnapshot = await transaction.get(projectRef);
+          if (!projectSnapshot.exists()
+            || (Array.isArray(projectSnapshot.data().activeAreas) ? projectSnapshot.data().activeAreas : []).includes(area)) {
+            throw new Error('El área cambió de estado mientras se guardaba.');
+          }
+          transaction.set(itemRef, {
+            projectId: context.projectId,
+            area,
+            providerId: provider?.id || '',
+            providerName: provider ? providerLabel(provider) : String(args?.proveedor || '').trim(),
+            description,
+            unit: 'Unidad',
+            quantity,
+            unitPrice,
+            total,
+            order,
+            invoice: null,
+            invoices: [],
+            invoiceStatus: null,
+            otherReceipts: [],
+            paymentHistory: [],
+            paid: false,
+            paymentLocked: false,
+            paymentAuthorIds: [],
+            createdBy: userId,
+            createdByEmail: userEmail,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+          transaction.update(projectRef, {
+            budgetRevision: (Number(projectSnapshot.data().budgetRevision) || 0) + 1,
+            updatedAt: serverTimestamp(),
+          });
+        });
+
+        return {
+          ok: true,
+          mensaje: `Partida creada en ${area}: "${description}" por $${total.toLocaleString('es-AR')}.`,
+          partida: { id: itemRef.id, area, descripcion: description, proveedor: provider ? providerLabel(provider) : String(args?.proveedor || '').trim(), cantidad: quantity, precioUnitario: unitPrice, total },
+        };
+      },
+    });
+
+    tools.push({
+      name: 'crear_gasto_area',
+      description: 'Carga un gasto nuevo en Gestión por Áreas de un proyecto. Siempre requiere confirmación del usuario antes de guardar.',
+      requiresConfirmation: true,
+      summarize: (args) => {
+        const { quantity, unitPrice, total } = readAmounts(args);
+        const provider = String(args?.proveedor || '').trim();
+        const subcategory = cleanAreaExpenseSubcategory(args?.subcategoria);
+        return [
+          `Cargar gasto en ${String(args?.area || '(sin área)').trim()}${subcategory ? ` › ${subcategory}` : ''}`,
+          `"${String(args?.descripcion || '').trim()}"`,
+          provider ? `Proveedor: ${provider}` : '',
+          `${quantity} × $${unitPrice.toLocaleString('es-AR')} = $${total.toLocaleString('es-AR')}`,
+        ].filter(Boolean).join(' · ');
+      },
+      parameters: projectOptionsSchema({
+        area: { type: 'string', description: 'Área activa en Gestión por Áreas' },
+        subcategoria: { type: 'string', description: 'Subcategoría (opcional)' },
+        descripcion: { type: 'string', description: 'Detalle del gasto' },
+        proveedor: { type: 'string', description: 'Nombre del proveedor (opcional)' },
+        cantidad: { type: 'number' },
+        precioUnitario: { type: 'number' },
+      }),
+      run: async (args) => {
+        const resolved = await resolveProject(args?.proyecto);
+        if ('error' in resolved) return resolved;
+        const context = resolved.context;
+        const area = String(args?.area || '').trim();
+        const subcategory = cleanAreaExpenseSubcategory(args?.subcategoria);
+        if (!area || !context.categories.includes(area)) {
+          return { error: `El área "${area}" no existe en este proyecto.` };
+        }
+        if (!canAssistantEditSubcategory(context.capabilities, area, subcategory)) {
+          return { error: `El usuario no tiene permiso para cargar gastos en ${area}${subcategory ? ` › ${subcategory}` : ''}.` };
+        }
+        const description = String(args?.descripcion || '').trim();
+        if (!description) return { error: 'Falta la descripción del gasto.' };
+        const { quantity, unitPrice, total } = readAmounts(args);
+        const amountsIssue = amountError(quantity, unitPrice);
+        if (amountsIssue) return amountsIssue;
+        const provider = await findProviderByName(String(args?.proveedor || ''));
+        const order = await nextOrder(context.projectId, 'areaExpenses', area, subcategory);
+        const expenseRef = doc(collection(db, 'projects', context.projectId, 'areaExpenses'));
+
+        await runTransaction(db, async (transaction) => {
+          transaction.set(expenseRef, {
+            projectId: context.projectId,
+            area,
+            subcategory,
+            providerId: provider?.id || '',
+            providerName: provider ? providerLabel(provider) : String(args?.proveedor || '').trim(),
+            description,
+            unit: 'Unidad',
+            quantity,
+            unitPrice,
+            total,
+            order,
+            invoice: null,
+            invoices: [],
+            invoiceStatus: null,
+            otherReceipts: [],
+            paymentHistory: [],
+            paid: false,
+            paymentLocked: false,
+            paymentAuthorIds: [],
+            createdBy: userId,
+            createdByEmail: userEmail,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        });
+
+        return {
+          ok: true,
+          mensaje: `Gasto cargado en ${area}${subcategory ? ` › ${subcategory}` : ''}: "${description}" por $${total.toLocaleString('es-AR')}.`,
+          gasto: { id: expenseRef.id, area, subcategoria: subcategory, descripcion: description, proveedor: provider ? providerLabel(provider) : String(args?.proveedor || '').trim(), cantidad: quantity, precioUnitario: unitPrice, total },
+        };
+      },
+    });
+  }
 
   return tools;
 };

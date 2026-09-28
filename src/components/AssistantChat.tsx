@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Loader2, Send, Sparkles, X } from 'lucide-react';
+import { AlertTriangle, Check, Loader2, Send, Sparkles, X } from 'lucide-react';
 import { cn } from '../lib/utils';
 import {
   buildAssistantSystemPrompt,
   callDeepSeekAssistant,
+  continueAssistantTurn,
   runAssistantTurn,
   type AssistantMessage,
+  type AssistantPendingAction,
 } from '../lib/assistantAgent';
 import { buildAssistantTools } from '../lib/assistantTools';
 import {
@@ -16,6 +18,7 @@ import {
   type AssistantProjectHandle,
 } from '../lib/assistantData';
 import { hasGlobalRole, PROVIDER_ACCESS_ROLES } from '../lib/roles';
+import { AssistantMessageText } from './AssistantMessageText';
 
 type VisibleMessage = {
   id: string;
@@ -46,6 +49,7 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
   const [visible, setVisible] = useState<VisibleMessage[]>([]);
   const [projects, setProjects] = useState<AssistantProjectHandle[]>([]);
   const [engine, setEngine] = useState('');
+  const [pendingAction, setPendingAction] = useState<AssistantPendingAction | null>(null);
   const historyRef = useRef<AssistantMessage[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -67,6 +71,8 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
     loadProviders: loadAssistantProviders,
     canAccessProviders: hasGlobalRole(globalRole, PROVIDER_ACCESS_ROLES),
     currentProjectId: currentProjectId || null,
+    userId: uid,
+    userEmail: email,
   }), [currentProjectId, email, globalRole, listProjects, uid]);
 
   const systemPrompt = useMemo(() => buildAssistantSystemPrompt({
@@ -92,7 +98,18 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
   useEffect(() => {
     if (!open) return;
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
-  }, [busy, open, visible]);
+  }, [busy, open, pendingAction, visible]);
+
+  const applyEngine = (model?: string, reasoningEffort?: string) => {
+    if (model) setEngine(`${model}${reasoningEffort ? ` · esfuerzo ${reasoningEffort}` : ''}`);
+  };
+
+  const applyNavigation = (actions: Array<{ name: string; output: unknown }>) => {
+    const navigation = actions.find((action) => (action.output as any)?.abrirProyecto);
+    if (!navigation) return;
+    const destination = navigation.output as { abrirProyecto: string; pestana?: string };
+    navigate(`/proyectos/${destination.abrirProyecto}${destination.pestana ? `?tab=${destination.pestana}` : ''}`);
+  };
 
   const handleSend = async (rawText: string) => {
     const text = rawText.trim();
@@ -100,28 +117,28 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
     setInput('');
     setError('');
     setBusy(true);
+    setPendingAction(null);
     setVisible((current) => [...current, { id: `u-${Date.now()}`, role: 'user', content: text }]);
 
     try {
-      const { messages, reply, actions, model, reasoningEffort } = await runAssistantTurn({
+      const result = await runAssistantTurn({
         history: [{ role: 'system', content: systemPrompt }, ...historyRef.current],
         userText: text,
         tools,
         callModel: callDeepSeekAssistant,
       });
-      historyRef.current = messages.filter((message) => message.role !== 'system');
-      if (model) setEngine(`${model}${reasoningEffort ? ` · esfuerzo ${reasoningEffort}` : ''}`);
-      setVisible((current) => [...current, {
-        id: `a-${Date.now()}`,
-        role: 'assistant',
-        content: reply,
-        actions: actions.map((action) => action.name),
-      }]);
-
-      const navigation = actions.find((action) => (action.output as any)?.abrirProyecto);
-      if (navigation) {
-        const destination = navigation.output as { abrirProyecto: string; pestana?: string };
-        navigate(`/proyectos/${destination.abrirProyecto}${destination.pestana ? `?tab=${destination.pestana}` : ''}`);
+      historyRef.current = result.messages.filter((message) => message.role !== 'system');
+      applyEngine(result.model, result.reasoningEffort);
+      if (result.pending) {
+        setPendingAction(result.pending);
+      } else {
+        setVisible((current) => [...current, {
+          id: `a-${Date.now()}`,
+          role: 'assistant',
+          content: result.reply,
+          actions: result.actions.map((action) => action.name),
+        }]);
+        applyNavigation(result.actions);
       }
     } catch (err: any) {
       setError(String(err?.message || 'No se pudo consultar al asistente.').replace(/^FirebaseError:\s*/i, ''));
@@ -129,6 +146,61 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
       setBusy(false);
     }
   };
+
+  const finishPendingAction = async (pending: AssistantPendingAction, output: unknown) => {
+    try {
+      const history = [
+        ...historyRef.current,
+        { role: 'tool' as const, tool_call_id: pending.callId, content: JSON.stringify(output ?? null).slice(0, 30_000) },
+      ];
+      const result = await continueAssistantTurn({ history, tools, callModel: callDeepSeekAssistant });
+      historyRef.current = result.messages.filter((message) => message.role !== 'system');
+      applyEngine(result.model, result.reasoningEffort);
+      if (result.pending) {
+        setPendingAction(result.pending);
+        return;
+      }
+      setVisible((current) => [...current, {
+        id: `a-${Date.now()}`,
+        role: 'assistant',
+        content: result.reply,
+        actions: result.actions.map((action) => action.name),
+      }]);
+      applyNavigation(result.actions);
+    } catch (err: any) {
+      setError(String(err?.message || 'No se pudo completar la acción.').replace(/^FirebaseError:\s*/i, ''));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const confirmPendingAction = async () => {
+    const pending = pendingAction;
+    if (!pending || busy) return;
+    setPendingAction(null);
+    setError('');
+    setBusy(true);
+    const tool = tools.find((entry) => entry.name === pending.name);
+    let output: unknown;
+    try {
+      output = tool ? await tool.run(pending.args) : { error: 'La acción ya no está disponible.' };
+    } catch (err: any) {
+      output = { error: err?.message || 'No se pudo ejecutar la acción.' };
+    }
+    await finishPendingAction(pending, output);
+  };
+
+  const cancelPendingAction = async () => {
+    const pending = pendingAction;
+    if (!pending || busy) return;
+    setPendingAction(null);
+    setError('');
+    setBusy(true);
+    await finishPendingAction(pending, { error: 'El usuario canceló la acción.' });
+  };
+
+  const readsOf = (actions: string[] = []) => actions.filter((name) => !name.startsWith('crear_') && name !== 'ir_a_pantalla');
+  const writesOf = (actions: string[] = []) => actions.filter((name) => name.startsWith('crear_'));
 
   return (
     <>
@@ -165,6 +237,7 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
                   onClick={() => {
                     historyRef.current = [];
                     setVisible([]);
+                    setPendingAction(null);
                     setError('');
                   }}
                   className="rounded px-2 py-1 text-[9px] font-bold uppercase tracking-widest text-slate-300 transition-colors hover:text-white"
@@ -185,11 +258,11 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
           </div>
 
           <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
-            {visible.length === 0 && (
+            {visible.length === 0 && !pendingAction && (
               <div className="space-y-2">
                 <p className="text-[11px] leading-5 text-slate-500">
-                  Puedo resumir proyectos, buscar partidas o gastos y decirte qué pagos están pendientes.
-                  Siempre dentro de los permisos de tu usuario.
+                  Puedo resumir proyectos, buscar partidas o gastos, decirte qué pagos están pendientes y cargar
+                  partidas o gastos con tu confirmación. Siempre dentro de tus permisos.
                 </p>
                 <div className="flex flex-wrap gap-1.5">
                   {SUGGESTIONS.map((suggestion) => (
@@ -210,16 +283,21 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
               <div key={message.id} className={cn('flex', message.role === 'user' ? 'justify-end' : 'justify-start')}>
                 <div
                   className={cn(
-                    'max-w-[88%] whitespace-pre-wrap rounded-2xl px-3.5 py-2.5 text-[12px] leading-5',
-                    message.role === 'user'
-                      ? 'bg-slate-900 text-white'
-                      : 'bg-slate-100 text-slate-800',
+                    'max-w-[92%] whitespace-pre-wrap rounded-2xl px-3.5 py-2.5 text-[12px] leading-5',
+                    message.role === 'user' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-800',
                   )}
                 >
-                  {message.content}
+                  {message.role === 'user'
+                    ? message.content
+                    : <AssistantMessageText text={message.content} />}
                   {message.role === 'assistant' && message.actions && message.actions.length > 0 && (
-                    <div className="mt-1.5 text-[9px] font-bold uppercase tracking-widest text-slate-400">
-                      Consultó: {message.actions.filter((name) => name !== 'ir_a_pantalla').join(', ') || 'datos del proyecto'}
+                    <div className="mt-2 space-y-0.5 text-[9px] font-bold uppercase tracking-widest text-slate-400">
+                      {readsOf(message.actions).length > 0 && (
+                        <div>Consultó: {readsOf(message.actions).join(', ')}</div>
+                      )}
+                      {writesOf(message.actions).length > 0 && (
+                        <div className="text-emerald-600">Ejecutó: {writesOf(message.actions).join(', ')}</div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -239,6 +317,36 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
               </div>
             )}
           </div>
+
+          {pendingAction && (
+            <div className="border-t border-amber-100 bg-amber-50 px-4 py-3">
+              <div className="flex items-center gap-2 text-[9px] font-black uppercase tracking-widest text-amber-700">
+                <AlertTriangle className="h-3.5 w-3.5" />
+                Confirmá la acción
+              </div>
+              <p className="mt-1 text-[12px] font-bold text-slate-800">{pendingAction.summary}</p>
+              <div className="mt-2 flex gap-2">
+                <button
+                  type="button"
+                  onClick={confirmPendingAction}
+                  disabled={busy}
+                  className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-white transition-colors hover:bg-black disabled:bg-slate-300"
+                >
+                  <Check className="h-3.5 w-3.5" />
+                  Confirmar
+                </button>
+                <button
+                  type="button"
+                  onClick={cancelPendingAction}
+                  disabled={busy}
+                  className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-widest text-slate-500 transition-colors hover:border-slate-400 disabled:text-slate-300"
+                >
+                  <X className="h-3.5 w-3.5" />
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="border-t border-slate-100 p-3">
             <div className="flex items-end gap-2">

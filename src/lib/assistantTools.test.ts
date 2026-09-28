@@ -169,3 +169,31 @@ test('los colaboradores sólo se exponen si el usuario puede verlos', async () =
   const withPermission = await runTool(buildTools({ loadProject: async () => context }), 'listar_colaboradores');
   assert.equal(withPermission.colaboradores.length, 1);
 });
+
+test('las acciones de escritura piden confirmación y respetan los permisos', async () => {
+  const tools = buildTools();
+  const createExpense = tools.find((tool) => tool.name === 'crear_gasto_area');
+  const createBudgetItem = tools.find((tool) => tool.name === 'crear_partida');
+
+  assert.equal(createExpense?.requiresConfirmation, true);
+  assert.equal(createBudgetItem?.requiresConfirmation, true);
+  assert.match(
+    String(createExpense?.summarize?.({ area: 'Arte', descripcion: 'Pintura', cantidad: 2, precioUnitario: 1500 })),
+    /Cargar gasto en Arte/,
+  );
+  assert.match(
+    String(createExpense?.summarize?.({ area: 'Arte', descripcion: 'Pintura', cantidad: 2, precioUnitario: 1500 })),
+    /\$3\.000/,
+  );
+
+  // Un jefe de área no puede tocar el presupuesto principal.
+  const denied = await createBudgetItem?.run({ area: 'Arte', descripcion: 'Cámara', cantidad: 1, precioUnitario: 100 });
+  assert.match(String((denied as any).error), /presupuesto principal/);
+
+  // Ni cargar gastos en un área que no tiene asignada ni sin precio.
+  const foreignArea = await createExpense?.run({ area: 'Locaciones', descripcion: 'Estudio', cantidad: 1, precioUnitario: 100 });
+  assert.match(String((foreignArea as any).error), /no tiene permiso/);
+
+  const missingPrice = await createExpense?.run({ area: 'Arte', descripcion: 'Pintura', cantidad: 1 });
+  assert.match(String((missingPrice as any).error), /precio unitario/);
+});

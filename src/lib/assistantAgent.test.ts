@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { buildAssistantCapabilities } from './assistantCapabilities';
-import { buildAssistantSystemPrompt, runAssistantTurn, type AssistantMessage } from './assistantAgent';
+import {
+  buildAssistantSystemPrompt,
+  continueAssistantTurn,
+  runAssistantTurn,
+  type AssistantMessage,
+} from './assistantAgent';
 import type { AssistantTool } from './assistantTools';
 
 const tools: AssistantTool[] = [
@@ -108,7 +113,7 @@ test('si el modelo no cierra la respuesta se avisa en vez de quedar colgado', as
   assert.match(result.reply, /No pude terminar la consulta/);
 });
 
-test('el prompt del sistema explica el alcance y que todavía no escribe datos', () => {
+test('el prompt del sistema explica el alcance, el formato y las confirmaciones', () => {
   const prompt = buildAssistantSystemPrompt({
     globalRole: 'colaborador',
     projectNames: ['Largometraje', 'Spot'],
@@ -118,5 +123,68 @@ test('el prompt del sistema explica el alcance y que todavía no escribe datos',
   assert.match(prompt, /español rioplatense/);
   assert.match(prompt, /proyecto "Largometraje"/);
   assert.match(prompt, /Proyectos a los que tiene acceso: Largometraje, Spot/);
-  assert.match(prompt, /Todavía no modificás datos/);
+  assert.match(prompt, /la app le pide confirmación al usuario antes de guardar/);
+  assert.match(prompt, /panel angosto/);
+  assert.match(prompt, /borrar, pagar o cambiar permisos/);
+});
+
+test('las acciones de escritura quedan pendientes de confirmación', async () => {
+  const writeTools: AssistantTool[] = [
+    {
+      name: 'crear_gasto_area',
+      description: 'Crea un gasto',
+      parameters: { type: 'object', properties: {} },
+      requiresConfirmation: true,
+      summarize: () => 'Cargar gasto en Arte por $1.000',
+      run: async () => ({ ok: true, mensaje: 'Gasto cargado.' }),
+    },
+  ];
+
+  let round = 0;
+  const callModel = async ({ messages }: { messages: AssistantMessage[] }) => {
+    round += 1;
+    if (round === 1) {
+      return {
+        message: {
+          role: 'assistant' as const,
+          content: '',
+          tool_calls: [{ id: 'call-1', type: 'function' as const, function: { name: 'crear_gasto_area', arguments: JSON.stringify({ area: 'Arte' }) } }],
+        },
+        model: 'deepseek-flash',
+        reasoningEffort: 'high',
+      };
+    }
+    const toolMessage = messages.find((message) => message.role === 'tool');
+    return { message: { role: 'assistant' as const, content: toolMessage?.content.includes('ok') ? 'Listo, quedó cargado.' : 'No se pudo.' } };
+  };
+
+  const pending = await runAssistantTurn({
+    history: [{ role: 'system', content: 'sistema' }],
+    userText: 'Cargá un gasto de Arte por mil pesos',
+    tools: writeTools,
+    callModel,
+  });
+
+  assert.equal(pending.reply, '');
+  assert.deepEqual(pending.pending, {
+    callId: 'call-1',
+    name: 'crear_gasto_area',
+    args: { area: 'Arte' },
+    summary: 'Cargar gasto en Arte por $1.000',
+  });
+  assert.deepEqual(pending.actions, []);
+  assert.equal(pending.model, 'deepseek-flash');
+
+  const executed = await writeTools[0].run({ area: 'Arte' });
+  const continued = await continueAssistantTurn({
+    history: [
+      ...pending.messages,
+      { role: 'tool', tool_call_id: pending.pending!.callId, content: JSON.stringify(executed) },
+    ],
+    tools: writeTools,
+    callModel,
+  });
+
+  assert.equal(continued.reply, 'Listo, quedó cargado.');
+  assert.equal(continued.pending, undefined);
 });

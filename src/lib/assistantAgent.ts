@@ -15,6 +15,22 @@ export type AssistantMessage = {
   tool_call_id?: string;
 };
 
+export type AssistantPendingAction = {
+  callId: string;
+  name: string;
+  args: any;
+  summary: string;
+};
+
+export type AssistantTurnResult = {
+  messages: AssistantMessage[];
+  reply: string;
+  actions: Array<{ name: string; args: any; output: unknown }>;
+  pending?: AssistantPendingAction;
+  model?: string;
+  reasoningEffort?: string;
+};
+
 export type AssistantModelCaller = (input: {
   messages: AssistantMessage[];
   tools: ReturnType<typeof assistantToolsForModel>;
@@ -66,25 +82,27 @@ export const buildAssistantSystemPrompt = ({
   '- Antes de dar números o listados, consultá las herramientas. Nunca inventes cifras.',
   '- Trabajás únicamente con la información que este usuario puede ver: si te piden algo fuera de su alcance, explicá que no tiene permiso.',
   '- Si no sabés a qué proyecto se refiere, preguntale o listá los disponibles.',
-  '- Todavía no modificás datos: solo consultás, resumís y analizás. Si te piden una acción de escritura, contá qué habría que hacer y aclarás que esa función llega más adelante.',
+  '- Podés crear partidas y gastos de área con las herramientas de escritura: la app le pide confirmación al usuario antes de guardar, así que no afirmes que ya lo hiciste hasta que la herramienta devuelva ok.',
+  '- Si el usuario pide borrar, pagar o cambiar permisos, decile que por ahora eso se hace desde la app.',
+  'Formato:',
+  '- Escribís en un panel angosto: respuestas cortas, en lo posible con listas que empiezan con "-".',
+  '- Usá **negritas** sólo para cifras o nombres clave y `código` para ids o nombres de campos.',
+  '- No uses tablas anchas ni bloques enormes: si hay muchos datos, resumí y ofrecé el detalle.',
   '- Cuando informes plata, usá el formato $1.234.567 y aclarás el área o la partida.',
   '- Si una herramienta devuelve un error o no hay datos, decilo con claridad en vez de suponer.',
 ].join('\n');
 
-export const runAssistantTurn = async ({
-  history,
-  userText,
+const runAssistantLoop = async ({
+  messages,
   tools,
   callModel,
   maxRounds = 4,
 }: {
-  history: AssistantMessage[];
-  userText: string;
+  messages: AssistantMessage[];
   tools: AssistantTool[];
   callModel: AssistantModelCaller;
   maxRounds?: number;
-}) => {
-  const messages: AssistantMessage[] = [...history, { role: 'user', content: userText }];
+}): Promise<AssistantTurnResult> => {
   const actions: Array<{ name: string; args: any; output: unknown }> = [];
   const toolSchemas = assistantToolsForModel(tools);
   let model: string | undefined;
@@ -119,6 +137,21 @@ export const runAssistantTurn = async ({
       let output: unknown;
       if (!tool) {
         output = { error: `La herramienta ${call.function?.name || 'desconocida'} no está disponible para este usuario.` };
+      } else if (tool.requiresConfirmation) {
+        // Acción de escritura: se frena acá y la app le pide confirmación al usuario.
+        return {
+          messages,
+          reply: '',
+          actions,
+          model,
+          reasoningEffort,
+          pending: {
+            callId: call.id,
+            name: tool.name,
+            args,
+            summary: tool.summarize ? tool.summarize(args) : tool.name,
+          },
+        };
       } else {
         try {
           output = await tool.run(args);
@@ -143,3 +176,28 @@ export const runAssistantTurn = async ({
     reasoningEffort,
   };
 };
+
+export const runAssistantTurn = (input: {
+  history: AssistantMessage[];
+  userText: string;
+  tools: AssistantTool[];
+  callModel: AssistantModelCaller;
+  maxRounds?: number;
+}) => runAssistantLoop({
+  messages: [...input.history, { role: 'user', content: input.userText }],
+  tools: input.tools,
+  callModel: input.callModel,
+  maxRounds: input.maxRounds,
+});
+
+export const continueAssistantTurn = (input: {
+  history: AssistantMessage[];
+  tools: AssistantTool[];
+  callModel: AssistantModelCaller;
+  maxRounds?: number;
+}) => runAssistantLoop({
+  messages: input.history,
+  tools: input.tools,
+  callModel: input.callModel,
+  maxRounds: input.maxRounds,
+});
