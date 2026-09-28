@@ -223,6 +223,7 @@ export const ASSISTANT_HELP_SECTIONS: AssistantHelpSection[] = [
       'Llevarte a una pantalla ("abrí Áreas de tal proyecto").',
       'Lo que nunca hace: mostrar datos de proyectos, áreas o personas que no están dentro de tus permisos.',
       'Las planillas que se adjuntan no se guardan: se leen en el navegador y se usan sólo en esa conversación.',
+      'También se puede copiar una tabla desde Excel o Google Sheets y pegarla directamente en el chat: se toma como una lista de filas para cargar.',
       'Para acciones destructivas (borrar, pagar, cambiar permisos) todavía no está habilitado: eso se hace desde la app.',
     ].join('\n'),
   },

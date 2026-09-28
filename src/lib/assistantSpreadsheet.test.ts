@@ -4,6 +4,7 @@ import * as XLSX from 'xlsx';
 import {
   ASSISTANT_SPREADSHEET_MAX_ROWS,
   formatSpreadsheetForAssistant,
+  parsePastedTable,
   readAssistantSpreadsheet,
 } from './assistantSpreadsheet';
 
@@ -59,4 +60,35 @@ test('recorta las planillas muy largas', async () => {
 test('rechaza archivos que no son planillas', async () => {
   const file = new File(['hola'], 'notas.txt');
   await assert.rejects(() => readAssistantSpreadsheet(file), /CSV, XLSX o XLS/);
+});
+
+test('detecta una tabla pegada de Excel', () => {
+  const pasted = [
+    'Área\tProveedor\tDescripción\tCantidad\tPrecio',
+    'Arte\tFerretería\tPintura\t2\t1500',
+    'Vestuario\tZapatería\tBotas\t1\t50000',
+  ].join('\n');
+
+  const table = parsePastedTable(pasted);
+
+  assert.ok(table);
+  assert.equal(table?.source, 'paste');
+  assert.equal(table?.fileName, 'Tabla pegada');
+  assert.deepEqual(table?.headers, ['Área', 'Proveedor', 'Descripción', 'Cantidad', 'Precio']);
+  assert.equal(table?.rows.length, 2);
+  assert.deepEqual(table?.rows[0], ['Arte', 'Ferretería', 'Pintura', '2', '1500']);
+});
+
+test('acepta una sola fila con varias columnas', () => {
+  const table = parsePastedTable('Arte\tFerretería\tPintura\t2\t1500');
+
+  assert.ok(table);
+  assert.deepEqual(table?.headers, ['Columna 1', 'Columna 2', 'Columna 3', 'Columna 4', 'Columna 5']);
+  assert.deepEqual(table?.rows, [['Arte', 'Ferretería', 'Pintura', '2', '1500']]);
+});
+
+test('no confunde texto normal con una tabla', () => {
+  assert.equal(parsePastedTable('hola, ¿cómo va?'), null);
+  assert.equal(parsePastedTable('una linea sin tabs'), null);
+  assert.equal(parsePastedTable(''), null);
 });

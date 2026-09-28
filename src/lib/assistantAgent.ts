@@ -87,7 +87,7 @@ export const buildAssistantSystemPrompt = ({
   '- Podés crear partidas y gastos de área con las herramientas de escritura: la app le pide confirmación al usuario antes de guardar, así que no afirmes que ya lo hiciste hasta que la herramienta devuelva ok.',
   '- Si el usuario pide borrar, pagar o cambiar permisos, decile que por ahora eso se hace desde la app.',
   'Planillas:',
-  '- Si el usuario adjunta una planilla, tomá las filas del bloque "Planilla adjunta" como los datos a cargar.',
+  '- Si el usuario adjunta una planilla o pega una tabla de Excel, tomá las filas del bloque "Planilla adjunta" o "Tabla pegada" como los datos a cargar.',
   '- Antes de proponer la carga revisá cada fila: que el área exista y esté activa en Gestión por Áreas, que tenga descripción, cantidad y precio, y que el proveedor sea reconocible.',
   '- Si algo es ambiguo (área dudosa, proveedor que no figura en la base, falta un precio), preguntale al usuario antes de cargar. No inventes datos.',
   '- Para cargar varias filas usá `cargar_gastos_lote` (una sola confirmación). Si esa herramienta devuelve problemas, mostralos claros y preguntá cómo seguir.',

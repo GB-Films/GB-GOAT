@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ClipboardEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, Check, FileSpreadsheet, Loader2, Paperclip, Send, Sparkles, X } from 'lucide-react';
 import { cn } from '../lib/utils';
@@ -18,7 +18,12 @@ import {
   type AssistantProjectHandle,
 } from '../lib/assistantData';
 import { hasGlobalRole, PROVIDER_ACCESS_ROLES } from '../lib/roles';
-import { formatSpreadsheetForAssistant, readAssistantSpreadsheet, type AssistantSpreadsheet } from '../lib/assistantSpreadsheet';
+import {
+  formatSpreadsheetForAssistant,
+  parsePastedTable,
+  readAssistantSpreadsheet,
+  type AssistantSpreadsheet,
+} from '../lib/assistantSpreadsheet';
 import { AssistantMessageText } from './AssistantMessageText';
 
 type VisibleMessage = {
@@ -232,6 +237,15 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
     }
   };
 
+  const handlePaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    const pastedText = event.clipboardData?.getData('text/plain') || '';
+    const table = parsePastedTable(pastedText);
+    if (!table) return;
+    event.preventDefault();
+    setError('');
+    setAttachment({ spreadsheet: table, text: formatSpreadsheetForAssistant(table) });
+  };
+
   const readsOf = (actions: string[] = []) => actions.filter((name) => !name.startsWith('crear_') && name !== 'ir_a_pantalla');
   const writesOf = (actions: string[] = []) => actions.filter((name) => name.startsWith('crear_'));
 
@@ -427,6 +441,7 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
               <textarea
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
+                onPaste={handlePaste}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter' && !event.shiftKey) {
                     event.preventDefault();

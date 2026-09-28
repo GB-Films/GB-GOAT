@@ -7,6 +7,7 @@ export type AssistantSpreadsheet = {
   rows: string[][];
   totalRows: number;
   truncated: boolean;
+  source: 'file' | 'paste';
 };
 
 export const ASSISTANT_SPREADSHEET_MAX_ROWS = 250;
@@ -52,13 +53,55 @@ export const readAssistantSpreadsheet = async (file: File): Promise<AssistantSpr
     rows: truncated ? dataRows.slice(0, ASSISTANT_SPREADSHEET_MAX_ROWS) : dataRows,
     totalRows: dataRows.length + 1,
     truncated: truncated || extension === 'xls',
+    source: 'file',
+  };
+};
+
+// Detecta una tabla copiada de Excel o Google Sheets (texto con tabulaciones).
+export const parsePastedTable = (rawText: string): AssistantSpreadsheet | null => {
+  const text = String(rawText || '').replace(/\r\n/g, '\n').trim();
+  if (!text.includes('\t')) return null;
+
+  const lines = text.split('\n').map((line) => line.replace(/\n+$/g, ''));
+  const nonEmptyLines = lines.filter((line) => line.trim().length > 0);
+  if (nonEmptyLines.length === 0) return null;
+
+  const linesWithTabs = nonEmptyLines.filter((line) => line.includes('\t')).length;
+  if (nonEmptyLines.length > 1 && linesWithTabs / nonEmptyLines.length < 0.5) return null;
+
+  const matrix = nonEmptyLines.map((line) => line.split('\t').map(cleanCell));
+  const width = Math.max(...matrix.map((row) => row.length));
+  if (width < 2) return null;
+  if (matrix.length === 1 && width < 3) return null;
+
+  const padded = matrix.map((row) => {
+    const next = [...row];
+    while (next.length < width) next.push('');
+    return next;
+  });
+
+  const hasHeaderRow = padded.length > 1;
+  const headers = hasHeaderRow
+    ? padded[0].map((cell, index) => cell || `Columna ${index + 1}`)
+    : padded[0].map((_, index) => `Columna ${index + 1}`);
+  const dataRows = hasHeaderRow ? padded.slice(1) : padded;
+  const truncated = dataRows.length > ASSISTANT_SPREADSHEET_MAX_ROWS;
+
+  return {
+    fileName: 'Tabla pegada',
+    sheetName: 'Pegado',
+    headers,
+    rows: truncated ? dataRows.slice(0, ASSISTANT_SPREADSHEET_MAX_ROWS) : dataRows,
+    totalRows: dataRows.length + 1,
+    truncated,
+    source: 'paste',
   };
 };
 
 // Texto compacto (TSV) para mandarle al modelo junto con el mensaje del usuario.
 export const formatSpreadsheetForAssistant = (spreadsheet: AssistantSpreadsheet) => {
   const lines = [
-    `Planilla adjunta: ${spreadsheet.fileName} (hoja "${spreadsheet.sheetName}", ${spreadsheet.totalRows} filas con encabezado).`,
+    `${spreadsheet.source === 'paste' ? 'Tabla pegada desde una planilla' : 'Planilla adjunta'}: ${spreadsheet.fileName} (${spreadsheet.totalRows} filas con encabezado).`,
     'Columnas y filas (separadas por tabulaciones, la primera fila son los títulos):',
     spreadsheet.headers.join('\t'),
     ...spreadsheet.rows.map((row) => row.join('\t')),
