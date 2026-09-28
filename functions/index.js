@@ -92,9 +92,10 @@ exports.assistantChat = onCall(
     memory: '256MiB',
   },
   async (request) => {
-    if (!request.auth) {
-      throw new HttpsError('unauthenticated', 'Iniciá sesión para usar el asistente.');
-    }
+    try {
+      if (!request.auth) {
+        throw new HttpsError('unauthenticated', 'Iniciá sesión para usar el asistente.');
+      }
 
     const messages = validatePayload(request.data);
     const tools = Array.isArray(request.data?.tools) ? request.data.tools : [];
@@ -153,5 +154,10 @@ exports.assistantChat = onCall(
       },
       usage: payload?.usage || null,
     };
+    } catch (error) {
+      if (error instanceof HttpsError) throw error;
+      console.error('assistantChat falló:', error);
+      throw new HttpsError('internal', `Error inesperado del asistente: ${error?.message || 'sin detalle'}`);
+    }
   },
 );
