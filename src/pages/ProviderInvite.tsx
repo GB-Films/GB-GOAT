@@ -9,6 +9,7 @@ import {
   isValidCbu,
   normalizeDigits,
 } from '../lib/providerConstants';
+import { getProviderInviteTargetIssue } from '../lib/providerInvites';
 
 type ProviderType = 'persona' | 'empresa';
 type DuplicateState = { dni?: boolean; cuit?: boolean };
@@ -93,6 +94,47 @@ const getInviteDate = (dateValue: any) => {
 const isInviteExpired = (inviteData: any) => {
   const expiresAt = getInviteDate(inviteData?.expiresAt);
   return Boolean(expiresAt && expiresAt.getTime() < Date.now());
+};
+
+const PROVIDER_INVITE_MESSAGES: Record<string, string> = {
+  INVITE_NOT_FOUND: 'Este link de alta no existe o fue eliminado.',
+  INVITE_USED: 'Este link ya fue utilizado. Pedí un nuevo link a Gran Berta Films.',
+  INVITE_CANCELLED: 'Este link fue cancelado. Pedí un nuevo link a Gran Berta Films.',
+  INVITE_EXPIRED: 'Este link vencio. Pedi un nuevo link a Gran Berta Films.',
+  TARGET_EXPENSE_NOT_FOUND: 'El gasto asociado a este link ya no existe. Pedí un link nuevo a Gran Berta Films.',
+  TARGET_EXPENSE_ALREADY_ASSIGNED: 'Este gasto ya tiene un proveedor asignado. Si te pasaron este link para reemplazarlo, pedí uno nuevo a Gran Berta Films.',
+  TARGET_EXPENSE_HAS_PAYMENTS: 'Este gasto ya tiene pagos registrados, por eso el link no puede asignarle un proveedor. Avisá a Gran Berta Films para resolver el alta por otra vía.',
+  DNI_EXISTS: 'Ya existe una persona registrada con este DNI.',
+  CUIT_EXISTS: 'Ya existe un proveedor registrado con este CUIT/CUIL.',
+};
+
+const getInviteTargetRef = (inviteData: any) => {
+  const projectId = typeof inviteData?.projectId === 'string' ? inviteData.projectId : '';
+  const expenseId = typeof inviteData?.expenseId === 'string' ? inviteData.expenseId : '';
+  if (!projectId || !expenseId) return null;
+  const collectionName = inviteData.collectionName === 'budgetItems' ? 'budgetItems' : 'areaExpenses';
+  return doc(db, 'projects', projectId, collectionName, expenseId);
+};
+
+const getInviteTargetIssueFromSnapshot = (snapshot: { exists: () => boolean; data: () => any }) => (
+  getProviderInviteTargetIssue(snapshot.exists() ? { ...snapshot.data(), exists: true } : { exists: false })
+);
+
+// Antes de mostrar el formulario, revisa el gasto del link para poder decir
+// exactamente por qué el alta ya no puede completarse.
+const readInviteTargetIssue = async (inviteData: any) => {
+  const targetRef = getInviteTargetRef(inviteData);
+  if (!targetRef) return '';
+  try {
+    const targetIssue = getInviteTargetIssueFromSnapshot(await getDoc(targetRef));
+    return targetIssue ? PROVIDER_INVITE_MESSAGES[targetIssue] || '' : '';
+  } catch (err: any) {
+    console.error('Error reading provider invite target:', err);
+    if (err?.code === 'unavailable' || err?.code === 'firestore/unavailable') {
+      return 'No pudimos conectar con el servidor. Revisá la conexión a internet y volvé a intentar.';
+    }
+    return 'No pudimos verificar el gasto asociado a este link: puede haber sido eliminado o el link dejó de estar activo. Pedí un link nuevo a Gran Berta Films.';
+  }
 };
 
 function InlineDatePicker({ value, onChange }: { value: string; onChange: (value: string) => void }) {
@@ -325,20 +367,25 @@ export default function ProviderInvite() {
         const inviteRef = doc(db, 'providerInvites', token);
         const snap = await getDoc(inviteRef);
         if (!snap.exists()) {
-          setError('Este link de alta no existe o fue eliminado.');
+          setError(PROVIDER_INVITE_MESSAGES.INVITE_NOT_FOUND);
           return;
         }
         const data = snap.data();
         if (data.used || data.status === 'used') {
-          setError('Este link ya fue utilizado. Pedí un nuevo link a Gran Berta Films.');
+          setError(PROVIDER_INVITE_MESSAGES.INVITE_USED);
           return;
         }
         if (data.status === 'cancelled') {
-          setError('Este link fue cancelado. Pedí un nuevo link a Gran Berta Films.');
+          setError(PROVIDER_INVITE_MESSAGES.INVITE_CANCELLED);
           return;
         }
         if (isInviteExpired(data)) {
-          setError('Este link vencio. Pedi un nuevo link a Gran Berta Films.');
+          setError(PROVIDER_INVITE_MESSAGES.INVITE_EXPIRED);
+          return;
+        }
+        const targetIssue = await readInviteTargetIssue(data);
+        if (targetIssue) {
+          setError(targetIssue);
           return;
         }
         setInvite({ id: snap.id, ...data });
@@ -528,10 +575,13 @@ export default function ProviderInvite() {
               businessName: form.businessName.trim(),
             };
 
-        const targetCollectionName = inviteData.collectionName === 'budgetItems' ? 'budgetItems' : 'areaExpenses';
-        const targetExpenseRef = inviteData.projectId && inviteData.expenseId
-          ? doc(db, 'projects', inviteData.projectId, targetCollectionName, inviteData.expenseId)
-          : null;
+        // Se relee el gasto dentro de la transacción: si cambió mientras el
+        // proveedor completaba el formulario, se explica el motivo exacto.
+        const targetExpenseRef = getInviteTargetRef(inviteData);
+        if (targetExpenseRef) {
+          const targetIssue = getInviteTargetIssueFromSnapshot(await transaction.get(targetExpenseRef));
+          if (targetIssue) throw new Error(targetIssue);
+        }
 
         transaction.set(providerRef, providerData);
         for (const item of identifierRefs) {
@@ -581,19 +631,9 @@ export default function ProviderInvite() {
       setSubmitted(true);
     } catch (err: any) {
       console.error('Error submitting provider invite:', err);
-      const messageByCode: Record<string, string> = {
-        INVITE_NOT_FOUND: 'Este link de alta no existe o fue eliminado.',
-        INVITE_USED: 'Este link ya fue utilizado. Pedí un nuevo link a Gran Berta Films.',
-        INVITE_CANCELLED: 'Este link fue cancelado. Pedí un nuevo link a Gran Berta Films.',
-        INVITE_EXPIRED: 'Este link vencio. Pedi un nuevo link a Gran Berta Films.',
-        TARGET_EXPENSE_NOT_FOUND: 'El gasto asociado a este link ya no existe. Pedi un nuevo link.',
-        TARGET_EXPENSE_ALREADY_ASSIGNED: 'Este gasto ya tiene un proveedor asignado. Pedi un nuevo link si corresponde.',
-        DNI_EXISTS: 'Ya existe una persona registrada con este DNI.',
-        CUIT_EXISTS: 'Ya existe un proveedor registrado con este CUIT/CUIL.',
-      };
       const firebaseMessageByCode: Record<string, string> = {
-        'permission-denied': 'El link no pudo autorizar el envío. Recargá la página e intentá nuevamente. Si continúa, pedí un link nuevo.',
-        'firestore/permission-denied': 'El link no pudo autorizar el envío. Recargá la página e intentá nuevamente. Si continúa, pedí un link nuevo.',
+        'permission-denied': 'No pudimos asignar el alta al gasto de este link (código permission-denied): el gasto pudo haber cambiado o sido eliminado mientras completabas el formulario. Mandá esta pantalla a Gran Berta Films para que lo revisen y te generen un link nuevo.',
+        'firestore/permission-denied': 'No pudimos asignar el alta al gasto de este link (código permission-denied): el gasto pudo haber cambiado o sido eliminado mientras completabas el formulario. Mandá esta pantalla a Gran Berta Films para que lo revisen y te generen un link nuevo.',
         unavailable: 'No pudimos conectar con el servidor. Revisá la conexión a internet y volvé a intentar.',
         'firestore/unavailable': 'No pudimos conectar con el servidor. Revisá la conexión a internet y volvé a intentar.',
         'deadline-exceeded': 'La conexión tardó demasiado. Los datos siguen cargados: volvé a presionar Enviar.',
@@ -601,9 +641,10 @@ export default function ProviderInvite() {
         'not-found': 'La fila de gasto asociada a este link ya no existe. Pedí un link nuevo.',
         'firestore/not-found': 'La fila de gasto asociada a este link ya no existe. Pedí un link nuevo.',
       };
-      const submitError = messageByCode[err?.message]
+      const rawDetail = err?.code || err?.message || 'sin detalle';
+      const submitError = PROVIDER_INVITE_MESSAGES[err?.message]
         || firebaseMessageByCode[err?.code]
-        || 'Ocurrió un error inesperado al enviar. Los datos siguen cargados: recargá la página o pedí un link nuevo.';
+        || `Ocurrió un error inesperado al enviar (${rawDetail}). Los datos siguen cargados: recargá la página o pedí un link nuevo.`;
       if (err?.message === 'DNI_EXISTS' || err?.message === 'CUIT_EXISTS') {
         const field = err.message === 'DNI_EXISTS' ? 'dni' : 'cuit';
         setShowFieldErrors(true);

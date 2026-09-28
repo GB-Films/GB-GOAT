@@ -974,6 +974,23 @@ service cloud.firestore {
         && providerInviteTargetsItem(projectId, collectionName, itemId, request.resource.data.providerInviteAssignment.token);
     }
 
+    // La pantalla pública de alta necesita leer el gasto destino mientras el
+    // link siga pendiente, para poder explicar por qué no puede asignarse el
+    // proveedor (ya tiene proveedor, tiene pagos o fue eliminado). No expone
+    // filas ya resueltas ni habilita listados anónimos.
+    function publicProviderInviteTargetIsOpen() {
+      return request.auth == null
+        && (
+          resource == null
+          || (
+            resource.data.keys().hasAny(['providerInviteLink'])
+            && resource.data.providerInviteLink.status == 'pending'
+            && (!resource.data.keys().hasAny(['providerId']) || resource.data.providerId == '')
+            && (!resource.data.keys().hasAny(['providerName']) || resource.data.providerName == '')
+          )
+        );
+    }
+
     function userInviteIsPending(token) {
       return token is string
         && exists(/databases/$(database)/documents/userInvites/$(token))
@@ -1082,7 +1099,8 @@ service cloud.firestore {
       }
 
       match /budgetItems/{itemId} {
-        allow read: if hasProjectAccess(projectId);
+        allow list: if hasProjectAccess(projectId);
+        allow get: if hasProjectAccess(projectId) || publicProviderInviteTargetIsOpen();
         allow create: if isProjectAdmin(projectId)
           && !(request.resource.data.area in getAfter(/databases/$(database)/documents/projects/$(projectId)).data.get('activeAreas', []))
           && budgetMembershipAdvancesRevision(projectId)
@@ -1101,7 +1119,8 @@ service cloud.firestore {
       }
 
       match /areaExpenses/{expenseId} {
-        allow read: if hasProjectAccess(projectId);
+        allow list: if hasProjectAccess(projectId);
+        allow get: if hasProjectAccess(projectId) || publicProviderInviteTargetIsOpen();
         allow create: if (isProjectAdmin(projectId)
           || canWriteAreaExpense(projectId, request.resource.data.area, request.resource.data.subcategory))
             && request.resource.data.createdBy == request.auth.uid
