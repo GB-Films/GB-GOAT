@@ -1,14 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Loader2, Send, Sparkles, X } from 'lucide-react';
 import { cn } from '../lib/utils';
-import type { AssistantCapabilities } from '../lib/assistantCapabilities';
 import {
   buildAssistantSystemPrompt,
   callDeepSeekAssistant,
   runAssistantTurn,
   type AssistantMessage,
 } from '../lib/assistantAgent';
-import { buildAssistantTools, type AssistantProjectContext } from '../lib/assistantTools';
+import { buildAssistantTools } from '../lib/assistantTools';
+import {
+  listAssistantProjects,
+  loadAssistantProjectContext,
+  loadAssistantProviders,
+  type AssistantProjectHandle,
+} from '../lib/assistantData';
+import { hasGlobalRole, PROVIDER_ACCESS_ROLES } from '../lib/roles';
 
 type VisibleMessage = {
   id: string;
@@ -18,34 +25,68 @@ type VisibleMessage = {
 };
 
 type AssistantChatProps = {
-  capabilities: AssistantCapabilities;
-  context: Omit<AssistantProjectContext, 'capabilities'>;
-  onOpenTab?: (tab: string) => void;
+  uid: string;
+  email: string;
+  globalRole?: string | null;
+  currentProjectId?: string | null;
 };
 
 const SUGGESTIONS = [
-  '¿Cómo viene el presupuesto del proyecto?',
+  '¿Qué proyectos tengo?',
+  '¿Cómo viene el presupuesto?',
   '¿Qué pagos están pendientes?',
-  'Resumime las áreas activas',
 ];
 
-export function AssistantChat({ capabilities, context, onOpenTab }: AssistantChatProps) {
+export function AssistantChat({ uid, email, globalRole, currentProjectId }: AssistantChatProps) {
+  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [visible, setVisible] = useState<VisibleMessage[]>([]);
+  const [projects, setProjects] = useState<AssistantProjectHandle[]>([]);
   const historyRef = useRef<AssistantMessage[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const tools = useMemo(
-    () => buildAssistantTools({ ...context, capabilities }),
-    [capabilities, context],
+  const listProjects = useMemo(
+    () => () => listAssistantProjects({ uid, email }),
+    [email, uid],
   );
-  const systemPrompt = useMemo(
-    () => buildAssistantSystemPrompt({ projectName: context.projectName, capabilities }),
-    [capabilities, context.projectName],
-  );
+
+  const projectNames = useMemo(() => projects.map((project) => project.name), [projects]);
+  const currentProjectName = useMemo(() => (
+    currentProjectId
+      ? projects.find((project) => project.id === currentProjectId)?.name || null
+      : null
+  ), [currentProjectId, projects]);
+
+  const tools = useMemo(() => buildAssistantTools({
+    listProjects,
+    loadProject: (projectId) => loadAssistantProjectContext({ projectId, uid, email, globalRole }),
+    loadProviders: loadAssistantProviders,
+    canAccessProviders: hasGlobalRole(globalRole, PROVIDER_ACCESS_ROLES),
+    currentProjectId: currentProjectId || null,
+  }), [currentProjectId, email, globalRole, listProjects, uid]);
+
+  const systemPrompt = useMemo(() => buildAssistantSystemPrompt({
+    globalRole,
+    isAppAdmin: globalRole === 'admin',
+    projectNames,
+    currentProjectName,
+  }), [currentProjectName, globalRole, projectNames]);
+
+  useEffect(() => {
+    let cancelled = false;
+    listProjects()
+      .then((loaded) => {
+        if (cancelled) return;
+        setProjects(loaded);
+      })
+      .catch((loadError) => console.warn('No pude listar los proyectos del asistente:', loadError));
+    return () => {
+      cancelled = true;
+    };
+  }, [listProjects]);
 
   useEffect(() => {
     if (!open) return;
@@ -74,9 +115,12 @@ export function AssistantChat({ capabilities, context, onOpenTab }: AssistantCha
         content: reply,
         actions: actions.map((action) => action.name),
       }]);
-      const navigation = actions.find((action) => action.name === 'ir_a_pantalla');
-      const tab = navigation?.args?.pestana;
-      if (tab && onOpenTab) onOpenTab(String(tab));
+
+      const navigation = actions.find((action) => (action.output as any)?.abrirProyecto);
+      if (navigation) {
+        const destination = navigation.output as { abrirProyecto: string; pestana?: string };
+        navigate(`/proyectos/${destination.abrirProyecto}${destination.pestana ? `?tab=${destination.pestana}` : ''}`);
+      }
     } catch (err: any) {
       setError(String(err?.message || 'No se pudo consultar al asistente.').replace(/^FirebaseError:\s*/i, ''));
     } finally {
@@ -104,10 +148,12 @@ export function AssistantChat({ capabilities, context, onOpenTab }: AssistantCha
             <div className="min-w-0">
               <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest">
                 <Sparkles className="h-3.5 w-3.5 text-emerald-300" />
-                Asistente del proyecto
+                Asistente
               </div>
               <div className="mt-0.5 truncate text-[9px] font-bold uppercase tracking-widest text-slate-400">
-                {capabilities.role ? `${context.projectName || capabilities.projectId} · ${capabilities.role}` : context.projectName || capabilities.projectId}
+                {currentProjectName
+                  ? currentProjectName
+                  : globalRole === 'admin' ? 'Todos los proyectos' : 'Tus proyectos'}
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-1">
@@ -140,7 +186,8 @@ export function AssistantChat({ capabilities, context, onOpenTab }: AssistantCha
             {visible.length === 0 && (
               <div className="space-y-2">
                 <p className="text-[11px] leading-5 text-slate-500">
-                  Puedo resumir el proyecto, buscar partidas o gastos de tus áreas y decirte qué pagos están pendientes.
+                  Puedo resumir proyectos, buscar partidas o gastos y decirte qué pagos están pendientes.
+                  Siempre dentro de los permisos de tu usuario.
                 </p>
                 <div className="flex flex-wrap gap-1.5">
                   {SUGGESTIONS.map((suggestion) => (
@@ -218,7 +265,7 @@ export function AssistantChat({ capabilities, context, onOpenTab }: AssistantCha
               </button>
             </div>
             <div className="mt-1.5 text-[9px] font-bold uppercase tracking-widest text-slate-300">
-              Responde con los datos que vos podés ver
+              Responde sólo con la información que vos podés ver
             </div>
           </div>
         </div>

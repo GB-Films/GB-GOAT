@@ -11,8 +11,6 @@ const baseProject = {
   activeAreas: ['Arte'],
 };
 
-const adminCapabilities = buildAssistantCapabilities({ ...baseProject, userId: 'owner-uid' });
-
 const areaLeadCapabilities = buildAssistantCapabilities({
   ...baseProject,
   userId: 'area-uid',
@@ -25,11 +23,16 @@ const areaLeadCapabilities = buildAssistantCapabilities({
   },
 });
 
-const buildContext = (capabilities: AssistantProjectContext['capabilities']): AssistantProjectContext => ({
+const projectList = [
+  { id: 'proj-1', name: 'Largometraje', clientName: 'Cliente A' },
+  { id: 'proj-2', name: 'Spot', clientName: 'Cliente B' },
+];
+
+const buildContext = (): AssistantProjectContext => ({
   projectId: baseProject.projectId,
   projectName: baseProject.projectName,
   userEmail: 'area@example.com',
-  capabilities,
+  capabilities: areaLeadCapabilities,
   categories: baseProject.categories,
   activeAreas: baseProject.activeAreas,
   budgetItems: [
@@ -46,83 +49,123 @@ const buildContext = (capabilities: AssistantProjectContext['capabilities']): As
     { id: 'c1', type: 'entrega', amount: 500, status: 'confirmed', toUserEmail: 'area@example.com' },
     { id: 'c2', type: 'pago', amount: 100, status: 'confirmed', toUserEmail: 'otro@example.com' },
   ],
-  collaborators: [
-    { email: 'area@example.com', displayName: 'Jefa de Área', role: 'jefe_area', allowedCategories: ['Arte'], allowedSubcategories: ['Vestuario||Zapatos'] },
-  ],
-  providers: [
-    { id: 'p1', name: 'Rental', lastName: 'Sur', category: 'Técnica' },
-  ],
+  collaborators: [],
 });
 
-const toolByName = (tools: ReturnType<typeof buildAssistantTools>, name: string) => {
+const buildTools = (options: Partial<Parameters<typeof buildAssistantTools>[0]> = {}) => buildAssistantTools({
+  listProjects: async () => projectList,
+  loadProject: async (projectId) => (projectId === 'proj-1' ? buildContext() : null),
+  currentProjectId: 'proj-1',
+  ...options,
+});
+
+const runTool = async (
+  tools: ReturnType<typeof buildAssistantTools>,
+  name: string,
+  args: any = {},
+) => {
   const tool = tools.find((entry) => entry.name === name);
   assert.ok(tool, `Falta la herramienta ${name}`);
-  return tool;
+  return await tool.run(args) as any;
 };
 
-test('el resumen del proyecto sólo cuenta lo que el usuario puede ver', () => {
-  const tools = buildAssistantTools(buildContext(areaLeadCapabilities));
-  const summary = toolByName(tools, 'resumen_proyecto').run({}) as any;
+test('el asistente lista los proyectos del usuario', async () => {
+  const result = await runTool(buildTools(), 'listar_proyectos');
 
+  assert.equal(result.total, 2);
+  assert.deepEqual(result.proyectos.map((project: any) => project.nombre), ['Largometraje', 'Spot']);
+});
+
+test('sin proyecto indicado usa el que está abierto en pantalla', async () => {
+  const summary = await runTool(buildTools(), 'resumen_proyecto');
+
+  assert.equal(summary.proyecto, 'Largometraje');
   assert.equal(summary.presupuestoPrincipal, 1000);
   assert.equal(summary.gastosDeAreas, 500);
   assert.equal(summary.partidas, 1);
   assert.equal(summary.gastosCargados, 2);
 });
 
-test('el listado de gastos respeta área y subcategoría delegadas', () => {
-  const tools = buildAssistantTools(buildContext(areaLeadCapabilities));
+test('un proyecto por nombre se resuelve y respeta el acceso', async () => {
+  const denied = await runTool(buildTools(), 'resumen_proyecto', { proyecto: 'Spot' });
+  assert.match(denied.error, /No tenés acceso/);
 
-  const all = toolByName(tools, 'listar_gastos_area').run({}) as any;
+  const unknown = await runTool(buildTools(), 'resumen_proyecto', { proyecto: 'Película inexistente' });
+  assert.match(unknown.error, /No encontré el proyecto/);
+});
+
+test('los listados respetan área y subcategoría delegadas', async () => {
+  const tools = buildTools();
+  const all = await runTool(tools, 'listar_gastos_area');
   assert.deepEqual(all.gastos.map((row: any) => row.id), ['a1', 'a2']);
 
-  const sandals = toolByName(tools, 'listar_gastos_area').run({ subcategoria: 'Zapatos' }) as any;
-  assert.deepEqual(sandals.gastos.map((row: any) => row.id), ['a2']);
+  const shoes = await runTool(tools, 'listar_gastos_area', { subcategoria: 'Zapatos' });
+  assert.deepEqual(shoes.gastos.map((row: any) => row.id), ['a2']);
 
-  const foreign = toolByName(tools, 'listar_gastos_area').run({ area: 'Locaciones' }) as any;
+  const foreign = await runTool(tools, 'listar_gastos_area', { area: 'Locaciones' });
   assert.deepEqual(foreign.gastos, []);
 });
 
+test('el detalle del proyecto muestra el alcance real', async () => {
+  const detail = await runTool(buildTools(), 'detalle_proyecto');
+
+  assert.match(detail.resumen, /jefe de área/);
+  assert.deepEqual(detail.areas, [
+    { area: 'Arte', acceso: 'completa' },
+    { area: 'Vestuario', acceso: ['Zapatos'] },
+  ]);
+});
+
 test('las herramientas globales aparecen sólo con el alcance correspondiente', () => {
-  const scopedTools = buildAssistantTools(buildContext(areaLeadCapabilities)).map((tool) => tool.name);
-  assert.ok(scopedTools.includes('buscar_proveedores'));
-  assert.ok(scopedTools.includes('resumen_cajas'));
-  assert.ok(!scopedTools.includes('listar_colaboradores'));
+  const withProviders = buildTools({
+    canAccessProviders: true,
+    loadProviders: async () => [{ id: 'p1', name: 'Rental', lastName: 'Sur', category: 'Técnica' }],
+  }).map((tool) => tool.name);
+  assert.ok(withProviders.includes('buscar_proveedores'));
 
-  const adminTools = buildAssistantTools(buildContext(adminCapabilities)).map((tool) => tool.name);
-  assert.ok(adminTools.includes('listar_colaboradores'));
+  const withoutProviders = buildTools().map((tool) => tool.name);
+  assert.ok(!withoutProviders.includes('buscar_proveedores'));
+  assert.ok(withoutProviders.includes('listar_colaboradores'));
 });
 
-test('la navegación sólo permite pestañas habilitadas', () => {
-  const scopedTools = buildAssistantTools(buildContext(areaLeadCapabilities));
-  assert.deepEqual(toolByName(scopedTools, 'ir_a_pantalla').run({ pestana: 'areas' }), { abrirPestana: 'areas' });
-  assert.ok((toolByName(scopedTools, 'ir_a_pantalla').run({ pestana: 'resultado' }) as any).error);
-
-  const adminTools = buildAssistantTools(buildContext(adminCapabilities));
-  assert.deepEqual(toolByName(adminTools, 'ir_a_pantalla').run({ pestana: 'resultado' }), { abrirPestana: 'resultado' });
+test('la navegación sólo permite pestañas habilitadas', async () => {
+  const tools = buildTools();
+  assert.deepEqual(
+    await runTool(tools, 'ir_a_pantalla', { pestana: 'areas' }),
+    { abrirProyecto: 'proj-1', pestana: 'areas' },
+  );
+  assert.ok((await runTool(tools, 'ir_a_pantalla', { pestana: 'resultado' })).error);
 });
 
-test('los pagos pendientes descuentan lo ya pagado', () => {
-  const capabilities = buildAssistantCapabilities({ ...baseProject, userId: 'owner-uid' });
-  const context = buildContext(capabilities);
+test('los pagos pendientes descuentan lo ya pagado', async () => {
+  const context = buildContext();
   context.budgetItems = [
     { id: 'b1', area: 'Arte', total: 1000, paymentHistory: [{ amount: 400 }], paymentDate: '2026-10-01' },
     { id: 'b2', area: 'Locaciones', total: 500, paid: true, paymentDate: '2026-09-20' },
   ];
   context.areaExpenses = [];
 
-  const tools = buildAssistantTools(context);
-  const pending = toolByName(tools, 'pagos_pendientes').run({}) as any;
+  const tools = buildTools({ loadProject: async () => context });
+  const pending = await runTool(tools, 'pagos_pendientes');
 
   assert.equal(pending.pendientes.length, 1);
   assert.equal(pending.pendientes[0].id, 'b1');
   assert.equal(pending.pendientes[0].saldo, 600);
 });
 
-test('el resumen de cajas acota los movimientos de quien no ve todo el equipo', () => {
-  const tools = buildAssistantTools(buildContext(areaLeadCapabilities));
-  const cash = toolByName(tools, 'resumen_cajas').run({}) as any;
+test('el resumen de cajas acota los movimientos de quien no ve todo el equipo', async () => {
+  const cash = await runTool(buildTools(), 'resumen_cajas');
 
   assert.equal(cash.movimientos, 1);
   assert.equal(cash.totalesPorEstado.confirmed, 500);
+});
+
+test('los colaboradores sólo se exponen si el usuario puede verlos', async () => {
+  const withoutPermission = await runTool(buildTools(), 'listar_colaboradores');
+  assert.match(withoutPermission.error, /no tiene permiso/);
+
+  const context = buildContext();
+  context.collaborators = [{ email: 'area@example.com', displayName: 'Jefa de Área', role: 'jefe_area' }];
+  const withPermission = await runTool(buildTools({ loadProject: async () => context }), 'listar_colaboradores');
+  assert.equal(withPermission.colaboradores.length, 1);
 });

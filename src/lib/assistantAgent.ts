@@ -1,6 +1,5 @@
 import { getApp } from 'firebase/app';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { describeAssistantScope, type AssistantCapabilities } from './assistantCapabilities';
 import { assistantToolsForModel, type AssistantTool } from './assistantTools';
 
 export type AssistantToolCall = {
@@ -39,20 +38,32 @@ export const callDeepSeekAssistant: AssistantModelCaller = async ({ messages, to
 };
 
 export const buildAssistantSystemPrompt = ({
-  projectName,
-  capabilities,
+  globalRole = null,
+  isAppAdmin = false,
+  projectNames = [],
+  currentProjectName = null,
   today = new Date(),
 }: {
-  projectName: string;
-  capabilities: AssistantCapabilities;
+  globalRole?: string | null;
+  isAppAdmin?: boolean;
+  projectNames?: string[];
+  currentProjectName?: string | null;
   today?: Date;
 }) => [
   'Sos el asistente interno de GB GOAT, la herramienta de gestión de producción de Gran Berta Films.',
-  'Hablás en español rioplatense, claro y directo. Cuando necesitás números, primero consultás las herramientas y nunca inventás cifras.',
+  'Hablás en español rioplatense, claro y directo.',
   `Hoy es ${today.toISOString().slice(0, 10)}.`,
-  describeAssistantScope(capabilities),
+  ...(isAppAdmin
+    ? ['El usuario es administrador global de la aplicación.']
+    : globalRole ? [`Rol global del usuario: ${globalRole}.`] : []),
+  ...(currentProjectName ? [`En pantalla está abierto el proyecto "${currentProjectName}". Si el usuario no aclara otro, asumí ese.`] : []),
+  ...(projectNames.length > 0
+    ? [`Proyectos a los que tiene acceso: ${projectNames.slice(0, 40).join(', ')}.`]
+    : ['Si necesitás saber a qué proyectos tiene acceso, usá la herramienta listar_proyectos.']),
   'Reglas:',
-  '- Trabajás únicamente con la información que este usuario puede ver. Si te piden algo fuera de su alcance, explicá que no tiene permiso.',
+  '- Antes de dar números o listados, consultá las herramientas. Nunca inventes cifras.',
+  '- Trabajás únicamente con la información que este usuario puede ver: si te piden algo fuera de su alcance, explicá que no tiene permiso.',
+  '- Si no sabés a qué proyecto se refiere, preguntale o listá los disponibles.',
   '- Todavía no modificás datos: solo consultás, resumís y analizás. Si te piden una acción de escritura, contá qué habría que hacer y aclarás que esa función llega más adelante.',
   '- Cuando informes plata, usá el formato $1.234.567 y aclarás el área o la partida.',
   '- Si una herramienta devuelve un error o no hay datos, decilo con claridad en vez de suponer.',
@@ -72,7 +83,7 @@ export const runAssistantTurn = async ({
   maxRounds?: number;
 }) => {
   const messages: AssistantMessage[] = [...history, { role: 'user', content: userText }];
-  const actions: Array<{ name: string; args: any }> = [];
+  const actions: Array<{ name: string; args: any; output: unknown }> = [];
   const toolSchemas = assistantToolsForModel(tools);
 
   for (let round = 0; round < maxRounds; round += 1) {
@@ -102,12 +113,12 @@ export const runAssistantTurn = async ({
       if (!tool) {
         output = { error: `La herramienta ${call.function?.name || 'desconocida'} no está disponible para este usuario.` };
       } else {
-        actions.push({ name: tool.name, args });
         try {
-          output = tool.run(args);
+          output = await tool.run(args);
         } catch (error: any) {
           output = { error: error?.message || 'Error al ejecutar la consulta.' };
         }
+          actions.push({ name: tool.name, args, output });
       }
       messages.push({
         role: 'tool',

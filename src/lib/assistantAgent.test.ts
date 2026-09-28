@@ -109,23 +109,14 @@ test('si el modelo no cierra la respuesta se avisa en vez de quedar colgado', as
 });
 
 test('el prompt del sistema explica el alcance y que todavía no escribe datos', () => {
-  const capabilities = buildAssistantCapabilities({
-    projectId: 'proj-1',
-    projectName: 'Largometraje',
-    projectCreatedBy: 'otro',
-    categories: ['Arte'],
-    userId: 'area-uid',
-    collaborator: {
-      role: 'jefe_area',
-      allowedTabs: ['resumen', 'areas'],
-      allowedCategories: ['Arte'],
-      canEditBudgetAreas: true,
-    },
+  const prompt = buildAssistantSystemPrompt({
+    globalRole: 'colaborador',
+    projectNames: ['Largometraje', 'Spot'],
+    currentProjectName: 'Largometraje',
   });
-  const prompt = buildAssistantSystemPrompt({ projectName: 'Largometraje', capabilities });
 
   assert.match(prompt, /español rioplatense/);
-  assert.match(prompt, /Rol en el proyecto: jefe de área/);
+  assert.match(prompt, /proyecto "Largometraje"/);
+  assert.match(prompt, /Proyectos a los que tiene acceso: Largometraje, Spot/);
   assert.match(prompt, /Todavía no modificás datos/);
-  assert.doesNotMatch(prompt, /editar el presupuesto principal/);
 });
