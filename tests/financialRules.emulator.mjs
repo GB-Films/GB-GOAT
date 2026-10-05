@@ -287,6 +287,95 @@ try {
   await assertSucceeds(updateDoc(doc(adminDb, itemPath('areaExpenses', 'paid-area')), { paymentDate: '2026-10-01' }));
   await assertSucceeds(updateDoc(doc(collaboratorDb, itemPath('areaExpenses', 'paid-area')), { paymentDate: '2026-10-02' }));
 
+  // Reproduce the $500,000 row: deleting its final payment preserves the lock,
+  // but an administrator can then correct its amounts with a coupled audit.
+  for (const collectionName of ['areaExpenses', 'budgetItems']) {
+    const finalPayment = payment(`final-${collectionName}`, 500000);
+    const expenseRef = doc(adminDb, itemPath(collectionName, 'removed-final'));
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      await setDoc(doc(db, expenseRef.path), baseExpense({
+        unitPrice: 500000, total: 500000, paid: true,
+        paymentHistory: [finalPayment], paymentLocked: true, paymentAuthorIds: [adminId],
+      }));
+    });
+    const deletionAudit = doc(collection(adminDb, `projects/${projectId}/activityLog`));
+    const removeFinal = writeBatch(adminDb);
+    removeFinal.update(expenseRef, {
+      paymentHistory: [], paid: false, paymentLocked: true,
+      lastFinancialAuditId: deletionAudit.id, updatedAt: serverTimestamp(),
+    });
+    removeFinal.set(deletionAudit, audit('payment_deleted', 'removed-final', finalPayment.id, 0, {
+      collectionName, amount: 500000, cashMovementId: '', deletedCashMovementCount: 0,
+    }));
+    await assertSucceeds(removeFinal.commit());
+
+    const previousAmounts = { quantity: 1, unitPrice: 500000, total: 500000 };
+    const amounts = { quantity: 1, unitPrice: 400000, total: 400000 };
+    const correctionBatch = (db, updates = {}, auditUpdates = {}, targetId = 'removed-final') => {
+      const entryRef = doc(collection(db, `projects/${projectId}/activityLog`));
+      const batch = writeBatch(db);
+      batch.update(doc(db, itemPath(collectionName, targetId)), {
+        unitPrice: 400000, total: 400000, lastAmountCorrectionAuditId: entryRef.id,
+        updatedAt: serverTimestamp(), ...updates,
+      });
+      batch.set(entryRef, {
+        action: 'unpaid_expense_amount_corrected', collectionName, itemId: targetId,
+        previousAmounts, amounts, deletedBy: adminId, deletedByEmail: adminEmail,
+        deletedByName: 'Admin', deletedByRole: 'admin', createdAt: serverTimestamp(),
+        ...auditUpdates,
+      });
+      return { batch, entryRef };
+    };
+
+    await assertFails(updateDoc(expenseRef, { unitPrice: 400000, total: 400000 }));
+    await assertFails(correctionBatch(collaboratorDb, {}, {
+      deletedBy: collaboratorId, deletedByEmail: collaboratorEmail,
+    }).batch.commit());
+    await assertFails(correctionBatch(adminDb, {}, { previousAmounts: { ...previousAmounts, total: 1 } }).batch.commit());
+    await assertFails(correctionBatch(adminDb, {}, { itemId: 'other-row' }).batch.commit());
+    for (const unrelatedChange of [
+      { description: 'Otro gasto' }, { providerId: 'provider-2' }, { area: 'Arte' },
+      { createdBy: collaboratorId }, { paymentLocked: false }, { paymentAuthorIds: [] },
+    ]) {
+      await assertFails(correctionBatch(adminDb, unrelatedChange).batch.commit());
+    }
+    for (const invalidAmounts of [
+      { quantity: '1' }, { unitPrice: -1, total: -1 }, { total: 399999 },
+      { quantity: Infinity, total: Infinity }, { unitPrice: NaN, total: NaN },
+    ]) {
+      await assertFails(correctionBatch(adminDb, invalidAmounts, {
+        amounts: { ...amounts, ...invalidAmounts },
+      }).batch.commit());
+    }
+    const orphanAudit = correctionBatch(adminDb);
+    await assertFails(setDoc(orphanAudit.entryRef, {
+      action: 'unpaid_expense_amount_corrected', collectionName, itemId: 'removed-final',
+      previousAmounts, amounts, deletedBy: adminId, deletedByEmail: adminEmail,
+      deletedByName: 'Admin', deletedByRole: 'admin', createdAt: serverTimestamp(),
+    }));
+
+    const correctionAfterDeletion = correctionBatch(adminDb);
+    await assertSucceeds(correctionAfterDeletion.batch.commit());
+    const correctedUnpaid = (await getDoc(expenseRef)).data();
+    assert.equal(correctedUnpaid.total, 400000);
+    assert.equal(correctedUnpaid.paymentLocked, true);
+    assert.deepEqual(correctedUnpaid.paymentHistory, []);
+    assert.deepEqual(correctedUnpaid.paymentAuthorIds, [adminId]);
+    assert.equal(correctedUnpaid.lastFinancialAuditId, deletionAudit.id);
+    assert.deepEqual((await getDoc(correctionAfterDeletion.entryRef)).data().previousAmounts, previousAmounts);
+    await assertFails(updateDoc(correctionAfterDeletion.entryRef, { amounts: previousAmounts }));
+    await assertFails(deleteDoc(correctionAfterDeletion.entryRef));
+    await assertFails(updateDoc(expenseRef, {
+      unitPrice: 500000, total: 500000,
+      lastAmountCorrectionAuditId: correctionAfterDeletion.entryRef.id, updatedAt: serverTimestamp(),
+    }));
+    await assertFails(deleteDoc(expenseRef));
+
+    // A remaining payment cannot be bypassed using a fabricated correction audit.
+    await assertFails(correctionBatch(adminDb, {}, {}, collectionName === 'areaExpenses' ? 'paid-area' : 'paid-budget').batch.commit());
+  }
+
   const collaboratorPayment = payment('collab-payment', 100, {
     createdBy: collaboratorId, createdByEmail: collaboratorEmail, cashMovementId: 'cash-collab', method: 'caja_efectivo',
   });

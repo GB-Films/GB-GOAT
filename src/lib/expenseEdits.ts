@@ -28,6 +28,32 @@ export const hasRecordedPayment = (expense: Pick<ExpenseRecord, 'paymentLocked' 
 
 export const sameExpenseVersion = sameVersion;
 
+const EXPENSE_AMOUNT_FIELDS = ['quantity', 'unitPrice', 'total'];
+
+export const isUnpaidAmountCorrection = (
+  expense: Pick<ExpenseRecord, 'paymentLocked' | 'paymentHistory' | 'paid'>,
+  updates: Record<string, unknown>,
+  isProjectAdmin: boolean,
+) => (
+  isProjectAdmin && expense.paymentLocked === true && expense.paid !== true
+  && Array.isArray(expense.paymentHistory) && expense.paymentHistory.length === 0
+  && Object.keys(updates).length > 0
+  && Object.keys(updates).every((field) => EXPENSE_AMOUNT_FIELDS.includes(field))
+);
+
+export function buildUnpaidAmountCorrectionAudit(latest: ExpenseRecord, updates: Record<string, unknown>) {
+  const amounts = (expense: ExpenseRecord) => ({
+    quantity: expense.quantity ?? 0,
+    unitPrice: expense.unitPrice ?? 0,
+    total: expense.total ?? 0,
+  });
+  return {
+    action: 'unpaid_expense_amount_corrected',
+    previousAmounts: amounts(latest),
+    amounts: amounts({ ...latest, ...updates }),
+  };
+}
+
 const PAYMENT_TARGET_FIELDS = [
   'area', 'subcategory', 'providerId', 'providerName', 'description',
   'unit', 'quantity', 'unitPrice', 'total',
@@ -107,7 +133,8 @@ export function prepareExpenseEdit(
 
   const history = Array.isArray(latest.paymentHistory) ? latest.paymentHistory : [];
   const hasPayment = hasRecordedPayment(latest);
-  if (hasPayment && FINANCIAL_IDENTITY_FIELDS.some((field) => field in updates)) {
+  if (hasPayment && !isUnpaidAmountCorrection(latest, updates, options.isProjectAdmin)
+    && FINANCIAL_IDENTITY_FIELDS.some((field) => field in updates)) {
     const providerOnly = Object.keys(updates).every((field) => field === 'providerId' || field === 'providerName');
     const newProviderId = updates.providerId;
     const newProviderName = updates.providerName;
@@ -126,13 +153,15 @@ export function prepareExpenseEdit(
     if (!Number.isFinite(quantity) || !Number.isFinite(unitPrice) || quantity < 0 || unitPrice < 0) {
       throw new Error('INVALID_EXPENSE_AMOUNT');
     }
+    next.quantity = quantity;
+    next.unitPrice = unitPrice;
     next.total = quantity * unitPrice;
   }
 
   if ('total' in next) {
     const total = Number(next.total);
     const paidCents = history.reduce((sum, payment) => sum + toMoneyCents(payment.amount), 0);
-    if (!Number.isFinite(total) || toMoneyCents(total) < paidCents) {
+    if (!Number.isFinite(total) || total < 0 || toMoneyCents(total) < paidCents) {
       throw new Error('EXPENSE_BELOW_PAYMENTS');
     }
   }

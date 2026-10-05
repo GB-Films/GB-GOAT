@@ -70,7 +70,7 @@ import { getExpenseInvoices, getInvoiceDocumentKey, type ExpenseInvoiceDocument 
 import { buildPaymentCashBoxOptions, calculateCashBalances, calculateGeneralCashSummary, GENERAL_CASH_ACCOUNT } from '../lib/cashBoxes';
 import { buildLinkedProviderInviteExpiration } from '../lib/providerInvites';
 import { resolveCashMovementTarget } from '../lib/cashMovementTargets';
-import { assertCashPaymentLink, findCurrentPayment, hasRecordedPayment, prepareExpenseEdit, sameExpenseVersion, samePaymentTarget } from '../lib/expenseEdits';
+import { assertCashPaymentLink, buildUnpaidAmountCorrectionAudit, findCurrentPayment, hasRecordedPayment, isUnpaidAmountCorrection, prepareExpenseEdit, sameExpenseVersion, samePaymentTarget } from '../lib/expenseEdits';
 
 const tabs = [
   { id: 'resumen', label: 'Resumen', icon: Info },
@@ -1099,6 +1099,7 @@ export default function ProjectDetail() {
       const currentItem = budgetItems.find((item) => item.id === itemId);
       const itemRef = doc(db, 'projects', id, 'budgetItems', itemId);
       const projectRef = doc(db, 'projects', id);
+      const amountAuditRef = doc(collection(db, 'projects', id, 'activityLog'));
       const nextRevision = await runTransaction(db, async (transaction) => {
         const projectSnapshot = 'area' in updates ? await transaction.get(projectRef) : null;
         const latestSnap = await transaction.get(itemRef);
@@ -1107,6 +1108,16 @@ export default function ProjectDetail() {
           isProjectAdmin: true, expectedUpdatedAt: currentItem?.updatedAt,
         });
         const assignedUpdates = await cancelPendingProviderInviteIfAssigning(transaction, latestSnap.data(), nextUpdates);
+        if (isUnpaidAmountCorrection(latestSnap.data(), updates, isProjectAdmin)) {
+          transaction.set(amountAuditRef, {
+            ...buildUnpaidAmountCorrectionAudit(latestSnap.data(), nextUpdates),
+            collectionName: 'budgetItems', itemId,
+            deletedBy: user?.uid || '', deletedByEmail: currentUserEmail,
+            deletedByName: currentUserName, deletedByRole: currentProjectRole,
+            createdAt: serverTimestamp(),
+          });
+          assignedUpdates.lastAmountCorrectionAuditId = amountAuditRef.id;
+        }
         if ('area' in assignedUpdates && assignedUpdates.area !== latestSnap.data().area) {
           if (!projectSnapshot?.exists()
             || safeArray(projectSnapshot.data().activeAreas).includes(assignedUpdates.area)) {
@@ -1127,7 +1138,9 @@ export default function ProjectDetail() {
       if (saved.exists()) setBudgetItems(items => items.map(i => i.id === itemId ? { id: i.id, ...saved.data() } as BudgetItem : i));
     } catch (e) {
       console.error("Error updating budget item:", e);
-      alert('La partida cambió o su importe no permite conservar los pagos. Actualizá y revisá la fila antes de intentarlo otra vez.');
+      alert(e instanceof Error && e.message === 'PAID_EXPENSE_LOCKED'
+        ? 'Para corregir el importe, primero eliminá todos los pagos de la fila. Los demás datos del gasto conservan su bloqueo histórico.'
+        : 'No se pudo guardar el importe. La partida cambió o no se pudo validar la corrección. Actualizá y revisá la fila antes de intentarlo otra vez.');
     }
   };
 
@@ -1672,6 +1685,7 @@ export default function ProjectDetail() {
       const budgetWarning = getAreaExpenseBudgetWarning(nextArea, nextTotal, expenseId);
       const docRef = doc(db, 'projects', id, 'areaExpenses', expenseId);
       const auditRef = paidProviderCorrection ? doc(collection(db, 'projects', id, 'activityLog')) : null;
+      const amountAuditRef = doc(collection(db, 'projects', id, 'activityLog'));
       await runTransaction(db, async (transaction) => {
         const latestSnap = await transaction.get(docRef);
         if (!latestSnap.exists()) throw new Error('EXPENSE_MISSING');
@@ -1683,6 +1697,16 @@ export default function ProjectDetail() {
         const assignedUpdates = paidProviderCorrection
           ? nextUpdates
           : await cancelPendingProviderInviteIfAssigning(transaction, latest, nextUpdates);
+        if (isUnpaidAmountCorrection(latest, submittedUpdates, isProjectAdmin)) {
+          transaction.set(amountAuditRef, {
+            ...buildUnpaidAmountCorrectionAudit(latest, nextUpdates),
+            collectionName: 'areaExpenses', itemId: expenseId,
+            deletedBy: user?.uid || '', deletedByEmail: currentUserEmail,
+            deletedByName: currentUserName, deletedByRole: currentProjectRole,
+            createdAt: serverTimestamp(),
+          });
+          assignedUpdates.lastAmountCorrectionAuditId = amountAuditRef.id;
+        }
         if (auditRef) {
           if (getPendingProviderInviteLink(latest)) throw new Error('PENDING_PROVIDER_INVITE');
           transaction.set(auditRef, {
@@ -1716,7 +1740,9 @@ export default function ProjectDetail() {
       console.error("Error updating area expense:", e);
       alert(e instanceof Error && e.message === 'PENDING_PROVIDER_INVITE'
         ? 'Este gasto tiene una invitación de alta pendiente. Cancelala antes de corregir el proveedor.'
-        : 'No se pudo guardar la corrección: el gasto cambió o no se pudo validar el proveedor. Actualizá y revisá la fila antes de intentarlo otra vez.');
+        : e instanceof Error && e.message === 'PAID_EXPENSE_LOCKED'
+          ? 'Sólo un administrador puede corregir el importe después de eliminar todos los pagos de la fila. Los demás datos del gasto conservan su bloqueo histórico.'
+          : 'No se pudo guardar la corrección: el gasto cambió o no se pudo validar el importe o el proveedor. Actualizá y revisá la fila antes de intentarlo otra vez.');
     }
   };
 

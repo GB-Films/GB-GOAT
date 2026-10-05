@@ -6,7 +6,7 @@ The September 2026 incident showed that one paid area expense could be repurpose
 
 ## Invariants in this branch
 
-- Once an expense has a payment history, a payment lock, or a legacy `paid` flag, its area, subcategory, provider, description, unit, quantity, price, and total cannot change. This applies to project administrators too.
+- Once an expense has a payment history, a payment lock, or a legacy `paid` flag, its financial identity is locked. An administrator may correct quantity, unit price, and total after all payments have been deleted, provided `paymentHistory` is explicitly empty and `paid` is not true. Both area expenses and main budget items require an immutable before/after activity record in the same transaction. Provider corrections retain their separate audited flow; other identity changes stay blocked.
 - Paid expense rows cannot be deleted, replaced during budget copy, moved to a different area, or silently migrated from the main budget to area management.
 - Row deletion, category rename, subcategory rename/removal, and area movement reread affected rows in a transaction. A concurrent payment or changed row aborts the operation instead of applying part of it.
 - Payment correction and deletion reread the selected payment and linked cash movement in a transaction. The same transaction updates the expense, the cash movement, and a new activity record. A removed final payment keeps `paymentLocked: true`.

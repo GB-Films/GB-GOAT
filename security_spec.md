@@ -31,6 +31,7 @@ Un jefe de producción sólo puede delegar subcategorías que le hayan sido asig
 - Un colaborador sólo puede anexar un pago; no puede reescribir ni acortar `paymentHistory`.
 - Un gasto con pagos sólo puede eliminarlo un administrador del proyecto.
 - Los movimientos de caja asociados a pagos sólo pueden corregirse o eliminarse administrativamente.
+- Luego de eliminar el último pago, sólo un administrador puede corregir cantidad, precio e importe de la fila. Debe conservar el bloqueo histórico, los autores y las auditorías previas, y registrar los valores anteriores y nuevos en una actividad inmutable dentro de la misma transacción. Se aplica a Áreas y Presu Ppal; si aún hay pagos o la marca `paid` sigue activa, la corrección de importes se rechaza.
 - Un comprobante adicional de colaborador sólo puede agregarse al final y debe registrar su email.
 
 ## Invariantes de archivos

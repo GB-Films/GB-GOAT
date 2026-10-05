@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { assertCashPaymentLink, findCurrentPayment, prepareExpenseEdit, samePaymentTarget } from './expenseEdits';
+import { assertCashPaymentLink, buildUnpaidAmountCorrectionAudit, findCurrentPayment, hasRecordedPayment, isUnpaidAmountCorrection, prepareExpenseEdit, samePaymentTarget } from './expenseEdits';
 
 const paidGimbal = {
   description: 'Alquiler de Gimbal', quantity: 1, unitPrice: 87000, total: 87000,
@@ -17,6 +17,39 @@ test('a collaborator cannot turn a paid expense into a different row', () => {
 test('an admin cannot repurpose an expense after payment', () => {
   assert.throws(() => prepareExpenseEdit(paidGimbal, { unitPrice: 25000 }, {
     isProjectAdmin: true, expectedUpdatedAt: paidGimbal.updatedAt,
+  }), /PAID_EXPENSE_LOCKED/);
+});
+
+test('an admin can correct the amount after deleting the final payment, keeping the historical lock', () => {
+  const deletedPaymentExpense = { ...paidGimbal, paid: false, paymentHistory: [] };
+  const updates = { unitPrice: 25000, total: 25000 };
+  assert.equal(hasRecordedPayment(deletedPaymentExpense), true);
+  assert.equal(isUnpaidAmountCorrection(deletedPaymentExpense, updates, true), true);
+  const next = prepareExpenseEdit(deletedPaymentExpense, updates, { isProjectAdmin: true });
+  assert.deepEqual(next, { quantity: 1, ...updates });
+  assert.deepEqual(buildUnpaidAmountCorrectionAudit(deletedPaymentExpense, next), {
+    action: 'unpaid_expense_amount_corrected',
+    previousAmounts: { quantity: 1, unitPrice: 87000, total: 87000 },
+    amounts: { quantity: 1, unitPrice: 25000, total: 25000 },
+  });
+  assert.throws(() => prepareExpenseEdit(deletedPaymentExpense, updates, { isProjectAdmin: false }), /PAID_EXPENSE_LOCKED/);
+  assert.throws(() => prepareExpenseEdit(deletedPaymentExpense, { ...updates, description: 'Otro gasto' }, { isProjectAdmin: true }), /PAID_EXPENSE_LOCKED/);
+  assert.throws(() => prepareExpenseEdit(deletedPaymentExpense, { area: 'Arte' }, { isProjectAdmin: true }), /PAID_EXPENSE_LOCKED/);
+  assert.throws(() => prepareExpenseEdit(deletedPaymentExpense, { unitPrice: -1 }, { isProjectAdmin: true }), /INVALID_EXPENSE_AMOUNT/);
+  assert.throws(() => prepareExpenseEdit(deletedPaymentExpense, { total: -0.001 }, { isProjectAdmin: true }), /EXPENSE_BELOW_PAYMENTS/);
+  assert.throws(() => prepareExpenseEdit({ ...deletedPaymentExpense, paid: true }, updates, { isProjectAdmin: true }), /PAID_EXPENSE_LOCKED/);
+  assert.throws(() => prepareExpenseEdit({ ...deletedPaymentExpense, paymentHistory: undefined }, updates, { isProjectAdmin: true }), /PAID_EXPENSE_LOCKED/);
+});
+
+test('amount corrections recompute totals and reject stale edits or a concurrently added payment', () => {
+  const unpaid = { ...paidGimbal, quantity: 2, paid: false, paymentHistory: [] };
+  assert.equal(prepareExpenseEdit(unpaid, { unitPrice: 25000, total: 25000 }, { isProjectAdmin: true }).total, 50000);
+  assert.equal(prepareExpenseEdit(unpaid, { quantity: 3 }, { isProjectAdmin: true }).total, 261000);
+  assert.throws(() => prepareExpenseEdit(unpaid, { unitPrice: 25000 }, {
+    isProjectAdmin: true, expectedUpdatedAt: { seconds: 9, nanoseconds: 1 },
+  }), /EXPENSE_CHANGED/);
+  assert.throws(() => prepareExpenseEdit({ ...unpaid, paymentHistory: [{ amount: 100 }] }, { unitPrice: 25000 }, {
+    isProjectAdmin: true,
   }), /PAID_EXPENSE_LOCKED/);
 });
 
@@ -50,6 +83,17 @@ test('quantity and price use the latest stored counterpart', () => {
     unitPrice: 150, total: 150,
   }, { isProjectAdmin: false });
   assert.equal(next.total, 300);
+});
+
+test('numeric inputs and legacy string counterparts are stored as numbers', () => {
+  const next = prepareExpenseEdit({ quantity: 2, unitPrice: 100, total: 200 }, {
+    unitPrice: '150',
+  }, { isProjectAdmin: false });
+  assert.deepEqual(next, { quantity: 2, unitPrice: 150, total: 300 });
+  const legacy = prepareExpenseEdit({ quantity: 2, unitPrice: '100', total: 200 } as any, {
+    quantity: '3',
+  }, { isProjectAdmin: false });
+  assert.deepEqual(legacy, { quantity: 3, unitPrice: 100, total: 300 });
 });
 
 test('a payment rejects a row repurposed while its dialog was open', () => {

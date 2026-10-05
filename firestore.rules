@@ -428,8 +428,76 @@ service cloud.firestore {
       return !hasReceivedPayment()
         || !request.resource.data.diff(resource.data).affectedKeys().hasAny([
           'area', 'subcategory', 'providerId', 'providerName', 'description',
-          'unit', 'quantity', 'unitPrice', 'total', 'lastProviderCorrectionAuditId'
+          'unit', 'quantity', 'unitPrice', 'total', 'lastProviderCorrectionAuditId',
+          'lastAmountCorrectionAuditId'
         ]);
+    }
+
+    function isHistoricallyLockedWithoutPayments(data) {
+      return data.get('paymentLocked', false) == true
+        && data.get('paid', false) != true
+        && data.get('paymentHistory', null) is list
+        && data.paymentHistory.size() == 0;
+    }
+
+    function expenseAmounts(data) {
+      return {
+        'quantity': data.get('quantity', 0),
+        'unitPrice': data.get('unitPrice', 0),
+        'total': data.get('total', 0)
+      };
+    }
+
+    // Corrections after the final payment is removed keep the historical lock.
+    // The row and its immutable before/after audit must be written together.
+    function validUnpaidAmountCorrection(projectId, collectionName, itemId) {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      let auditId = request.resource.data.get('lastAmountCorrectionAuditId', '');
+      let auditPath = /databases/$(database)/documents/projects/$(projectId)/activityLog/$(auditId);
+      let audit = getAfter(auditPath).data;
+      let next = request.resource.data;
+      return isHistoricallyLockedWithoutPayments(resource.data)
+        && isHistoricallyLockedWithoutPayments(next)
+        && changed.hasAny(['quantity', 'unitPrice', 'total'])
+        && changed.hasAll(['lastAmountCorrectionAuditId'])
+        && changed.hasOnly(['quantity', 'unitPrice', 'total', 'lastAmountCorrectionAuditId', 'updatedAt'])
+        && next.quantity is number && next.quantity >= 0 && next.quantity < 1000000000000
+        && next.unitPrice is number && next.unitPrice >= 0 && next.unitPrice < 1000000000000000
+        && next.total is number && next.total >= 0 && next.total < 1000000000000000000
+        && next.total == next.quantity * next.unitPrice
+        && next.updatedAt == request.time
+        && auditId is string && auditId.size() > 0 && auditId.size() <= 128
+        && !exists(auditPath) && existsAfter(auditPath)
+        && audit.action == 'unpaid_expense_amount_corrected'
+        && audit.collectionName == collectionName && audit.itemId == itemId
+        && audit.previousAmounts == expenseAmounts(resource.data)
+        && audit.amounts == expenseAmounts(next)
+        && audit.deletedBy == request.auth.uid && audit.deletedByEmail == userEmail()
+        && audit.createdAt == request.time;
+    }
+
+    function validUnpaidAmountCorrectionAudit(projectId, entryId) {
+      let audit = request.resource.data;
+      let expensePath = /databases/$(database)/documents/projects/$(projectId)/$(audit.collectionName)/$(audit.itemId);
+      let priorExpense = get(expensePath).data;
+      let nextExpense = getAfter(expensePath).data;
+      return isProjectAdmin(projectId)
+        && audit.keys().hasOnly([
+          'action', 'collectionName', 'itemId', 'previousAmounts', 'amounts',
+          'deletedBy', 'deletedByEmail', 'deletedByName', 'deletedByRole', 'createdAt'
+        ])
+        && audit.collectionName in ['budgetItems', 'areaExpenses']
+        && audit.itemId is string && audit.itemId.size() > 0 && audit.itemId.size() <= 128
+        && audit.deletedByName is string && audit.deletedByName.size() <= 200
+        && audit.deletedByRole == 'admin'
+        && exists(expensePath) && existsAfter(expensePath)
+        && isHistoricallyLockedWithoutPayments(priorExpense)
+        && isHistoricallyLockedWithoutPayments(nextExpense)
+        && audit.previousAmounts == expenseAmounts(priorExpense)
+        && audit.amounts == expenseAmounts(nextExpense)
+        && audit.previousAmounts != audit.amounts
+        && nextExpense.lastAmountCorrectionAuditId == entryId
+        && priorExpense.get('lastAmountCorrectionAuditId', '') != entryId;
     }
 
     // A paid expense can only change its provider in an admin transaction that
@@ -1109,7 +1177,8 @@ service cloud.firestore {
           && request.resource.data.get('paid', false) == false;
         allow delete: if isProjectAdmin(projectId) && !hasReceivedPayment()
           && budgetMembershipAdvancesRevision(projectId);
-        allow update: if (isProjectAdmin(projectId) && preservesPaidExpenseIdentity()
+        allow update: if (isProjectAdmin(projectId)
+          && (preservesPaidExpenseIdentity() || validUnpaidAmountCorrection(projectId, 'budgetItems', itemId))
           && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['area'])
             || (!(request.resource.data.area in getAfter(/databases/$(database)/documents/projects/$(projectId)).data.get('activeAreas', []))
               && budgetMembershipAdvancesRevision(projectId)))
@@ -1130,7 +1199,9 @@ service cloud.firestore {
             && request.resource.data.paymentAuthorIds == []
           ;
         allow update: if (isProjectAdmin(projectId)
-          && (preservesPaidExpenseIdentity() || validPaidProviderCorrection(projectId, expenseId))
+          && (preservesPaidExpenseIdentity()
+            || validUnpaidAmountCorrection(projectId, 'areaExpenses', expenseId)
+            || validPaidProviderCorrection(projectId, expenseId))
           && preservesAdminFinancialHistory(projectId, 'areaExpenses', expenseId))
           || ((!isProjectAdmin(projectId) && (
             canWriteAreaExpense(projectId, resource.data.area, resource.data.subcategory)
@@ -1189,6 +1260,7 @@ service cloud.firestore {
             'payment_deleted',
             'payment_corrected',
             'paid_provider_corrected',
+            'unpaid_expense_amount_corrected',
             'reimbursement_recorded',
             'reimbursement_deleted',
             'cash_delivery_deleted'
@@ -1197,7 +1269,9 @@ service cloud.firestore {
           && request.resource.data.deletedByEmail == userEmail()
           && request.resource.data.createdAt == request.time
           && (request.resource.data.action != 'paid_provider_corrected'
-            || validPaidProviderCorrectionAudit(projectId, entryId));
+            || validPaidProviderCorrectionAudit(projectId, entryId))
+          && (request.resource.data.action != 'unpaid_expense_amount_corrected'
+            || validUnpaidAmountCorrectionAudit(projectId, entryId));
         allow update: if false;
         allow delete: if false;
       }
