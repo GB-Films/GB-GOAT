@@ -1,12 +1,36 @@
 const { setGlobalOptions } = require('firebase-functions/v2');
 const { HttpsError, onCall } = require('firebase-functions/v2/https');
 const { defineSecret } = require('firebase-functions/params');
+const { defineString } = require('firebase-functions/params');
+const { onDocumentWritten } = require('firebase-functions/v2/firestore');
+const { syncGoatProject } = require('./baniProjectSync');
 const admin = require('firebase-admin');
 
 setGlobalOptions({ region: 'us-central1', maxInstances: 5, memory: '256MiB' });
 admin.initializeApp();
 
 const db = admin.firestore();
+const baniProjectId = defineString('BANI_PROJECT_ID', { default: 'gran-berta-films' });
+const baniDatabaseId = defineString('BANI_DATABASE_ID', { default: 'ai-studio-1ef504c9-77ed-4378-b361-4b3659b5d837' });
+const baniOwnerUid = defineString('BANI_OWNER_UID');
+let baniDb;
+
+exports.syncProjectToBani = onDocumentWritten({
+  document: 'projects/{projectId}',
+  database: '(default)',
+  region: 'us-central1',
+  serviceAccount: 'bani-project-sync@gb-goat.iam.gserviceaccount.com',
+  retry: true,
+}, async event => {
+  if (!event.data?.after.exists) return;
+  if (!baniDb) {
+    const app = admin.initializeApp({ projectId: baniProjectId.value() }, 'bani-project-sync');
+    baniDb = require('firebase-admin/firestore').getFirestore(app, baniDatabaseId.value());
+  }
+  const result = await syncGoatProject({ sourceDb: db, targetDb: baniDb, ownerUid: baniOwnerUid.value(), projectId: event.params.projectId });
+  console.info('BANI project sync', result);
+});
+
 const deepseekApiKey = defineSecret('DEEPSEEK_API_KEY');
 
 const DEEPSEEK_BASE_URL = 'https://api.deepseek.com/v1';
