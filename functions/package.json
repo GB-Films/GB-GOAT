@@ -7,7 +7,7 @@
     "node": "22"
   },
   "scripts": {
-    "test": "node --test baniProjectSync.test.js",
+    "test": "node --test *.test.js",
     "logs": "firebase functions:log"
   },
   "dependencies": {

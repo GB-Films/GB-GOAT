@@ -37,6 +37,11 @@ jobs:
       - name: Run domain tests
         run: npm test
 
+      - name: Validate project integration functions
+        run: |
+          npm ci --prefix functions
+          npm test --prefix functions
+
       - name: Configure Pages
         uses: actions/configure-pages@v5
 

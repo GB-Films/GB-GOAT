@@ -1,15 +1,28 @@
 const { setGlobalOptions } = require('firebase-functions/v2');
-const { HttpsError, onCall } = require('firebase-functions/v2/https');
+const { HttpsError, onCall, onRequest } = require('firebase-functions/v2/https');
 const { defineSecret } = require('firebase-functions/params');
 const { defineString } = require('firebase-functions/params');
 const { onDocumentWritten } = require('firebase-functions/v2/firestore');
 const { syncGoatProject } = require('./baniProjectSync');
+const { createImportHandler } = require('./crmProjectImport');
 const admin = require('firebase-admin');
 
 setGlobalOptions({ region: 'us-central1', maxInstances: 5, memory: '256MiB' });
 admin.initializeApp();
 
 const db = admin.firestore();
+exports.importCrmProject = onRequest({
+  region: 'us-central1',
+  invoker: 'private',
+  serviceAccount: 'crm-project-import@gb-goat.iam.gserviceaccount.com',
+  maxInstances: 2,
+  minInstances: 0,
+  concurrency: 4,
+  timeoutSeconds: 30,
+  memory: '256MiB',
+  cpu: 1,
+}, createImportHandler({ db, timestamp: () => admin.firestore.FieldValue.serverTimestamp() }));
+
 const baniProjectId = defineString('BANI_PROJECT_ID', { default: 'gran-berta-films' });
 const baniDatabaseId = defineString('BANI_DATABASE_ID', { default: 'ai-studio-1ef504c9-77ed-4378-b361-4b3659b5d837' });
 const baniOwnerUid = defineString('BANI_OWNER_UID');

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { collection, query, getDocs, getDoc, setDoc, addDoc, serverTimestamp, where, or, doc, updateDoc, runTransaction } from 'firebase/firestore';
+import { collection, query, getDocs, getDoc, setDoc, addDoc, serverTimestamp, where, or, doc, updateDoc, runTransaction, onSnapshot } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { handleFirestoreError } from '../lib/firestoreUtils';
 import { useAuth } from '../context/AuthContext';
@@ -85,32 +85,38 @@ export default function Projects() {
   };
 
   useEffect(() => {
-    const fetchProjects = async () => {
-      if (!profile?.uid || !profile?.email) return;
-      try {
-        const projectsRef = collection(db, 'projects');
-        const q = profile.role === 'admin'
-          ? query(projectsRef)
-          : query(
-              projectsRef,
-              or(
-                where('createdBy', '==', profile.uid),
-                where('collaboratorEmails', 'array-contains', normalizeEmail(profile.email))
-              )
-            );
-        const querySnapshot = await getDocs(q);
-        setProjects(querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-      } catch (error: any) {
-        if (error.message?.includes('insufficient permissions')) {
-            handleFirestoreError(error, 'list', 'projects');
-        }
-        console.error("Error fetching projects:", error);
-      } finally {
-        setLoading(false);
+    if (!profile?.uid || !profile?.email) {
+      setProjects([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    const projectsRef = collection(db, 'projects');
+    const q = profile.role === 'admin'
+      ? query(projectsRef)
+      : query(
+          projectsRef,
+          or(
+            where('createdBy', '==', profile.uid),
+            where('collaboratorEmails', 'array-contains', normalizeEmail(profile.email))
+          )
+        );
+    const unsubscribe = onSnapshot(q, querySnapshot => {
+      setProjects(querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      setLoading(false);
+    }, error => {
+      setProjects([]);
+      setLoading(false);
+      if (error.message?.includes('insufficient permissions')) {
+        handleFirestoreError(error, 'list', 'projects');
       }
-    };
-    fetchProjects();
+      console.error("Error fetching projects:", error);
+    });
+    return unsubscribe;
+  }, [profile?.uid, profile?.email, profile?.role]);
 
+  useEffect(() => {
+    if (!profile?.uid) return;
     const fetchClients = async () => {
       try {
         const querySnapshot = await getDocs(collection(db, 'clients'));
@@ -123,7 +129,7 @@ export default function Projects() {
       }
     };
     fetchClients();
-  }, [profile]);
+  }, [profile?.uid]);
 
   const selectedSource = sourceProjects.find(project => project.projectCode === selectedCode);
   const sourceAlreadyInGoat = (source: ControlTotalProject) => projects.some(project =>
@@ -240,7 +246,6 @@ export default function Projects() {
           transaction.set(docRef, data);
         });
       }
-      setProjects([{ id: docRef.id, ...data }, ...projects]);
       setShowNewModal(false);
     } catch (error) {
       console.error("Error adding project:", error);
