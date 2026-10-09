@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CalendarDays, CheckCircle2, Clapperboard, Clock, MapPin } from 'lucide-react';
+import { AlertTriangle, CalendarDays, CheckCircle2, Clapperboard, Clock, MapPin, RefreshCw } from 'lucide-react';
 import { motion } from 'motion/react';
 import { collection, getDocs, query, orderBy, where, or, updateDoc, doc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { handleFirestoreError } from '../lib/firestoreUtils';
+import { loadDashboardData } from '../lib/dashboardLoad';
 import { Link, Navigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
 import { useAuth } from '../context/AuthContext';
@@ -49,6 +49,7 @@ interface ProjectFinance {
   shootingDate?: any;
   location?: string;
   updatedAt?: any;
+  financeStatus: 'pending' | 'ready' | 'error';
 }
 
 const statusColors: Record<string, string> = {
@@ -101,6 +102,7 @@ const getOperationalFlags = (project: ProjectFinance) => {
   else if (project.usagePercent >= 85 && project.status !== 'Aprobado') flags.push('Presupuesto en alerta');
   if (project.debt > 0.01) flags.push('Pagos pendientes');
   if (!project.clientName) flags.push('Sin cliente asignado');
+  if (project.financeStatus === 'error') flags.push('Finanzas sin verificar');
   return flags;
 };
 
@@ -165,14 +167,20 @@ const buildProjectFinance = (project: any, budgetItems: any[], areaExpenses: any
     shootingDate: project.shootingDate,
     location: project.location,
     updatedAt: project.updatedAt,
+    financeStatus: 'ready',
   };
 };
 
 export default function Dashboard() {
-  const { profile } = useAuth();
+  const { user, profile } = useAuth();
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 1024);
   const [projects, setProjects] = useState<ProjectFinance[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [reloadKey, setReloadKey] = useState(0);
+  const uid = user?.uid || profile?.uid;
+  const email = normalizeEmail(user?.email || profile?.email);
+  const role = profile?.role;
 
   useEffect(() => {
     const updateIsMobile = () => setIsMobile(window.innerWidth < 1024);
@@ -182,27 +190,40 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
-    if (isMobile || !profile?.uid || !profile?.email) return;
+    if (isMobile) return;
+    if (!uid || !email) {
+      setLoading(false);
+      setLoadError('No pudimos identificar tu cuenta. Volv\u00e9 a iniciar sesi\u00f3n.');
+      return;
+    }
+    let cancelled = false;
 
     const fetchDashboardData = async () => {
       setLoading(true);
+      setLoadError('');
       try {
-        const pq = profile.role === 'admin'
+        const pq = role === 'admin'
           ? query(collection(db, 'projects'), orderBy('createdAt', 'desc'))
           : query(
               collection(db, 'projects'),
               or(
-                where('createdBy', '==', profile.uid),
-                where('collaboratorEmails', 'array-contains', normalizeEmail(profile.email))
+                where('createdBy', '==', uid),
+                where('collaboratorEmails', 'array-contains', email)
               ),
               orderBy('createdAt', 'desc')
             );
 
-        const pSnap = await getDocs(pq);
-        const projectsData = pSnap.docs.map((projectDoc) => ({ id: projectDoc.id, ...projectDoc.data() as any }));
-
-        const projectsWithFinance = await Promise.all(
-          projectsData.map(async (project) => {
+        await loadDashboardData({
+          loadProjects: async () => {
+            const pSnap = await getDocs(pq);
+            return pSnap.docs.map((projectDoc) => ({ ...projectDoc.data() as any, id: projectDoc.id }));
+          },
+          onProjects: (projectsData) => {
+            if (cancelled) return;
+            setProjects(projectsData.map((project) => ({ ...buildProjectFinance(project, [], []), financeStatus: 'pending' })));
+            setLoading(false);
+          },
+          loadFinance: async (project) => {
             const [budgetSnap, expensesSnap] = await Promise.all([
               getDocs(collection(db, 'projects', project.id, 'budgetItems')),
               getDocs(collection(db, 'projects', project.id, 'areaExpenses')),
@@ -212,22 +233,33 @@ export default function Dashboard() {
             const areaExpenses = expensesSnap.docs.map((itemDoc) => ({ id: itemDoc.id, ...itemDoc.data() }));
 
             return buildProjectFinance(project, budgetItems, areaExpenses);
-          })
-        );
-
-        setProjects(projectsWithFinance);
+          },
+          onFinance: (project, finance) => {
+            if (cancelled) return;
+            setProjects((current) => current.map((item) => item.id === project.id ? { ...finance, status: item.status } : item));
+          },
+          onFinanceError: (project, error) => {
+            console.error('Error loading project finances:', project.id, error);
+            if (cancelled) return;
+            setProjects((current) => current.map((item) => item.id === project.id ? { ...item, financeStatus: 'error' } : item));
+          },
+        });
       } catch (error: any) {
         console.error('Error fetching dashboard data:', error);
-        if (error.message?.includes('insufficient permissions')) {
-          handleFirestoreError(error, 'list', 'projects');
-        }
+        if (!cancelled) setLoadError(error.code === 'permission-denied'
+          ? 'No pudimos acceder a los proyectos. Verific\u00e1 tu sesi\u00f3n y reintent\u00e1.'
+          : 'No pudimos completar la carga de proyectos. Revis\u00e1 la conexi\u00f3n y reintent\u00e1.');
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
 
     fetchDashboardData();
-  }, [profile, isMobile]);
+    return () => { cancelled = true; };
+  }, [uid, email, role, isMobile, reloadKey]);
+
+  const financePending = projects.some((project) => project.financeStatus === 'pending');
+  const financeFailed = projects.some((project) => project.financeStatus === 'error');
 
   const dashboardStats = useMemo(() => {
     const active = projects.filter((project) => project.status !== 'Aprobado').length;
@@ -275,7 +307,7 @@ export default function Dashboard() {
     }
 
     const newStatus = destination.droppableId;
-    const previousProjects = projects;
+    const previousStatus = projects.find((project) => project.id === draggableId)?.status;
     const updatedProjects = projects.map((project) =>
       project.id === draggableId ? { ...project, status: newStatus } : project
     );
@@ -289,7 +321,11 @@ export default function Dashboard() {
       });
     } catch (error) {
       console.error('Error updating project status:', error);
-      setProjects(previousProjects);
+      setProjects((current) => current.map((project) =>
+        project.id === draggableId && project.status === newStatus && previousStatus
+          ? { ...project, status: previousStatus }
+          : project
+      ));
     }
   };
 
@@ -309,6 +345,15 @@ export default function Dashboard() {
         </div>}
       />
 
+      {(loadError || financeFailed) && (
+        <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <span>{loadError || 'Los proyectos est\u00e1n visibles, pero no se pudieron verificar todas las finanzas.'}</span>
+          <button type="button" disabled={loading || financePending} onClick={() => setReloadKey((value) => value + 1)} className="inline-flex items-center gap-2 font-bold disabled:opacity-50">
+            <RefreshCw className="h-4 w-4" /> Reintentar
+          </button>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
         {[
           { label: 'Producciones visibles', value: projects.length.toString(), icon: Clapperboard, color: 'text-blue-600', bg: 'bg-blue-50' },
@@ -327,7 +372,7 @@ export default function Dashboard() {
             <div className="flex items-center justify-between gap-3">
               <div>
                 <div className="text-[9px] text-slate-400 font-bold uppercase mb-1 tracking-wider">{stat.label}</div>
-                <div className="text-xl font-black text-slate-900 leading-none">{loading ? '...' : stat.value}</div>
+                <div className="text-xl font-black text-slate-900 leading-none">{loading || (stat.label === 'Necesitan atencion' && financePending) ? '...' : loadError && projects.length === 0 ? '\u2014' : stat.value}</div>
               </div>
               <div className={cn('w-9 h-9 rounded-lg flex items-center justify-center', stat.bg)}>
                 <stat.icon className={cn('w-4 h-4', stat.color)} />
@@ -424,9 +469,11 @@ export default function Dashboard() {
                                         'inline-flex max-w-full items-center gap-1 rounded border px-2 py-1 text-[8px] font-black uppercase tracking-widest',
                                         flags.length > 0
                                           ? 'bg-rose-50 text-rose-700 border-rose-100'
+                                          : project.financeStatus === 'pending'
+                                          ? 'bg-slate-50 text-slate-500 border-slate-200'
                                           : 'bg-emerald-50 text-emerald-700 border-emerald-100'
                                       )}>
-                                        {flags.length > 0 ? flags[0] : 'En orden'}
+                                        {flags.length > 0 ? flags[0] : project.financeStatus === 'pending' ? 'Verificando finanzas' : 'En orden'}
                                       </div>
                                     </div>
                                   </Link>
@@ -437,7 +484,7 @@ export default function Dashboard() {
                           })
                         ) : (
                           <div className="flex-1 border border-dashed border-slate-100 rounded-lg flex items-center justify-center p-4">
-                            <p className="text-[8px] font-bold uppercase tracking-widest text-slate-200">Vacio</p>
+                            <p className="text-[8px] font-bold uppercase tracking-widest text-slate-400">{loading ? 'Cargando' : loadError && projects.length === 0 ? 'Carga no disponible' : 'Vacio'}</p>
                           </div>
                         )}
                         {provided.placeholder}
@@ -472,7 +519,7 @@ export default function Dashboard() {
                   </div>
                 </Link>
               ))}
-              {!loading && upcomingShoots.length === 0 && (
+              {!loading && !loadError && upcomingShoots.length === 0 && (
                 <div className="px-4 py-10 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
                   No hay rodajes proximos cargados
                 </div>
@@ -509,7 +556,7 @@ export default function Dashboard() {
                   </div>
                 </Link>
               ))}
-              {!loading && attentionProjects.length === 0 && (
+              {!loading && !loadError && !financePending && attentionProjects.length === 0 && (
                 <div className="px-4 py-10 text-center text-[10px] font-bold uppercase tracking-widest text-emerald-600 flex items-center justify-center gap-2">
                   <CheckCircle2 className="w-4 h-4" />
                   Producciones sin alertas operativas
