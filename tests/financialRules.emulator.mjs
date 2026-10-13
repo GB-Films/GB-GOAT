@@ -1,12 +1,17 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
+import { initializeTestEnvironment, assertFails, assertSucceeds as expectedSuccess } from '@firebase/rules-unit-testing';
 import { collection, deleteDoc, doc, getDoc, runTransaction, serverTimestamp, setDoc, Timestamp, updateDoc, writeBatch } from 'firebase/firestore';
 
 const testEnv = await initializeTestEnvironment({
   projectId: 'demo-gb-goat-financial-rules',
   firestore: { rules: readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8') },
 });
+async function assertSucceeds(operation) {
+  const location = new Error('Expected successful operation').stack;
+  try { return await expectedSuccess(operation); }
+  catch (error) { console.error(location); throw error; }
+}
 
 const adminId = 'admin-test';
 const adminEmail = 'admin@example.test';
@@ -578,6 +583,51 @@ try {
     }
   }
 
+  for (const collectionName of ['budgetItems', 'areaExpenses']) {
+    const itemId = `cleared-${collectionName}`;
+    const oldAuditId = `old-delete-${collectionName}`;
+    const cleared = baseExpense({ paymentLocked: true, paymentHistory: [], lastFinancialAuditId: oldAuditId });
+    await testEnv.withSecurityRulesDisabled(async context => {
+      const db = context.firestore();
+      await setDoc(doc(db, itemPath(collectionName, itemId)), cleared);
+      await setDoc(doc(db, `projects/${projectId}/activityLog/${oldAuditId}`), {
+        action:'payment_deleted', collectionName, itemId, cashMovementId:'',
+      });
+    });
+    await assertFails(deleteDoc(doc(adminDb, itemPath(collectionName, itemId))));
+    const revision = (await getDoc(doc(adminDb, `projects/${projectId}`))).data().budgetRevision;
+    const deleteCleared = database => {
+      const batch = writeBatch(database);
+      const auditId = `archive-${collectionName}`;
+      batch.delete(doc(database, itemPath(collectionName, itemId)));
+      batch.update(doc(database, `projects/${projectId}`), {lastExpenseDeletionAuditId:auditId, budgetRevision:revision+1});
+      batch.set(doc(database, `projects/${projectId}/activityLog/${auditId}`), {
+        ...audit('expense_rows_deleted', itemId, '', 0), collectionName, reason:'row_deleted',
+        previousDocuments:{[itemId]:cleared},
+      });
+      return batch;
+    };
+    await assertFails(deleteCleared(collaboratorDb).commit());
+    await assertSucceeds(deleteCleared(adminDb).commit());
+    assert.equal((await getDoc(doc(adminDb, `projects/${projectId}/activityLog/archive-${collectionName}`))).data().previousDocuments[itemId].total,100);
+  }
+
+  for (const [source, ownerEmail, allowed] of [['personal','other@example.test',false], ['personal',adminEmail,true], ['general','other@example.test',true]]) {
+    const itemId=`cash-owner-${source}-${allowed}`;
+    const cashId=`cash-${itemId}`;
+    const entry=payment(itemId,50,{method:'caja_efectivo',cashAccount:source,cashMovementId:cashId,paidByEmail:ownerEmail});
+    await testEnv.withSecurityRulesDisabled(async context => {
+      const db=context.firestore();
+      await setDoc(doc(db,itemPath('areaExpenses',itemId)),baseExpense({paymentHistory:[entry],paymentLocked:true}));
+      await setDoc(doc(db,movementPath(cashId)),{type:'pago',collectionName:'areaExpenses',itemId,paymentId:itemId,amount:50,date,area:'Producción',subcategory:'',cashAccount:source,fromUserEmail:ownerEmail});
+    });
+    const auditId=`delete-${itemId}`;
+    const batch=writeBatch(adminDb);
+    batch.update(doc(adminDb,itemPath('areaExpenses',itemId)),{paymentHistory:[],paid:false,paymentLocked:true,lastFinancialAuditId:auditId});
+    batch.delete(doc(adminDb,movementPath(cashId)));
+    batch.set(doc(adminDb,`projects/${projectId}/activityLog/${auditId}`),audit('payment_deleted',itemId,itemId,0,{amount:50,cashMovementId:cashId}));
+    await (allowed ? assertSucceeds(batch.commit()) : assertFails(batch.commit()));
+  }
   console.log('Firestore emulator financial rules: expected allow and deny cases passed');
 } finally {
   await testEnv.cleanup();

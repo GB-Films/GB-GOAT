@@ -5,6 +5,7 @@ import { collection, doc, getDocs, orderBy, query, runTransaction, serverTimesta
 import { deleteObject, ref } from 'firebase/storage';
 import { db, storage } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
+import { canChangePaymentCash, assertCanChangePaymentCash } from '../lib/paymentCashAccess';
 import { cn } from '../lib/utils';
 import { buildPaymentCalendarDays, formatDateKey, formatPeriodLabel, formatScheduleDate, getOverdueLines, getTodayLines, getUnscheduledLines, sumDebt, type PaymentScheduleLine } from '../lib/paymentSchedule';
 import { formatIdentifier, inferLegacyIdentifiers, normalizeProviderText, providerDisplayName, providerMatchesSearch } from '../lib/providerConstants';
@@ -472,7 +473,7 @@ export default function Reports() {
     });
   };
 
-  const canEditPaymentRecord = () => profile?.role === 'admin';
+  const canEditPaymentRecord = (payment: Payment) => profile?.role === 'admin' && canChangePaymentCash(payment, currentUserEmail);
 
   const deletePaymentFromSelectedLine = async (paymentIndex: number) => {
     if (!selectedPaymentLine?.projectId || !selectedPaymentLine.item?.id) return;
@@ -498,6 +499,7 @@ export default function Reports() {
           const cashSnapshot = await transaction.get(cashRef);
           if (!cashSnapshot.exists()) throw new Error('CASH_LINK_MISMATCH');
           assertCashPaymentLink(cashSnapshot.data(), { collectionName: selectedPaymentLine.collectionName, itemId: selectedPaymentLine.item.id, payment });
+          assertCanChangePaymentCash(payment, currentUserEmail, cashSnapshot.data());
         }
         const updatedHistory = history.filter((_, historyIndex) => historyIndex !== index);
         const isFullyPaid = getPaymentTotal({ paymentHistory: updatedHistory }) >= (Number(latest.total) || 0) - 0.01;
