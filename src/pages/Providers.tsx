@@ -20,6 +20,8 @@ import { handleFirestoreError } from '../lib/firestoreUtils';
 import { useAuth } from '../context/AuthContext';
 import { getPaymentTotal } from '../lib/projectFinance';
 import { PageHeader } from '../components/PageHeader';
+import { ProviderDocumentLinks } from '../components/ProviderDocumentLinks';
+import { getProviderExpenseDocuments, uniqueProviderDocuments } from '../lib/providerDocuments';
 import { validateSpreadsheetImport } from '../lib/files';
 import { Plus, Search, Truck, X, Upload, Download, Pencil, Trash2, Link2, Copy, CheckCircle2, FileText, Paperclip, CalendarDays } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -747,7 +749,8 @@ export default function Providers() {
               total: amount, paid: reimbursed, debt: Math.max(0, amount - reimbursed),
               paymentDate: item.paymentDate || '',
               payments: (payment.reimbursements || []).map((entry: any) => ({ id: entry.id, amount: entry.amount, detail: entry.detail || '', date: entry.date, loadedBy: entry.createdByEmail || '' })),
-              invoiceUrl: '', invoiceName: '', receipts: [],
+              invoiceDocuments: [], otherReceiptDocuments: [],
+              paymentReceiptDocuments: getProviderExpenseDocuments({paymentHistory:payment.reimbursements}).paymentReceiptDocuments,
             });
           });
           if (item.providerId !== provider.id) return;
@@ -774,12 +777,7 @@ export default function Providers() {
             debt: Math.max(0, total - paid),
             paymentDate: item.paymentDate || '',
             payments,
-            invoiceUrl: item.invoice?.url || '',
-            invoiceName: item.invoice?.originalFileName || item.invoice?.fileName || '',
-            receipts: [
-              ...(Array.isArray(item.paymentHistory) ? item.paymentHistory.filter((payment: any) => payment.receipt?.url).map((payment: any) => payment.receipt) : []),
-              ...(Array.isArray(item.otherReceipts) ? item.otherReceipts.filter((receipt: any) => receipt?.url) : []),
-            ],
+            ...getProviderExpenseDocuments(item),
           });
         };
 
@@ -798,22 +796,26 @@ export default function Providers() {
             debt: 0,
             invoices: 0,
             receipts: 0,
+            invoiceDocuments: [], otherReceiptDocuments: [], paymentReceiptDocuments: [],
           });
         }
         const row = projectMap.get(line.projectId);
         row.total += line.total;
         row.paid += line.paid;
         row.debt += line.debt;
-        if (line.invoiceUrl) row.invoices += 1;
-        row.receipts += line.receipts.length;
+        row.invoiceDocuments = uniqueProviderDocuments([...row.invoiceDocuments, ...line.invoiceDocuments]);
+        row.otherReceiptDocuments = uniqueProviderDocuments([...row.otherReceiptDocuments, ...line.otherReceiptDocuments]);
+        row.paymentReceiptDocuments = uniqueProviderDocuments([...row.paymentReceiptDocuments, ...line.paymentReceiptDocuments]);
+        row.invoices = row.invoiceDocuments.length;
+        row.receipts = row.otherReceiptDocuments.length + row.paymentReceiptDocuments.length;
       });
 
-      const totals = lines.reduce((acc, line) => ({
+      const totals = Array.from(projectMap.values()).reduce((acc, line) => ({
         total: acc.total + line.total,
         paid: acc.paid + line.paid,
         debt: acc.debt + line.debt,
-        invoices: acc.invoices + (line.invoiceUrl ? 1 : 0),
-        receipts: acc.receipts + line.receipts.length,
+        invoices: acc.invoices + line.invoices,
+        receipts: acc.receipts + line.receipts,
       }), { total: 0, paid: 0, debt: 0, invoices: 0, receipts: 0 });
 
       setProviderDetail({
@@ -1207,7 +1209,7 @@ export default function Providers() {
   );
 }
 
-function ProviderDetailModal({ detail, loading, onClose }: { detail: any; loading: boolean; onClose: () => void }) {
+export function ProviderDetailModal({ detail, loading, onClose }: { detail: any; loading: boolean; onClose: () => void }) {
   const [copiedProviderField, setCopiedProviderField] = useState('');
   const [showFullData, setShowFullData] = useState(false);
   const provider = detail.provider;
@@ -1252,7 +1254,7 @@ function ProviderDetailModal({ detail, loading, onClose }: { detail: any; loadin
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} className="absolute inset-0 bg-white/80 backdrop-blur-md" />
-      <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.98 }} className="bg-white rounded-xl w-full max-w-5xl max-h-[90vh] overflow-auto relative z-10 border border-slate-200 shadow-2xl shadow-slate-200/50">
+      <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.98 }} className="bg-white rounded-xl w-full max-w-7xl max-h-[90vh] overflow-auto relative z-10 border border-slate-200 shadow-2xl shadow-slate-200/50">
         <div className="sticky top-0 z-10 bg-white border-b border-slate-100 p-6 flex items-start justify-between gap-4">
           <div>
             <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Detalle de proveedor</div>
@@ -1349,18 +1351,27 @@ function ProviderDetailModal({ detail, loading, onClose }: { detail: any; loadin
                 {detail.projects.length === 0 ? (
                   <div className="p-8 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">Sin movimientos visibles</div>
                 ) : (
-                  <div className="divide-y divide-slate-100">
+                  <div className="overflow-x-auto">
+                  <div className="min-w-[1050px] divide-y divide-slate-100">
+                    <div className="grid grid-cols-[minmax(180px,1.5fr)_100px_100px_100px_140px_140px_150px] gap-3 bg-slate-50 px-4 py-2 text-[9px] font-bold uppercase tracking-widest text-slate-400">
+                      <span>Proyecto</span><span className="text-right">Trabajado</span><span className="text-right">Pagado</span><span className="text-right">Deuda</span>
+                      <span className="text-center">Facturas</span><span className="text-center">Otros comprobantes</span><span className="text-center">Comprobantes de pago</span>
+                    </div>
                     {detail.projects.map((project: any) => (
-                      <a key={project.id} href={`#/proyectos/${project.id}`} className="grid grid-cols-5 gap-3 px-4 py-3 hover:bg-slate-50 transition-colors">
-                        <div className="col-span-2 min-w-0">
+                      <div key={project.id} className="grid grid-cols-[minmax(180px,1.5fr)_100px_100px_100px_140px_140px_150px] items-start gap-3 px-4 py-3 hover:bg-slate-50 transition-colors">
+                        <a href={`#/proyectos/${project.id}`} className="min-w-0 hover:underline">
                           <div className="text-xs font-black text-slate-900 truncate">{project.name}</div>
                           <div className="text-[9px] font-bold uppercase tracking-widest text-slate-300">{project.invoices} facturas / {project.receipts} comprobantes</div>
-                        </div>
+                        </a>
                         <div className="text-right text-xs font-bold text-slate-500">${project.total.toLocaleString()}</div>
                         <div className="text-right text-xs font-bold text-emerald-600">${project.paid.toLocaleString()}</div>
                         <div className={`text-right text-xs font-black ${project.debt > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>${project.debt.toLocaleString()}</div>
-                      </a>
+                        <ProviderDocumentLinks documents={project.invoiceDocuments} kind="invoice" />
+                        <ProviderDocumentLinks documents={project.otherReceiptDocuments} kind="other" />
+                        <ProviderDocumentLinks documents={project.paymentReceiptDocuments} kind="payment" />
+                      </div>
                     ))}
+                  </div>
                   </div>
                 )}
               </section>
@@ -1368,9 +1379,14 @@ function ProviderDetailModal({ detail, loading, onClose }: { detail: any; loadin
               {detail.lines.length > 0 && (
                 <section className="rounded-xl border border-slate-200 overflow-hidden">
                   <div className="bg-slate-50 px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-400">Movimientos</div>
-                  <div className="divide-y divide-slate-100">
+                  <div className="overflow-x-auto">
+                  <div className="min-w-[1050px] divide-y divide-slate-100">
+                    <div className="grid grid-cols-[minmax(480px,1fr)_140px_140px_150px] gap-3 bg-slate-50 px-4 py-2 text-[9px] font-bold uppercase tracking-widest text-slate-400">
+                      <span>Detalle del gasto y pagos</span><span className="text-center">Facturas</span><span className="text-center">Otros comprobantes</span><span className="text-center">Comprobantes de pago</span>
+                    </div>
                     {detail.lines.map((line: any) => (
-                      <div key={line.id} className="px-4 py-3">
+                      <div key={line.id} className="grid grid-cols-[minmax(480px,1fr)_140px_140px_150px] items-start gap-3 px-4 py-3">
+                        <div>
                         <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
                           <div className="min-w-0">
                             <div className="text-xs font-bold text-slate-900">{line.projectName} / {line.area}</div>
@@ -1382,18 +1398,6 @@ function ProviderDetailModal({ detail, loading, onClose }: { detail: any; loadin
                             <span className="text-emerald-600">${line.paid.toLocaleString()}</span>
                             <span className={line.debt > 0 ? 'text-rose-600 font-black' : 'text-emerald-600 font-black'}>${line.debt.toLocaleString()}</span>
                           </div>
-                        </div>
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          {line.invoiceUrl && (
-                            <a href={line.invoiceUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded bg-emerald-50 px-2 py-1 text-[9px] font-black uppercase tracking-widest text-emerald-700 hover:bg-emerald-600 hover:text-white">
-                              <FileText className="w-3 h-3" /> Factura
-                            </a>
-                          )}
-                          {line.receipts.map((receipt: any, index: number) => (
-                            <a key={receipt.id || receipt.path || index} href={receipt.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded bg-blue-50 px-2 py-1 text-[9px] font-black uppercase tracking-widest text-blue-700 hover:bg-blue-600 hover:text-white">
-                              <Paperclip className="w-3 h-3" /> Comprobante
-                            </a>
-                          ))}
                         </div>
                         {line.payments.length > 0 && (
                           <div className="mt-2 space-y-1">
@@ -1408,8 +1412,13 @@ function ProviderDetailModal({ detail, loading, onClose }: { detail: any; loadin
                             ))}
                           </div>
                         )}
+                        </div>
+                        <ProviderDocumentLinks documents={line.invoiceDocuments} kind="invoice" />
+                        <ProviderDocumentLinks documents={line.otherReceiptDocuments} kind="other" />
+                        <ProviderDocumentLinks documents={line.paymentReceiptDocuments} kind="payment" />
                       </div>
                     ))}
+                  </div>
                   </div>
                 </section>
               )}
