@@ -25,6 +25,7 @@ type ExpenseReceiptsCellProps = {
   onUploadReceipt: (file?: File | null) => void;
   onRemoveReceipt: (receipt: any) => void;
   canRemoveReceipt: (receipt: any) => boolean;
+  onReceiptDragEnter?: () => void;
 };
 
 export function ExpenseInvoiceCell({
@@ -185,11 +186,58 @@ export function ExpenseReceiptsCell({
   onUploadReceipt,
   onRemoveReceipt,
   canRemoveReceipt,
+  onReceiptDragEnter,
 }: ExpenseReceiptsCellProps) {
   const receipts = Array.isArray(item.otherReceipts) ? item.otherReceipts : [];
+  const [isDragOver, setIsDragOver] = useState(false);
+  const canDrop = canManage && !uploadingReceipt;
+  const isFileDrag = (event: React.DragEvent<HTMLDivElement>) => Array.from(event.dataTransfer.types).includes('Files');
+
+  useEffect(() => { setIsDragOver(false); }, [item.id, canDrop]);
 
   return (
-    <div className="flex flex-wrap items-center justify-center gap-1">
+    <div
+      className={cn('relative flex min-h-8 w-full flex-wrap items-center justify-center gap-1 rounded transition-colors',
+        isDragOver && canDrop && 'bg-blue-50 ring-2 ring-inset ring-blue-400')}
+      onDragEnter={(event) => {
+        if (!isFileDrag(event)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        onReceiptDragEnter?.();
+        setIsDragOver(canDrop);
+      }}
+      onDragOver={(event) => {
+        if (!isFileDrag(event)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        event.dataTransfer.dropEffect = canDrop ? 'copy' : 'none';
+        onReceiptDragEnter?.();
+        setIsDragOver(canDrop);
+      }}
+      onDragLeave={(event) => {
+        event.stopPropagation();
+        if (!event.currentTarget.contains(event.relatedTarget as Node)) setIsDragOver(false);
+      }}
+      onDrop={(event) => {
+        if (!isFileDrag(event)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setIsDragOver(false);
+        onReceiptDragEnter?.();
+        if (!canDrop) return;
+        if (event.dataTransfer.files.length > 1) {
+          alert('Soltá un solo comprobante por vez.');
+          return;
+        }
+        const file = event.dataTransfer.files.item(0);
+        if (file) onUploadReceipt(file);
+      }}
+    >
+      {isDragOver && canDrop && (
+        <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center rounded border border-blue-400 bg-blue-50/95 px-1 text-center text-[9px] font-black text-blue-700">
+          Soltar comprobante
+        </div>
+      )}
       {receipts.map((receipt: any, receiptIndex: number) => (
         <div key={receipt.id || receipt.path || receipt.url || receiptIndex} className="flex items-center">
           <a

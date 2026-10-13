@@ -1155,7 +1155,14 @@ export default function ProjectDetail() {
       setBudgetItems(items => items.filter(i => i.id !== itemId));
       showExpenseConfirmation('Partida eliminada.');
     } catch (e) {
-      console.error("Error deleting budget item:", e);
+      if (!(e instanceof Error && ['PAID_EXPENSE_LOCKED', 'EXPENSE_HAS_CASH_MOVEMENT'].includes(e.message))) {
+        console.error("Error deleting budget item:", e);
+      }
+      alert(e instanceof Error && e.message === 'PAID_EXPENSE_LOCKED'
+        ? 'No se puede eliminar esta partida porque tiene pagos o un historial de pagos anteriores, aunque se hayan eliminado. Revisá Gestión de pagos antes de corregir el gasto.'
+        : e instanceof Error && e.message === 'EXPENSE_HAS_CASH_MOVEMENT'
+          ? 'No se puede eliminar esta partida porque todavía tiene movimientos de caja asociados. Revisá Gestión de pagos y Cajas.'
+          : 'No se pudo eliminar la partida. Actualizá la página y revisá sus pagos y permisos antes de intentarlo otra vez.');
     }
   };
 
@@ -3435,6 +3442,7 @@ export default function ProjectDetail() {
       onUploadReceipt={(file) => uploadOtherReceiptForExpense(item, file, collectionName)}
       onRemoveReceipt={(receipt) => removeOtherReceiptFromExpense(item, receipt, collectionName)}
       canRemoveReceipt={canDeleteOtherReceipt}
+      onReceiptDragEnter={() => setDragOverExpenseId(null)}
     />
   );
   const renderMobileExpenseCard = ({
