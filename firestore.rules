@@ -347,6 +347,41 @@ service cloud.firestore {
         );
     }
 
+    function validPaymentCashCorrection(projectId, collectionName, itemId, oldPayment, nextPayment, audit) {
+      let oldId = oldPayment.get('cashMovementId', '');
+      let nextId = nextPayment.get('cashMovementId', '');
+      let oldPath = /databases/$(database)/documents/projects/$(projectId)/cashMovements/$(oldId);
+      let nextPath = /databases/$(database)/documents/projects/$(projectId)/cashMovements/$(nextId);
+      let oldMovement = oldId != '' ? get(oldPath).data : {};
+      let nextMovement = nextId != '' ? getAfter(nextPath).data : {};
+      return audit.get('oldCashMovementId', '') == oldId
+        && audit.get('newCashMovementId', '') == nextId
+        && (oldId == '' || (exists(oldPath)
+          && oldMovement.type == 'pago'
+          && oldMovement.itemId == itemId
+          && oldMovement.collectionName == collectionName
+          && oldMovement.paymentId == oldPayment.get('id', '')
+          && oldMovement.amount == oldPayment.amount))
+        && (
+          (nextId == '' && nextPayment.get('method', '') == 'otro'
+            && !nextPayment.keys().hasAny(['cashAccount', 'cashBoxLabel', 'paidByEmail', 'paidByName'])
+            && (oldId == '' || !existsAfter(oldPath)))
+          || (nextId != '' && (oldId == '' || nextId == oldId)
+            && nextPayment.get('method', '') == 'caja_efectivo'
+            && existsAfter(nextPath)
+            && nextMovement.type == 'pago'
+            && nextMovement.collectionName == collectionName
+            && nextMovement.itemId == itemId
+            && nextMovement.paymentId == nextPayment.get('id', '')
+            && nextMovement.amount == nextPayment.amount
+            && nextMovement.cashAccount == nextPayment.cashAccount
+            && nextMovement.fromUserEmail == nextPayment.paidByEmail
+            && nextPayment.cashAccount in ['personal', 'general']
+            && (nextPayment.paidByEmail == userEmail()
+              || (oldId != '' && nextPayment.paidByEmail == oldMovement.fromUserEmail)))
+        );
+    }
+
     function validFinancialAudit(projectId, collectionName, itemId, action) {
       let auditId = request.resource.data.get('lastFinancialAuditId', '');
       let auditPath = /databases/$(database)/documents/projects/$(projectId)/activityLog/$(auditId);
@@ -354,40 +389,51 @@ service cloud.firestore {
       let newHistory = request.resource.data.paymentHistory;
       let auditIndex = getAfter(auditPath).data.paymentIndex;
       let oldPayment = oldHistory[auditIndex];
+      let audit = getAfter(auditPath).data;
+      let nextPayment = action == 'payment_corrected' ? newHistory[auditIndex] : {};
+      let cashChanged = action == 'payment_corrected' && newHistory[auditIndex].diff(oldPayment).affectedKeys().hasAny([
+        'method', 'cashMovementId', 'cashAccount', 'cashBoxLabel', 'paidByEmail', 'paidByName'
+      ]);
       return request.resource.data.keys().hasAny(['lastFinancialAuditId'])
         && auditId is string
         && auditId != ''
         && !exists(auditPath)
         && existsAfter(auditPath)
-        && getAfter(auditPath).data.action == action
-        && getAfter(auditPath).data.collectionName == collectionName
-        && getAfter(auditPath).data.itemId == itemId
-        && getAfter(auditPath).data.deletedBy == request.auth.uid
-        && getAfter(auditPath).data.deletedByEmail == userEmail()
-        && getAfter(auditPath).data.createdAt == request.time
+        && audit.action == action
+        && audit.collectionName == collectionName
+        && audit.itemId == itemId
+        && audit.deletedBy == request.auth.uid
+        && audit.deletedByEmail == userEmail()
+        && audit.createdAt == request.time
         && auditIndex is int
         && auditIndex >= 0
         && auditIndex < storedPaymentCount()
-        && getAfter(auditPath).data.paymentId == oldPayment.get('id', '')
+        && audit.paymentId == oldPayment.get('id', '')
         && (
           (action == 'payment_deleted'
-            && getAfter(auditPath).data.amount == oldPayment.amount
+            && audit.amount == oldPayment.amount
             && oldPayment.get('reimbursements', []) == []
             && oldHistory.removeAll([oldPayment]) == newHistory
             && oldHistory.removeAll([oldPayment]).size() == storedPaymentCount() - 1)
           || (action == 'payment_corrected'
-            && getAfter(auditPath).data.oldAmount == oldPayment.amount
-            && getAfter(auditPath).data.amount == newHistory[auditIndex].amount
-            && newHistory[auditIndex].get('id', '') == oldPayment.get('id', '')
-            && newHistory[auditIndex].get('reimbursements', []) == oldPayment.get('reimbursements', [])
-            && newHistory[auditIndex].get('reimbursedAmount', 0) == oldPayment.get('reimbursedAmount', 0)
-            && newHistory[auditIndex].get('thirdPartyPayerId', '') == oldPayment.get('thirdPartyPayerId', '')
-            && newHistory[auditIndex].get('thirdPartyPayerName', '') == oldPayment.get('thirdPartyPayerName', '')
-            && newHistory[auditIndex].get('method', '') == oldPayment.get('method', '')
-            && newHistory[auditIndex].amount >= oldPayment.get('reimbursedAmount', 0)
-            && oldHistory.removeAll([oldPayment]) == newHistory.removeAll([newHistory[auditIndex]])
+            && audit.oldAmount == oldPayment.amount
+            && audit.amount == nextPayment.amount
+            && nextPayment.get('id', '') == oldPayment.get('id', '')
+            && nextPayment.get('reimbursements', []) == oldPayment.get('reimbursements', [])
+            && nextPayment.get('reimbursedAmount', 0) == oldPayment.get('reimbursedAmount', 0)
+            && nextPayment.get('thirdPartyPayerId', '') == oldPayment.get('thirdPartyPayerId', '')
+            && nextPayment.get('thirdPartyPayerName', '') == oldPayment.get('thirdPartyPayerName', '')
+            && (
+              (cashChanged
+                && oldPayment.get('method', '') != 'tercero'
+                && validPaymentCashCorrection(projectId, collectionName, itemId, oldPayment,
+                  nextPayment, audit))
+              || !cashChanged
+            )
+            && nextPayment.amount >= oldPayment.get('reimbursedAmount', 0)
+            && oldHistory.removeAll([oldPayment]) == newHistory.removeAll([nextPayment])
             && oldHistory.removeAll([oldPayment]).size() == storedPaymentCount() - 1
-            && newHistory.removeAll([newHistory[auditIndex]]).size() == storedPaymentCount() - 1)
+            && newHistory.removeAll([nextPayment]).size() == storedPaymentCount() - 1)
         );
     }
 
@@ -658,6 +704,42 @@ service cloud.firestore {
         && payment.amount == request.resource.data.amount;
     }
 
+    function cashPaymentIsCorrection(projectId, movementId) {
+      let path = paymentExpensePath(projectId, request.resource.data.collectionName, request.resource.data.itemId);
+      let expense = getAfter(path).data;
+      let auditPath = /databases/$(database)/documents/projects/$(projectId)/activityLog/$(expense.lastFinancialAuditId);
+      let audit = getAfter(auditPath).data;
+      let payment = expense.paymentHistory[audit.paymentIndex];
+      return isProjectAdmin(projectId) && !exists(auditPath) && existsAfter(auditPath)
+        && audit.action == 'payment_corrected'
+        && audit.collectionName == request.resource.data.collectionName
+        && audit.itemId == request.resource.data.itemId
+        && audit.newCashMovementId == movementId
+        && audit.deletedBy == request.auth.uid && audit.createdAt == request.time
+        && payment.get('id', '') == request.resource.data.paymentId
+        && payment.cashMovementId == movementId
+        && payment.method == 'caja_efectivo'
+        && payment.cashAccount == request.resource.data.cashAccount
+        && payment.paidByEmail == request.resource.data.fromUserEmail
+        && payment.amount == request.resource.data.amount;
+    }
+
+    function cashPaymentIsUnlinked(projectId, movementId) {
+      let path = paymentExpensePath(projectId, resource.data.collectionName, resource.data.itemId);
+      let expense = getAfter(path).data;
+      let auditPath = /databases/$(database)/documents/projects/$(projectId)/activityLog/$(expense.lastFinancialAuditId);
+      let audit = getAfter(auditPath).data;
+      let payment = expense.paymentHistory[audit.paymentIndex];
+      return !exists(auditPath) && existsAfter(auditPath)
+        && audit.action == 'payment_corrected'
+        && audit.itemId == resource.data.itemId && audit.collectionName == resource.data.collectionName
+        && audit.oldCashMovementId == movementId && audit.newCashMovementId == ''
+        && audit.deletedBy == request.auth.uid && audit.createdAt == request.time
+        && audit.paymentId == resource.data.paymentId
+        && payment.get('id', '') == resource.data.paymentId
+        && payment.get('cashMovementId', '') == '' && payment.method == 'otro';
+    }
+
     function reimbursementCashIsRecorded(projectId, movementId) {
       let expensePath = paymentExpensePath(projectId, request.resource.data.collectionName, request.resource.data.itemId);
       let expense = getAfter(expensePath).data;
@@ -725,7 +807,10 @@ service cloud.firestore {
           || (action == 'payment_corrected'
             && getAfter(auditPath).data.oldAmount == resource.data.amount
             && getAfter(auditPath).data.amount == request.resource.data.amount
-            && expense.paymentHistory[getAfter(auditPath).data.paymentIndex].cashMovementId == movementId)
+            && expense.paymentHistory[getAfter(auditPath).data.paymentIndex].cashMovementId == movementId
+            && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['cashAccount', 'fromUserEmail', 'fromUserName'])
+              || (expense.paymentHistory[getAfter(auditPath).data.paymentIndex].cashAccount == request.resource.data.cashAccount
+                && expense.paymentHistory[getAfter(auditPath).data.paymentIndex].paidByEmail == request.resource.data.fromUserEmail)))
         );
     }
 
@@ -788,7 +873,7 @@ service cloud.firestore {
             && request.resource.data.fromUserEmail == userEmail()
             && request.resource.data.collectionName in ['budgetItems', 'areaExpenses']
             && canWriteAreaExpense(projectId, request.resource.data.area, request.resource.data.subcategory)
-            && cashPaymentIsAppended(projectId, movementId)
+            && (cashPaymentIsAppended(projectId, movementId) || cashPaymentIsCorrection(projectId, movementId))
             && (
               !request.resource.data.keys().hasAny(['cashAccount'])
               || request.resource.data.cashAccount == 'personal'
@@ -811,7 +896,8 @@ service cloud.firestore {
     function canDeleteCashMovement(projectId, movementId) {
       return isProjectAdmin(projectId)
         && ((resource.data.type != 'pago' && resource.data.type != 'reintegro' && resource.data.type != 'devolucion')
-          || (resource.data.type == 'pago' && cashPaymentHasAudit(projectId, movementId, 'payment_deleted'))
+          || (resource.data.type == 'pago' && (cashPaymentHasAudit(projectId, movementId, 'payment_deleted')
+            || cashPaymentIsUnlinked(projectId, movementId)))
           || (resource.data.type == 'reintegro' && reimbursementCashHasDeletionAudit(projectId, movementId)));
     }
 
@@ -883,14 +969,15 @@ service cloud.firestore {
             resource.data.type == 'pago'
             && request.resource.data.type == resource.data.type
             && isProjectAdmin(projectId)
-            && request.resource.data.fromUserEmail == resource.data.fromUserEmail
+            && (request.resource.data.fromUserEmail == resource.data.fromUserEmail
+              || request.resource.data.fromUserEmail == userEmail())
             && request.resource.data.collectionName == resource.data.collectionName
             && request.resource.data.itemId == resource.data.itemId
             && request.resource.data.paymentId == resource.data.paymentId
             && request.resource.data.area == resource.data.area
             && canWriteAreaExpense(projectId, resource.data.area, resource.data.subcategory)
             && cashPaymentHasAudit(projectId, movementId, 'payment_corrected')
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['amount', 'date', 'notes', 'updatedAt'])
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['amount', 'date', 'notes', 'updatedAt', 'cashAccount', 'fromUserEmail', 'fromUserName'])
           )
         );
     }
