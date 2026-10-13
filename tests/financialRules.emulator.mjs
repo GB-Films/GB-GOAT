@@ -526,6 +526,58 @@ try {
   shadowCreation.update(doc(adminDb, `projects/${projectId}`), { budgetRevision: 6 });
   await assertFails(shadowCreation.commit());
 
+  // Corregir el origen de fondos conserva el pago y requiere su movimiento en la misma operación.
+  for (const collectionName of ['areaExpenses', 'budgetItems']) {
+    const itemId = `cash-source-${collectionName}`;
+    const original = payment(`source-${collectionName}`, 30, { method: 'otro' });
+    const movementId = `source-movement-${collectionName}`;
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), itemPath(collectionName, itemId)), baseExpense({
+        paymentHistory: [original], paymentLocked: true, paymentAuthorIds: [adminId],
+      }));
+    });
+    let previous = original;
+    let correctionNumber = 0;
+    for (const account of ['personal', 'general', 'none', 'personal']) {
+      console.log(`Cash source correction: ${collectionName} ${previous.method} -> ${account}`);
+      const next = { ...previous };
+      if (account === 'none') {
+        for (const key of ['cashMovementId', 'cashAccount', 'cashBoxLabel', 'paidByEmail', 'paidByName']) delete next[key];
+        next.method = 'otro';
+      } else Object.assign(next, { method: 'caja_efectivo', cashMovementId: movementId,
+        cashAccount: account, cashBoxLabel: account, paidByEmail: adminEmail, paidByName: 'Admin' });
+      const auditId = `source-audit-${collectionName}-${++correctionNumber}`;
+      const entry = { ...audit('payment_corrected', itemId, original.id, 0, {
+        oldAmount: 30, amount: 30, cashMovementId: previous.cashMovementId || '',
+        oldCashMovementId: previous.cashMovementId || '', newCashMovementId: next.cashMovementId || '',
+      }), collectionName };
+      const buildCorrection = (database, includeMovement) => {
+        const batch = writeBatch(database);
+        batch.update(doc(database, itemPath(collectionName, itemId)), {
+          paymentHistory: [next], lastFinancialAuditId: auditId, updatedAt: serverTimestamp(),
+        });
+        batch.set(doc(database, `projects/${projectId}/activityLog/${auditId}`), entry);
+        if (includeMovement) {
+          if (account === 'none') batch.delete(doc(database, movementPath(movementId)));
+          else {
+            const movement = { type: 'pago', collectionName, itemId, paymentId: original.id,
+              area: 'Producción', subcategory: '', amount: 30, date, notes: original.detail,
+              cashAccount: account, fromUserEmail: adminEmail, fromUserName: 'Admin', updatedAt: serverTimestamp() };
+            if (previous.cashMovementId) batch.update(doc(database, movementPath(movementId)), movement);
+            else batch.set(doc(database, movementPath(movementId)), movement);
+          }
+        }
+        return batch;
+      };
+      await assertFails(buildCorrection(adminDb, false).commit());
+      await assertFails(buildCorrection(collaboratorDb, true).commit());
+      await assertSucceeds(buildCorrection(adminDb, true).commit());
+      assert.equal((await getDoc(doc(adminDb, itemPath(collectionName, itemId)))).data().paymentHistory[0].amount, 30);
+      assert.equal((await getDoc(doc(adminDb, movementPath(movementId)))).exists(), account !== 'none');
+      previous = next;
+    }
+  }
+
   console.log('Firestore emulator financial rules: expected allow and deny cases passed');
 } finally {
   await testEnv.cleanup();

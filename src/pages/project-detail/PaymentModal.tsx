@@ -212,6 +212,10 @@ export function PaymentModal({
     const nextAmount = Number(formData.get('editAmount'));
     const nextDate = formData.get('editPaymentDate') as string;
     const nextDetail = String(formData.get('editDetail') || '');
+    const cashChoice = String(formData.get('editCashBoxId') || 'keep');
+    const nextCashBox = cashBoxOptions.find((option) => option.id === cashChoice);
+    if (cashChoice !== 'keep' && cashChoice !== 'none' && !nextCashBox) return;
+    if (isThirdPartyPayment(currentPayment) && cashChoice !== 'keep') return;
 
     if (!nextAmount || nextAmount <= 0) {
       alert('Ingresá un monto válido.');
@@ -268,6 +272,7 @@ export function PaymentModal({
       };
       const itemRef = doc(db, 'projects', projectId, collectionName, item.id);
       const auditRef = doc(collection(db, 'projects', projectId, 'activityLog'));
+      const newMovementRef = doc(collection(db, 'projects', projectId, 'cashMovements'));
 
       const result = await runTransaction(db, async (transaction) => {
         const latestItemSnap = await transaction.get(itemRef);
@@ -279,11 +284,30 @@ export function PaymentModal({
         const { payment: latestPayment, index: latestPaymentIndex } = findCurrentPayment(latestHistory, currentPayment, paymentIndex);
         const movementRef = latestPayment.cashMovementId
           ? doc(db, 'projects', projectId, 'cashMovements', latestPayment.cashMovementId) : null;
+        let previousMovement: any = null;
         if (movementRef) {
           const movementSnapshot = await transaction.get(movementRef);
           if (!movementSnapshot.exists()) throw new Error('CASH_LINK_MISMATCH');
           assertCashPaymentLink(movementSnapshot.data(), { collectionName, itemId: item.id, payment: latestPayment });
+          previousMovement = movementSnapshot.data();
         }
+        const effectiveBox = cashChoice === 'keep' && previousMovement ? {
+          account: previousMovement.cashAccount || 'personal',
+          ownerEmail: previousMovement.fromUserEmail,
+          ownerName: previousMovement.fromUserName || '',
+          label: latestPayment.cashBoxLabel || 'Caja del pago',
+          unlimited: previousMovement.cashAccount === 'general',
+          balance: cashBoxOptions.find((box) => box.account === 'personal'
+            && box.ownerEmail === previousMovement.fromUserEmail)?.balance,
+        } : nextCashBox;
+        if (effectiveBox && !effectiveBox.unlimited && effectiveBox.balance !== undefined) {
+          const restoredAmount = previousMovement?.cashAccount !== 'general'
+            && previousMovement?.fromUserEmail === effectiveBox.ownerEmail ? latestPayment.amount : 0;
+          if (toMoneyCents(nextAmount) > toMoneyCents(effectiveBox.balance + restoredAmount)) {
+            throw new Error('CASH_BALANCE_EXCEEDED');
+          }
+        }
+        const nextMovementRef = effectiveBox ? movementRef || newMovementRef : null;
 
         const itemTotalCents = toMoneyCents(latestItem.total);
         const otherPaymentsTotalCents = latestHistory.reduce((acc, payment, index) => (
@@ -296,7 +320,7 @@ export function PaymentModal({
         }
 
         const isFullyPaid = nextTotalPaidCents >= itemTotalCents;
-        const updatedPayment = {
+        const updatedPayment: Payment = {
           ...latestPayment,
           amount: paymentChanges.amount,
           detail: paymentChanges.detail,
@@ -304,6 +328,19 @@ export function PaymentModal({
           receipt: paymentChanges.receipt,
           type: isFullyPaid ? 'total' as const : 'partial' as const,
         };
+        if (cashChoice !== 'keep') {
+          delete updatedPayment.cashAccount;
+          delete updatedPayment.cashBoxLabel;
+          delete updatedPayment.cashMovementId;
+          delete updatedPayment.paidByEmail;
+          delete updatedPayment.paidByName;
+          updatedPayment.method = effectiveBox ? 'caja_efectivo' : 'otro';
+          if (effectiveBox && nextMovementRef) Object.assign(updatedPayment, {
+            cashAccount: effectiveBox.account, cashBoxLabel: effectiveBox.label,
+            cashMovementId: nextMovementRef.id,
+            paidByEmail: effectiveBox.ownerEmail, paidByName: effectiveBox.ownerName,
+          });
+        }
         const updatedHistory = latestHistory.map((payment, index) => index === latestPaymentIndex ? updatedPayment : payment);
         transaction.update(itemRef, {
           paymentHistory: updatedHistory,
@@ -313,13 +350,25 @@ export function PaymentModal({
           updatedAt: serverTimestamp(),
         });
 
-        if (movementRef) {
-          transaction.update(movementRef, {
+        const movementChanges = {
             amount: nextAmount,
             date: paymentChanges.date,
             notes: nextDetail,
             updatedAt: serverTimestamp(),
+            ...(effectiveBox && cashChoice !== 'keep' ? { cashAccount: effectiveBox.account,
+              fromUserEmail: effectiveBox.ownerEmail, fromUserName: effectiveBox.ownerName } : {}),
+        };
+        if (nextMovementRef && effectiveBox) {
+          if (movementRef) transaction.update(movementRef, movementChanges);
+          else transaction.set(nextMovementRef, {
+            ...movementChanges, type: 'pago', collectionName, itemId: item.id,
+            paymentId: latestPayment.id || '', area: latestItem.area || '',
+            subcategory: latestItem.subcategory || '', description: latestItem.description || '',
+            createdBy: currentUserId, createdByEmail: currentUserEmail,
+            createdByName: currentUserName, createdAt: serverTimestamp(),
           });
+        } else if (movementRef && cashChoice === 'none') {
+          transaction.delete(movementRef);
         }
         transaction.set(auditRef, {
           action: 'payment_corrected',
@@ -328,6 +377,12 @@ export function PaymentModal({
           paymentId: latestPayment.id || '',
           paymentIndex: latestPaymentIndex,
           cashMovementId: latestPayment.cashMovementId || '',
+          oldCashMovementId: latestPayment.cashMovementId || '',
+          newCashMovementId: updatedPayment.cashMovementId || '',
+          oldCashAccount: latestPayment.cashAccount || '',
+          newCashAccount: updatedPayment.cashAccount || '',
+          oldPaidByEmail: latestPayment.paidByEmail || '',
+          newPaidByEmail: updatedPayment.paidByEmail || '',
           oldAmount: Number(latestPayment.amount) || 0,
           amount: nextAmount,
           deletedBy: currentUserId,
@@ -337,20 +392,17 @@ export function PaymentModal({
           createdAt: serverTimestamp(),
         });
 
-        return { updatedHistory, isFullyPaid };
+        return { updatedHistory, isFullyPaid, nextMovementRef, movementChanges };
       });
 
       if (editReceipt && currentPayment.receipt?.path && currentPayment.receipt.path !== nextReceipt?.path) {
         deleteObject(ref(storage, currentPayment.receipt.path)).catch(() => {});
       }
 
-      if (currentPayment.cashMovementId) {
-        onCashMovementUpdated?.(currentPayment.cashMovementId, {
-          amount: nextAmount,
-          date: paymentChanges.date,
-          notes: nextDetail,
-          updatedAt: new Date(),
-        });
+      if (result.nextMovementRef && currentPayment.cashMovementId) {
+        onCashMovementUpdated?.(result.nextMovementRef.id, { ...result.movementChanges, updatedAt: new Date() });
+      } else if (currentPayment.cashMovementId && cashChoice === 'none') {
+        onCashMovementDeleted?.(currentPayment.cashMovementId);
       }
 
       onPaymentStateChange(item.id, collectionName, result.updatedHistory, result.isFullyPaid);
@@ -360,6 +412,10 @@ export function PaymentModal({
       console.error('Error editing payment:', error);
       if (editReceipt && nextReceipt?.path && nextReceipt.path !== currentPayment.receipt?.path) {
         deleteObject(ref(storage, nextReceipt.path)).catch(() => {});
+      }
+      if (error?.message === 'CASH_BALANCE_EXCEEDED') {
+        alert('El monto supera el saldo disponible en la caja seleccionada.');
+        return;
       }
       if (error?.message === 'PAYMENT_EXCEEDS_TOTAL') {
         alert('El pago no puede superar el valor total del gasto. Otro pago pudo haberse registrado mientras editabas.');
@@ -972,6 +1028,19 @@ export function PaymentModal({
                           placeholder="Detalle"
                           className="w-full px-3 py-2 bg-white border border-slate-100 rounded text-xs focus:outline-none focus:border-black"
                         />
+                        {!isExternal && (
+                          <label className="block text-xs font-bold text-amber-900">
+                            Caja del pago
+                            <select name="editCashBoxId" defaultValue="keep" className="mt-1 w-full rounded border border-amber-200 bg-white px-3 py-2 text-xs">
+                              {cashBoxOptions.map((option) => (
+                                <option key={option.id} value={option.id}>{option.label}{option.unlimited ? '' : ` · saldo $${option.balance.toLocaleString('es-AR')}`}</option>
+                              ))}
+                              <option value="keep">Mantener {wasPaidWithCashBox ? payment.cashBoxLabel || 'la caja actual' : 'sin caja'}</option>
+                              <option value="none">Sin caja · pagado por otro medio</option>
+                            </select>
+                            <span className="mt-1 block text-[11px] font-normal text-slate-500">Cambiar o quitar la caja conserva el pago y corrige el movimiento de efectivo.</span>
+                          </label>
+                        )}
                         <label className="flex items-center justify-between gap-2 px-3 py-2 bg-white border border-dashed border-slate-200 rounded text-[10px] font-bold uppercase tracking-widest text-slate-400 cursor-pointer hover:text-slate-900 hover:border-slate-900">
                           <span>{editReceipt ? editReceipt.name : payment.receipt?.url ? 'Reemplazar comprobante' : 'Agregar comprobante'}</span>
                           <Paperclip className="w-3.5 h-3.5" />

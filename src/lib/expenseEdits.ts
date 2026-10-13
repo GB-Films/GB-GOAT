@@ -75,6 +75,9 @@ type PaymentRecord = {
   amount: number;
   detail?: string;
   cashMovementId?: string;
+  cashAccount?: string;
+  paidByEmail?: string;
+  method?: string;
   createdByEmail?: string;
   date?: unknown;
   receipt?: { path?: string } | null;
@@ -92,6 +95,9 @@ const dateKey = (value: unknown) => {
 const samePaymentRecord = (opened: PaymentRecord, latest: PaymentRecord) => (
   opened.id === latest.id
   && opened.cashMovementId === latest.cashMovementId
+  && opened.cashAccount === latest.cashAccount
+  && opened.paidByEmail === latest.paidByEmail
+  && opened.method === latest.method
   && toMoneyCents(opened.amount) === toMoneyCents(latest.amount)
   && opened.createdByEmail === latest.createdByEmail
   && opened.detail === latest.detail
@@ -116,7 +122,7 @@ export function assertCashPaymentLink(
   expected: { collectionName: string; itemId: string; payment: PaymentRecord },
 ) {
   if (movement.type !== 'pago' || movement.collectionName !== expected.collectionName
-    || movement.itemId !== expected.itemId || movement.paymentId !== expected.payment.id
+    || movement.itemId !== expected.itemId || (movement.paymentId || '') !== (expected.payment.id || '')
     || toMoneyCents(movement.amount || 0) !== toMoneyCents(expected.payment.amount)) {
     throw new Error('CASH_LINK_MISMATCH');
   }
