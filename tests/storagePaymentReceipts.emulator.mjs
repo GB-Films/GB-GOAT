@@ -57,6 +57,9 @@ try {
     await setDoc(doc(db, `projects/${projectId}/areaExpenses/${expenseId}`), {
       area: 'Producción', subcategory: '', providerName: 'Meira', total: 173241,
     });
+    await setDoc(doc(db, `projects/${projectId}/budgetItems/${expenseId}`), {
+      area: 'Producción', providerName: 'Proveedor de prueba', total: 100,
+    });
   });
 
   await assertSucceeds(upload(admin, metadata('global_admin')));
@@ -67,6 +70,28 @@ try {
   await assertFails(upload(editor, metadata('area_editor', { itemId: 'different-expense' })));
   await assertFails(upload(editor, metadata('project_admin')));
   assert.equal(nextFile, 7);
+  // Reproduce «Otros comprobantes» de Presu Ppal: el cliente anterior enviaba
+  // expenseId, omitiendo los campos obligatorios itemId/paymentId y la ruta de autorización.
+  const uploadRowReceipt = (context, collectionName, fields) => context.storage()
+    .ref(`projects/${projectId}/${collectionName}/${expenseId}/comprobantes/retencion-${++nextFile}.jpeg`)
+    .put(new Uint8Array([255, 216, 255, 217]), { contentType: 'image/jpeg', customMetadata: fields });
+  const oldFields = { projectId, expenseId, collectionName: 'budgetItems', area: 'Producción',
+    originalFileName: 'retencion-prueba.jpeg', uploadedBy: 'admin@example.test', uploadedByRole: 'admin' };
+  await assertFails(uploadRowReceipt(admin, 'budgetItems', oldFields));
+  for (const collectionName of ['budgetItems', 'areaExpenses']) {
+    const rowMetadata = { ...oldFields, collectionName, itemId: expenseId, paymentId: '' };
+    await assertSucceeds(uploadRowReceipt(admin, collectionName, { ...rowMetadata, uploadAccessScope: 'global_admin' }));
+    await assertSucceeds(uploadRowReceipt(owner, collectionName, { ...rowMetadata, uploadAccessScope: 'project_owner' }));
+    await assertSucceeds(uploadRowReceipt(projectAdmin, collectionName, { ...rowMetadata, uploadAccessScope: 'project_admin' }));
+    await assertFails(uploadRowReceipt(outsider, collectionName, { ...rowMetadata, uploadAccessScope: 'global_admin' }));
+    await assertFails(uploadRowReceipt(admin, collectionName, { ...rowMetadata, uploadAccessScope: 'global_admin', itemId: 'wrong-row' }));
+  }
+  await assertSucceeds(uploadRowReceipt(editor, 'areaExpenses', {
+    ...oldFields, collectionName: 'areaExpenses', itemId: expenseId, paymentId: '', uploadAccessScope: 'area_editor',
+  }));
+  await assertFails(uploadRowReceipt(editor, 'budgetItems', {
+    ...oldFields, itemId: expenseId, paymentId: '', uploadAccessScope: 'area_editor',
+  }));
   console.log('Storage payment receipt permissions passed');
 } finally {
   await testEnv.cleanup();

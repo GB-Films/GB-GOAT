@@ -2508,7 +2508,12 @@ export default function ProjectDetail() {
         customMetadata: {
           projectId: id,
           expenseId: expense.id,
+          itemId: expense.id,
+          // Es un comprobante de la fila (por ejemplo una retención), no de un pago individual.
+          paymentId: '',
           collectionName,
+          uploadAccessScope: isGlobalAdmin ? 'global_admin'
+            : isOwner ? 'project_owner' : isProjectAdmin ? 'project_admin' : 'area_editor',
           area: expense.area || '',
           originalFileName: file.name,
           uploadedBy: user?.email || user?.uid || 'unknown',
