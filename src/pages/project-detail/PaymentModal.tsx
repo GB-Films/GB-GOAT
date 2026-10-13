@@ -12,6 +12,7 @@ import type { PaymentCashBoxOption } from '../../lib/cashBoxes';
 import { assertCashPaymentLink, findCurrentPayment, samePaymentTarget } from '../../lib/expenseEdits';
 import { buildPaymentAuditAppend } from '../../lib/paymentAudit';
 import { parsePaymentAmount } from '../../lib/paymentAmounts';
+import { assertCanChangePaymentCash } from '../../lib/paymentCashAccess';
 import { providerDisplayName } from '../../lib/providerConstants';
 import { assertReimbursementAmount, assertReimbursementCashLink, getReimbursementBalanceCents, getReimbursedCents, isThirdPartyPayment } from '../../lib/reimbursements';
 import type { Payment, PaymentCollection } from './types';
@@ -290,6 +291,7 @@ export function PaymentModal({
           if (!movementSnapshot.exists()) throw new Error('CASH_LINK_MISMATCH');
           assertCashPaymentLink(movementSnapshot.data(), { collectionName, itemId: item.id, payment: latestPayment });
           previousMovement = movementSnapshot.data();
+          assertCanChangePaymentCash(latestPayment, currentUserEmail, previousMovement);
         }
         const effectiveBox = cashChoice === 'keep' && previousMovement ? {
           account: previousMovement.cashAccount || 'personal',
@@ -534,6 +536,7 @@ export function PaymentModal({
         const cashSnapshot = await transaction.get(cashRef);
         if (!cashSnapshot.exists()) throw new Error('REIMBURSEMENT_CASH_MISMATCH');
         assertReimbursementCashLink(cashSnapshot.data(), { collectionName, itemId: item.id, payment: currentPayment, reimbursement });
+        assertCanChangePaymentCash(reimbursement, currentUserEmail, cashSnapshot.data());
         const nextReimbursedAmount = (getReimbursedCents(currentPayment) - toMoneyCents(reimbursement.amount)) / 100;
         const updatedHistory = history.map((payment, currentIndex) => currentIndex === index
           ? { ...currentPayment, reimbursements: reimbursements.filter((entry) => entry.id !== reimbursementId), reimbursedAmount: nextReimbursedAmount }

@@ -26,6 +26,10 @@ export const hasRecordedPayment = (expense: Pick<ExpenseRecord, 'paymentLocked' 
     || (Array.isArray(expense.paymentHistory) && expense.paymentHistory.length > 0)
 );
 
+export const hasActiveExpensePayments = (expense: Pick<ExpenseRecord, 'paymentHistory' | 'paid'>) => (
+  expense.paid === true || !Array.isArray(expense.paymentHistory) || expense.paymentHistory.length > 0
+);
+
 export const sameExpenseVersion = sameVersion;
 
 const EXPENSE_AMOUNT_FIELDS = ['quantity', 'unitPrice', 'total'];

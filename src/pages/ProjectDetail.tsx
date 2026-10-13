@@ -70,7 +70,8 @@ import { getExpenseInvoices, getInvoiceDocumentKey, type ExpenseInvoiceDocument 
 import { buildPaymentCashBoxOptions, calculateCashBalances, calculateGeneralCashSummary, GENERAL_CASH_ACCOUNT } from '../lib/cashBoxes';
 import { buildLinkedProviderInviteExpiration } from '../lib/providerInvites';
 import { resolveCashMovementTarget } from '../lib/cashMovementTargets';
-import { assertCashPaymentLink, buildUnpaidAmountCorrectionAudit, findCurrentPayment, hasRecordedPayment, isUnpaidAmountCorrection, prepareExpenseEdit, sameExpenseVersion, samePaymentTarget } from '../lib/expenseEdits';
+import { canChangePaymentCash, assertCanChangePaymentCash } from '../lib/paymentCashAccess';
+import { assertCashPaymentLink, buildUnpaidAmountCorrectionAudit, findCurrentPayment, hasRecordedPayment, hasActiveExpensePayments, isUnpaidAmountCorrection, prepareExpenseEdit, sameExpenseVersion, samePaymentTarget } from '../lib/expenseEdits';
 
 const tabs = [
   { id: 'resumen', label: 'Resumen', icon: Info },
@@ -731,6 +732,7 @@ export default function ProjectDetail() {
   const [collapsedAreaSubcategories, setCollapsedAreaSubcategories] = useState<Record<string, boolean>>({});
   const [areaExpenseSort, setAreaExpenseSort] = useState<AreaExpenseSortKey>('manual');
   const [areaExpenseSearch, setAreaExpenseSearch] = useState('');
+  const [budgetSearch, setBudgetSearch] = useState('');
   const [providerSearch, setProviderSearch] = useState('');
   const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
   const [cashMovements, setCashMovements] = useState<CashMovement[]>([]);
@@ -1042,7 +1044,9 @@ export default function ProjectDetail() {
     const currentItems: any[] = snapshots.map((snapshot, index) => {
       if (!snapshot.exists()) throw new Error('EXPENSE_CHANGED');
       const current = snapshot.data();
-      if (hasRecordedPayment(current)) throw new Error('PAID_EXPENSE_LOCKED');
+      if (hasActiveExpensePayments({ ...current, paymentHistory: current.paymentHistory || [] })) throw new Error('PAID_EXPENSE_LOCKED');
+      if (!isProjectAdmin && hasRecordedPayment(current)) throw new Error('PAID_EXPENSE_LOCKED');
+      if (hasRecordedPayment(current) && reason !== 'row_deleted') throw new Error('PAID_EXPENSE_LOCKED');
       if (!sameExpenseVersion(current.updatedAt, items[index].updatedAt)
         || !samePaymentTarget(current, items[index])) throw new Error('EXPENSE_CHANGED');
       return { id: snapshot.id, ...current };
@@ -1050,6 +1054,11 @@ export default function ProjectDetail() {
     refs.forEach((expenseRef) => transaction.delete(expenseRef));
 
     const auditRef = doc(collection(db, 'projects', id!, 'activityLog'));
+    const historicalSnapshots = Object.fromEntries(snapshots.filter(snapshot => snapshot.data()?.paymentLocked === true)
+      .map(snapshot => [snapshot.id, snapshot.data()]));
+    if (Object.keys(historicalSnapshots).length) {
+      transaction.update(doc(db, 'projects', id!), { lastExpenseDeletionAuditId: auditRef.id });
+    }
     transaction.set(auditRef, {
       action: 'expense_rows_deleted',
       reason,
@@ -1061,6 +1070,7 @@ export default function ProjectDetail() {
       providerName: currentItems.length === 1 ? (currentItems[0].providerName || '') : '',
       amount: currentItems.reduce((total, item) => total + (Number(item.total) || 0), 0),
       paymentCount: 0,
+      previousDocuments: historicalSnapshots,
       deletedCashMovementCount: 0,
       deletedBy: user?.uid || '',
       deletedByEmail: currentUserEmail,
@@ -1159,7 +1169,7 @@ export default function ProjectDetail() {
         console.error("Error deleting budget item:", e);
       }
       alert(e instanceof Error && e.message === 'PAID_EXPENSE_LOCKED'
-        ? 'No se puede eliminar esta partida porque tiene pagos o un historial de pagos anteriores, aunque se hayan eliminado. Revisá Gestión de pagos antes de corregir el gasto.'
+        ? 'No se puede eliminar esta partida mientras tenga pagos vigentes. Eliminá primero los pagos autorizados desde Gestión de pagos.'
         : e instanceof Error && e.message === 'EXPENSE_HAS_CASH_MOVEMENT'
           ? 'No se puede eliminar esta partida porque todavía tiene movimientos de caja asociados. Revisá Gestión de pagos y Cajas.'
           : 'No se pudo eliminar la partida. Actualizá la página y revisá sus pagos y permisos antes de intentarlo otra vez.');
@@ -2767,6 +2777,7 @@ export default function ProjectDetail() {
       setActiveTab('areas');
     } else {
       const item = target.item as BudgetItem;
+      setBudgetSearch('');
       setCollapsedCategories((current) => ({ ...current, [item.area]: false }));
       setActiveTab('presupuesto');
     }
@@ -2840,6 +2851,7 @@ export default function ProjectDetail() {
           const movementSnapshot = await transaction.get(movementRef);
           if (!movementSnapshot.exists()) throw new Error('CASH_LINK_MISMATCH');
           assertCashPaymentLink(movementSnapshot.data(), { collectionName, itemId: currentItemId, payment });
+          assertCanChangePaymentCash(payment, currentUserEmail, movementSnapshot.data());
         }
         const updatedHistory = history.filter((_, currentIndex) => currentIndex !== index);
         const totalPaid = getPaymentTotal({ paymentHistory: updatedHistory });
@@ -3231,6 +3243,11 @@ export default function ProjectDetail() {
     if (isProjectAdmin) return true;
     return safeArray(userPermissions?.allowedCategories).includes(item.area);
   });
+  const budgetSearchTerm = normalizeText(budgetSearch);
+  const filteredBudgetItems = visibleBudgetItems.filter(item => !budgetSearchTerm || normalizeText([
+    item.providerName, item.description, item.area, item.unit, item.total, formatDate(item.paymentDate),
+  ].filter(Boolean).join(' ')).includes(budgetSearchTerm));
+  const filteredBudgetCategories = visibleCategories.filter(area => !budgetSearchTerm || filteredBudgetItems.some(item => item.area === area));
 
   const visibleCategoryKey = visibleCategories.join('|');
   const selectedVisibleAreas = selectedAreaTabs.filter((area) => visibleCategories.includes(area));
@@ -3416,7 +3433,8 @@ export default function ProjectDetail() {
   };
   const canEditPaymentRecord = (payment?: Payment | null) => {
     if (!payment) return false;
-    return canEditExistingPayment(isProjectAdmin);
+    return canEditExistingPayment(isProjectAdmin) && canChangePaymentCash(payment, currentUserEmail,
+      cashMovements.find(movement => movement.id === payment.cashMovementId));
   };
   const canUploadAreaFiles = (area?: string | null, subcategory?: string | null) => canEditAreaSubcategory(area, subcategory);
   const canDeleteOtherReceipt = (receipt?: any | null) => {
@@ -5771,12 +5789,23 @@ export default function ProjectDetail() {
               </div>
             </header>
 
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex min-w-[220px] items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1">
+                <Search className="h-3.5 w-3.5 text-slate-400" />
+                <input value={budgetSearch} onChange={event => setBudgetSearch(event.target.value)}
+                  placeholder="Buscar gasto en Presu Ppal..." aria-label="Buscar gasto en Presu Ppal"
+                  className="w-full bg-transparent text-[10px] font-bold text-slate-700 placeholder:text-slate-300 focus:outline-none" />
+                {budgetSearch && <button type="button" onClick={() => setBudgetSearch('')} title="Limpiar búsqueda"><X className="h-3 w-3 text-slate-400" /></button>}
+              </div>
+              {budgetSearchTerm && <span className="text-[10px] text-slate-500">{filteredBudgetItems.length} de {visibleBudgetItems.length} gastos · los totales del proyecto se conservan</span>}
+            </div>
+            {budgetSearchTerm && !filteredBudgetItems.length && <p className="rounded-lg border border-slate-200 bg-white p-4 text-xs text-slate-500">No hay gastos que coincidan con la búsqueda.</p>}
             <div className="space-y-3 md:hidden">
-              {visibleCategories.map((area) => {
-                const areaItems = visibleBudgetItems
+              {filteredBudgetCategories.map((area) => {
+                const areaItems = filteredBudgetItems
                   .filter((item) => item.area === area)
                   .sort((a, b) => (a.order || 0) - (b.order || 0));
-                const isCollapsed = collapsedCategories[area];
+                const isCollapsed = budgetSearchTerm ? false : collapsedCategories[area];
                 const areaTotal = areaItems.reduce((total, item) => total + (item.total || 0), 0);
 
                 return (
@@ -5858,20 +5887,20 @@ export default function ProjectDetail() {
                   <div className="text-center text-[10px] font-bold uppercase tracking-widest text-slate-400">Pagado</div>
                 </div>
 
-                <DragDropContext onDragEnd={canEditMainBudget ? onDragEnd : () => {}}>
+                <DragDropContext onDragEnd={canEditMainBudget && !budgetSearchTerm ? onDragEnd : () => {}}>
                   <Droppable droppableId="all-categories" type="category">
                     {(provided) => (
                       <div {...provided.droppableProps} ref={provided.innerRef}>
-                        {visibleCategories.map((area, areaIndex) => {
-                          const areaItems = visibleBudgetItems
+                        {filteredBudgetCategories.map((area, areaIndex) => {
+                          const areaItems = filteredBudgetItems
                             .filter(i => i.area === area)
                             .sort((a, b) => (a.order || 0) - (b.order || 0));
-                          const isCollapsed = collapsedCategories[area];
+                          const isCollapsed = budgetSearchTerm ? false : collapsedCategories[area];
                           const areaTotal = areaItems.reduce((acc, curr) => acc + (curr.total || 0), 0);
 
                           const DraggableComponent = Draggable as any;
                           return (
-                            <DraggableComponent key={area} draggableId={area} index={areaIndex} isDragDisabled={!canEditMainBudget}>
+                            <DraggableComponent key={area} draggableId={area} index={areaIndex} isDragDisabled={!canEditMainBudget || Boolean(budgetSearchTerm)}>
                               {(provided: any) => (
                                 <div
                                   ref={provided.innerRef}
@@ -5942,7 +5971,7 @@ export default function ProjectDetail() {
                                           {areaItems.map((item, index) => {
                                             const DraggableComponent = Draggable as any;
                                             return (
-                                              <DraggableComponent key={item.id} draggableId={item.id} index={index}>
+                                              <DraggableComponent key={item.id} draggableId={item.id} index={index} isDragDisabled={Boolean(budgetSearchTerm) || !canEditMainBudget}>
                                                 {(provided: any, snapshot: any) => (
                                                   <div
                                                     ref={provided.innerRef}
@@ -5978,7 +6007,7 @@ export default function ProjectDetail() {
                                                     <div className="flex w-full items-center">
                                                       <ExpenseDragHandle
                                                         dragHandleProps={provided.dragHandleProps}
-                                                        disabled={!canEditMainBudget}
+                                                        disabled={!canEditMainBudget || Boolean(budgetSearchTerm)}
                                                         className="mr-2"
                                                       />
                                                       <div className="grid w-full grid-cols-[minmax(142px,1.45fr)_minmax(180px,1.6fr)_78px_100px_76px_92px_96px_104px_150px_78px] items-center gap-2">
