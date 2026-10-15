@@ -42,6 +42,7 @@ import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import * as XLSX from 'xlsx';
 import Papa from 'papaparse';
 import { cn } from '../lib/utils';
+import { AreaBudgetSummary } from './project-detail/AreaBudgetSummary';
 import { validateMaxUploadSize } from '../lib/uploadLimits';
 import { buildPaymentCalendarDays, formatDateKey, formatPeriodLabel, getOverdueLines, getTodayLines, getUnscheduledLines, sumDebt, type PaymentScheduleLine } from '../lib/paymentSchedule';
 import { BudgetRowCell } from './project-detail/BudgetRowCell';
@@ -6256,44 +6257,12 @@ export default function ProjectDetail() {
 
             {selectedAreaDashboardRows.length > 0 && (
               <div className="space-y-4">
-                {/* Summary Header */}
-                <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
-                  {(() => {
-                    const assigned = areaDashboardTotals.assigned;
-                    const spent = areaDashboardTotals.spent;
-                    const balance = areaDashboardTotals.balance;
-                    const usedPercent = assigned > 0 ? Math.min(100, (spent / assigned) * 100) : 0;
-
-                    return (
-                      <>
-                        <div className="bg-white border border-slate-200 px-4 py-3 rounded-lg shadow-sm">
-                          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Presupuesto</div>
-                          <div className="text-base font-bold text-slate-900">${assigned.toLocaleString()}</div>
-                          <div className="text-[9px] text-slate-400 mt-1 italic">{selectedAreaDashboardRows.length} áreas seleccionadas</div>
-                        </div>
-                        <div className="bg-white border border-slate-200 px-4 py-3 rounded-lg shadow-sm">
-                          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Gasto Global</div>
-                          <div className="text-base font-bold text-emerald-600">${spent.toLocaleString()}</div>
-                          <div className="mt-2 h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                            <div
-                              className={cn("h-full rounded-full", balance < 0 ? "bg-red-500" : usedPercent >= 85 ? "bg-yellow-400" : "bg-emerald-500")}
-                              style={{ width: `${usedPercent}%` }}
-                            />
-                          </div>
-                          <div className="text-[9px] text-slate-400 mt-1 italic">{areaDashboardTotals.records} registros cargados</div>
-                        </div>
-                        <div className={cn(
-                          "px-4 py-3 rounded-lg shadow-sm border bg-white",
-                          balance >= 0 ? "border-slate-200 text-slate-950" : "border-red-100 text-red-600"
-                        )}>
-                          <div className={cn("text-[10px] font-bold uppercase tracking-widest mb-1", balance >= 0 ? "text-blue-700" : "text-red-400")}>Saldo Proyectado</div>
-                          <div className="text-base font-bold font-mono tracking-tight">${balance.toLocaleString()}</div>
-                          {balance < 0 && <div className="text-[9px] font-bold uppercase mt-1">¡EXCEDIDO!</div>}
-                        </div>
-                      </>
-                    );
-                  })()}
-                </div>
+                <AreaBudgetSummary
+                  assigned={areaDashboardTotals.assigned}
+                  spent={areaDashboardTotals.spent}
+                  balance={areaDashboardTotals.balance}
+                  areas={selectedAreaDashboardRows.map(row => row.area)}
+                />
 
                 <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
                 <DragDropContext onDragEnd={onAreaExpenseDragEnd}>
@@ -6358,11 +6327,11 @@ export default function ProjectDetail() {
                         </div>
                         <div className="rounded border border-white/10 bg-white/10 px-2 py-1">
                           <div className="text-[7px] font-bold uppercase tracking-widest text-slate-300 sm:text-[8px]">Gastado</div>
-                          <div className="truncate font-mono text-[10px] font-black text-emerald-300 sm:text-xs">${areaRow.spent.toLocaleString()}</div>
+                          <div className="truncate font-mono text-[10px] font-black text-red-300 sm:text-xs">${areaRow.spent.toLocaleString()}</div>
                         </div>
                         <div className="rounded border border-white/10 bg-white/10 px-2 py-1">
                           <div className="text-[7px] font-bold uppercase tracking-widest text-slate-300 sm:text-[8px]">Saldo</div>
-                          <div className={cn("truncate font-mono text-[10px] font-black sm:text-xs", areaRow.balance >= 0 ? "text-white" : "text-red-300")}>${areaRow.balance.toLocaleString()}</div>
+                          <div className={cn("truncate font-mono text-[10px] font-black sm:text-xs", areaRow.balance >= 0 ? "text-emerald-300" : "text-red-300")}>${areaRow.balance.toLocaleString()}</div>
                         </div>
                       </div>
                       <button
