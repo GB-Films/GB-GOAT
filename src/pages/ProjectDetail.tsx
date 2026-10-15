@@ -5408,7 +5408,12 @@ export default function ProjectDetail() {
                         {project.brandName && <span>Marca: {project.brandName}</span>}
                         {project.companyName && <span>Empresa: {project.companyName}</span>}
                         {project.serviceName && <span>Servicio: {project.serviceName}</span>}
-                        {project.controlTotalContractCurrency && project.controlTotalContractAmount != null && (
+                        {(Number(project.controlTotalContractArs) > 0 || Number(project.controlTotalContractUsd) > 0) ? (
+                          <span>Contrato al importar: {[
+                            Number(project.controlTotalContractArs) > 0 ? `ARS ${Number(project.controlTotalContractArs).toLocaleString('es-AR')}` : '',
+                            Number(project.controlTotalContractUsd) > 0 ? `USD ${Number(project.controlTotalContractUsd).toLocaleString('es-AR')}` : '',
+                          ].filter(Boolean).join(' + ')}</span>
+                        ) : project.controlTotalContractCurrency && project.controlTotalContractAmount != null && (
                           <span>Contrato al importar: {project.controlTotalContractCurrency} {Number(project.controlTotalContractAmount).toLocaleString('es-AR')}</span>
                         )}
                         {project.controlTotalUrl && <a href={project.controlTotalUrl} target="_blank" rel="noopener noreferrer" className="text-blue-700 underline">Ver en Control Total</a>}
@@ -5416,6 +5421,9 @@ export default function ProjectDetail() {
                     )}
                     {pendingUsdBudget && isProjectAdmin && (
                       <p className="mt-2 text-xs font-semibold text-amber-800">Contrato en USD: presupuesto GOAT pendiente de carga manual en ARS. El resultado todavía no es comparable.</p>
+                    )}
+                    {Number(project.controlTotalContractArs) > 0 && Number(project.controlTotalContractUsd) > 0 && (
+                      <p className="mt-2 text-xs font-semibold text-amber-800">Contrato mixto ARS/USD: el presupuesto GOAT es sólo en ARS. Verificá que contemple el alcance completo antes de comparar resultados; GOAT no convierte el componente USD.</p>
                     )}
                     <div className="mt-3 flex flex-wrap items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-slate-500">
                       <span className={cn("rounded-full border px-2.5 py-1", statusColors[project.status || 'Presupuesto'] || 'bg-emerald-100 text-emerald-700 border-emerald-200')}>
