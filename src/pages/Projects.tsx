@@ -10,7 +10,9 @@ import { motion, AnimatePresence } from 'motion/react';
 import { normalizeEmail } from '../lib/identity';
 import { PageHeader } from '../components/PageHeader';
 import { readControlTotalProjects } from '../lib/readControlTotalProjects';
-import { CONTROL_TOTAL_SPREADSHEET_ID, controlTotalProjectUrl, type ControlTotalProject } from '../lib/controlTotalProjects';
+import { CONTROL_TOTAL_SPREADSHEET_ID, controlTotalProjectUrl, controlTotalContractLabel, controlTotalArsBudget, type ControlTotalProject } from '../lib/controlTotalProjects';
+import { SearchableSelect } from '../components/SearchableSelect';
+import { matchesSmartSearch } from '../lib/smartSearch';
 
 const projectCatalogRef = doc(db, 'integrations', 'controlTotalProjectCatalog');
 
@@ -47,13 +49,7 @@ export default function Projects() {
 
   const filteredProjects = projects
     .filter((project) => {
-      const term = searchTerm.trim().toLowerCase();
-      if (!term) return true;
-      return [project.name, project.projectCode, project.clientName, project.companyName, project.brandName, project.status, project.description]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase()
-        .includes(term);
+      return matchesSmartSearch(searchTerm, project.name, project.projectCode, project.clientName, project.companyName, project.brandName, project.status, project.description);
     })
     .sort((a, b) => {
       const aPinned = pinnedProjectIds.includes(a.id);
@@ -224,6 +220,9 @@ export default function Projects() {
         controlTotalDeliveryDate: source.deliveryDate,
         controlTotalContractCurrency: source.contractCurrency,
         controlTotalContractAmount: source.contractAmount,
+        controlTotalContractArs: source.contractArs ?? (source.contractCurrency === 'ARS' ? source.contractAmount : null),
+        controlTotalContractUsd: source.contractUsd ?? (source.contractCurrency === 'USD' ? source.contractAmount : null),
+        ...(source.sourceWarning ? { controlTotalSourceWarning: source.sourceWarning } : {}),
         controlTotalImportedAt: serverTimestamp(),
       } : {}),
       status: 'Presupuesto',
@@ -277,7 +276,7 @@ export default function Projects() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
           <input 
             type="text" 
-            placeholder="Filtrar por nombre o cliente..."
+            placeholder="Buscar por nombre, código, cliente o marca..."
             value={searchTerm}
             onChange={(event) => setSearchTerm(event.target.value)}
             className="w-full pl-10 pr-4 py-2 bg-white border border-slate-200 rounded text-sm focus:outline-none focus:border-slate-400 transition-all placeholder:text-slate-300"
@@ -399,14 +398,14 @@ export default function Projects() {
                 {creationMode === 'controlTotal' ? (
                   <div className="space-y-3">
                     <label className="block text-[10px] font-bold uppercase text-slate-400 tracking-widest">Proyecto G de Control Total</label>
-                    <select value={selectedCode} onChange={event => { setSelectedCode(event.target.value); setSourceError(''); }} disabled={sourceLoading} required className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm">
-                      <option value="">{sourceLoading ? 'Leyendo proyectos...' : 'Seleccionar proyecto...'}</option>
-                      {sourceProjects.map(source => (
-                        <option key={source.projectCode} value={source.projectCode} disabled={sourceAlreadyInGoat(source)}>
-                          {source.projectCode} · {source.name}{sourceAlreadyInGoat(source) ? ' (ya existe)' : ''}
-                        </option>
-                      ))}
-                    </select>
+                    <SearchableSelect value={selectedCode} onChange={code => { setSelectedCode(code); setSourceError(''); }}
+                      label="Proyecto G de Control Total" disabled={sourceLoading} required
+                      placeholder={sourceLoading ? 'Leyendo proyectos...' : 'Buscar por código, nombre, cliente o marca...'}
+                      options={sourceProjects.map(source => ({ value: source.projectCode,
+                        label: `${source.projectCode} · ${source.name}${sourceAlreadyInGoat(source) ? ' (ya existe)' : ''}`,
+                        searchText: [source.client, source.company, source.brand, source.service].join(' '),
+                        disabled: sourceAlreadyInGoat(source),
+                      }))} />
                     {sourceError && <p role="alert" className="text-xs text-red-700">{sourceError}</p>}
                     <p className="text-[11px] text-slate-500">Catálogo G: {catalogUpdatedAt ? `actualizado el ${catalogUpdatedAt.toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires', hour12: false })}` : 'aún no publicado'}.</p>
                     {!sourceLoading && sourceProjects.length === 0 && !canRefreshCatalog && <p className="text-xs text-amber-800">Pedile a Tomás o a info@granbertafilms.com que actualice el catálogo.</p>}
@@ -417,7 +416,8 @@ export default function Projects() {
                         <div><b>Nombre en GOAT:</b> {selectedSource.name}</div>
                         <div><b>Código:</b> {selectedSource.projectCode}</div>
                         <div><b>Cliente:</b> {selectedSource.client || 'Sin dato'} · <b>Empresa:</b> {selectedSource.company || 'Sin dato'} · <b>Marca:</b> {selectedSource.brand || 'Sin dato'}</div>
-                        <div><b>Contrato:</b> {selectedSource.contractAmount === null ? 'Sin importe' : `${selectedSource.contractCurrency} ${selectedSource.contractAmount.toLocaleString('es-AR')}`}</div>
+                        <div><b>Contrato:</b> {controlTotalContractLabel(selectedSource)}</div>
+                        {selectedSource.sourceWarning && <p className="text-amber-800">{selectedSource.sourceWarning}</p>}
                         {canRefreshCatalog && <a href={controlTotalProjectUrl(selectedSource)} target="_blank" rel="noopener noreferrer" className="inline-block text-blue-700 underline">Ver fila de origen</a>}
                       </div>
                     )}
@@ -445,7 +445,7 @@ export default function Projects() {
                   </div>}
                   <div>
                     <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Presupuesto GOAT (ARS)</label>
-                    <input key={`${creationMode}-${selectedCode}`} name="budgetTotal" type="number" min="0" step="0.01" readOnly={selectedSource?.contractCurrency === 'USD'} defaultValue={selectedSource?.contractCurrency === 'ARS' ? selectedSource.contractAmount ?? undefined : selectedSource?.contractCurrency === 'USD' ? 0 : undefined} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all" placeholder="0" />
+                    <input key={`${creationMode}-${selectedCode}`} name="budgetTotal" type="number" min="0" step="0.01" readOnly={selectedSource?.contractCurrency === 'USD'} defaultValue={selectedSource ? controlTotalArsBudget(selectedSource) : undefined} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all" placeholder="0" />
                   </div>
                 </div>
                 {creationMode === 'manual' && <div className="grid grid-cols-2 gap-4">
@@ -459,6 +459,7 @@ export default function Projects() {
                   </div>
                 </div>}
                 {selectedSource?.contractCurrency === 'USD' && <p className="text-xs text-amber-800">El contrato en USD queda guardado como referencia. El presupuesto de GOAT se crea en ARS 0 y se completa manualmente después.</p>}
+                {selectedSource && Number(selectedSource.contractArs) > 0 && Number(selectedSource.contractUsd) > 0 && <p className="text-xs text-amber-800">El contrato tiene componentes ARS y USD, que se guardan por separado. El presupuesto GOAT propone sólo el componente ARS; el importe USD no se convierte ni se suma automáticamente.</p>}
                 <div className="flex gap-3 pt-4">
                   <button type="button" onClick={() => setShowNewModal(false)} className="flex-1 px-4 py-3 border border-slate-200 rounded text-xs font-bold tracking-widest uppercase hover:bg-slate-50 transition-colors">Cancelar</button>
                   <button type="submit" disabled={creating || sourceLoading || (creationMode === 'controlTotal' && !selectedSource)} className="flex-1 px-4 py-3 bg-black text-white rounded text-xs font-bold tracking-widest uppercase hover:bg-slate-800 transition-colors disabled:opacity-50">{creating ? 'Creando...' : 'Confirmar'}</button>

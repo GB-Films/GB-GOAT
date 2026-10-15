@@ -16,6 +16,7 @@ import { assertCanChangePaymentCash } from '../../lib/paymentCashAccess';
 import { providerDisplayName } from '../../lib/providerConstants';
 import { assertReimbursementAmount, assertReimbursementCashLink, getReimbursementBalanceCents, getReimbursedCents, isThirdPartyPayment } from '../../lib/reimbursements';
 import type { Payment, PaymentCollection } from './types';
+import { SearchableSelect } from '../../components/SearchableSelect';
 
 const formatDate = (dateString: string | any) => {
   if (!dateString) return 'Sin fecha';
@@ -882,18 +883,18 @@ export function PaymentModal({
                 </select>
                 {paymentFundingMode === 'third_party' && (
                   <>
-                    <select
+                    <SearchableSelect
                       value={thirdPartyPayerId}
-                      onChange={(event) => setThirdPartyPayerId(event.target.value)}
+                      onChange={setThirdPartyPayerId}
                       required
-                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs"
-                    >
-                      <option value="">Seleccionar persona acreedora...</option>
-                      {providers
+                      label="Persona que pagó"
+                      placeholder="Buscar persona por nombre, email o documento..."
+                      options={providers
                         .filter((provider) => provider.type !== 'empresa')
                         .sort((a, b) => providerDisplayName(a).localeCompare(providerDisplayName(b), 'es'))
-                        .map((provider) => <option key={provider.id} value={provider.id}>{providerDisplayName(provider)}</option>)}
-                    </select>
+                        .map((provider) => ({ value: provider.id, label: providerDisplayName(provider),
+                          searchText: [provider.email, provider.dni, provider.cuit, provider.taxId, provider.businessName].filter(Boolean).join(' '),
+                        }))} />
                     <p className="text-xs text-amber-700">El gasto quedará pagado al proveedor y pendiente de reintegro a esta persona. La caja de la empresa no se moverá todavía.</p>
                   </>
                 )}

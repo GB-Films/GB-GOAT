@@ -21,6 +21,9 @@ export type ControlTotalProject = {
   status: string;
   contractCurrency: 'ARS' | 'USD' | '';
   contractAmount: number | null;
+  contractArs?: number | null;
+  contractUsd?: number | null;
+  sourceWarning?: string;
 };
 
 const text = (value: unknown) => String(value ?? '').trim();
@@ -42,7 +45,7 @@ export const parseControlTotalProjects = (rows: unknown[][]): ControlTotalProjec
   }
 
   const header = rows[0].map(text);
-  const required = ['ProyectoID', 'Servicio', 'Marca', 'Empresa', 'Cliente', 'Unidad dueña', 'Unidad prestadora interna', 'Condición', 'Fecha confirmación', 'Fecha entrega', 'Moneda contrato', 'Contrato ARS', 'Contrato USD', 'Estado'];
+  const required = ['ProyectoID', 'Servicio', 'Marca', 'Empresa', 'Cliente', 'Unidad dueña', 'Unidad prestadora interna', 'Condición', 'Fecha confirmación', 'Fecha entrega', 'Contrato ARS', 'Contrato USD', 'Estado'];
   for (const column of required) {
     if (!header.includes(column)) throw new Error(`Falta la columna ${column} en Control Total.`);
   }
@@ -59,13 +62,31 @@ export const parseControlTotalProjects = (rows: unknown[][]): ControlTotalProjec
     const projectCode = match[1].replace(/\s+/g, ' ');
     if (seenCodes.has(projectCode)) throw new Error(`El código ${projectCode} está repetido en Control Total.`);
     seenCodes.add(projectCode);
-    const contractCurrency = text(at(row, 'Moneda contrato'));
-    if (contractCurrency && contractCurrency !== 'ARS' && contractCurrency !== 'USD') {
+    const hasLegacyHeader = header.includes('Moneda contrato');
+    const legacyRow = !hasLegacyHeader && ['ARS', 'USD'].includes(text(row[10]));
+    const legacyCurrency = hasLegacyHeader ? text(at(row, 'Moneda contrato')) : legacyRow ? text(row[10]) : '';
+    const readAmount = (value: unknown) => {
+      const parsed = amount(value);
+      if (parsed === null && value !== '' && value !== null && value !== undefined) {
+        throw new Error(`Importe de contrato no reconocido para ${projectCode} (fila ${index + 5}). Revisá Control Total.`);
+      }
+      return parsed;
+    };
+    const contractArs = readAmount(legacyRow ? row[11] : at(row, 'Contrato ARS'));
+    const contractUsd = readAmount(legacyRow ? row[12] : at(row, 'Contrato USD'));
+    const shiftedStatus = !hasLegacyHeader && typeof at(row, 'Estado') !== 'string'
+      && ['Activo', 'Migrado', 'Finalizado', 'Cerrado', 'Cancelado', 'Presupuesto', 'En curso'].includes(text(row[15]));
+    // Current CT has independent currency components, which may coexist.
+    // Keep the legacy single-currency fields only when unambiguous.
+    const hasArs = contractArs !== null && contractArs > 0;
+    const hasUsd = contractUsd !== null && contractUsd > 0;
+    const contractCurrency = hasArs && hasUsd ? '' : hasArs ? 'ARS' : hasUsd ? 'USD' : legacyCurrency;
+    if (legacyCurrency && legacyCurrency !== 'ARS' && legacyCurrency !== 'USD') {
       throw new Error(`Moneda no reconocida para ${projectCode}.`);
     }
     const contractAmount = contractCurrency === 'ARS'
-      ? amount(at(row, 'Contrato ARS'))
-      : contractCurrency === 'USD' ? amount(at(row, 'Contrato USD')) : null;
+      ? contractArs
+      : contractCurrency === 'USD' ? contractUsd : null;
     projects.push({
       projectCode,
       sourceProjectId,
@@ -80,9 +101,12 @@ export const parseControlTotalProjects = (rows: unknown[][]): ControlTotalProjec
       condition: text(at(row, 'Condición')),
       confirmationDate: sheetDate(at(row, 'Fecha confirmación')),
       deliveryDate: sheetDate(at(row, 'Fecha entrega')),
-      status: text(at(row, 'Estado')),
+      status: text(legacyRow || shiftedStatus ? row[15] : at(row, 'Estado')),
       contractCurrency: contractCurrency as ControlTotalProject['contractCurrency'],
       contractAmount,
+      contractArs,
+      contractUsd,
+      ...(legacyRow || shiftedStatus ? { sourceWarning: 'Esta fila conserva columnas del formato anterior de Control Total. Se preservaron los importes identificables por moneda; revisá la fila de origen antes de confirmar el presupuesto.' } : {}),
     });
   });
   return projects;
@@ -90,3 +114,15 @@ export const parseControlTotalProjects = (rows: unknown[][]): ControlTotalProjec
 
 export const controlTotalProjectUrl = (project: ControlTotalProject) =>
   `https://docs.google.com/spreadsheets/d/${CONTROL_TOTAL_SPREADSHEET_ID}/edit#gid=${CONTROL_TOTAL_PROJECTS_SHEET_ID}&range=A${project.sourceRow}:P${project.sourceRow}`;
+
+export const controlTotalContractLabel = (project: ControlTotalProject) => {
+  const components = [
+    project.contractArs != null && project.contractArs > 0 ? `ARS ${project.contractArs.toLocaleString('es-AR')}` : '',
+    project.contractUsd != null && project.contractUsd > 0 ? `USD ${project.contractUsd.toLocaleString('es-AR')}` : '',
+  ].filter(Boolean);
+  return components.join(' + ') || (project.contractAmount !== null && project.contractCurrency
+    ? `${project.contractCurrency} ${project.contractAmount.toLocaleString('es-AR')}` : 'Sin importe');
+};
+
+export const controlTotalArsBudget = (project: ControlTotalProject) =>
+  project.contractArs ?? (project.contractCurrency === 'ARS' ? project.contractAmount ?? 0 : 0);
