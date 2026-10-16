@@ -1,5 +1,11 @@
 # Gastos, equipo y cajas
 
+Resumen, Presupuesto, Áreas, Cajas, Finanzas, Documentos y Proveedores utilizan encabezados compactos sin introducciones redundantes. Resumen no repite el nombre del proyecto ni muestra una descripción de relleno. Los avisos financieros de contratos USD/mixtos se mantienen sólo para administración.
+
+La línea comercial de Resumen (código, cliente, marca, empresa, servicio, contrato y enlace a Control Total) se renderiza sólo para administradores generales o del proyecto. **Es una política de visualización, no una protección de lectura de campos:** hoy estos datos siguen en el documento compartido `projects/{id}`. Firestore autoriza documentos completos; una confidencialidad efectiva requiere separar y migrar datos comerciales a un registro privado, adaptar sus escritores e integraciones y probar/publicar las reglas correspondientes. Este ajuste visual no realiza esa migración ni afirma que un colaborador con acceso al documento no pueda leer esos campos por API.
+
+Contactos clave usa el selector con búsqueda por palabras, sin distinguir tildes o mayúsculas, y datos de contacto/documento. Buscar texto nunca elimina una asignación existente: sólo se persiste una opción elegida o el botón explícito Quitar. El rol que puede asignar contactos no cambia.
+
 En celular, tocar **Total** abre el importe del gasto en Presu Ppal y Áreas. Se ingresa total y cantidad; el precio unitario se deriva sin redondearlo antes de calcular el total. Cantidad inicial: 1 si la fila no tenía una cantidad positiva. Se aceptan coma decimal y separadores de miles. Guardar no registra pagos ni movimientos de caja.
 
 El guardado utiliza las transacciones, validaciones de permisos, versión y auditorías existentes. Con pagos asociados sólo se consulta el importe; los administradores conservan la corrección de filas históricamente bloqueadas pero actualmente sin pagos. Si la fila cambia durante la edición, se pide revisarla; si falla el guardado, se conserva el formulario. Total pagado e importe abonado se muestran en verde; los pagos parciales se identifican por separado.
