@@ -4,6 +4,7 @@ import { AlertTriangle, BarChart3, CalendarDays, DollarSign, Download, FileSprea
 import { collection, doc, getDocs, orderBy, query, runTransaction, serverTimestamp } from 'firebase/firestore';
 import { deleteObject, ref } from 'firebase/storage';
 import { db, storage } from '../lib/firebase';
+import { readProjectCommercial } from '../lib/projectCommercial';
 import { useAuth } from '../context/AuthContext';
 import { canChangePaymentCash, assertCanChangePaymentCash } from '../lib/paymentCashAccess';
 import { cn } from '../lib/utils';
@@ -261,7 +262,7 @@ export default function Reports() {
           getDocs(query(collection(db, 'projects'), orderBy('createdAt', 'desc'))),
           getDocs(collection(db, 'providers')),
         ]);
-        const projectRows = projectsSnap.docs.map((projectDoc) => ({ id: projectDoc.id, ...projectDoc.data() as any }));
+        const projectRows = await Promise.all(projectsSnap.docs.map(projectDoc => readProjectCommercial(db, { id: projectDoc.id, ...projectDoc.data() }, true)));
         const providers = providersSnap.docs.map((providerDoc) => ({ id: providerDoc.id, ...providerDoc.data() }));
         setProviders(providers);
         const providerById = new Map(providers.map((provider) => [provider.id, provider]));

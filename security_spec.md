@@ -25,6 +25,16 @@
 
 Un jefe de producción sólo puede delegar subcategorías que le hayan sido asignadas explícitamente. Si posee el área completa, puede delegar el área completa; la delegación fina fuera de su lista explícita queda reservada al administrador.
 
+## Privacidad comercial
+
+`projectCommercial/{projectId}` conserva presupuesto total, cliente, marca, empresa, servicio, importación/contrato de Control Total y referencia de venta CRM. Sólo admin global, creador o colaborador con rol real `admin` pueden leer un registro específico. Sólo admin global puede listar la colección o borrar registros. Las escrituras validan esquema, tipos, límites y timestamp de servidor, y requieren un proyecto existente (o creado en el mismo batch). Flags de UI y `canViewBudgetTotals` no conceden acceso comercial.
+
+Las altas manuales/CT y CRM separan ambos documentos atómicamente. Las actualizaciones de proyecto también se separan; las reglas impiden reinsertar campos comerciales en el documento compartido, incluso a un administrador. Las pantallas hidratan los datos privados sólo con ACL autorizada. BANI sigue recibiendo únicamente identidad operativa, nunca importes comerciales; su integración usa IAM de servidor, no permisos de cliente.
+
+La migración `scripts/migrate-project-commercial.cjs` es de sólo lectura salvo `--apply --backup-dir <carpeta privada>`. Respalda los documentos completos fuera de Git, verifica versiones, copia valores exactos y los retira del documento compartido dentro de un commit por proyecto, con lectura posterior. No modifica subcolecciones de gastos, pagos ni cajas. Nombre/código continúan compartidos como identificadores operativos. La separación no revoca información ya descargada antes de la migración ni constituye un aislamiento frente a operadores IAM del backend.
+
+Pruebas: `tests/projectCommercialRules.emulator.mjs`, política compartida frontend/backend y pruebas de integraciones CRM/BANI. El alcance es la nueva separación comercial; no representa una auditoría integral del resto del sistema.
+
 ## Invariantes financieras
 
 - Los pagos nuevos deben tener importe mayor que cero y autor/autora iguales a la sesión autenticada.

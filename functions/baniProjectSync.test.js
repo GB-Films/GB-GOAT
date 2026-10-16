@@ -95,6 +95,24 @@ test('source deletion leaves BANI history untouched', async () => {
   assert.equal(targetDb.writes, 0);
 });
 
+test('migrated source reads private identity but never transfers commercial amounts', async () => {
+  const sourceDb = fakeDb({
+    'projects/test-project': { name: 'Test', projectCode: 'G AS 0001', commercialDataVersion: 1 },
+    'projectCommercial/test-project': { clientName: 'Private client', budgetTotal: 12345, controlTotalContractAmount: 999, controlTotalUrl: 'https://example.test/private' },
+  });
+  const targetDb = fakeDb();
+  await syncGoatProject({ sourceDb, targetDb, projectId: input.projectId, ownerUid: 'owner' });
+  const written = [...targetDb.documents.values()][0];
+  assert.equal(written.client, 'Private client');
+  for (const field of ['budgetTotal', 'controlTotalContractAmount', 'controlTotalUrl']) assert.equal(JSON.stringify(written).includes(field), false);
+});
+
+test('missing migrated private record fails closed without changing BANI', async () => {
+  const targetDb = fakeDb();
+  await assert.rejects(syncGoatProject({ sourceDb: fakeDb({ 'projects/test-project': { name: 'Test', commercialDataVersion: 1 } }), targetDb, projectId: input.projectId, ownerUid: 'owner' }), /Commercial metadata unavailable/);
+  assert.equal(targetDb.writes, 0);
+});
+
 test('duplicate legacy links fail without overwriting either history', async () => {
   const targetDb = fakeDb({ 'users/owner/postProjects/a': { goatProjectId: input.projectId }, 'users/owner/postProjects/b': { goatProjectId: input.projectId } });
   await assert.rejects(syncGoatProject({ sourceDb: fakeDb({ 'projects/test-project': input.data }), targetDb, ownerUid: 'owner', projectId: input.projectId }), /Multiple BANI projects/);

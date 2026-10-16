@@ -1,0 +1,13 @@
+{
+  "date": "2026-10-16",
+  "score": 5,
+  "scope": "New projectCommercial rules and anti-reinsertion guards only; not a whole-system audit",
+  "summary": "Scoped review and emulator checks cover authenticated roles, document versus list access, authority from stored ACL, parent existence, field allowlists, required version/timestamp, size/type/range bounds, malformed values, and public-root reinsertion. No unresolved finding within this narrow scope.",
+  "findings": [],
+  "limitations": [
+    "Operational project name/code and expense data remain shared under existing project permissions.",
+    "Backend IAM operators and trusted integrations are outside client-rule isolation.",
+    "Data downloaded before migration cannot be revoked retroactively."
+  ],
+  "evidence": ["tests/projectCommercialRules.emulator.mjs", "src/lib/projectCommercialFields.test.ts", "functions/crmProjectImport.test.js", "functions/baniProjectSync.test.js"]
+}

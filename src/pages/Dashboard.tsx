@@ -3,6 +3,7 @@ import { AlertTriangle, CalendarDays, CheckCircle2, Clapperboard, Clock, MapPin,
 import { motion } from 'motion/react';
 import { collection, getDocs, query, orderBy, where, or, updateDoc, doc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
+import { readAuthorizedProject } from '../lib/projectCommercial';
 import { loadDashboardData } from '../lib/dashboardLoad';
 import { Link, Navigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
@@ -216,7 +217,7 @@ export default function Dashboard() {
         await loadDashboardData({
           loadProjects: async () => {
             const pSnap = await getDocs(pq);
-            return pSnap.docs.map((projectDoc) => ({ ...projectDoc.data() as any, id: projectDoc.id }));
+            return Promise.all(pSnap.docs.map(projectDoc => readAuthorizedProject(db, { ...projectDoc.data(), id: projectDoc.id }, { uid, email, isAppAdmin: role === 'admin' })));
           },
           onProjects: (projectsData) => {
             if (cancelled) return;

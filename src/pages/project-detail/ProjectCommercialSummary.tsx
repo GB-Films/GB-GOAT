@@ -1,6 +1,5 @@
 export function ProjectCommercialSummary({ project, isProjectAdmin }: { project: any; isProjectAdmin: boolean }) {
-  // Display policy only. These fields still live in the shared project document;
-  // field-level confidentiality requires a separate admin-only Firestore record.
+  // Defense in depth: protected fields are hydrated from an admin-only record.
   if (!isProjectAdmin) return null;
   const contracts = [
     Number(project.controlTotalContractArs) > 0 ? `ARS ${Number(project.controlTotalContractArs).toLocaleString('es-AR')}` : '',
