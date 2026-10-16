@@ -48,6 +48,8 @@ import { ProjectTeam } from './project-detail/ProjectTeam';
 import { ProjectDialog } from './project-detail/ProjectDialog';
 import { CashBoxPicker } from './project-detail/CashBoxPicker';
 import { cashLedgerPeople } from '../lib/cashLedgerPeople';
+import { ProjectCommercialSummary } from './project-detail/ProjectCommercialSummary';
+import { ProjectKeyContacts } from './project-detail/ProjectKeyContacts';
 import { matchesSmartSearch } from '../lib/smartSearch';
 import { validateMaxUploadSize } from '../lib/uploadLimits';
 import { buildPaymentCalendarDays, formatDateKey, formatPeriodLabel, getOverdueLines, getTodayLines, getUnscheduledLines, sumDebt, type PaymentScheduleLine } from '../lib/paymentSchedule';
@@ -5399,62 +5401,39 @@ export default function ProjectDetail() {
         animate={{ opacity: 1, y: 0 }}
       >
         {activeTab === 'resumen' && (
-          <div className="space-y-4 pb-20">
-            <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_12px_32px_rgba(15,23,42,0.10)] ring-1 ring-white">
+          <div className="space-y-3 pb-20">
+            <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
               <div>
-                <div className="space-y-5 p-5 sm:p-6">
-                  <div>
-                    <div className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-400">Resumen del proyecto</div>
-                    <h2 className="mt-2 text-2xl font-black tracking-[-0.04em] text-slate-950 sm:text-4xl">{project.name}</h2>
-                    {(project.projectCode || project.companyName || project.brandName) && (
-                      <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-500">
-                        {project.projectCode && <span className="font-bold">{project.projectCode}</span>}
-                        {project.brandName && <span>Marca: {project.brandName}</span>}
-                        {project.companyName && <span>Empresa: {project.companyName}</span>}
-                        {project.serviceName && <span>Servicio: {project.serviceName}</span>}
-                        {(Number(project.controlTotalContractArs) > 0 || Number(project.controlTotalContractUsd) > 0) ? (
-                          <span>Contrato al importar: {[
-                            Number(project.controlTotalContractArs) > 0 ? `ARS ${Number(project.controlTotalContractArs).toLocaleString('es-AR')}` : '',
-                            Number(project.controlTotalContractUsd) > 0 ? `USD ${Number(project.controlTotalContractUsd).toLocaleString('es-AR')}` : '',
-                          ].filter(Boolean).join(' + ')}</span>
-                        ) : project.controlTotalContractCurrency && project.controlTotalContractAmount != null && (
-                          <span>Contrato al importar: {project.controlTotalContractCurrency} {Number(project.controlTotalContractAmount).toLocaleString('es-AR')}</span>
-                        )}
-                        {project.controlTotalUrl && <a href={project.controlTotalUrl} target="_blank" rel="noopener noreferrer" className="text-blue-700 underline">Ver en Control Total</a>}
-                      </div>
-                    )}
+                <div className="space-y-3 p-3 sm:p-4">
+                  <div className="space-y-2">
+                    <h2 className="text-base font-bold text-slate-900">Resumen</h2>
+                    <ProjectCommercialSummary project={project} isProjectAdmin={isProjectAdmin} />
                     {pendingUsdBudget && isProjectAdmin && (
-                      <p className="mt-2 text-xs font-semibold text-amber-800">Contrato en USD: presupuesto GOAT pendiente de carga manual en ARS. El resultado todavía no es comparable.</p>
+                      <p className="text-xs font-semibold text-amber-800">Contrato en USD: presupuesto GOAT pendiente en ARS. El resultado todavía no es comparable.</p>
                     )}
-                    {Number(project.controlTotalContractArs) > 0 && Number(project.controlTotalContractUsd) > 0 && (
-                      <p className="mt-2 text-xs font-semibold text-amber-800">Contrato mixto ARS/USD: el presupuesto GOAT es sólo en ARS. Verificá que contemple el alcance completo antes de comparar resultados; GOAT no convierte el componente USD.</p>
+                    {isProjectAdmin && Number(project.controlTotalContractArs) > 0 && Number(project.controlTotalContractUsd) > 0 && (
+                      <p className="text-xs font-semibold text-amber-800">Contrato mixto ARS/USD: revisá el presupuesto operativo en ARS antes de comparar resultados. GOAT no convierte el componente USD.</p>
                     )}
-                    <div className="mt-3 flex flex-wrap items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-slate-500">
-                      <span className={cn("rounded-full border px-2.5 py-1", statusColors[project.status || 'Presupuesto'] || 'bg-emerald-100 text-emerald-700 border-emerald-200')}>
-                        {project.status || 'Presupuesto'}
-                      </span>
-                      <span>{project.clientName || 'Cliente sin asignar'}</span>
-                    </div>
                   </div>
 
-                  <div className={cn("grid grid-cols-1 gap-3", isProjectAdmin ? "md:grid-cols-4" : "md:grid-cols-3")}>
+                  <div className={cn("grid grid-cols-2 gap-2", isProjectAdmin ? "lg:grid-cols-4" : "sm:grid-cols-3")}>
                     <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
                       <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">{isProjectAdmin ? 'Presupuesto' : 'Presupuesto asignado'}</div>
-                      <div className="mt-1 truncate font-mono text-2xl font-black text-slate-950">${summaryBudgetTotal.toLocaleString()}</div>
+                      <div className="mt-1 overflow-x-auto whitespace-nowrap font-mono text-base font-black text-slate-950 sm:text-xl">${summaryBudgetTotal.toLocaleString()}</div>
                     </div>
                     <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
                       <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Costo proyectado</div>
-                      <div className="mt-1 truncate font-mono text-2xl font-black text-rose-600">${areaSummaryTotals.actualCost.toLocaleString()}</div>
+                      <div className="mt-1 overflow-x-auto whitespace-nowrap font-mono text-base font-black text-rose-600 sm:text-xl">${areaSummaryTotals.actualCost.toLocaleString()}</div>
                     </div>
                     {isProjectAdmin && (
                       <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
                         <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Incidencias</div>
-                        <div className="mt-1 truncate font-mono text-2xl font-black text-rose-600">${summaryIncidenceTotal.toLocaleString()}</div>
+                        <div className="mt-1 overflow-x-auto whitespace-nowrap font-mono text-base font-black text-rose-600 sm:text-xl">${summaryIncidenceTotal.toLocaleString()}</div>
                       </div>
                     )}
                     <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
-                      <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Saldo proyectado</div>
-                      <div className={cn("mt-1 truncate font-mono text-2xl font-black", summaryProjectedBalance >= 0 ? "text-emerald-600" : "text-rose-600")}>
+                      <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Saldo</div>
+                      <div className={cn("mt-1 overflow-x-auto whitespace-nowrap font-mono text-base font-black sm:text-xl", summaryProjectedBalance >= 0 ? "text-emerald-600" : "text-rose-600")}>
                         ${summaryProjectedBalance.toLocaleString()}
                       </div>
                     </div>
@@ -5479,39 +5458,37 @@ export default function ProjectDetail() {
                     </div>
                   </div>
 
-                  <div className="rounded-lg border border-slate-100 bg-slate-50/70 px-4 py-3 text-sm leading-relaxed text-slate-600">
-                    {project.description || 'No hay una descripcion extendida registrada para esta produccion audiovisual.'}
-                  </div>
+                  {project.description && <p className="text-sm leading-relaxed text-slate-600">{project.description}</p>}
                 </div>
               </div>
             </section>
 
-            <section className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_0.7fr]">
-              <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-950 text-white shadow-sm">
-                <div className="border-b border-white/10 px-5 py-4">
-                  <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
+            <section className="grid grid-cols-1 gap-3 xl:grid-cols-[1fr_0.7fr]">
+              <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+                <div className="grid grid-cols-1 gap-3 border-b border-slate-100 p-3 sm:grid-cols-2">
+                  <div><div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-slate-500">
                     <Calendar className="h-3.5 w-3.5" />
                     Rodaje
                   </div>
-                  <div className="mt-2 text-xl font-black tracking-[-0.03em]">{formatShootingRange(project)}</div>
-                  <div className="mt-4 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
+                  <div className="mt-1 text-sm font-bold text-slate-900">{formatShootingRange(project)}</div></div>
+                  <div><div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-slate-500">
                     <MapPin className="h-3.5 w-3.5" />
                     Locacion
                   </div>
-                  <div className="mt-2 text-sm font-bold text-white">{locationValue || 'Locacion sin definir'}</div>
+                  <div className="mt-1 text-sm font-bold text-slate-900">{locationValue || 'Locación sin definir'}</div></div>
                 </div>
-                <div className="p-4">
-                  <div className="overflow-hidden rounded-lg border border-white/10 bg-white/5">
+                <div className="p-3">
+                  <div className="overflow-hidden rounded-lg border border-slate-100 bg-slate-50">
                     {mapsEmbedUrl ? (
                       <iframe
                         title="Mapa de locacion de rodaje"
                         src={mapsEmbedUrl}
-                        className="h-[360px] w-full border-0"
+                        className="h-[180px] w-full border-0 sm:h-[220px]"
                         loading="lazy"
                         referrerPolicy="no-referrer-when-downgrade"
                       />
                     ) : (
-                      <div className="flex h-[360px] items-center justify-center px-6 text-center text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                      <div className={cn('flex items-center justify-center px-4 text-center text-xs text-slate-500', locationValue ? 'h-[180px] sm:h-[220px]' : 'py-3')}>
                         {locationValue ? 'Abrir Maps para ver esta locacion' : 'Carga una direccion para ver el mapa'}
                       </div>
                     )}
@@ -5521,7 +5498,7 @@ export default function ProjectDetail() {
                       href={mapsSearchUrl}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="mt-3 inline-flex items-center gap-1.5 rounded border border-white/10 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-widest text-slate-950 transition-colors hover:bg-slate-100"
+                      className="mt-2 inline-flex items-center gap-1.5 rounded border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
                     >
                       <LinkIcon className="h-3.5 w-3.5" />
                       Abrir en Maps
@@ -5530,49 +5507,7 @@ export default function ProjectDetail() {
                 </div>
               </div>
 
-              <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-                <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/60 px-5 py-4">
-                  <div>
-                    <h3 className="text-xs font-black uppercase tracking-widest text-slate-950">Contactos clave</h3>
-                    <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-slate-400">Direccion, produccion y linea</p>
-                  </div>
-                </div>
-                <div className="divide-y divide-slate-100">
-                  {projectKeyPeople.map(({ id: roleId, label, provider }) => (
-                    <div key={roleId} className="p-4">
-                      <div className="flex items-start gap-3">
-                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-slate-950 text-sm font-black uppercase text-white">
-                          {provider ? providerDisplayName(provider)[0] || 'P' : label[0]}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">{label}</div>
-                          {isProjectAdmin && (
-                            <select
-                              value={provider?.id || ''}
-                              onChange={(event) => updateProjectKeyPerson(roleId, event.target.value)}
-                              className="mt-2 w-full rounded border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[11px] font-bold outline-none focus:border-blue-500"
-                            >
-                              <option value="">Sin asignar</option>
-                              {providers.map((candidate) => (
-                                <option key={candidate.id} value={candidate.id}>{providerDisplayName(candidate)}</option>
-                              ))}
-                            </select>
-                          )}
-                          <div className="mt-2 truncate text-sm font-black text-slate-950">
-                            {provider ? providerDisplayName(provider) : 'Sin asignar'}
-                          </div>
-                          {provider && (
-                            <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] font-semibold text-slate-500">
-                              <span>Email: <span className="font-bold text-slate-800">{provider.email || provider.adminEmail || '-'}</span></span>
-                              <span>Tel: <span className="font-bold text-slate-800">{provider.phone || '-'}</span></span>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
+              <ProjectKeyContacts people={projectKeyPeople} providers={providers} canEdit={isProjectAdmin} onAssign={updateProjectKeyPerson} />
 
             </section>
           </div>
@@ -5746,16 +5681,13 @@ export default function ProjectDetail() {
 
         {activeTab === 'presupuesto' && (
           <div className="space-y-2 pb-20 sm:space-y-4">
-            <header className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <header className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
               <div>
-                <h2 className="text-lg font-bold text-slate-900">Planilla de Presupuesto</h2>
-                <div className="text-[10px] uppercase font-bold text-slate-400 tracking-widest mt-1">
-                  {canEditMainBudget ? 'Categorías dinámicas y ordenables' : 'Vista restringida por rol'}
-                </div>
+                <h2 className="text-base font-bold text-slate-900">Presupuesto</h2>
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 {canEditMainBudget && (
-                  <div className="flex gap-1">
+                  <div className="flex flex-wrap gap-1">
                     <button 
                       onClick={downloadTemplate}
                       className="px-4 py-2 bg-white border border-slate-200 text-slate-600 text-[10px] font-bold uppercase tracking-widest hover:bg-slate-50 transition-all flex items-center gap-2 rounded"
@@ -6143,12 +6075,9 @@ export default function ProjectDetail() {
 
         {activeTab === 'areas' && (
           <div className="space-y-2 pb-20 sm:space-y-4">
-            <header className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <header className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
               <div>
-                <h2 className="text-lg font-bold text-slate-900">Gestión por Áreas</h2>
-                <div className="text-[10px] uppercase font-bold text-slate-400 tracking-widest mt-1">
-                  Control de gastos y saldos por especialidad
-                </div>
+                <h2 className="text-base font-bold text-slate-900">Áreas</h2>
               </div>
               {isProjectAdmin && (
                 <div className="relative" ref={areaSelectorRef}>
@@ -6864,15 +6793,10 @@ export default function ProjectDetail() {
         )}
 
         {activeTab === 'cajas' && (
-          <div className="flex flex-col gap-5 pb-20">
-            <header className="order-1">
+          <div className="flex flex-col gap-3 pb-20">
+            <header className="order-1 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
               <div>
-                <h2 className="text-xl font-black text-slate-900">Cajas del proyecto</h2>
-                <p className="mt-1 max-w-3xl text-sm text-slate-500">
-                  {isProjectAdmin
-                    ? 'Entregá fondos, seguí las confirmaciones y consultá cuánto efectivo tiene disponible cada responsable.'
-                    : 'Consultá el efectivo que recibiste, los movimientos realizados y tu saldo disponible.'}
-                </p>
+                <h2 className="text-base font-bold text-slate-900">Cajas</h2>
               </div>
             </header>
 
@@ -7317,14 +7241,11 @@ export default function ProjectDetail() {
 
         {activeTab === 'proveedores' && (
           <div className="space-y-4 pb-20">
-            <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <header className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
               <div>
-                <h2 className="text-lg font-bold text-slate-900">Proveedores del Proyecto</h2>
-                <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest mt-1">
-                  Proveedores cargados en Gestion por Areas
-                </p>
+                <h2 className="text-base font-bold text-slate-900">Proveedores de Áreas</h2>
               </div>
-              <div className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-lg min-w-[260px]">
+              <div className="flex w-full items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 sm:w-auto sm:min-w-[260px]">
                 <Search className="w-3.5 h-3.5 text-slate-400" />
                 <input
                   value={providerSearch}
@@ -7421,12 +7342,9 @@ export default function ProjectDetail() {
 
         {activeTab === 'resultado' && isProjectAdmin && (
           <div className="space-y-4 pb-20">
-            <header className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-3">
+            <header className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
               <div>
-                <h2 className="text-lg font-bold text-slate-900">Resultado del Proyecto</h2>
-                <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest mt-1">
-                  Analisis de venta, costos, incidencias y margen
-                </p>
+                <h2 className="text-base font-bold text-slate-900">Resultado</h2>
               </div>
               <div className={cn(
                 "px-4 py-3 rounded-xl border text-right",
@@ -7633,12 +7551,9 @@ export default function ProjectDetail() {
 
         {activeTab === 'saldos' && (
           <div className="space-y-2 pb-20 sm:space-y-4">
-            <header className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+            <header className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
               <div>
-              <h2 className="text-lg font-bold text-slate-900">Finanzas del Proyecto</h2>
-              <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest mt-1">
-                {isProjectAdmin ? 'Pagos, deuda, facturas y comprobantes por proveedor' : 'Vista financiera limitada a tus areas asignadas'}
-              </p>
+              <h2 className="text-base font-bold text-slate-900">{isProjectAdmin ? 'Finanzas' : 'Finanzas · Mis áreas'}</h2>
               </div>
               <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
                 {filteredProviderSaldos.length} proveedores con movimientos
@@ -8265,12 +8180,9 @@ export default function ProjectDetail() {
 
         {activeTab === 'documentos' && (
           <div className="space-y-4 pb-20">
-            <header className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+            <header className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
               <div>
-                <h2 className="text-lg font-bold text-slate-900">Documentos del Proyecto</h2>
-                <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest mt-1">
-                  Centro documental por familia: finanzas, contratos, seguros y locaciones
-                </p>
+                <h2 className="text-base font-bold text-slate-900">Documentos</h2>
               </div>
               <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
                 {documentTotals.visible} documentos visibles
