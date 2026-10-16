@@ -8452,42 +8452,32 @@ export default function ProjectDetail() {
         )}
 
         {activeTab === 'permisos' && canAssignProjectAreas && (
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden p-8">
-            <div className="max-w-5xl mx-auto space-y-12">
-              <header className="text-center">
-                <Shield className="w-12 h-12 text-slate-900 mx-auto mb-4" />
-                <h2 className="text-xl font-bold mb-2">Permisos del Proyecto</h2>
-                <p className="text-sm text-slate-500 max-w-2xl mx-auto">
-                  {isProjectAdmin
-                    ? 'Agregá usuarios que ya se hayan logueado y definí si son admins del proyecto, jefes de producción o jefes de área. Esto no cambia su rol global en la app.'
-                    : 'Como Jefe de Producción podés asignar tus áreas a otros Jefes de Área del proyecto, sin cambiar roles ni permisos de administración.'}
-                </p>
+          <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm sm:p-4">
+            <div className="space-y-3">
+              <header className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-base font-bold text-slate-900">Personas y permisos</h2>
+                {canManageProjectAccess && (
+                  <button type="button" onClick={() => setShowAddCollaborator(true)} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white">
+                    <UserPlus className="h-3.5 w-3.5" />Agregar persona
+                  </button>
+                )}
               </header>
 
-              {canManageProjectAccess ? (
-              <button type="button" onClick={() => setShowAddCollaborator(true)} className="rounded-lg bg-slate-900 px-4 py-3 text-sm font-bold text-white">Agregar persona al proyecto</button>
-              ) : (
-                <div className="p-5 bg-slate-50 border border-slate-100 rounded-2xl text-sm text-slate-500">
-                  Seleccioná abajo qué áreas propias querés habilitar para cada Jefe de Área. Tu acceso a esas áreas se mantiene intacto.
-                </div>
-              )}
-
-              <div className="pt-8 border-t border-slate-100">
-                <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4 font-mono">Jefes del Proyecto</h3>
-                <div className="space-y-4">
+              <div>
+                <div className="space-y-2">
                   {visiblePermissionCollaborators.length === 0 ? (
-                    <div className="text-center py-10 border border-dashed border-slate-200 rounded-lg text-slate-300 font-bold uppercase text-[10px] tracking-widest">
-                      No hay jefes de área disponibles en este proyecto
+                    <div className="rounded-lg border border-dashed border-slate-200 py-5 text-center text-xs text-slate-500">
+                      No hay personas con permisos asignados para mostrar
                     </div>
                   ) : (
                     visiblePermissionCollaborators.map(col => (
-                      <div key={col.email} className="p-6 bg-slate-50 rounded-xl border border-slate-100">
-                        <div className="flex flex-col lg:flex-row lg:justify-between lg:items-start gap-3 mb-8">
+                      <div key={col.email} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                        <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                           <div className="flex items-center gap-3 min-w-0">
                             <img
                               src={col.photoURL || `https://ui-avatars.com/api/?name=${col.displayName || col.email || 'U'}&background=000&color=fff`}
                               alt="Avatar"
-                              className="w-10 h-10 rounded-full border border-slate-200"
+                              className="h-8 w-8 shrink-0 rounded-full border border-slate-200"
                             />
                             <div className="min-w-0">
                               <div className="text-xs font-bold truncate">{col.displayName || col.email}</div>
@@ -8525,11 +8515,11 @@ export default function ProjectDetail() {
                         </div>
 
                         {col.role !== 'admin' ? (
-                          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
                             {canManageProjectRoles && (
                             <div>
-                              <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3 font-mono">Pestañas Permitidas</div>
-                              <div className="flex flex-wrap gap-2">
+                              <div className="mb-1.5 text-[9px] font-bold uppercase tracking-widest text-slate-500">Pestañas</div>
+                              <div className="flex flex-wrap gap-1.5">
                                 {tabs.filter(t => t.id !== 'permisos' && t.id !== 'resultado').map(tab => {
                                   const enabled = safeArray(col.allowedTabs).includes(tab.id);
                                   return (
@@ -8555,8 +8545,8 @@ export default function ProjectDetail() {
                             )}
 
                             <div>
-                              <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3 font-mono">Áreas de Presupuesto</div>
-                              <div className="flex flex-wrap gap-2">
+                              <div className="mb-1.5 text-[9px] font-bold uppercase tracking-widest text-slate-500">Áreas</div>
+                              <div className="flex flex-wrap gap-1.5">
                                 {(isProjectAdmin ? categories : safeArray(userPermissions?.allowedCategories)).map(cat => {
                                   const enabled = safeArray(col.allowedCategories).includes(cat);
                                   return (
@@ -8582,8 +8572,8 @@ export default function ProjectDetail() {
 
                             {assignableSubcategoryOptions.length > 0 && (
                               <div className="lg:col-span-2">
-                                <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3 font-mono">Subcategorias asignadas</div>
-                                <div className="flex flex-wrap gap-2">
+                                <div className="mb-1.5 text-[9px] font-bold uppercase tracking-widest text-slate-500">Subcategorías</div>
+                                <div className="flex flex-wrap gap-1.5">
                                   {assignableSubcategoryOptions.map((option) => {
                                     const enabled = safeArray(col.allowedSubcategories).includes(option.key);
                                     return (
@@ -8609,14 +8599,11 @@ export default function ProjectDetail() {
                                     );
                                   })}
                                 </div>
-                                <p className="mt-2 text-[10px] text-slate-400">
-                                  Da acceso solo a esa subcategoria dentro del area padre, sin habilitar toda el area.
-                                </p>
                               </div>
                             )}
 
                             {canManageProjectRoles && (
-                            <div className="lg:col-span-2 flex flex-wrap gap-2 pt-2">
+                            <div className="flex flex-wrap gap-1.5 lg:col-span-2">
                               <button
                                 onClick={() => updateCollaboratorPermissions(col, { canEditBudgetAreas: !col.canEditBudgetAreas })}
                                 className={cn(
@@ -8639,8 +8626,8 @@ export default function ProjectDetail() {
                             )}
                           </div>
                         ) : (
-                          <div className="px-4 py-3 bg-white rounded border border-slate-200 text-[10px] font-bold uppercase tracking-widest text-slate-500">
-                            Tiene acceso completo al proyecto. No es admin global de la app.
+                          <div className="text-xs font-medium text-slate-600">
+                            Acceso completo al proyecto
                           </div>
                         )}
                       </div>
