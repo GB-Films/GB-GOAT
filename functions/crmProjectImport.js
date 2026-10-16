@@ -49,6 +49,7 @@ function validatePayload(input) {
   return data;
 }
 
+const { splitProjectCommercial } = require('./projectCommercial');
 const projectIdFor = code => `ct-${code.replace(/\s+/g, '-')}`;
 const response = (data, projectId, outcome) => ({ schemaVersion: 1, projectCode: data.projectCode, projectId, outcome });
 
@@ -112,7 +113,9 @@ async function importProject({ db, payload, timestamp }) {
       throw new ImportError(409, 'El código coincide con proyectos incompatibles. Requiere revisión.');
     }
     const existing = matches.docs[0] || (canonical.exists ? canonical : null);
-    if (existing?.data().crmSaleId && existing.data().crmSaleId !== data.saleId) {
+    const existingCommercial = existing ? await transaction.get(db.collection('projectCommercial').doc(existing.id)) : null;
+    const previousSaleId = existingCommercial?.data()?.crmSaleId || existing?.data().crmSaleId;
+    if (previousSaleId && previousSaleId !== data.saleId) {
       throw new ImportError(409, 'El proyecto existente está vinculado a otra venta.');
     }
     if (!existing) {
@@ -124,7 +127,12 @@ async function importProject({ db, payload, timestamp }) {
     const targetId = existing ? existing.id : projectId;
     const outcome = existing ? 'existing' : 'created';
     // Reads precede writes; create() also protects against concurrent creation.
-    if (!existing) transaction.create(projectRef, projectFromPayload(data, timestamp()));
+    if (!existing) {
+      const now = timestamp();
+      const { publicData, commercial } = splitProjectCommercial(projectFromPayload(data, now));
+      transaction.create(projectRef, { ...publicData, commercialDataVersion: 1 });
+      transaction.create(db.collection('projectCommercial').doc(projectId), { ...commercial, schemaVersion: 1, updatedAt: now });
+    }
     transaction.create(markerRef, {
       schemaVersion: 1, projectCode: data.projectCode, saleId: data.saleId,
       projectId: targetId, outcome, receivedAt: timestamp(), source: data,

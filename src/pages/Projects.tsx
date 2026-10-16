@@ -13,6 +13,8 @@ import { readControlTotalProjects } from '../lib/readControlTotalProjects';
 import { CONTROL_TOTAL_SPREADSHEET_ID, controlTotalProjectUrl, controlTotalContractLabel, controlTotalArsBudget, type ControlTotalProject } from '../lib/controlTotalProjects';
 import { SearchableSelect } from '../components/SearchableSelect';
 import { matchesSmartSearch } from '../lib/smartSearch';
+import { splitProjectCommercial } from '../lib/projectCommercialFields';
+import { readAuthorizedProject } from '../lib/projectCommercial';
 
 const projectCatalogRef = doc(db, 'integrations', 'controlTotalProjectCatalog');
 
@@ -97,9 +99,15 @@ export default function Projects() {
             where('collaboratorEmails', 'array-contains', normalizeEmail(profile.email))
           )
         );
+    let currentRead = 0;
     const unsubscribe = onSnapshot(q, querySnapshot => {
-      setProjects(querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-      setLoading(false);
+      const read = ++currentRead;
+      void Promise.all(querySnapshot.docs.map(snapshot => readAuthorizedProject(db, { id: snapshot.id, ...snapshot.data() }, {
+        uid: profile.uid, email: profile.email, isAppAdmin: profile.role === 'admin',
+      }))).then(rows => { if (read === currentRead) { setProjects(rows); setLoading(false); } }).catch(error => {
+        if (read === currentRead) { setProjects([]); setLoading(false); }
+        console.error('No se pudieron leer los datos comerciales autorizados:', error);
+      });
     }, error => {
       setProjects([]);
       setLoading(false);
@@ -108,7 +116,7 @@ export default function Projects() {
       }
       console.error("Error fetching projects:", error);
     });
-    return unsubscribe;
+    return () => { currentRead++; unsubscribe(); };
   }, [profile?.uid, profile?.email, profile?.role]);
 
   useEffect(() => {
@@ -238,13 +246,13 @@ export default function Projects() {
     setCreating(true);
     try {
       const docRef = source ? doc(db, 'projects', `ct-${source.projectCode.replace(/\s+/g, '-')}`)
-        : await addDoc(collection(db, 'projects'), data);
-      if (source) {
-        await runTransaction(db, async transaction => {
-          if ((await transaction.get(docRef)).exists()) throw new Error('Este código ya tiene un proyecto en GOAT.');
-          transaction.set(docRef, data);
-        });
-      }
+        : doc(collection(db, 'projects'));
+      const { publicData, commercial } = splitProjectCommercial(data);
+      await runTransaction(db, async transaction => {
+        if ((await transaction.get(docRef)).exists()) throw new Error('Este código ya tiene un proyecto en GOAT.');
+        transaction.set(docRef, { ...publicData, commercialDataVersion: 1 });
+        transaction.set(doc(db, 'projectCommercial', docRef.id), { ...commercial, schemaVersion: 1, updatedAt: serverTimestamp() });
+      });
       setShowNewModal(false);
     } catch (error) {
       console.error("Error adding project:", error);

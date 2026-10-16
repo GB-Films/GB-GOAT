@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { collection, query, getDocs, addDoc, serverTimestamp, orderBy, where, or } from 'firebase/firestore';
 import { db } from '../lib/firebase';
+import { readAuthorizedProject } from '../lib/projectCommercial';
 import { handleFirestoreError } from '../lib/firestoreUtils';
 import { useAuth } from '../context/AuthContext';
 import { Plus, Search, Building2, Globe, X, Upload, Download } from 'lucide-react';
@@ -124,7 +125,9 @@ export default function Clients() {
                 )
               );
           const pSnapshot = await getDocs(pq);
-          projectsData = pSnapshot.docs.map(doc => doc.data());
+          projectsData = await Promise.all(pSnapshot.docs.map(snapshot => readAuthorizedProject(db, { id: snapshot.id, ...snapshot.data() }, {
+            uid: profile.uid, email: profile.email, isAppAdmin: profile.role === 'admin',
+          })));
         } catch (pError: any) {
           console.error("Error fetching projects count:", pError);
           // If projects fail, we still want to show clients

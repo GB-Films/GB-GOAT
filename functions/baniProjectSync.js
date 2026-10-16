@@ -1,3 +1,4 @@
+const { splitProjectCommercial } = require('./projectCommercial');
 const text = value => typeof value === 'string' ? value.trim() : '';
 
 function sourceMetadata(data) {
@@ -71,6 +72,9 @@ async function syncGoatProject({ sourceDb, targetDb, ownerUid, projectId, target
   const source = await sourceDb.collection('projects').doc(projectId).get();
   // Deleting in GOAT must never delete hours, budgets or other BANI history.
   if (!source.exists) return { outcome: 'source-missing', projectId };
+  const commercial = await sourceDb.collection('projectCommercial').doc(projectId).get();
+  if (source.data().commercialDataVersion === 1 && !commercial.exists) throw new Error('Commercial metadata unavailable');
+  const sourceData = commercial.exists ? { ...source.data(), ...splitProjectCommercial(commercial.data()).commercial } : source.data();
   const version = { seconds: source.updateTime.seconds, nanoseconds: source.updateTime.nanoseconds };
   const collection = targetDb.collection('users').doc(ownerUid).collection('postProjects');
   return targetDb.runTransaction(async transaction => {
@@ -79,7 +83,7 @@ async function syncGoatProject({ sourceDb, targetDb, ownerUid, projectId, target
     const ref = linked.empty ? collection.doc(targetId || `goat-${projectId}`) : linked.docs[0].ref;
     if (targetId && ref.id !== targetId) throw new Error('GOAT project already has another BANI link');
     const snapshot = await transaction.get(ref);
-    const patch = buildBaniPatch({ projectId, data: source.data(), version, existing: snapshot.exists ? snapshot.data() : null });
+    const patch = buildBaniPatch({ projectId, data: sourceData, version, existing: snapshot.exists ? snapshot.data() : null });
     if (!patch) return { outcome: 'unchanged', projectId, targetId: ref.id };
     if (snapshot.exists) transaction.update(ref, patch);
     else transaction.create(ref, patch);

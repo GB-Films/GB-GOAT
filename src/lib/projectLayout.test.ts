@@ -16,6 +16,8 @@ test('project team displays assigned access and exposes no management controls t
   assert.match(html, /Áreas · Cajas/);
   assert.match(html, /Sin edición de gastos/);
   assert.doesNotMatch(html, /<button/);
+  assert.match(html, /space-y-3 rounded-xl border border-slate-200 bg-white p-3/);
+  assert.doesNotMatch(html, /roles y permisos actuales|Los administradores generales mantienen/);
 });
 
 test('paid total is green, partial payment stays distinct and no amount can be edited without permission', () => {

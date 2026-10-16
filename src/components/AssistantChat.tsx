@@ -88,7 +88,7 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
   const tools = useMemo(() => buildAssistantTools({
     listProjects,
     loadProject: (projectId) => loadAssistantProjectContext({ projectId, uid, email, globalRole }),
-    loadProjectFinance: loadAssistantProjectFinance,
+    loadProjectFinance: projectId => loadAssistantProjectFinance(projectId, { uid, email, isAppAdmin: globalRole === 'admin' }),
     loadClients: loadAssistantClients,
     loadUsers: loadAssistantUsers,
     getPendingFile: () => pendingFileRef.current,

@@ -50,6 +50,8 @@ import { CashBoxPicker } from './project-detail/CashBoxPicker';
 import { cashLedgerPeople } from '../lib/cashLedgerPeople';
 import { ProjectCommercialSummary } from './project-detail/ProjectCommercialSummary';
 import { ProjectKeyContacts } from './project-detail/ProjectKeyContacts';
+import { readAuthorizedProject, readProjectCommercial } from '../lib/projectCommercial';
+import { splitProjectCommercial } from '../lib/projectCommercialFields';
 import { matchesSmartSearch } from '../lib/smartSearch';
 import { validateMaxUploadSize } from '../lib/uploadLimits';
 import { buildPaymentCalendarDays, formatDateKey, formatPeriodLabel, getOverdueLines, getTodayLines, getUnscheduledLines, sumDebt, type PaymentScheduleLine } from '../lib/paymentSchedule';
@@ -807,15 +809,17 @@ export default function ProjectDetail() {
   const isGlobalAdmin = profile?.role === 'admin';
   
   useEffect(() => {
+    let cancelled = false;
     const fetchProject = async () => {
       if (!id || !user) return;
       setLoading(true);
+      setProject(null);
       try {
         const docRef = doc(db, 'projects', id);
         const docSnap = await getDoc(docRef);
+        if (cancelled) return;
         if (docSnap.exists()) {
           const data = docSnap.data();
-          setProject({ id: docSnap.id, ...data });
           setLocationDraft(data.location || '');
           
           const owner = data.createdBy === user.uid;
@@ -828,6 +832,7 @@ export default function ProjectDetail() {
           if (!colSnapshot.exists() && user.email && user.email !== userEmailKey) {
             colSnapshot = await getDoc(doc(db, 'projects', id, 'collaborators', user.email));
           }
+          if (cancelled) return;
           
           if (colSnapshot.exists()) {
             const rawPerms = colSnapshot.data() as Collaborator;
@@ -848,6 +853,11 @@ export default function ProjectDetail() {
             setUserPermissions(null);
             setIsProjectAdmin(owner || isGlobalAdmin);
           }
+
+          const canReadCommercial = owner || isGlobalAdmin || colSnapshot.data()?.role === 'admin';
+          const hydrated = await readProjectCommercial(db, { id: docSnap.id, ...data }, canReadCommercial);
+          if (cancelled) return;
+          setProject(hydrated);
 
           if (data.activeAreas) {
             setActiveAreas(data.activeAreas);
@@ -918,10 +928,11 @@ export default function ProjectDetail() {
         }
         console.error("Error fetching project data:", error);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
     fetchProject();
+    return () => { cancelled = true; };
   }, [id, user, profile]);
 
   // Keep financial rows current across browsers. Transactions below still validate
@@ -963,8 +974,10 @@ export default function ProjectDetail() {
     const fetchSourceProjects = async () => {
       try {
         const snap = await getDocs(collection(db, 'projects'));
-        const items = snap.docs
-          .map((projectDoc) => ({ id: projectDoc.id, ...projectDoc.data() }))
+        const hydrated = await Promise.all(snap.docs.map(projectDoc => readAuthorizedProject(db, { id: projectDoc.id, ...projectDoc.data() }, {
+          uid: user?.uid || '', email: user?.email || '', isAppAdmin: profile?.role === 'admin',
+        })));
+        const items = hydrated
           .filter((item) => item.id !== id)
           .sort((a: any, b: any) => String(a.name || '').localeCompare(String(b.name || ''), 'es'));
         setSourceProjects(items);
@@ -5081,7 +5094,10 @@ export default function ProjectDetail() {
         await Promise.all(snap.docs.map((childDoc) => deleteDoc(childDoc.ref)));
       }
 
-      await deleteDoc(doc(db, 'projects', id));
+      const deletion = writeBatch(db);
+      deletion.delete(doc(db, 'projectCommercial', id));
+      deletion.delete(doc(db, 'projects', id));
+      await deletion.commit();
       navigate('/proyectos');
     } catch (error) {
       console.error('Error deleting project:', error);
@@ -9110,7 +9126,11 @@ export default function ProjectDetail() {
                   budgetTotal: Number(formData.get('budgetTotal')),
                 };
                 try {
-                  await updateDoc(doc(db, 'projects', id!), updates);
+                  const { publicData, commercial } = splitProjectCommercial(updates);
+                  const batch = writeBatch(db);
+                  batch.update(doc(db, 'projects', id!), { ...publicData, commercialDataVersion: 1, updatedAt: serverTimestamp() });
+                  batch.set(doc(db, 'projectCommercial', id!), { ...commercial, schemaVersion: 1, updatedAt: serverTimestamp() }, { merge: true });
+                  await batch.commit();
                   setProject({ ...project, ...updates });
                   setShowEditProjectModal(false);
                 } catch (err) {

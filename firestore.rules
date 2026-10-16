@@ -1,5 +1,10 @@
 rules_version = '2';
 
+// Commercial data model: projectCommercial/{projectId}, schemaVersion=1,
+// updatedAt=request.time, finite nonnegative budget/contract numbers, bounded
+// text/URLs and original import timestamps. Public projects retain operational
+// identity and ACL only. Reads use the existing project admin ACL, never client flags.
+
 service cloud.firestore {
   match /databases/{database}/documents {
     function isSignedIn() {
@@ -1261,6 +1266,59 @@ service cloud.firestore {
     // The user directory is readable by signed-in users so project admins can add
     // already-logged collaborators without giving them global admin privileges.
 
+    function commercialFieldNames() {
+      return ['budgetTotal', 'clientName', 'brandName', 'companyName', 'serviceName',
+        'controlTotalProjectId', 'controlTotalUrl', 'controlTotalSourceRowAtImport',
+        'controlTotalStatusAtImport', 'controlTotalOwnerUnit', 'controlTotalInternalProviderUnit',
+        'controlTotalCondition', 'controlTotalConfirmationDate', 'controlTotalDeliveryDate',
+        'controlTotalContractCurrency', 'controlTotalContractAmount', 'controlTotalContractArs',
+        'controlTotalContractUsd', 'controlTotalSourceWarning', 'controlTotalImportedAt', 'crmSaleId', 'crmSaleUrl'];
+    }
+
+    function commercialText(data, key, max) {
+      return !(key in data) || (data[key] is string && data[key].size() <= max);
+    }
+
+    function commercialAmount(data, key) {
+      return !(key in data) || data[key] == null || (data[key] is number && data[key] >= 0 && data[key] <= 1000000000000000);
+    }
+
+    function validCommercial(data) {
+      return data.keys().hasOnly(commercialFieldNames().concat(['schemaVersion', 'updatedAt']))
+        && data.keys().hasAll(['schemaVersion', 'updatedAt'])
+        && data.schemaVersion == 1 && data.updatedAt == request.time
+        && commercialAmount(data, 'budgetTotal')
+        && commercialAmount(data, 'controlTotalContractAmount')
+        && commercialAmount(data, 'controlTotalContractArs')
+        && commercialAmount(data, 'controlTotalContractUsd')
+        && commercialText(data, 'clientName', 500) && commercialText(data, 'brandName', 500)
+        && commercialText(data, 'companyName', 500) && commercialText(data, 'serviceName', 500)
+        && commercialText(data, 'controlTotalProjectId', 500)
+        && commercialText(data, 'controlTotalUrl', 2048)
+        && (!('controlTotalUrl' in data) || data.controlTotalUrl == '' || data.controlTotalUrl.matches('https://.*'))
+        && commercialText(data, 'crmSaleUrl', 2048)
+        && (!('crmSaleUrl' in data) || data.crmSaleUrl == '' || data.crmSaleUrl.matches('https://.*'))
+        && commercialText(data, 'crmSaleId', 500)
+        && commercialText(data, 'controlTotalStatusAtImport', 500)
+        && commercialText(data, 'controlTotalOwnerUnit', 500)
+        && commercialText(data, 'controlTotalInternalProviderUnit', 500)
+        && commercialText(data, 'controlTotalCondition', 500)
+        && commercialText(data, 'controlTotalConfirmationDate', 100)
+        && commercialText(data, 'controlTotalDeliveryDate', 100)
+        && commercialText(data, 'controlTotalSourceWarning', 2000)
+        && (!('controlTotalContractCurrency' in data) || data.controlTotalContractCurrency in ['ARS', 'USD', ''])
+        && (!('controlTotalSourceRowAtImport' in data) || (data.controlTotalSourceRowAtImport is int && data.controlTotalSourceRowAtImport >= 1 && data.controlTotalSourceRowAtImport <= 10000000))
+        && (!('controlTotalImportedAt' in data) || data.controlTotalImportedAt is timestamp);
+    }
+
+    match /projectCommercial/{projectId} {
+      allow get: if exists(/databases/$(database)/documents/projects/$(projectId)) && isProjectAdmin(projectId);
+      allow list: if isAppAdmin();
+      allow create, update: if existsAfter(/databases/$(database)/documents/projects/$(projectId))
+        && (isAppAdmin() || isProjectAdmin(projectId)) && validCommercial(request.resource.data);
+      allow delete: if isAppAdmin();
+    }
+
     match /projects/{projectId} {
       allow list: if isAppAdmin() || (
         isSignedIn()
@@ -1270,11 +1328,12 @@ service cloud.firestore {
         )
       );
       allow get: if hasProjectAccess(projectId);
-      allow create: if isAppAdmin() && request.resource.data.createdBy == request.auth.uid;
-      allow update: if isProjectAdmin(projectId)
+      allow create: if isAppAdmin() && request.resource.data.createdBy == request.auth.uid
+        && !request.resource.data.keys().hasAny(commercialFieldNames());
+      allow update: if !request.resource.data.diff(resource.data).affectedKeys().hasAny(commercialFieldNames()) && (isProjectAdmin(projectId)
         || canAppendCollaboratorEmailAsProductionLead(projectId)
         || canUpdateProjectOperations(projectId)
-        || canUpdateAreaExpenseSubcategories(projectId);
+        || canUpdateAreaExpenseSubcategories(projectId));
       allow delete: if isAppAdmin();
 
       match /collaborators/{email} {

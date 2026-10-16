@@ -85,8 +85,9 @@ test('creates a project and receipt; repeated delivery creates nothing', async (
   const options = { db, payload: fixture(), timestamp: () => 123 };
   assert.deepEqual(await importProject(options), { schemaVersion: 1, projectCode: 'G ZZZ 0001', projectId: 'ct-G-ZZZ-0001', outcome: 'created' });
   assert.equal((await importProject(options)).outcome, 'already_processed');
-  assert.equal(db.writes.length, 2);
-  assert.equal(db.records.get('projects/ct-G-ZZZ-0001').budgetTotal, 500000);
+  assert.equal(db.writes.length, 3);
+  assert.equal(db.records.get('projects/ct-G-ZZZ-0001').budgetTotal, undefined);
+  assert.equal(db.records.get('projectCommercial/ct-G-ZZZ-0001').budgetTotal, 500000);
 });
 
 test('preserves existing projects, including random legacy IDs and financial edits', async () => {
@@ -106,7 +107,7 @@ test('receipt prevents retries from resurrecting a project deleted by an adminis
   db.records.delete('projects/ct-G-ZZZ-0001');
   assert.equal((await importProject(options)).outcome, 'already_processed');
   assert.equal(db.records.has('projects/ct-G-ZZZ-0001'), false);
-  assert.equal(db.writes.length, 2);
+  assert.equal(db.writes.length, 3);
 });
 
 test('a receipt cannot be reused by another sale', async () => {
@@ -120,6 +121,7 @@ for (const [title, seed] of [
   ['canonical ID conflict', { 'projects/ct-G-ZZZ-0001': { projectCode: 'G OTHER 0001' } }],
   ['uncoded legacy project', { 'projects/a': { name: 'Prueba local', budgetTotal: 222 } }],
   ['existing sale conflict', { 'projects/a': { projectCode: 'G ZZZ 0001', crmSaleId: 'VE-OTHER' } }],
+  ['migrated sale conflict', { 'projects/a': { projectCode: 'G ZZZ 0001', commercialDataVersion: 1 }, 'projectCommercial/a': { crmSaleId: 'VE-OTHER' } }],
 ]) {
   test(`conflict ${title} creates nothing`, async () => {
     const db = database(seed);

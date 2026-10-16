@@ -25,6 +25,12 @@ npm run build
 
 `npm run lint` valida TypeScript y la sintaxis local de `firestore.rules` y `storage.rules`.
 
+La privacidad comercial tiene pruebas de autorización específicas (requiere Java y Firebase Emulator Suite):
+
+```bash
+firebase emulators:exec --only firestore --project demo-gb-goat-commercial "node tests/projectCommercialRules.emulator.mjs"
+```
+
 ## Publicación
 
 Un push a `main` ejecuta las validaciones y publica la interfaz en GitHub Pages. Las reglas de Firebase se publican por separado:
