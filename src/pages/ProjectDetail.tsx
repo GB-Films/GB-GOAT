@@ -43,6 +43,12 @@ import * as XLSX from 'xlsx';
 import Papa from 'papaparse';
 import { cn } from '../lib/utils';
 import { AreaBudgetSummary } from './project-detail/AreaBudgetSummary';
+import { MobileExpenseAmount } from './project-detail/MobileExpenseAmount';
+import { ProjectTeam } from './project-detail/ProjectTeam';
+import { ProjectDialog } from './project-detail/ProjectDialog';
+import { CashBoxPicker } from './project-detail/CashBoxPicker';
+import { cashLedgerPeople } from '../lib/cashLedgerPeople';
+import { matchesSmartSearch } from '../lib/smartSearch';
 import { validateMaxUploadSize } from '../lib/uploadLimits';
 import { buildPaymentCalendarDays, formatDateKey, formatPeriodLabel, getOverdueLines, getTodayLines, getUnscheduledLines, sumDebt, type PaymentScheduleLine } from '../lib/paymentSchedule';
 import { BudgetRowCell } from './project-detail/BudgetRowCell';
@@ -749,6 +755,9 @@ export default function ProjectDetail() {
   const [availableUsers, setAvailableUsers] = useState<any[]>([]);
   const [newCollaboratorSearch, setNewCollaboratorSearch] = useState('');
   const [selectedUserToAdd, setSelectedUserToAdd] = useState<any | null>(null);
+  const [showAddCollaborator, setShowAddCollaborator] = useState(false);
+  const [addingCollaborator, setAddingCollaborator] = useState(false);
+  const [selectedCashBox, setSelectedCashBox] = useState('general');
   const [newCollaboratorRole, setNewCollaboratorRole] = useState<Collaborator['role']>('jefe_produccion');
   const [newCollaboratorCategories, setNewCollaboratorCategories] = useState<string[]>([]);
   const [userPermissions, setUserPermissions] = useState<Collaborator | null>(null);
@@ -781,7 +790,6 @@ export default function ProjectDetail() {
   const [paymentScheduleAnchor, setPaymentScheduleAnchor] = useState(() => formatDateKey(new Date()));
   const [selectedPaymentBucketKey, setSelectedPaymentBucketKey] = useState<string | null>(null);
   const [expandedPaymentLineId, setExpandedPaymentLineId] = useState<string | null>(null);
-  const [expandedMobileExpenseId, setExpandedMobileExpenseId] = useState<string | null>(null);
   const [copiedPaymentLineId, setCopiedPaymentLineId] = useState<string | null>(null);
   const [documentFamilyFilter, setDocumentFamilyFilter] = useState<'todos' | 'finanzas' | 'contratos' | 'seguros' | 'locaciones'>('todos');
   const [documentTypeFilter, setDocumentTypeFilter] = useState<'all' | 'factura' | 'comprobante'>('all');
@@ -1104,8 +1112,8 @@ export default function ProjectDetail() {
     }
   };
 
-  const updateBudgetItem = async (itemId: string, updates: any) => {
-    if (!id || !canEditMainBudget) return;
+  const updateBudgetItem = async (itemId: string, updates: any, propagateFailure = false) => {
+    if (!id || !canEditMainBudget) { if (propagateFailure) throw new Error('No tenés permiso para editar este gasto.'); return; }
     try {
       const currentItem = budgetItems.find((item) => item.id === itemId);
       const itemRef = doc(db, 'projects', id, 'budgetItems', itemId);
@@ -1149,6 +1157,7 @@ export default function ProjectDetail() {
       if (saved.exists()) setBudgetItems(items => items.map(i => i.id === itemId ? { id: i.id, ...saved.data() } as BudgetItem : i));
     } catch (e) {
       console.error("Error updating budget item:", e);
+      if (propagateFailure) throw new Error('No se pudo guardar el importe. El gasto cambió o tiene pagos asociados; revisá la fila.');
       alert(e instanceof Error && e.message === 'PAID_EXPENSE_LOCKED'
         ? 'Para corregir el importe, primero eliminá todos los pagos de la fila. Los demás datos del gasto conservan su bloqueo histórico.'
         : 'No se pudo guardar el importe. La partida cambió o no se pudo validar la corrección. Actualizá y revisá la fila antes de intentarlo otra vez.');
@@ -1666,11 +1675,11 @@ export default function ProjectDetail() {
     }
   };
 
-  const updateAreaExpense = async (expenseId: string, updates: any) => {
-    if (!id) return;
+  const updateAreaExpense = async (expenseId: string, updates: any, propagateFailure = false) => {
+    if (!id) { if (propagateFailure) throw new Error('No se encontró el proyecto.'); return; }
     try {
       const currentExpense = areaExpenses.find(e => e.id === expenseId);
-      if (!currentExpense) return;
+      if (!currentExpense) { if (propagateFailure) throw new Error('No se encontró el gasto.'); return; }
 
       const paidProviderCorrection = hasRecordedPayment(currentExpense)
         && 'providerId' in updates && 'providerName' in updates;
@@ -1698,7 +1707,7 @@ export default function ProjectDetail() {
 
       const nextArea = submittedUpdates.area || currentExpense.area;
       const nextSubcategory = submittedUpdates.subcategory !== undefined ? submittedUpdates.subcategory : currentExpense.subcategory;
-      if (!canEditAreaExpense(currentExpense) || !canEditAreaSubcategory(nextArea, nextSubcategory)) return;
+      if (!canEditAreaExpense(currentExpense) || !canEditAreaSubcategory(nextArea, nextSubcategory)) { if (propagateFailure) throw new Error('No tenés permiso para editar este gasto.'); return; }
       const nextTotal = submittedUpdates.total !== undefined ? Number(submittedUpdates.total) : Number(currentExpense.total) || 0;
       const budgetWarning = getAreaExpenseBudgetWarning(nextArea, nextTotal, expenseId);
       const docRef = doc(db, 'projects', id, 'areaExpenses', expenseId);
@@ -1756,6 +1765,7 @@ export default function ProjectDetail() {
       if (budgetWarning) showExpenseConfirmation(budgetWarning, 'warning');
     } catch (e) {
       console.error("Error updating area expense:", e);
+      if (propagateFailure) throw new Error('No se pudo guardar el importe. El gasto cambió o tiene pagos asociados; revisá la fila.');
       alert(e instanceof Error && e.message === 'PENDING_PROVIDER_INVITE'
         ? 'Este gasto tiene una invitación de alta pendiente. Cancelala antes de corregir el proveedor.'
         : e instanceof Error && e.message === 'PAID_EXPENSE_LOCKED'
@@ -3527,32 +3537,10 @@ export default function ProjectDetail() {
             <BudgetRowCell item={item} onUpdate={onUpdate} type="description" disabled={!canEdit} />
           </div>
         </div>
-        <button
-          type="button"
-          onClick={() => setExpandedMobileExpenseId((current) => current === item.id ? null : item.id)}
-          className="shrink-0 rounded border border-slate-100 bg-slate-50 px-1.5 py-0.5 text-right transition-colors hover:border-slate-300"
-          title="Ver detalle de precio unitario y cantidad"
-        >
-          <span className="flex items-center justify-end gap-1 text-[8px] font-black uppercase tracking-widest text-slate-300">
-            Total
-            {expandedMobileExpenseId === item.id ? <ChevronDown className="h-2.5 w-2.5" /> : <ChevronRight className="h-2.5 w-2.5" />}
-          </span>
-          <span className="block font-mono text-[11px] font-black text-slate-900">${item.total?.toLocaleString()}</span>
-        </button>
+        <MobileExpenseAmount item={item} paidAmount={getPaymentTotal(item)}
+          canEdit={canEdit && (!hasRecordedPayment(item) || isUnpaidAmountCorrection(item, { total: item.total }, isProjectAdmin))}
+          onUpdate={(rowId, updates) => collectionName === 'budgetItems' ? updateBudgetItem(rowId, updates, true) : updateAreaExpense(rowId, updates, true)} />
       </div>
-
-      {expandedMobileExpenseId === item.id && (
-        <div className="mt-1 grid grid-cols-2 gap-1 rounded border border-slate-100 bg-slate-50 px-1.5 py-1">
-          <div className="min-w-0">
-            <div className="text-[7px] font-black uppercase tracking-widest text-slate-300">P. unitario</div>
-            <BudgetRowCell item={item} onUpdate={onUpdate} type="price" disabled={!canEdit} />
-          </div>
-          <div className="min-w-0 text-right">
-            <div className="text-[7px] font-black uppercase tracking-widest text-slate-300">Cant.</div>
-            <BudgetRowCell item={item} onUpdate={onUpdate} type="quantity" disabled={!canEdit} />
-          </div>
-        </div>
-      )}
 
       <div className="mt-1.5 flex flex-wrap items-center gap-1">
         <div className="w-[78px] rounded border border-slate-100 bg-slate-50 px-1 py-0.5 [&_button]:h-7 [&_button]:px-1 [&_button]:py-0 [&_button]:text-[8px]">
@@ -3568,10 +3556,10 @@ export default function ProjectDetail() {
           type="button"
           disabled={!canManagePaymentForItem(item, collectionName)}
           onClick={() => openPaymentModal(item, collectionName)}
-          className="ml-auto inline-flex h-7 items-center gap-1 rounded border border-slate-900 bg-slate-900 px-1.5 text-[8px] font-black uppercase tracking-widest text-white disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-300"
+          className={cn('ml-auto inline-flex h-8 items-center gap-1 rounded border px-2 text-[9px] font-black uppercase tracking-widest', getPaymentTotal(item) > 0 || item.paid ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-900 bg-slate-900 text-white disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400')}
         >
           <Wallet className="h-3 w-3" />
-          Pago
+          {item.paid || (Number(item.total) > 0 && getPaymentTotal(item) >= Number(item.total)) ? 'Pagado' : getPaymentTotal(item) > 0 ? 'Pago parcial' : 'Registrar pago'}
         </button>
         {canDelete && (
           <button
@@ -3587,6 +3575,15 @@ export default function ProjectDetail() {
     </div>
   );
   const collaboratorEmails = collaborators.map((col) => normalizeEmail(col.email));
+  const ownerEmail = normalizeEmail(project?.createdByEmail);
+  const projectTeamMembers = [
+    ...(ownerEmail ? [{ email: ownerEmail, displayName: availableUsers.find(candidate => normalizeEmail(candidate.email) === ownerEmail)?.displayName || ownerEmail,
+      role: 'admin' as const, allowedTabs: [...PROJECT_TAB_IDS], allowedCategories: categories, owner: true,
+      globalAdmin: availableUsers.some(candidate => normalizeEmail(candidate.email) === ownerEmail && candidate.role === 'admin') }] : []),
+    ...collaborators.filter(col => normalizeEmail(col.email) !== ownerEmail).map(col => ({ ...col,
+      globalAdmin: availableUsers.some(candidate => normalizeEmail(candidate.email) === normalizeEmail(col.email) && candidate.role === 'admin'),
+    })),
+  ];
   const visiblePermissionCollaborators = isProjectAdmin
     ? collaborators
     : collaborators.filter((col) => col.role === 'jefe_area' || col.role === 'jefe_produccion');
@@ -3594,10 +3591,9 @@ export default function ProjectDetail() {
     .filter((candidate) => {
       const email = normalizeEmail(candidate.email);
       if (!email) return false;
+      if (email === ownerEmail) return false;
       if (collaboratorEmails.includes(email)) return false;
-      const term = newCollaboratorSearch.trim().toLowerCase();
-      if (!term) return true;
-      return [candidate.displayName, candidate.email].filter(Boolean).join(' ').toLowerCase().includes(term);
+      return matchesSmartSearch(newCollaboratorSearch, candidate.displayName, candidate.email);
     })
     .slice(0, 8);
 
@@ -3739,7 +3735,7 @@ export default function ProjectDetail() {
   ), [cashResponsibles, currentUserEmail, isProjectAdmin, userPermissions]);
 
   const visibleCashRows = React.useMemo(() => (
-    cashResponsibles
+    cashLedgerPeople(cashResponsibles, cashMovements)
       .filter((responsible) => (
         isProjectAdmin
         || normalizeEmail(responsible.email) === currentUserEmail
@@ -3792,9 +3788,12 @@ export default function ProjectDetail() {
           balance: cashBalanceByEmail.get(email) || 0,
         };
       })
+      .filter(row => row.movements.length > 0 || row.balance !== 0)
   ), [cashBalanceByEmail, cashMovements, cashResponsibles, currentUserEmail, isProductionLead, isProjectAdmin, userPermissions]);
+  const activeCashBox = isProjectAdmin && selectedCashBox === 'general' ? 'general'
+    : visibleCashRows.some(row => row.email === selectedCashBox) ? selectedCashBox
+      : isProjectAdmin ? 'general' : visibleCashRows[0]?.email || '';
   const currentCashRow = visibleCashRows.find((row) => row.email === currentUserEmail);
-  const visibleCashBalanceTotal = visibleCashRows.reduce((total, row) => total + row.balance, 0);
 
   useEffect(() => {
     if (!cashRecipientEmail && cashResponsibles.length > 0) {
@@ -4906,7 +4905,7 @@ export default function ProjectDetail() {
   };
 
   const addCollaborator = async (selectedUser: any) => {
-    if (!id || !selectedUser?.email || !canManageProjectAccess) return;
+    if (!id || !selectedUser?.email || !canManageProjectAccess || addingCollaborator) return;
     if (!isProjectAdmin && newCollaboratorRole === 'admin') return;
 
     const email = normalizeEmail(selectedUser.email);
@@ -4930,6 +4929,7 @@ export default function ProjectDetail() {
     };
 
     try {
+      setAddingCollaborator(true);
       const newEmails = Array.from(new Set([...(project?.collaboratorEmails || []), email].map(normalizeEmail).filter(Boolean)));
       const batch = writeBatch(db);
       batch.set(doc(db, 'projects', id, 'collaborators', email), newCol);
@@ -4945,9 +4945,12 @@ export default function ProjectDetail() {
       setNewCollaboratorSearch('');
       setNewCollaboratorRole('jefe_area');
       setNewCollaboratorCategories([]);
+      setShowAddCollaborator(false);
     } catch (e) {
       console.error("Error adding collaborator:", e);
       alert("Error al añadir colaborador. Verificá permisos o que el usuario exista en la plataforma.");
+    } finally {
+      setAddingCollaborator(false);
     }
   };
 
@@ -6476,34 +6479,10 @@ export default function ProjectDetail() {
                                         />
                                       </div>
                                     </div>
-                                    <div className="shrink-0 text-right">
-                                      <button
-                                        type="button"
-                                        onClick={() => setExpandedMobileExpenseId((current) => current === item.id ? null : item.id)}
-                                        className="rounded border border-slate-100 bg-slate-50 px-1.5 py-0.5 text-right transition-colors hover:border-slate-300"
-                                        title="Ver detalle de precio unitario y cantidad"
-                                      >
-                                        <span className="flex items-center justify-end gap-1 text-[8px] font-black uppercase tracking-widest text-slate-300">
-                                          Total
-                                          {expandedMobileExpenseId === item.id ? <ChevronDown className="h-2.5 w-2.5" /> : <ChevronRight className="h-2.5 w-2.5" />}
-                                        </span>
-                                        <span className="block font-mono text-[11px] font-black text-slate-900">${item.total?.toLocaleString()}</span>
-                                      </button>
-                                    </div>
+                                    <MobileExpenseAmount item={item} paidAmount={getPaymentTotal(item)}
+                                      canEdit={canEditAreaExpense(item) && (!hasRecordedPayment(item) || isUnpaidAmountCorrection(item, { total: item.total }, isProjectAdmin))}
+                                      onUpdate={(rowId, updates) => updateAreaExpense(rowId, updates, true)} />
                                   </div>
-
-                                  {expandedMobileExpenseId === item.id && (
-                                    <div className="mt-1 grid grid-cols-2 gap-1 rounded border border-slate-100 bg-slate-50 px-1.5 py-1">
-                                      <div className="min-w-0">
-                                        <div className="text-[7px] font-black uppercase tracking-widest text-slate-300">P. unitario</div>
-                                        <div className="truncate font-mono text-[10px] font-black text-slate-800">${Number(item.unitPrice || 0).toLocaleString()}</div>
-                                      </div>
-                                      <div className="min-w-0 text-right">
-                                        <div className="text-[7px] font-black uppercase tracking-widest text-slate-300">Cant.</div>
-                                        <div className="truncate font-mono text-[10px] font-black text-slate-800">{Number(item.quantity || 0).toLocaleString()}</div>
-                                      </div>
-                                    </div>
-                                  )}
 
                                   <div className="mt-1.5 flex flex-wrap items-center gap-1">
                                     <div className="w-[78px] rounded border border-slate-100 bg-slate-50 px-1 py-0.5 [&_button]:h-7 [&_button]:px-1 [&_button]:py-0 [&_button]:text-[8px]">
@@ -6547,10 +6526,10 @@ export default function ProjectDetail() {
                                       type="button"
                                       disabled={!canEditAreaExpense(item)}
                                       onClick={() => openPaymentModal(item, 'areaExpenses')}
-                                      className="ml-auto inline-flex h-7 items-center gap-1 rounded border border-slate-900 bg-slate-900 px-1.5 text-[8px] font-black uppercase tracking-widest text-white disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-300"
+                                      className={cn('ml-auto inline-flex h-8 items-center gap-1 rounded border px-2 text-[9px] font-black uppercase tracking-widest', getPaymentTotal(item) > 0 || item.paid ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-900 bg-slate-900 text-white disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400')}
                                     >
                                       <Wallet className="h-3 w-3" />
-                                      Pago
+                                      {item.paid || (Number(item.total) > 0 && getPaymentTotal(item) >= Number(item.total)) ? 'Pagado' : getPaymentTotal(item) > 0 ? 'Pago parcial' : 'Registrar pago'}
                                     </button>
                                     {canDeleteAreaExpense(item) && (
                                       <button
@@ -6897,81 +6876,9 @@ export default function ProjectDetail() {
               </div>
             </header>
 
-            <section className="order-2 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-              <div className="border-b border-slate-100 px-5 py-3">
-                <h3 className="text-xs font-black text-slate-900">Cómo funciona</h3>
-              </div>
-              <div className="grid grid-cols-1 divide-y divide-slate-100 md:grid-cols-4 md:divide-x md:divide-y-0">
-                {[
-                  { step: '1', title: 'Caja General', detail: 'El proyecto registra una entrega.' },
-                  { step: '2', title: 'Entrega pendiente', detail: 'El monto todavía no suma al saldo.' },
-                  { step: '3', title: 'Recepción confirmada', detail: 'El responsable confirma que recibió el dinero.' },
-                  { step: '4', title: 'Caja personal', detail: 'Pagos y transferencias descuentan del saldo.' },
-                ].map((item) => (
-                  <div key={item.step} className="flex gap-3 px-5 py-4">
-                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-900 text-[10px] font-black text-white">{item.step}</span>
-                    <div>
-                      <div className="text-xs font-black text-slate-900">{item.title}</div>
-                      <p className="mt-1 text-[11px] leading-4 text-slate-500">{item.detail}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </section>
-
-            <section className="order-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
-              {(isProjectAdmin
-                ? [
-                    {
-                      label: 'Salió de Caja General',
-                      value: generalCashSummary.totalOut,
-                      detail: 'Entregas y pagos menos devoluciones confirmadas',
-                      tone: 'text-slate-950',
-                    },
-                    {
-                      label: 'Pendiente de confirmación',
-                      value: generalCashSummary.pendingDeliveries + generalCashSummary.pendingReturns,
-                      detail: 'Entregas y devoluciones a confirmar',
-                      tone: 'text-amber-700',
-                    },
-                    {
-                      label: 'Disponible en cajas',
-                      value: visibleCashBalanceTotal,
-                      detail: 'Saldo total entre los responsables visibles',
-                      tone: visibleCashBalanceTotal >= 0 ? 'text-emerald-700' : 'text-rose-700',
-                    },
-                  ]
-                : [
-                    {
-                      label: 'Mi saldo disponible',
-                      value: currentCashBalance,
-                      detail: 'Efectivo que todavía podés utilizar',
-                      tone: currentCashBalance >= 0 ? 'text-emerald-700' : 'text-rose-700',
-                    },
-                    {
-                      label: 'Total recibido',
-                      value: currentCashRow?.received || 0,
-                      detail: 'Entregas y transferencias confirmadas',
-                      tone: 'text-slate-950',
-                    },
-                    {
-                      label: 'Pagado o transferido',
-                      value: (currentCashRow?.used || 0) + (currentCashRow?.transferred || 0) + (currentCashRow?.returned || 0),
-                      detail: 'Pagos, transferencias y devoluciones confirmadas',
-                      tone: 'text-slate-950',
-                    },
-                  ]
-              ).map((summaryItem) => (
-                <div key={summaryItem.label} className="rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
-                  <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">{summaryItem.label}</div>
-                  <div className={cn('mt-2 font-mono text-2xl font-black', summaryItem.tone)}>${summaryItem.value.toLocaleString()}</div>
-                  <p className="mt-1 text-[11px] text-slate-500">{summaryItem.detail}</p>
-                </div>
-              ))}
-            </section>
 
             {pendingCashDeliveries.length > 0 && (
-              <section className="order-4 overflow-hidden rounded-xl border-2 border-amber-300 bg-amber-50 shadow-lg shadow-amber-100">
+              <section className="order-2 overflow-hidden rounded-xl border-2 border-amber-300 bg-amber-50 shadow-lg shadow-amber-100">
                 <div className="flex items-center gap-3 border-b border-amber-200 px-5 py-4">
                   <Clock3 className="h-5 w-5 text-amber-700" />
                   <div>
@@ -7005,7 +6912,7 @@ export default function ProjectDetail() {
             )}
 
             {pendingCashReturns.length > 0 && (
-              <section className="order-4 rounded-xl border-2 border-amber-300 bg-amber-50 p-5">
+              <section className="order-2 rounded-xl border-2 border-amber-300 bg-amber-50 p-5">
                 <h3 className="text-sm font-black text-amber-950">Devoluciones pendientes de tu recepción</h3>
                 <p className="mt-1 text-xs text-amber-800">Confirmá sólo después de recibir el efectivo. Hasta entonces, el saldo de la persona permanece igual.</p>
                 {pendingCashReturns.map((movement) => (
@@ -7020,19 +6927,22 @@ export default function ProjectDetail() {
               </section>
             )}
 
-            {isProjectAdmin && (
-              <section className="order-6 overflow-hidden rounded-xl border border-slate-800 bg-slate-950 text-white shadow-xl">
+            <CashBoxPicker rows={visibleCashRows} value={activeCashBox} onChange={setSelectedCashBox}
+              showGeneral={isProjectAdmin} generalOut={generalCashSummary.totalOut} />
+
+            {isProjectAdmin && activeCashBox === 'general' && (
+              <section className="order-4 overflow-hidden rounded-xl border border-slate-800 bg-slate-950 text-white shadow-sm">
                 <div className="flex flex-col gap-3 border-b border-white/10 px-5 py-4 md:flex-row md:items-center md:justify-between">
                   <div>
                     <h3 className="text-sm font-black">Caja General</h3>
                     <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-slate-400">Sin saldo inicial ni límite · salidas netas de devoluciones confirmadas</p>
                   </div>
                   <div className="text-right">
-                    <div className="text-2xl font-black font-mono text-white">-${generalCashSummary.totalOut.toLocaleString()}</div>
+                    <div className="text-2xl font-black font-mono text-white">${generalCashSummary.totalOut.toLocaleString()}</div>
                     <div className="text-[9px] font-black uppercase tracking-widest text-slate-500">Salida neta registrada</div>
                   </div>
                 </div>
-                <div className="grid grid-cols-1 divide-y divide-white/10 border-b border-white/10 sm:grid-cols-5 sm:divide-x sm:divide-y-0">
+                <div className="grid grid-cols-2 border-b border-white/10 sm:grid-cols-5">
                   {[
                     { label: 'Entregas confirmadas', value: generalCashSummary.confirmedDeliveries, tone: 'text-blue-300' },
                     { label: 'Pagos directos', value: generalCashSummary.directPayments, tone: 'text-emerald-300' },
@@ -7040,9 +6950,9 @@ export default function ProjectDetail() {
                     { label: 'Entregas pendientes', value: generalCashSummary.pendingDeliveries, tone: 'text-amber-300' },
                     { label: 'Devoluciones pendientes', value: generalCashSummary.pendingReturns, tone: 'text-amber-300' },
                   ].map((summaryItem) => (
-                    <div key={summaryItem.label} className="px-5 py-4">
+                    <div key={summaryItem.label} className="px-3 py-3">
                       <div className="text-[9px] font-black uppercase tracking-widest text-slate-500">{summaryItem.label}</div>
-                      <div className={cn('mt-1 text-lg font-black font-mono', summaryItem.tone)}>${summaryItem.value.toLocaleString()}</div>
+                      <div className={cn('mt-1 text-sm font-black font-mono', summaryItem.tone)}>${summaryItem.value.toLocaleString()}</div>
                     </div>
                   ))}
                 </div>
@@ -7104,12 +7014,9 @@ export default function ProjectDetail() {
               </section>
             )}
 
-            <section className="order-5">
-              <div className="mb-3">
-                <h3 className="text-sm font-black text-slate-900">Acciones de caja</h3>
-                  <p className="mt-1 text-xs text-slate-500">Registrá entregas, transferencias y devoluciones de saldo.</p>
-              </div>
-              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <details className="order-5 rounded-xl border border-slate-200 bg-white p-3">
+              <summary className="cursor-pointer px-1 py-2 text-sm font-bold text-slate-900">Registrar movimiento · entrega, transferencia o devolución</summary>
+              <div className="mt-3 grid grid-cols-1 gap-4 lg:grid-cols-2">
               {isProjectAdmin && (
                 <form onSubmit={createCashDelivery} className="bg-white border border-slate-200 rounded-xl shadow-sm p-5 space-y-4">
                   <div>
@@ -7264,15 +7171,15 @@ export default function ProjectDetail() {
                 </form>
               )}
               </div>
-            </section>
+            </details>
 
-            <section className="order-7">
+            {activeCashBox !== 'general' && <section className="order-4">
               <div className="mb-3">
                 <h3 className="text-sm font-black text-slate-900">{isProjectAdmin ? 'Cajas por responsable' : 'Detalle de mi caja'}</h3>
                 <p className="mt-1 text-xs text-slate-500">{isProjectAdmin ? 'Saldo y movimientos de cada persona identificada por nombre y email.' : 'Todos los ingresos y egresos que componen tu saldo.'}</p>
               </div>
-              <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-              {visibleCashRows.map((row) => (
+              <div className="grid grid-cols-1 gap-4">
+              {visibleCashRows.filter(row => row.email === activeCashBox).map((row) => (
                 <div key={row.email} className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
                   <div className="px-5 py-4 bg-slate-50 border-b border-slate-200 flex items-start justify-between gap-4">
                     <div className="min-w-0">
@@ -7281,7 +7188,7 @@ export default function ProjectDetail() {
                         <Mail className="h-3.5 w-3.5 shrink-0 text-slate-400" />
                         <span className="truncate">{row.email}</span>
                       </div>
-                      <div className="mt-2 text-[9px] font-bold uppercase tracking-widest text-slate-400">{roleLabels[row.responsible.role]} · {safeArray(row.responsible.allowedCategories).join(', ') || 'Sin áreas'}</div>
+                      <div className="mt-2 text-[9px] font-bold uppercase tracking-widest text-slate-400">{row.responsible.historicalOnly ? 'Responsable histórico · sin acceso asignado por esta caja' : `${roleLabels[row.responsible.role]} · ${safeArray(row.responsible.allowedCategories).join(', ') || 'Sin áreas'}`}</div>
                     </div>
                     <div className="text-right">
                       <div className={cn("text-xl font-black font-mono", row.balance >= 0 ? "text-emerald-600" : "text-red-600")}>${row.balance.toLocaleString()}</div>
@@ -7295,7 +7202,7 @@ export default function ProjectDetail() {
                     </div>
                     <div className="p-4">
                       <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Pagado</div>
-                      <div className="text-sm font-black text-slate-900 mt-1">${row.used.toLocaleString()}</div>
+                      <div className="text-sm font-black text-emerald-600 mt-1">${row.used.toLocaleString()}</div>
                     </div>
                     <div className="p-4">
                       <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Transferido</div>
@@ -7404,7 +7311,7 @@ export default function ProjectDetail() {
                 </div>
               )}
               </div>
-            </section>
+            </section>}
           </div>
         )}
 
@@ -8540,100 +8447,8 @@ export default function ProjectDetail() {
         )}
 
         {activeTab === 'equipo' && (
-          <div className="space-y-12">
-            <header className="flex justify-between items-center">
-              <div className="space-y-1">
-                <h2 className="text-lg font-bold text-slate-900">Equipo de Trabajo</h2>
-                <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">
-                  Producción y Staff de Producción por rubro
-                </p>
-              </div>
-            </header>
-
-            {/* Equipo de Producción */}
-            <section className="space-y-4">
-              <div className="flex items-center gap-3">
-                <h3 className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400 underline decoration-slate-200 underline-offset-8">Dirección y Producción</h3>
-                <div className="h-[1px] bg-slate-100 flex-1"></div>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {/* Dueño / Creador */}
-                <div className="bg-white border-2 border-slate-900 p-5 rounded-xl shadow-sm flex items-center justify-between group hover:shadow-md transition-all">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-slate-900 text-white rounded-full flex items-center justify-center font-bold text-xs uppercase">
-                      {project.createdByEmail?.[0] || 'D'}
-                    </div>
-                    <div>
-                      <div className="text-xs font-bold text-slate-900 truncate max-w-[150px]">{project.createdByEmail || 'Director / Productor'}</div>
-                      <div className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Creador / Responsable</div>
-                    </div>
-                  </div>
-                  <Shield className="w-4 h-4 text-slate-900" />
-                </div>
-
-                {/* Colaboradores */}
-                {collaborators.map((col) => (
-                  <div key={col.email} className="bg-white border border-slate-200 p-5 rounded-xl shadow-sm flex items-center justify-between group hover:border-black transition-all">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-slate-100 text-slate-900 rounded-full flex items-center justify-center font-bold text-xs uppercase">
-                        {col.email[0]}
-                      </div>
-                      <div>
-                        <div className="text-xs font-bold text-slate-900 truncate max-w-[150px]">{col.email}</div>
-                        <div className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">
-                          {roleLabels[col.role] || 'Colaborador'}
-                        </div>
-                      </div>
-                    </div>
-                    {col.role === 'admin' ? (
-                      <Shield className="w-4 h-4 text-emerald-500" />
-                    ) : col.role === 'jefe_area' ? (
-                      <LayoutGrid className="w-4 h-4 text-blue-500" />
-                    ) : (
-                      <Users className="w-4 h-4 text-slate-300" />
-                    )}
-                  </div>
-                ))}
-
-              </div>
-            </section>
-
-            {/* Personal de Rubros */}
-            <section className="space-y-8">
-              <div className="flex items-center gap-3">
-                <h3 className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400 underline decoration-slate-200 underline-offset-8">Personal de Rubros</h3>
-                <div className="h-[1px] bg-slate-100 flex-1"></div>
-              </div>
-              {visibleCategories.map(area => {
-                const areaTeam = visibleBudgetItems.filter(i => i.area === area && (i.providerId || i.providerName));
-                if (areaTeam.length === 0) return null;
-
-                return (
-                  <div key={area} className="space-y-4 px-4">
-                    <div className="text-[9px] font-black uppercase tracking-widest text-slate-300">{area}</div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                      {areaTeam.map((member) => (
-                        <div key={member.id} className="bg-white border border-slate-100 p-4 rounded-xl shadow-sm flex items-center justify-between group hover:border-slate-300 transition-all">
-                          <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 bg-slate-50 text-slate-900 rounded-full flex items-center justify-center font-bold text-[10px] uppercase border border-slate-100">
-                              {member.providerName?.[0] || 'P'}
-                            </div>
-                            <div>
-                              <div className="text-xs font-bold text-slate-900">{member.providerName || 'Sin asignar'}</div>
-                              <div className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">{member.description || 'Staff'}</div>
-                            </div>
-                          </div>
-                          <div className="text-right">
-                             <div className="text-[9px] font-bold text-emerald-600">${member.total?.toLocaleString()}</div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
-            </section>
-          </div>
+          <ProjectTeam members={projectTeamMembers} canAdd={canManageProjectAccess} canManage={canAssignProjectAreas}
+            onAdd={() => setShowAddCollaborator(true)} onManage={() => setActiveTab('permisos')} />
         )}
 
         {activeTab === 'permisos' && canAssignProjectAreas && (
@@ -8650,116 +8465,7 @@ export default function ProjectDetail() {
               </header>
 
               {canManageProjectAccess ? (
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 p-6 bg-slate-50 border border-slate-100 rounded-2xl">
-                <div className="lg:col-span-5 space-y-4">
-                  <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400">Buscar usuario logueado</label>
-                  <div className="relative">
-                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
-                    <input
-                      value={newCollaboratorSearch}
-                      onChange={(event) => {
-                        setNewCollaboratorSearch(event.target.value);
-                        setSelectedUserToAdd(null);
-                      }}
-                      placeholder="Nombre o email..."
-                      className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded text-sm focus:border-black focus:outline-none transition-all"
-                    />
-                  </div>
-
-                  <div className="max-h-64 overflow-y-auto bg-white border border-slate-200 rounded-xl divide-y divide-slate-100">
-                    {filteredAvailableUsers.length === 0 ? (
-                      <div className="p-5 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
-                        {availableUsers.length === 0 ? 'No hay usuarios disponibles' : 'Sin resultados'}
-                      </div>
-                    ) : filteredAvailableUsers.map((candidate) => {
-                      const candidateEmail = normalizeEmail(candidate.email);
-                      const selected = normalizeEmail(selectedUserToAdd?.email) === candidateEmail;
-                      return (
-                        <button
-                          key={candidate.uid || candidate.id || candidateEmail}
-                          type="button"
-                          onClick={() => setSelectedUserToAdd(candidate)}
-                          className={cn(
-                            "w-full text-left px-4 py-3 transition-all flex items-center gap-3",
-                            selected ? "bg-black text-white" : "hover:bg-slate-50 text-slate-700"
-                          )}
-                        >
-                          <img
-                            src={candidate.photoURL || `https://ui-avatars.com/api/?name=${candidate.displayName || candidate.email || 'U'}&background=000&color=fff`}
-                            alt="Avatar"
-                            className="w-8 h-8 rounded-full border border-white/30"
-                          />
-                          <div className="min-w-0">
-                            <div className="text-xs font-bold truncate">{candidate.displayName || candidate.email}</div>
-                            <div className={cn("text-[10px] truncate", selected ? "text-white/60" : "text-slate-400")}>{candidate.email}</div>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="lg:col-span-7 space-y-4">
-                  <div>
-                    <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Rol dentro del proyecto</div>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                      {roleOptionsForCurrentUser.map((role) => (
-                        <button
-                          key={role}
-                          type="button"
-                          onClick={() => setNewCollaboratorRole(role)}
-                          className={cn(
-                            "px-3 py-2 rounded border text-[9px] font-bold uppercase tracking-widest transition-all",
-                            newCollaboratorRole === role ? "bg-black text-white border-black" : "bg-white border-slate-200 text-slate-400 hover:text-black hover:border-black"
-                          )}
-                        >
-                          {roleLabels[role]}
-                        </button>
-                      ))}
-                    </div>
-                    {newCollaboratorRole === 'admin' && (
-                      <p className="text-[10px] text-slate-500 mt-2">
-                        Admin de proyecto: puede gestionar este proyecto y sus permisos, pero no pasa a ser admin global de la app.
-                      </p>
-                    )}
-                  </div>
-
-                  {newCollaboratorRole !== 'admin' && (
-                    <div>
-                      <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Áreas del presupuesto asignadas</div>
-                      <div className="flex flex-wrap gap-2 max-h-36 overflow-y-auto pr-1">
-                        {assignableAreaOptions.map((cat) => {
-                          const selected = newCollaboratorCategories.includes(cat);
-                          return (
-                            <button
-                              key={cat}
-                              type="button"
-                              onClick={() => setNewCollaboratorCategories(selected ? newCollaboratorCategories.filter(item => item !== cat) : [...newCollaboratorCategories, cat])}
-                              className={cn(
-                                "px-3 py-1.5 rounded text-[10px] font-bold uppercase transition-all tracking-tight",
-                                selected ? "bg-emerald-500 text-white" : "bg-white border border-slate-200 text-slate-400 hover:border-emerald-500 hover:text-emerald-500"
-                              )}
-                            >
-                              {cat}
-                            </button>
-                          );
-                        })}
-                      </div>
-                      <p className="text-[10px] text-slate-400 mt-2">Si no elegís ninguna, se asigna la primera área activa/disponible.</p>
-                    </div>
-                  )}
-
-                  <button
-                    type="button"
-                    disabled={!selectedUserToAdd}
-                    onClick={() => selectedUserToAdd && addCollaborator(selectedUserToAdd)}
-                    className="w-full px-6 py-3 bg-black text-white rounded text-xs font-bold uppercase tracking-widest hover:bg-slate-800 transition-all flex items-center justify-center gap-2 disabled:bg-slate-300 disabled:cursor-not-allowed"
-                  >
-                    <UserPlus className="w-4 h-4" />
-                    Agregar al Proyecto
-                  </button>
-                </div>
-              </div>
+              <button type="button" onClick={() => setShowAddCollaborator(true)} className="rounded-lg bg-slate-900 px-4 py-3 text-sm font-bold text-white">Agregar persona al proyecto</button>
               ) : (
                 <div className="p-5 bg-slate-50 border border-slate-100 rounded-2xl text-sm text-slate-500">
                   Seleccioná abajo qué áreas propias querés habilitar para cada Jefe de Área. Tu acceso a esas áreas se mantiene intacto.
@@ -8955,6 +8661,121 @@ export default function ProjectDetail() {
       </motion.div>
 
       <AnimatePresence>
+        {showAddCollaborator && canManageProjectAccess && (
+          <ProjectDialog title="Agregar persona al proyecto" onClose={() => { if (!addingCollaborator) setShowAddCollaborator(false); }}>
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 p-4 sm:p-6 bg-slate-50 border border-slate-100 rounded-2xl">
+                <div className="lg:col-span-5 space-y-4">
+                  <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400">Buscar usuario logueado</label>
+                  <div className="relative">
+                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
+                    <input
+                      value={newCollaboratorSearch}
+                      onChange={(event) => {
+                        setNewCollaboratorSearch(event.target.value);
+                        setSelectedUserToAdd(null);
+                      }}
+                      placeholder="Nombre o email..."
+                      className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded text-sm focus:border-black focus:outline-none transition-all"
+                    />
+                  </div>
+
+                  <div className="max-h-64 overflow-y-auto bg-white border border-slate-200 rounded-xl divide-y divide-slate-100">
+                    {filteredAvailableUsers.length === 0 ? (
+                      <div className="p-5 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
+                        {availableUsers.length === 0 ? 'No hay usuarios disponibles' : 'Sin resultados'}
+                      </div>
+                    ) : filteredAvailableUsers.map((candidate) => {
+                      const candidateEmail = normalizeEmail(candidate.email);
+                      const selected = normalizeEmail(selectedUserToAdd?.email) === candidateEmail;
+                      return (
+                        <button
+                          key={candidate.uid || candidate.id || candidateEmail}
+                          type="button"
+                          onClick={() => setSelectedUserToAdd(candidate)}
+                          className={cn(
+                            "w-full text-left px-4 py-3 transition-all flex items-center gap-3",
+                            selected ? "bg-black text-white" : "hover:bg-slate-50 text-slate-700"
+                          )}
+                        >
+                          <img
+                            src={candidate.photoURL || `https://ui-avatars.com/api/?name=${candidate.displayName || candidate.email || 'U'}&background=000&color=fff`}
+                            alt="Avatar"
+                            className="w-8 h-8 rounded-full border border-white/30"
+                          />
+                          <div className="min-w-0">
+                            <div className="text-xs font-bold truncate">{candidate.displayName || candidate.email}</div>
+                            <div className={cn("text-[10px] truncate", selected ? "text-white/60" : "text-slate-400")}>{candidate.email}</div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="lg:col-span-7 space-y-4">
+                  <div>
+                    <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Rol dentro del proyecto</div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                      {roleOptionsForCurrentUser.map((role) => (
+                        <button
+                          key={role}
+                          type="button"
+                          onClick={() => setNewCollaboratorRole(role)}
+                          className={cn(
+                            "px-3 py-2 rounded border text-[9px] font-bold uppercase tracking-widest transition-all",
+                            newCollaboratorRole === role ? "bg-black text-white border-black" : "bg-white border-slate-200 text-slate-400 hover:text-black hover:border-black"
+                          )}
+                        >
+                          {roleLabels[role]}
+                        </button>
+                      ))}
+                    </div>
+                    {newCollaboratorRole === 'admin' && (
+                      <p className="text-[10px] text-slate-500 mt-2">
+                        Admin de proyecto: puede gestionar este proyecto y sus permisos, pero no pasa a ser admin global de la app.
+                      </p>
+                    )}
+                  </div>
+
+                  {newCollaboratorRole !== 'admin' && (
+                    <div>
+                      <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Áreas del presupuesto asignadas</div>
+                      <div className="flex flex-wrap gap-2 max-h-36 overflow-y-auto pr-1">
+                        {assignableAreaOptions.map((cat) => {
+                          const selected = newCollaboratorCategories.includes(cat);
+                          return (
+                            <button
+                              key={cat}
+                              type="button"
+                              onClick={() => setNewCollaboratorCategories(selected ? newCollaboratorCategories.filter(item => item !== cat) : [...newCollaboratorCategories, cat])}
+                              className={cn(
+                                "px-3 py-1.5 rounded text-[10px] font-bold uppercase transition-all tracking-tight",
+                                selected ? "bg-emerald-500 text-white" : "bg-white border border-slate-200 text-slate-400 hover:border-emerald-500 hover:text-emerald-500"
+                              )}
+                            >
+                              {cat}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <p className="text-[10px] text-slate-400 mt-2">Si no elegís ninguna, se asigna la primera área activa/disponible.</p>
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    disabled={!selectedUserToAdd || addingCollaborator}
+                    onClick={() => selectedUserToAdd && addCollaborator(selectedUserToAdd)}
+                    className="w-full px-6 py-3 bg-black text-white rounded text-xs font-bold uppercase tracking-widest hover:bg-slate-800 transition-all flex items-center justify-center gap-2 disabled:bg-slate-300 disabled:cursor-not-allowed"
+                  >
+                    <UserPlus className="w-4 h-4" />
+                    {addingCollaborator ? 'Agregando...' : 'Agregar al Proyecto'}
+                  </button>
+                </div>
+              </div>
+          </ProjectDialog>
+        )}
+
         {showExportModal && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[250] flex items-center justify-center p-4">
             <motion.div
