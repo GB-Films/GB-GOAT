@@ -39,8 +39,6 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
-import * as XLSX from 'xlsx';
-import Papa from 'papaparse';
 import { cn } from '../lib/utils';
 import { AreaBudgetSummary } from './project-detail/AreaBudgetSummary';
 import { MobileExpenseAmount } from './project-detail/MobileExpenseAmount';
@@ -51,6 +49,7 @@ import { ProjectDialog } from './project-detail/ProjectDialog';
 import { CashBoxPicker } from './project-detail/CashBoxPicker';
 import { cashLedgerPeople } from '../lib/cashLedgerPeople';
 import { ProjectCommercialSummary } from './project-detail/ProjectCommercialSummary';
+import { ProjectSummaryMetrics } from './project-detail/ProjectSummaryMetrics';
 import { ProjectKeyContacts } from './project-detail/ProjectKeyContacts';
 import { readAuthorizedProject, readProjectCommercial } from '../lib/projectCommercial';
 import { splitProjectCommercial } from '../lib/projectCommercialFields';
@@ -466,22 +465,34 @@ const formatExportDate = (dateValue: any) => {
   return date.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
 };
 
-const downloadCsv = (rows: Record<string, any>[], fileName: string) => {
-  const csv = Papa.unparse(rows);
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = fileName;
-  link.click();
-  URL.revokeObjectURL(url);
+const downloadCsv = async (rows: Record<string, any>[], fileName: string) => {
+  try {
+    const { default: Papa } = await import('papaparse');
+    const csv = Papa.unparse(rows);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    link.click();
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    console.error('Error exporting CSV:', error);
+    alert('No se pudo exportar el archivo. Revisá la conexión e intentá de nuevo.');
+  }
 };
 
-const downloadXlsx = (rows: Record<string, any>[], sheetName: string, fileName: string) => {
-  const worksheet = XLSX.utils.json_to_sheet(rows);
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
-  XLSX.writeFile(workbook, fileName);
+const downloadXlsx = async (rows: Record<string, any>[], sheetName: string, fileName: string) => {
+  try {
+    const XLSX = await import('xlsx');
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+    XLSX.writeFile(workbook, fileName);
+  } catch (error) {
+    console.error('Error exporting Excel:', error);
+    alert('No se pudo exportar el archivo. Revisá la conexión e intentá de nuevo.');
+  }
 };
 
 function PaymentDatePicker({
@@ -686,6 +697,7 @@ export default function ProjectDetail() {
   const { user, profile } = useAuth();
   const [project, setProject] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [showMobileProjectDetails, setShowMobileProjectDetails] = useState(false);
   const [searchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState(() => {
     const requestedTab = searchParams.get('tab') || '';
@@ -731,6 +743,8 @@ export default function ProjectDetail() {
   const [isProjectAdmin, setIsProjectAdmin] = useState(false);
   const [showEditProjectModal, setShowEditProjectModal] = useState(false);
   const [showCopyBudgetModal, setShowCopyBudgetModal] = useState(false);
+  const [sourceProjectsLoading, setSourceProjectsLoading] = useState(false);
+  const [sourceProjectsError, setSourceProjectsError] = useState('');
   const [copyBudgetSearch, setCopyBudgetSearch] = useState('');
   const [sourceProjects, setSourceProjects] = useState<any[]>([]);
   const [selectedSourceProjectId, setSelectedSourceProjectId] = useState('');
@@ -853,7 +867,16 @@ export default function ProjectDetail() {
           }
 
           // Fetch all collaborators for project admins
-          const colSnap = await getDocs(collection(db, 'projects', id, 'collaborators'));
+          const [colSnap, dSnap, pSnap, cSnap] = await Promise.all([
+            getDocs(collection(db, 'projects', id, 'collaborators')),
+            getDocs(collection(db, 'projects', id, 'projectDocuments')),
+            getDocs(collection(db, 'providers')),
+            getDocs(collection(db, 'clients')),
+          ]);
+          if (cancelled) return;
+          setManualProjectDocuments(dSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+          setProviders(pSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+          setClients(cSnap.docs.map(d => ({ id: d.id, ...d.data() })));
           setCollaborators(colSnap.docs.map(d => {
             const data = d.data() as any;
             const role = normalizeProjectRole(data.role);
@@ -869,20 +892,6 @@ export default function ProjectDetail() {
             } as Collaborator;
           }));
         }
-
-        const dq = query(collection(db, 'projects', id, 'projectDocuments'));
-        const dSnap = await getDocs(dq);
-        setManualProjectDocuments(dSnap.docs.map(d => ({ id: d.id, ...d.data() })));
-
-        // Fetch all Providers (for selection)
-        const pq = query(collection(db, 'providers'));
-        const pSnap = await getDocs(pq);
-        setProviders(pSnap.docs.map(d => ({ id: d.id, ...d.data() })));
-
-        // Fetch all Clients
-        const cq = query(collection(db, 'clients'));
-        const cSnap = await getDocs(cq);
-        setClients(cSnap.docs.map(d => ({ id: d.id, ...d.data() })));
 
       } catch (error: any) {
         if (error.message?.includes('insufficient permissions')) {
@@ -931,8 +940,11 @@ export default function ProjectDetail() {
   }, [id, user]);
 
   useEffect(() => {
-    if (!isProjectAdmin || !id) return;
-
+    if (!isProjectAdmin || !id || !showCopyBudgetModal) return;
+    let cancelled = false;
+    setSourceProjectsLoading(true);
+    setSourceProjectsError('');
+    setSourceProjects([]);
     const fetchSourceProjects = async () => {
       try {
         const snap = await getDocs(collection(db, 'projects'));
@@ -942,14 +954,18 @@ export default function ProjectDetail() {
         const items = hydrated
           .filter((item) => item.id !== id)
           .sort((a: any, b: any) => String(a.name || '').localeCompare(String(b.name || ''), 'es'));
-        setSourceProjects(items);
+        if (!cancelled) setSourceProjects(items);
       } catch (error) {
         console.error('Error fetching source projects:', error);
+        if (!cancelled) setSourceProjectsError('No se pudieron leer los proyectos. Cerrá esta ventana e intentá nuevamente.');
+      } finally {
+        if (!cancelled) setSourceProjectsLoading(false);
       }
     };
 
     fetchSourceProjects();
-  }, [isProjectAdmin, id]);
+    return () => { cancelled = true; };
+  }, [isProjectAdmin, id, showCopyBudgetModal, user?.uid, user?.email, profile?.role]);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -2901,7 +2917,7 @@ export default function ProjectDetail() {
     }
   };
 
-  const downloadTemplate = () => {
+  const downloadTemplate = async () => {
     const templateData = [
       {
         Area: 'Producción',
@@ -2919,10 +2935,7 @@ export default function ProjectDetail() {
       }
     ];
 
-    const worksheet = XLSX.utils.json_to_sheet(templateData);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Plantilla Presupuesto');
-    XLSX.writeFile(workbook, 'plantilla_presupuesto_gb_goat.xlsx');
+    await downloadXlsx(templateData, 'Plantilla Presupuesto', 'plantilla_presupuesto_gb_goat.xlsx');
   };
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -2943,9 +2956,11 @@ export default function ProjectDetail() {
 
       try {
         if (file.name.endsWith('.csv')) {
+          const { default: Papa } = await import('papaparse');
           const results = Papa.parse(data as string, { header: true, skipEmptyLines: true });
           jsonData = results.data;
         } else {
+          const XLSX = await import('xlsx');
           const workbook = XLSX.read(data, { type: 'binary' });
           const sheetName = workbook.SheetNames[0];
           const worksheet = workbook.Sheets[sheetName];
@@ -5117,8 +5132,16 @@ export default function ProjectDetail() {
     }
   };
 
-  const renderShootingRangeControls = () => (
-    <div className="inline-flex min-h-9 max-w-full items-center gap-1 rounded-full border border-slate-200 bg-white px-2 shadow-sm hover:border-blue-200 hover:shadow-md transition-all sm:gap-1.5 sm:px-3">
+  const renderShootingRangeControls = (expanded = false) => (
+    <>
+    {!expanded && <button type="button" onClick={() => setShowMobileProjectDetails(true)}
+      aria-label="Editar rodaje y locación"
+      className="inline-flex h-7 min-w-0 max-w-[190px] items-center gap-1 rounded-full border border-slate-200 bg-white px-2 text-[9px] font-bold text-slate-700 sm:hidden">
+      <Calendar className="h-3 w-3 shrink-0" />
+      <span className="truncate">{formatShootingRange(project)}</span>
+      <MapPin className="h-3 w-3 shrink-0 text-slate-400" />
+    </button>}
+    <div className={cn(expanded ? 'flex flex-wrap' : 'hidden sm:inline-flex', 'min-h-9 max-w-full items-center gap-1 rounded-full border border-slate-200 bg-white px-2 sm:gap-1.5 sm:px-3')}>
       <Calendar className="w-3.5 h-3.5 text-slate-500" />
       <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">Rodaje</span>
       <ShootingDateButton
@@ -5142,6 +5165,7 @@ export default function ProjectDetail() {
         onChange={(newEnd) => updateShootingRange({ shootingEndDate: newEnd })}
       />
     </div>
+    </>
   );
 
   if (loading) return <div className="p-8 text-center text-slate-500 font-mono text-xs uppercase tracking-widest">Analizando proyecto...</div>;
@@ -5167,11 +5191,23 @@ export default function ProjectDetail() {
         )}
       </AnimatePresence>
 
+      {showMobileProjectDetails && canEditProjectOperations && <ProjectDialog title="Rodaje y locación" onClose={() => setShowMobileProjectDetails(false)}>
+        <div className="space-y-4">
+          {renderShootingRangeControls(true)}
+          <label className="block text-xs font-bold text-slate-600">Locación o link de Google Maps
+            <input type="text" value={locationDraft} onChange={event => setLocationDraft(event.target.value)} onBlur={saveLocation}
+              className="mt-2 w-full rounded-lg border border-slate-200 p-3 text-base font-normal" placeholder="Dirección o link" />
+          </label>
+          <p className="text-xs text-slate-400">Las fechas se guardan al elegirlas; la locación al salir del campo.</p>
+          {isSavingLocation && <p className="text-xs text-slate-500">Guardando locación…</p>}
+        </div>
+      </ProjectDialog>}
+
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white/95 shadow-[0_10px_28px_rgba(15,23,42,0.10)] ring-1 ring-white backdrop-blur-sm sm:rounded-2xl sm:shadow-[0_16px_45px_rgba(15,23,42,0.12)]">
-        <header className="px-3 py-2.5 md:px-5 md:py-4">
+        <header className="relative px-3 py-2 md:px-5 md:py-4">
           <div className="flex flex-col gap-2.5 lg:flex-row lg:items-start lg:justify-between">
             <div className="min-w-0">
-              <div className="mb-1.5 flex items-center gap-2 text-[10px] font-semibold text-slate-500 sm:mb-2 sm:text-[11px]">
+              <div className="mb-1 flex min-h-7 items-center gap-2 text-[10px] font-semibold text-slate-500 sm:mb-2 sm:min-h-0 sm:text-[11px]">
                 <Link to="/proyectos" className="inline-flex items-center gap-1 hover:text-blue-700 transition-colors">
                   <ChevronLeft className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
                   Proyectos
@@ -5207,7 +5243,7 @@ export default function ProjectDetail() {
 
                         {renderShootingRangeControls()}
 
-                        <label className="inline-flex h-7 w-full min-w-0 max-w-full flex-1 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 shadow-sm transition-all hover:border-blue-200 hover:shadow-md sm:h-8 sm:min-w-[260px] sm:max-w-[430px] sm:px-3">
+                        <label className="hidden h-7 w-full min-w-0 max-w-full flex-1 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 shadow-sm transition-all hover:border-blue-200 hover:shadow-md sm:inline-flex sm:h-8 sm:min-w-[260px] sm:max-w-[430px] sm:px-3">
                           <MapPin className="w-3.5 h-3.5 flex-none text-slate-500" />
                           <input
                             type="text"
@@ -5243,7 +5279,7 @@ export default function ProjectDetail() {
                         {canEditProjectOperations ? (
                           <>
                             {renderShootingRangeControls()}
-                            <label className="inline-flex h-7 w-full min-w-0 max-w-full flex-1 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 shadow-sm transition-all hover:border-blue-200 hover:shadow-md sm:h-8 sm:min-w-[260px] sm:max-w-[430px] sm:px-3">
+                            <label className="hidden h-7 w-full min-w-0 max-w-full flex-1 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 shadow-sm transition-all hover:border-blue-200 hover:shadow-md sm:inline-flex sm:h-8 sm:min-w-[260px] sm:max-w-[430px] sm:px-3">
                               <MapPin className="w-3.5 h-3.5 flex-none text-slate-500" />
                               <input
                                 type="text"
@@ -5290,25 +5326,26 @@ export default function ProjectDetail() {
               </div>
             </div>
 
-            <div className="flex gap-1.5 lg:gap-2 lg:pt-0">
+            <div className="absolute right-3 top-2 flex gap-1.5 sm:static lg:gap-2 lg:pt-0">
               {isProjectAdmin && (
                 <button 
                   onClick={() => setShowEditProjectModal(true)}
+                  aria-label="Editar proyecto"
                   className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-[10px] font-bold shadow-md shadow-slate-200/70 transition-all hover:border-slate-400 hover:bg-slate-50 sm:px-3.5 sm:py-2 sm:text-[11px]"
                 >
                   <Settings className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
                   <span className="hidden sm:inline">Editar proyecto</span>
-                  <span className="sm:hidden">Editar</span>
                 </button>
               )}
               <button
                 onClick={() => setShowExportModal(true)}
+                aria-label="Exportar reportes del proyecto"
                 disabled={!hasExportOptions}
                 className="flex items-center gap-1.5 rounded-lg border border-slate-950 bg-slate-950 px-2.5 py-1.5 text-[10px] font-bold text-white shadow-lg shadow-slate-900/20 transition-all hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40 sm:px-3.5 sm:py-2 sm:text-[11px]"
                 title={hasExportOptions ? 'Exportar reportes del proyecto' : 'No tenes reportes disponibles para exportar'}
               >
                 <Download className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                Exportar
+                <span className="hidden sm:inline">Exportar</span>
                 <ChevronDown className="hidden h-4 w-4 opacity-70 sm:block" />
               </button>
             </div>
@@ -5392,7 +5429,7 @@ export default function ProjectDetail() {
           <div className="space-y-3 pb-20">
             <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
               <div>
-                <div className="space-y-3 p-3 sm:p-4">
+                <div className="space-y-2 p-2.5 sm:space-y-3 sm:p-4">
                   <div className="space-y-2">
                     <h2 className="text-base font-bold text-slate-900">Resumen</h2>
                     <ProjectCommercialSummary project={project} isProjectAdmin={isProjectAdmin} />
@@ -5404,31 +5441,11 @@ export default function ProjectDetail() {
                     )}
                   </div>
 
-                  <div className={cn("grid grid-cols-2 gap-2", isProjectAdmin ? "lg:grid-cols-4" : "sm:grid-cols-3")}>
-                    <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
-                      <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">{isProjectAdmin ? 'Presupuesto' : 'Presupuesto asignado'}</div>
-                      <div className="mt-1 overflow-x-auto whitespace-nowrap font-mono text-base font-black text-slate-950 sm:text-xl">${summaryBudgetTotal.toLocaleString()}</div>
-                    </div>
-                    <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
-                      <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Costo proyectado</div>
-                      <div className="mt-1 overflow-x-auto whitespace-nowrap font-mono text-base font-black text-rose-600 sm:text-xl">${areaSummaryTotals.actualCost.toLocaleString()}</div>
-                    </div>
-                    {isProjectAdmin && (
-                      <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
-                        <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Incidencias</div>
-                        <div className="mt-1 overflow-x-auto whitespace-nowrap font-mono text-base font-black text-rose-600 sm:text-xl">${summaryIncidenceTotal.toLocaleString()}</div>
-                      </div>
-                    )}
-                    <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
-                      <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Saldo</div>
-                      <div className={cn("mt-1 overflow-x-auto whitespace-nowrap font-mono text-base font-black sm:text-xl", summaryProjectedBalance >= 0 ? "text-emerald-600" : "text-rose-600")}>
-                        ${summaryProjectedBalance.toLocaleString()}
-                      </div>
-                    </div>
-                  </div>
+                  <ProjectSummaryMetrics isProjectAdmin={isProjectAdmin} budget={summaryBudgetTotal}
+                    cost={areaSummaryTotals.actualCost} incidences={summaryIncidenceTotal} balance={summaryProjectedBalance} />
 
                   <div>
-                    <div className="mb-2 flex items-center justify-between text-[9px] font-black uppercase tracking-widest text-slate-400">
+                    <div className="mb-1 flex items-center justify-between text-[8px] font-black uppercase tracking-wide text-slate-400 sm:mb-2 sm:text-[9px] sm:tracking-widest">
                       <span>Uso proyectado del presupuesto</span>
                       <span>{summaryUsedPercent.toFixed(0)}%</span>
                     </div>
@@ -5438,7 +5455,7 @@ export default function ProjectDetail() {
                         style={{ width: `${summaryUsedPercent}%` }}
                       />
                     </div>
-                    <div className="mt-3 grid grid-cols-2 gap-2 text-[10px] font-bold text-slate-500 sm:grid-cols-4">
+                    <div className="mt-1.5 grid grid-cols-2 gap-x-2 gap-y-1 text-[9px] font-bold text-slate-500 sm:mt-3 sm:grid-cols-4 sm:gap-2 sm:text-[10px]">
                       <div>Asignado: <span className="font-black text-slate-900">${areaSummaryTotals.assigned.toLocaleString()}</span></div>
                       <div>Gastado: <span className="font-black text-slate-900">${areaSummaryTotals.spent.toLocaleString()}</span></div>
                       <div>Principal: <span className="font-black text-slate-900">{summaryBudgetItemCount} filas</span></div>
@@ -5669,13 +5686,13 @@ export default function ProjectDetail() {
 
         {activeTab === 'presupuesto' && (
           <div className="space-y-2 pb-20 sm:space-y-4">
-            <header className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+            <header className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-2.5 shadow-sm sm:flex-wrap sm:p-3">
               <div>
                 <h2 className="text-base font-bold text-slate-900">Presupuesto</h2>
               </div>
               <div className="flex flex-wrap gap-2">
                 {canEditMainBudget && (
-                  <div className="flex flex-wrap gap-1">
+                  <div className="hidden flex-wrap gap-1 sm:flex">
                     <button 
                       onClick={downloadTemplate}
                       className="px-4 py-2 bg-white border border-slate-200 text-slate-600 text-[10px] font-bold uppercase tracking-widest hover:bg-slate-50 transition-all flex items-center gap-2 rounded"
@@ -8786,9 +8803,10 @@ export default function ProjectDetail() {
                       </button>
                     );
                   })}
-                  {filteredSourceProjects.length === 0 && (
+                  {sourceProjectsError && <p role="alert" className="px-5 py-4 text-xs text-red-600">{sourceProjectsError}</p>}
+                  {filteredSourceProjects.length === 0 && !sourceProjectsError && (
                     <div className="px-5 py-10 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
-                      No hay proyectos disponibles para copiar
+                      {sourceProjectsLoading ? 'Leyendo proyectos…' : 'No hay proyectos disponibles para copiar'}
                     </div>
                   )}
                 </div>

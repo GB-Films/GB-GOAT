@@ -20,6 +20,18 @@ Sólo en las tarjetas de celular de Presu Ppal y Áreas: no se repite «Pagado $
 
 Validación: 155 pruebas automatizadas, tipos, sintaxis de reglas y build correctos. Prueba interactiva local con datos ficticios en Edge/Chromium táctil a 320, 390 y 430 px: campo de fecha, apertura/cierre de ventana, enlaces, carga y eliminación simuladas, sin desborde horizontal. No se consultaron ni modificaron datos productivos. Safari/iPhone físico no probado; WebKit no está instalado en este equipo.
 
+## Compactación y carga progresiva — 18/10/2026
+
+En celular, Editar y Exportar conservan sus acciones con íconos accesibles en la esquina superior, sin ocupar una fila aparte. Estado y rodaje comparten una línea cuando hay ancho disponible. Tocar rodaje abre una ventana de fechas y locación con los mismos permisos y guardados existentes; en escritorio se mantienen los campos visibles. Los cuatro totales del resumen usan menos relleno y separación en celular, sin cambiar importes, fórmulas, colores ni acceso por rol.
+
+En el encabezado de Presupuesto, celular conserva sólo Nueva Categoría junto al título, alineado a la derecha. Plantilla, Copiar presupuesto e Importar Excel/CSV siguen disponibles en escritorio.
+
+La lista de Proyectos presenta primero campos operativos autorizados por la consulta y completa los datos comerciales después, con la autorización individual previa. Incluso los campos comerciales legacy se excluyen de esa primera presentación. Un fallo de datos adicionales no vacía toda la lista y se informa; respuestas anteriores no actualizan una pantalla desmontada, otro usuario ni un snapshot nuevo. No se agrega caché persistente ni se modifican reglas o permisos.
+
+Se evita leer clientes hasta abrir Nuevo Proyecto y leer todos los proyectos/fichas de origen hasta abrir Copiar presupuesto. En el detalle, las lecturas auxiliares existentes de colaboradores, documentos, proveedores y clientes corren en paralelo en lugar de secuencialmente. Excel y CSV se descargan al usar importación/exportación, no como dependencias iniciales del detalle. El manifiesto del build verifica esa separación. Esto elimina esperas y tráfico evitables; no es una medición de latencia del backend ni garantiza un tiempo fijo en redes móviles.
+
+Validación de esta tanda: 160 pruebas, tipos, sintaxis de reglas y build. Componentes reales con datos ficticios y APIs simuladas en Edge/Chromium a 320/390/430/1280 px: encabezado compacto, totales, ventana de rodaje, acciones de presupuesto, ningún cambio financiero al entrar y sin desborde horizontal. La lista sigue navegable con la lectura comercial retenida, y se completa al liberarla. No se conectó Firestore ni se modificaron datos de producción para probarlo. Safari/iPhone físico sigue sin probarse.
+
 Equipo prioriza integrantes con acceso, nombre/email, rol, áreas, subcategorías y pestañas permitidas. Los proveedores de filas no se presentan como usuarios con acceso. Agregar persona abre una ventana con las mismas opciones y autorizaciones previas; Editar permisos abre la gestión existente. No se incorporan personas ni se cambian roles automáticamente por esta reorganización.
 
 Cajas muestra Caja General (sólo para quienes ya podían verla) y responsables con movimientos o saldo, incluyendo pendientes claramente separados del saldo disponible. Elegir una caja muestra su detalle; registrar entregas, transferencias o devoluciones está en un panel desplegable. Se conservan confirmaciones, enlaces a gastos y restricciones vigentes. Quienes dejaron el equipo permanecen como responsables históricos cuando tienen movimientos; no se los habilita como destinatarios de nuevas entregas ni se les otorgan permisos. Caja General muestra salida neta, no un saldo inicial inventado.

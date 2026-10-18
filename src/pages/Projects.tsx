@@ -15,6 +15,7 @@ import { SearchableSelect } from '../components/SearchableSelect';
 import { matchesSmartSearch } from '../lib/smartSearch';
 import { splitProjectCommercial } from '../lib/projectCommercialFields';
 import { readAuthorizedProject } from '../lib/projectCommercial';
+import { publishProgressiveProjects } from '../lib/progressiveProjects';
 
 const projectCatalogRef = doc(db, 'integrations', 'controlTotalProjectCatalog');
 
@@ -30,6 +31,7 @@ export default function Projects() {
   const [projects, setProjects] = useState<any[]>([]);
   const [clients, setClients] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [detailsStatus, setDetailsStatus] = useState<'loading' | 'ready' | 'partial'>('ready');
   const [showNewModal, setShowNewModal] = useState(false);
   const [creationMode, setCreationMode] = useState<'controlTotal' | 'manual'>('controlTotal');
   const [sourceProjects, setSourceProjects] = useState<ControlTotalProject[]>([]);
@@ -102,13 +104,24 @@ export default function Projects() {
     let currentRead = 0;
     const unsubscribe = onSnapshot(q, querySnapshot => {
       const read = ++currentRead;
-      void Promise.all(querySnapshot.docs.map(snapshot => readAuthorizedProject(db, { id: snapshot.id, ...snapshot.data() }, {
-        uid: profile.uid, email: profile.email, isAppAdmin: profile.role === 'admin',
-      }))).then(rows => { if (read === currentRead) { setProjects(rows); setLoading(false); } }).catch(error => {
-        if (read === currentRead) { setProjects([]); setLoading(false); }
-        console.error('No se pudieron leer los datos comerciales autorizados:', error);
+      setDetailsStatus('loading');
+      void publishProgressiveProjects(
+        querySnapshot.docs.map(snapshot => ({ ...snapshot.data(), id: snapshot.id })),
+        project => readAuthorizedProject(db, project, {
+          uid: profile.uid, email: profile.email, isAppAdmin: profile.role === 'admin',
+        }),
+        rows => { setProjects(rows); setLoading(false); },
+        () => read === currentRead,
+        error => {
+          setDetailsStatus('partial');
+          console.error('No se pudieron leer los datos comerciales autorizados:', error);
+        },
+      ).then(() => {
+        if (read === currentRead) setDetailsStatus(status => status === 'partial' ? 'partial' : 'ready');
       });
     }, error => {
+      currentRead++;
+      setDetailsStatus('ready');
       setProjects([]);
       setLoading(false);
       if (error.message?.includes('insufficient permissions')) {
@@ -120,7 +133,7 @@ export default function Projects() {
   }, [profile?.uid, profile?.email, profile?.role]);
 
   useEffect(() => {
-    if (!profile?.uid) return;
+    if (!profile?.uid || !showNewModal) return;
     const fetchClients = async () => {
       try {
         const querySnapshot = await getDocs(collection(db, 'clients'));
@@ -133,7 +146,7 @@ export default function Projects() {
       }
     };
     fetchClients();
-  }, [profile?.uid]);
+  }, [profile?.uid, showNewModal]);
 
   const selectedSource = sourceProjects.find(project => project.projectCode === selectedCode);
   const sourceAlreadyInGoat = (source: ControlTotalProject) => projects.some(project =>
@@ -292,6 +305,9 @@ export default function Projects() {
         </div>
       </div>
 
+      {!loading && detailsStatus !== 'ready' && <p role="status" className="text-[10px] text-slate-400">
+        {detailsStatus === 'loading' ? 'Completando datos de cliente y marca…' : 'Algunos datos adicionales no se pudieron cargar. Abrí el proyecto para revisarlos.'}
+      </p>}
       {loading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-6">
           {[1, 2, 3].map(i => (
