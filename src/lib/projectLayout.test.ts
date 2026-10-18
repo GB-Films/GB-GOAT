@@ -23,7 +23,7 @@ test('project team displays assigned access and exposes no management controls t
 test('paid total is green, partial payment stays distinct and no amount can be edited without permission', () => {
   const paid = renderToStaticMarkup(createElement(MobileExpenseAmount, { item: { id: 'paid', total: 1000, paid: true }, paidAmount: 1000, canEdit: false, onUpdate: async () => {} }));
   assert.match(paid, /font-black text-emerald-600/);
-  assert.match(paid, /Pagado \$/);
+  assert.doesNotMatch(paid, /Pagado \$/);
   assert.doesNotMatch(paid, /Total · Editar/);
   const partial = renderToStaticMarkup(createElement(MobileExpenseAmount, { item: { id: 'partial', total: 1000 }, paidAmount: 300, canEdit: false, onUpdate: async () => {} }));
   assert.match(partial, /font-black text-slate-900/);

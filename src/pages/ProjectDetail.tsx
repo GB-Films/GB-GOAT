@@ -44,6 +44,8 @@ import Papa from 'papaparse';
 import { cn } from '../lib/utils';
 import { AreaBudgetSummary } from './project-detail/AreaBudgetSummary';
 import { MobileExpenseAmount } from './project-detail/MobileExpenseAmount';
+import { MobileExpenseDocuments } from './project-detail/MobileExpenseDocuments';
+import { ShootingDateInput } from './project-detail/ShootingDateInput';
 import { ProjectTeam } from './project-detail/ProjectTeam';
 import { ProjectDialog } from './project-detail/ProjectDialog';
 import { CashBoxPicker } from './project-detail/CashBoxPicker';
@@ -560,7 +562,7 @@ function PaymentDatePicker({
           selectedKey && "text-slate-800"
         )}
       >
-        {selectedKey ? formatDate(selectedKey) : 'Definir fecha'}
+        {selectedKey ? formatDate(selectedKey) : <><span className="sm:hidden">Fecha Pago</span><span className="hidden sm:inline">Definir fecha</span></>}
       </button>
 
       {isOpen && !disabled && (
@@ -644,48 +646,8 @@ function ShootingDateButton({
   title: string;
   onChange: (value: string) => void;
 }) {
-  const inputRef = useRef<HTMLInputElement>(null);
   const valueKey = toDateInputValue(value);
-
-  const openPicker = () => {
-    const input = inputRef.current;
-    if (!input) return;
-
-    try {
-      if (input.showPicker) {
-        input.showPicker();
-      } else {
-        input.focus();
-        input.click();
-      }
-    } catch {
-      input.focus();
-      input.click();
-    }
-  };
-
-  return (
-    <span className="relative inline-flex min-w-[76px] items-center justify-center">
-      <button
-        type="button"
-        onClick={openPicker}
-        className="w-full text-center text-[11px] font-bold text-slate-900 cursor-pointer"
-        title={title}
-      >
-        {valueKey ? formatDate(valueKey) : label}
-      </button>
-      <input
-        ref={inputRef}
-        type="date"
-        min={min}
-        value={valueKey}
-        onChange={(e) => onChange(e.target.value)}
-        className="pointer-events-none absolute h-px w-px opacity-0"
-        tabIndex={-1}
-        aria-hidden="true"
-      />
-    </span>
-  );
+  return <ShootingDateInput label={title || label} value={valueKey} min={min} onChange={onChange} />;
 }
 
 const providerExportRow = (provider: any, extra: Record<string, any> = {}) => {
@@ -3489,6 +3451,21 @@ export default function ProjectDetail() {
       onReceiptDragEnter={() => setDragOverExpenseId(null)}
     />
   );
+  const renderMobileExpenseDocuments = (item: any, collectionName: PaymentCollection) => (
+    <MobileExpenseDocuments
+      item={item}
+      canManage={canManageItemFiles(item, collectionName)}
+      canRemove={isProjectAdmin}
+      uploadingInvoice={!!uploadingInvoices[`${collectionName}-${item.id}`]}
+      uploadingReceipt={!!uploadingInvoices[`other-${collectionName}-${item.id}`]}
+      generatingLink={!!generatingInvoiceLinks[`${collectionName}-${item.id}`]}
+      onUploadInvoice={(file) => uploadInvoiceForExpense(item, file, collectionName)}
+      onUploadReceipt={(file) => uploadOtherReceiptForExpense(item, file, collectionName)}
+      onRemoveInvoice={(invoice) => removeInvoiceFromExpense(item, invoice, collectionName)}
+      onRemoveReceipt={(receipt) => removeOtherReceiptFromExpense(item, receipt, collectionName)}
+      onCreateInvoiceLink={() => createInvoiceUploadLink(item, collectionName)}
+    />
+  );
   const renderMobileExpenseCard = ({
     item,
     collectionName,
@@ -3561,12 +3538,7 @@ export default function ProjectDetail() {
         <div className="w-[78px] rounded border border-slate-100 bg-slate-50 px-1 py-0.5 [&_button]:h-7 [&_button]:px-1 [&_button]:py-0 [&_button]:text-[8px]">
           {renderPaymentScheduleCell(item, collectionName, !canEditPaymentDateForItem(item, collectionName))}
         </div>
-        <div className="rounded border border-slate-100 bg-slate-50 p-0.5">
-          {renderExpenseInvoiceCell(item, collectionName)}
-        </div>
-        <div className="rounded border border-slate-100 bg-slate-50 p-0.5">
-          {renderExpenseReceiptsCell(item, collectionName)}
-        </div>
+        {renderMobileExpenseDocuments(item, collectionName)}
         <button
           type="button"
           disabled={!canManagePaymentForItem(item, collectionName)}
@@ -3574,7 +3546,7 @@ export default function ProjectDetail() {
           className={cn('ml-auto inline-flex h-8 items-center gap-1 rounded border px-2 text-[9px] font-black uppercase tracking-widest', getPaymentTotal(item) > 0 || item.paid ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-900 bg-slate-900 text-white disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400')}
         >
           <Wallet className="h-3 w-3" />
-          {item.paid || (Number(item.total) > 0 && getPaymentTotal(item) >= Number(item.total)) ? 'Pagado' : getPaymentTotal(item) > 0 ? 'Pago parcial' : 'Registrar pago'}
+          {item.paid || (Number(item.total) > 0 && getPaymentTotal(item) >= Number(item.total)) ? 'Pagado' : 'Pagos'}
         </button>
         {canDelete && (
           <button
@@ -5146,7 +5118,7 @@ export default function ProjectDetail() {
   };
 
   const renderShootingRangeControls = () => (
-    <div className="inline-flex h-8 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 shadow-sm hover:border-blue-200 hover:shadow-md transition-all">
+    <div className="inline-flex min-h-9 max-w-full items-center gap-1 rounded-full border border-slate-200 bg-white px-2 shadow-sm hover:border-blue-200 hover:shadow-md transition-all sm:gap-1.5 sm:px-3">
       <Calendar className="w-3.5 h-3.5 text-slate-500" />
       <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">Rodaje</span>
       <ShootingDateButton
@@ -6433,39 +6405,7 @@ export default function ProjectDetail() {
                                     <div className="w-[78px] rounded border border-slate-100 bg-slate-50 px-1 py-0.5 [&_button]:h-7 [&_button]:px-1 [&_button]:py-0 [&_button]:text-[8px]">
                                       {renderPaymentScheduleCell(item, 'areaExpenses', !canEditPaymentDateForItem(item, 'areaExpenses'))}
                                     </div>
-                                    {renderExpenseInvoiceCell(item, 'areaExpenses')}
-
-                                    {canUploadAreaFiles(item.area, item.subcategory) && (
-                                      <label className="inline-flex h-7 items-center gap-1 rounded border border-slate-200 bg-white px-1.5 text-[8px] font-black uppercase tracking-widest text-slate-600">
-                                        <Plus className="h-3 w-3" />
-                                        Comp.
-                                        <input
-                                          type="file"
-                                          accept="application/pdf,image/jpeg,image/png,image/webp,.pdf,.jpg,.jpeg,.png,.webp"
-                                          className="hidden"
-                                          disabled={!!uploadingInvoices[`other-areaExpenses-${item.id}`]}
-                                          onChange={(event) => {
-                                            const file = event.target.files?.[0];
-                                            uploadOtherReceiptForExpense(item, file);
-                                            event.target.value = '';
-                                          }}
-                                        />
-                                      </label>
-                                    )}
-
-                                    {(Array.isArray(item.otherReceipts) ? item.otherReceipts : []).map((receipt: any, receiptIndex: number) => (
-                                      <a
-                                        key={receipt.id || receipt.path || receipt.url}
-                                        href={receipt.url}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        className="inline-flex h-7 items-center gap-1 rounded border border-sky-100 bg-sky-50 px-1.5 text-[8px] font-black uppercase tracking-widest text-sky-700"
-                                        title={receipt.originalFileName || receipt.fileName || 'Ver comprobante'}
-                                      >
-                                        <Paperclip className="h-3 w-3" />
-                                        Comp. {receiptIndex + 1}
-                                      </a>
-                                    ))}
+                                    {renderMobileExpenseDocuments(item, 'areaExpenses')}
 
                                     <button
                                       type="button"
@@ -6474,7 +6414,7 @@ export default function ProjectDetail() {
                                       className={cn('ml-auto inline-flex h-8 items-center gap-1 rounded border px-2 text-[9px] font-black uppercase tracking-widest', getPaymentTotal(item) > 0 || item.paid ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-900 bg-slate-900 text-white disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400')}
                                     >
                                       <Wallet className="h-3 w-3" />
-                                      {item.paid || (Number(item.total) > 0 && getPaymentTotal(item) >= Number(item.total)) ? 'Pagado' : getPaymentTotal(item) > 0 ? 'Pago parcial' : 'Registrar pago'}
+                                      {item.paid || (Number(item.total) > 0 && getPaymentTotal(item) >= Number(item.total)) ? 'Pagado' : 'Pagos'}
                                     </button>
                                     {canDeleteAreaExpense(item) && (
                                       <button

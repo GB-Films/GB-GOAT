@@ -10,6 +10,16 @@ En celular, tocar **Total** abre el importe del gasto en Presu Ppal y Áreas. Se
 
 El guardado utiliza las transacciones, validaciones de permisos, versión y auditorías existentes. Con pagos asociados sólo se consulta el importe; los administradores conservan la corrección de filas históricamente bloqueadas pero actualmente sin pagos. Si la fila cambia durante la edición, se pide revisarla; si falla el guardado, se conserva el formulario. Total pagado e importe abonado se muestran en verde; los pagos parciales se identifican por separado.
 
+## Ajustes iPhone y comprobantes — 18/10/2026
+
+El acceso agregado al inicio utiliza el nuevo logo GB GOAT mediante apple-touch-icon (180 px) y manifiesto (192/512 px) con rutas relativas compatibles con GitHub Pages. Logo generado con imagen de referencia GB Films: GB grande y GOAT menor debajo, ambos del mismo ancho, letras geométricas blancas sobre negro. PNG optimizados a paleta de 4 grises. Un acceso ya creado en iOS puede conservar el ícono anterior: volver a agregarlo desde Safari tras publicar. No se incorpora caché offline ni se promete operar sin conexión.
+
+Inicio y fin de rodaje usan campos nativos visibles y táctiles, sin depender de showPicker sobre un input oculto. Mantienen permisos y guardado existentes, con fecha mínima de fin según inicio.
+
+Sólo en las tarjetas de celular de Presu Ppal y Áreas: no se repite «Pagado $…» en filas totalmente pagadas (sí se conserva el importe abonado en pagos parciales); el botón sin saldo completo dice Pagos y la fecha vacía dice Fecha Pago. Un único botón Comprobantes abre una ventana con facturas, carga, enlace del proveedor, otros comprobantes y eliminación según los permisos existentes. Los documentos ligados a un pago se pueden abrir allí y siguen gestionándose desde Pagos, sin eliminar el pago ni cambiar importes por una acción documental. Las columnas de escritorio se mantienen.
+
+Validación: 155 pruebas automatizadas, tipos, sintaxis de reglas y build correctos. Prueba interactiva local con datos ficticios en Edge/Chromium táctil a 320, 390 y 430 px: campo de fecha, apertura/cierre de ventana, enlaces, carga y eliminación simuladas, sin desborde horizontal. No se consultaron ni modificaron datos productivos. Safari/iPhone físico no probado; WebKit no está instalado en este equipo.
+
 Equipo prioriza integrantes con acceso, nombre/email, rol, áreas, subcategorías y pestañas permitidas. Los proveedores de filas no se presentan como usuarios con acceso. Agregar persona abre una ventana con las mismas opciones y autorizaciones previas; Editar permisos abre la gestión existente. No se incorporan personas ni se cambian roles automáticamente por esta reorganización.
 
 Cajas muestra Caja General (sólo para quienes ya podían verla) y responsables con movimientos o saldo, incluyendo pendientes claramente separados del saldo disponible. Elegir una caja muestra su detalle; registrar entregas, transferencias o devoluciones está en un panel desplegable. Se conservan confirmaciones, enlaces a gastos y restricciones vigentes. Quienes dejaron el equipo permanecen como responsables históricos cuando tienen movimientos; no se los habilita como destinatarios de nuevas entregas ni se les otorgan permisos. Caja General muestra salida neta, no un saldo inicial inventado.
