@@ -6167,26 +6167,28 @@ export default function ProjectDetail() {
                 </div>
               )}
             </div>
-            <div className="shrink-0 flex flex-col sm:flex-row sm:items-center gap-2">
-              <div className="flex items-center gap-2 px-3 py-1 bg-white border border-slate-200 rounded-lg">
-                <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">Orden</span>
+            <div className="grid min-w-0 grid-cols-2 gap-2 sm:flex sm:shrink-0 sm:items-center">
+              <div className="flex min-w-0 items-center gap-1.5 px-2 py-1 bg-white border border-slate-200 rounded-lg sm:gap-2 sm:px-3">
+                <span className="shrink-0 text-[9px] font-black uppercase tracking-widest text-slate-400">Orden</span>
                 <select
+                  aria-label="Orden de gastos de áreas"
                   value={areaExpenseSort}
                   onChange={(event) => setAreaExpenseSort(event.target.value as AreaExpenseSortKey)}
-                  className="bg-transparent text-[10px] font-bold text-slate-700 focus:outline-none"
+                  className="min-w-0 flex-1 bg-transparent text-[10px] font-bold text-slate-700 focus:outline-none"
                 >
                   {AREA_EXPENSE_SORT_OPTIONS.map((option) => (
                     <option key={option.id} value={option.id}>{option.label}</option>
                   ))}
                 </select>
               </div>
-              <div className="flex items-center gap-2 px-3 py-1 bg-white border border-slate-200 rounded-lg min-w-[220px]">
-                <Search className="w-3.5 h-3.5 text-slate-400" />
+              <div className="flex min-w-0 items-center gap-1.5 px-2 py-1 bg-white border border-slate-200 rounded-lg sm:min-w-[220px] sm:gap-2 sm:px-3">
+                <Search className="h-3.5 w-3.5 shrink-0 text-slate-400" />
                 <input
+                  aria-label="Buscar gasto en áreas"
                   value={areaExpenseSearch}
                   onChange={(event) => setAreaExpenseSearch(event.target.value)}
                   placeholder="Buscar gasto..."
-                  className="w-full bg-transparent text-[10px] font-bold text-slate-700 placeholder:text-slate-300 focus:outline-none"
+                  className="min-w-0 w-full bg-transparent text-[10px] font-bold text-slate-700 placeholder:text-slate-300 focus:outline-none"
                 />
               </div>
             </div>
