@@ -46,6 +46,8 @@ import { MobileExpenseDocuments } from './project-detail/MobileExpenseDocuments'
 import { ShootingDateInput } from './project-detail/ShootingDateInput';
 import { ProjectTeam } from './project-detail/ProjectTeam';
 import { ProjectDialog } from './project-detail/ProjectDialog';
+import { ProjectDataBoundary } from './project-detail/ProjectDataBoundary';
+import { projectLoadStatus, type ProjectLoadState } from '../lib/projectLoadState';
 import { CashBoxPicker } from './project-detail/CashBoxPicker';
 import { cashLedgerPeople } from '../lib/cashLedgerPeople';
 import { ProjectCommercialSummary } from './project-detail/ProjectCommercialSummary';
@@ -697,6 +699,13 @@ export default function ProjectDetail() {
   const { user, profile } = useAuth();
   const [project, setProject] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [reloadAttempt, setReloadAttempt] = useState(0);
+  const loadScope = JSON.stringify([id, user?.uid, user?.email, profile?.role, reloadAttempt]);
+  const [loadedProjectScope, setLoadedProjectScope] = useState('');
+  const [projectLoadError, setProjectLoadError] = useState('');
+  const [auxiliaryLoad, setAuxiliaryLoad] = useState<ProjectLoadState>({ scope: '', ready: false, error: '' });
+  const [financialLoad, setFinancialLoad] = useState<ProjectLoadState>({ scope: '', ready: false, error: '' });
+  const retryProjectLoad = () => setReloadAttempt(attempt => attempt + 1);
   const [showMobileProjectDetails, setShowMobileProjectDetails] = useState(false);
   const [searchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState(() => {
@@ -790,9 +799,21 @@ export default function ProjectDetail() {
       if (!id || !user) return;
       setLoading(true);
       setProject(null);
+      setProjectLoadError('');
+      setIsOwner(false);
+      setIsProjectAdmin(false);
+      setUserPermissions(null);
       try {
         const docRef = doc(db, 'projects', id);
-        const docSnap = await getDoc(docRef);
+        const userEmailKey = normalizeEmail(user.email);
+        const readPermissions = async () => {
+          let snapshot = await getDoc(doc(db, 'projects', id, 'collaborators', userEmailKey));
+          if (!snapshot.exists() && user.email && user.email !== userEmailKey) {
+            snapshot = await getDoc(doc(db, 'projects', id, 'collaborators', user.email));
+          }
+          return snapshot;
+        };
+        const [docSnap, colSnapshot] = await Promise.all([getDoc(docRef), readPermissions()]);
         if (cancelled) return;
         if (docSnap.exists()) {
           const data = docSnap.data();
@@ -803,12 +824,6 @@ export default function ProjectDetail() {
           setIsOwner(owner);
 
           // Fetch permissions. Los colaboradores se guardan por email normalizado.
-          const userEmailKey = normalizeEmail(user.email);
-          let colSnapshot = await getDoc(doc(db, 'projects', id, 'collaborators', userEmailKey));
-          if (!colSnapshot.exists() && user.email && user.email !== userEmailKey) {
-            colSnapshot = await getDoc(doc(db, 'projects', id, 'collaborators', user.email));
-          }
-          if (cancelled) return;
           
           if (colSnapshot.exists()) {
             const rawPerms = colSnapshot.data() as Collaborator;
@@ -866,78 +881,118 @@ export default function ProjectDetail() {
             setCategories(BUDGET_AREAS);
           }
 
-          // Fetch all collaborators for project admins
-          const [colSnap, dSnap, pSnap, cSnap] = await Promise.all([
-            getDocs(collection(db, 'projects', id, 'collaborators')),
-            getDocs(collection(db, 'projects', id, 'projectDocuments')),
-            getDocs(collection(db, 'providers')),
-            getDocs(collection(db, 'clients')),
-          ]);
-          if (cancelled) return;
-          setManualProjectDocuments(dSnap.docs.map(d => ({ id: d.id, ...d.data() })));
-          setProviders(pSnap.docs.map(d => ({ id: d.id, ...d.data() })));
-          setClients(cSnap.docs.map(d => ({ id: d.id, ...d.data() })));
-          setCollaborators(colSnap.docs.map(d => {
-            const data = d.data() as any;
-            const role = normalizeProjectRole(data.role);
-            return {
-              ...data,
-              email: normalizeEmail(data.email || d.id),
-              role,
-              allowedTabs: normalizeAllowedTabs(data.allowedTabs, role),
-              allowedCategories: safeArray(data.allowedCategories),
-              allowedSubcategories: safeArray(data.allowedSubcategories),
-              canEditBudgetAreas: data.canEditBudgetAreas ?? true,
-              canViewBudgetTotals: data.canViewBudgetTotals ?? role === 'admin',
-            } as Collaborator;
-          }));
         }
 
       } catch (error: any) {
+        if (!cancelled) setProjectLoadError('No se pudo cargar el proyecto. Revisá la conexión y volvé a intentar.');
         if (error.message?.includes('insufficient permissions')) {
             handleFirestoreError(error, 'get', `projects/${id}`);
         }
         console.error("Error fetching project data:", error);
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) { setLoadedProjectScope(loadScope); setLoading(false); }
       }
     };
     fetchProject();
     return () => { cancelled = true; };
-  }, [id, user, profile]);
+  }, [loadScope]);
+
+  // Start auxiliary catalogs alongside the core request, never as a prerequisite
+  // for opening the project header or the financial overview.
+  useEffect(() => {
+    if (!id || !user) return;
+    let cancelled = false;
+    setAuxiliaryLoad({ scope: loadScope, ready: false, error: '' });
+    setProviders([]); setCollaborators([]); setManualProjectDocuments([]);
+    void Promise.all([
+      getDocs(collection(db, 'projects', id, 'collaborators')),
+      getDocs(collection(db, 'projects', id, 'projectDocuments')),
+      getDocs(collection(db, 'providers')),
+    ]).then(([colSnap, dSnap, pSnap]) => {
+      if (cancelled) return;
+      setManualProjectDocuments(dSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+      setProviders(pSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+      setCollaborators(colSnap.docs.map(d => {
+        const data = d.data() as any;
+        const role = normalizeProjectRole(data.role);
+        return { ...data, email: normalizeEmail(data.email || d.id), role,
+          allowedTabs: normalizeAllowedTabs(data.allowedTabs, role),
+          allowedCategories: safeArray(data.allowedCategories), allowedSubcategories: safeArray(data.allowedSubcategories),
+          canEditBudgetAreas: data.canEditBudgetAreas ?? true,
+          canViewBudgetTotals: data.canViewBudgetTotals ?? role === 'admin' } as Collaborator;
+      }));
+      setAuxiliaryLoad({ scope: loadScope, ready: true, error: '' });
+    }).catch(error => {
+      if (cancelled) return;
+      console.error('Error loading auxiliary project data:', error);
+      setAuxiliaryLoad({ scope: loadScope, ready: false, error: 'No se pudieron cargar equipo, proveedores o documentos. Los datos financieros no se modificaron.' });
+    });
+    return () => { cancelled = true; };
+  }, [loadScope]);
+
+  useEffect(() => {
+    setClients([]);
+    if (!showEditProjectModal || !user || !isProjectAdmin) return;
+    let cancelled = false;
+    void getDocs(collection(db, 'clients')).then(snapshot => {
+      if (!cancelled) setClients(snapshot.docs.map(entry => ({ id: entry.id, ...entry.data() })));
+    }).catch(error => console.error('Error loading client suggestions:', error));
+    return () => { cancelled = true; };
+  }, [showEditProjectModal, isProjectAdmin, loadScope]);
 
   // Keep financial rows current across browsers. Transactions below still validate
   // the stored version because a listener cannot prevent an in-flight race.
   useEffect(() => {
     if (!id || !user) return;
+    let cancelled = false;
+    const received = new Set<string>();
+    setBudgetItems([]); setAreaExpenses([]); setCashMovements([]);
+    setFinancialLoad({ scope: loadScope, ready: false, error: '' });
+    const markReceived = (source: string) => {
+      received.add(source);
+      if (received.size === 3) setFinancialLoad(state => state.scope === loadScope ? { ...state, ready: true } : state);
+    };
+    const failed = (error: unknown) => {
+      if (cancelled) return;
+      console.error('Error watching project finances:', error);
+      setFinancialLoad({ scope: loadScope, ready: false, error: 'No se pudieron cargar todos los gastos y movimientos. No se muestran saldos parciales. Volvé a intentar.' });
+    };
     const stopBudget = onSnapshot(collection(db, 'projects', id, 'budgetItems'), (snapshot) => {
+      if (cancelled) return;
       const items = snapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() } as BudgetItem));
       items.sort((a, b) => (a.order || 0) - (b.order || 0));
       setBudgetItems(items);
-    }, (error) => console.error('Error watching budget items:', error));
+      markReceived('budget');
+    }, failed);
     const stopExpenses = onSnapshot(collection(db, 'projects', id, 'areaExpenses'), (snapshot) => {
+      if (cancelled) return;
       setAreaExpenses(snapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() } as AreaExpense)));
-    }, (error) => console.error('Error watching area expenses:', error));
+      markReceived('expenses');
+    }, failed);
     const stopCash = onSnapshot(collection(db, 'projects', id, 'cashMovements'), (snapshot) => {
+      if (cancelled) return;
       setCashMovements(snapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() } as CashMovement)));
-    }, (error) => console.error('Error watching cash movements:', error));
-    return () => { stopBudget(); stopExpenses(); stopCash(); };
-  }, [id, user]);
+      markReceived('cash');
+    }, failed);
+    return () => { cancelled = true; stopBudget(); stopExpenses(); stopCash(); };
+  }, [loadScope]);
 
   useEffect(() => {
     if (!id || !user) return;
-
+    let cancelled = false;
+    setAvailableUsers([]);
     const fetchUsers = async () => {
       try {
         const snap = await getDocs(collection(db, 'users'));
-        setAvailableUsers(snap.docs.map((userDoc) => ({ id: userDoc.id, ...userDoc.data() })));
+        if (!cancelled) setAvailableUsers(snap.docs.map((userDoc) => ({ id: userDoc.id, ...userDoc.data() })));
       } catch (error) {
         console.error('Error fetching available users:', error);
       }
     };
 
     fetchUsers();
-  }, [id, user]);
+    return () => { cancelled = true; };
+  }, [loadScope]);
 
   useEffect(() => {
     if (!isProjectAdmin || !id || !showCopyBudgetModal) return;
@@ -5168,8 +5223,13 @@ export default function ProjectDetail() {
     </>
   );
 
-  if (loading) return <div className="p-8 text-center text-slate-500 font-mono text-xs uppercase tracking-widest">Analizando proyecto...</div>;
+  if (loading || loadedProjectScope !== loadScope) return <div className="p-8 text-center text-slate-500 font-mono text-xs uppercase tracking-widest">Analizando proyecto...</div>;
+  if (projectLoadError) return <div role="alert" className="p-8 text-center text-sm text-slate-600">
+    <p>{projectLoadError}</p>
+    <button type="button" onClick={retryProjectLoad} className="mt-3 rounded-lg border border-slate-300 px-4 py-2 font-bold">Volver a intentar</button>
+  </div>;
   if (!project) return <div className="p-8 text-center text-slate-900 font-bold uppercase tracking-widest">Proyecto no encontrado</div>;
+  const sectionLoad = projectLoadStatus(financialLoad, loadScope) !== 'ready' || activeTab === 'resumen' ? financialLoad : auxiliaryLoad;
 
   return (
     <div className="mx-auto max-w-[1600px] text-[11px] sm:text-xs">
@@ -5340,7 +5400,7 @@ export default function ProjectDetail() {
               <button
                 onClick={() => setShowExportModal(true)}
                 aria-label="Exportar reportes del proyecto"
-                disabled={!hasExportOptions}
+                disabled={!hasExportOptions || projectLoadStatus(financialLoad, loadScope) !== 'ready' || projectLoadStatus(auxiliaryLoad, loadScope) !== 'ready'}
                 className="flex items-center gap-1.5 rounded-lg border border-slate-950 bg-slate-950 px-2.5 py-1.5 text-[10px] font-bold text-white shadow-lg shadow-slate-900/20 transition-all hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40 sm:px-3.5 sm:py-2 sm:text-[11px]"
                 title={hasExportOptions ? 'Exportar reportes del proyecto' : 'No tenes reportes disponibles para exportar'}
               >
@@ -5420,6 +5480,7 @@ export default function ProjectDetail() {
         </section>
       )}
 
+      <ProjectDataBoundary state={sectionLoad} scope={loadScope} onRetry={retryProjectLoad}>
       <motion.div
         key={activeTab}
         initial={{ opacity: 0, y: 5 }}
@@ -5512,7 +5573,9 @@ export default function ProjectDetail() {
                 </div>
               </div>
 
-              <ProjectKeyContacts people={projectKeyPeople} providers={providers} canEdit={isProjectAdmin} onAssign={updateProjectKeyPerson} />
+              <ProjectDataBoundary state={auxiliaryLoad} scope={loadScope} onRetry={retryProjectLoad} label="Cargando contactos del proyecto…">
+                <ProjectKeyContacts people={projectKeyPeople} providers={providers} canEdit={isProjectAdmin} onAssign={updateProjectKeyPerson} />
+              </ProjectDataBoundary>
 
             </section>
           </div>
@@ -8533,6 +8596,7 @@ export default function ProjectDetail() {
            </div>
         )}
       </motion.div>
+      </ProjectDataBoundary>
 
       <AnimatePresence>
         {showAddCollaborator && canManageProjectAccess && (
