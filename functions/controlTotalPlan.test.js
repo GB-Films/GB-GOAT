@@ -53,6 +53,10 @@ test('cleared source fields propagate without clearing CT-owned fields', () => {
   assert.equal(p.actions[0].values[7], '');
   assert.equal(p.actions[0].values[1], 46288);
 });
+test('existing accounting category is not replaced by the operational GOAT area', () => {
+  const p = plan({ ct: ct([row({ 8: 'Transporte' })]) });
+  assert.equal(p.actions[0].values[8], 'Transporte');
+});
 test('CT manual edit and changed GOAT version cause conflict, not overwrite', () => {
   const initial = plan({ ct: ct([row()]) });
   const target = [...initial.actions[0].values]; target[10] = 115;

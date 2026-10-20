@@ -141,7 +141,9 @@ function buildPlan({ projectId, project, documents, sourceProviders = {}, ct, st
     if (!existing && ct.ids.has(id)) { issue('Ese ServicioID ya existe. Vinculá el registro antes de continuar.'); continue; }
     const row = existing?.row || nextRow++;
     const current = existing?.values || [];
-    const managed = { 1: date, 2: selector, 5: targetProject, 7: source.description, 8: source.area, 9: source.currency, 10: source.amount };
+    // Operational area (e.g. Ejecutiva) is not the accounting cost category.
+    const category = cleanText(e.ctCategory || existing?.values[8] || source.area);
+    const managed = { 1: date, 2: selector, 5: targetProject, 7: source.description, 8: category, 9: source.currency, 10: source.amount };
     if (before?.source) {
       const sourceField = { 1: 'serviceDate', 2: 'providerId', 5: null, 7: 'description', 8: 'area', 9: 'currency', 10: 'amount' };
       let conflict = false;

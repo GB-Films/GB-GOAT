@@ -13,6 +13,8 @@ a GOAT: aparece como conflicto. El detalle operativo se corrige con los flujos
 normales de GOAT y se vuelve a comparar. El regreso automático de pagos desde CT,
 la identificación de transacciones compartidas y las altas de proveedores nuevos
 quedan fuera de esta primera entrega.
+La categoría contable existente de CT se conserva: un área operativa como Ejecutiva
+no reemplaza categorías de costo como Transporte o Catering.
 
 El servicio global interno BANI se conserva en su circuito propio; esta conexión no
 lo crea como otro costo externo. Sus componentes se vinculan/excluyen con motivo,
