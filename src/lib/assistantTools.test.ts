@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { buildAssistantCapabilities } from './assistantCapabilities';
 import { buildAssistantTools, type AssistantProjectContext } from './assistantTools';
+import { formatDateKey } from './paymentSchedule';
 
 const baseProject = {
   projectId: 'proj-1',
@@ -434,7 +435,7 @@ test('busca clientes y usuarios con filtros', async () => {
 
 test('el reporte de pagos separa vencidos, hoy, mes y sin fecha', async () => {
   const today = new Date();
-  const todayKey = today.toISOString().slice(0, 10);
+  const todayKey = formatDateKey(today);
   const tools = buildTools({
     isAppAdmin: true,
     loadProjectFinance: async (projectId) => (projectId === 'proj-1' ? {

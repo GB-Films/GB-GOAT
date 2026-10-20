@@ -55,6 +55,7 @@ import { ProjectSummaryMetrics } from './project-detail/ProjectSummaryMetrics';
 import { ProjectKeyContacts } from './project-detail/ProjectKeyContacts';
 import { readAuthorizedProject, readProjectCommercial } from '../lib/projectCommercial';
 import { splitProjectCommercial } from '../lib/projectCommercialFields';
+import { DEFAULT_BUDGET_CATEGORIES, resolveBudgetCategories, categoryDeletionPlan } from '../lib/budgetCategories';
 import { matchesSmartSearch } from '../lib/smartSearch';
 import { validateMaxUploadSize } from '../lib/uploadLimits';
 import { buildPaymentCalendarDays, formatDateKey, formatPeriodLabel, getOverdueLines, getTodayLines, getUnscheduledLines, sumDebt, type PaymentScheduleLine } from '../lib/paymentSchedule';
@@ -156,10 +157,7 @@ const DOCUMENT_SUBTYPES: Record<string, string[]> = {
   locaciones: ['Permiso de filmacion', 'Autorizacion de locacion', 'Condiciones de uso', 'Contacto / datos utiles', 'Otro'],
 };
 
-const BUDGET_AREAS = [
-  'Ejecutiva', 'Producción', 'Dirección', 'Guion', 'Arte', 'Vestuario', 
-  'Maquillaje', 'Fotografía', 'Sonido', 'Logística', 'Post-producción', 'Varios'
-];
+const BUDGET_AREAS = DEFAULT_BUDGET_CATEGORIES;
 
 const statusColors: Record<string, string> = {
   'Presupuesto': 'bg-slate-100 text-slate-700 border-slate-200',
@@ -861,25 +859,9 @@ export default function ProjectDetail() {
             setSelectedAreaTabs([]);
           }
 
-          if (data.categories && Array.isArray(data.categories) && data.categories.length > 0) {
-            // Once a project has saved categories, respect them exactly.
-            // A one-time migration adds Ejecutiva to older projects; after that, admins can delete it and it stays deleted.
-            const savedCategories = Array.from(new Set(data.categories));
-            const needsExecutiveDefault = !data.executiveCategoryDefaultApplied && !savedCategories.some(isExecutiveArea);
-            const resolvedCategories = needsExecutiveDefault
-              ? ['Ejecutiva', ...savedCategories]
-              : savedCategories;
-            setCategories(resolvedCategories);
-            if (needsExecutiveDefault) {
-              updateDoc(doc(db, 'projects', id), {
-                categories: resolvedCategories,
-                executiveCategoryDefaultApplied: true,
-                updatedAt: serverTimestamp(),
-              }).catch((error) => console.error('Error applying executive category default:', error));
-            }
-          } else {
-            setCategories(BUDGET_AREAS);
-          }
+          // Loading is read-only. Resolve legacy defaults identically to edits;
+          // never recreate categories that were intentionally deleted.
+          setCategories(resolveBudgetCategories(data));
 
         }
 
@@ -2769,7 +2751,7 @@ export default function ProjectDetail() {
         return;
       }
       const baselineCategories = safeArray(baselineProject.data().categories);
-      const newCategories = baselineCategories.map((category) => category === oldName ? newName : category);
+      const newCategories = resolveBudgetCategories(baselineProject.data()).map((category) => category === oldName ? newName : category);
       const budgetSnapshot = await getDocsFromServer(collection(db, 'projects', id, 'budgetItems'));
       const itemsInArea = budgetSnapshot.docs
         .map((entry) => ({ id: entry.id, ...entry.data() } as BudgetItem))
@@ -2780,6 +2762,7 @@ export default function ProjectDetail() {
         if (!projectSnapshot.exists()
           || (Number(projectSnapshot.data().budgetRevision) || 0) !== (Number(baselineProject.data().budgetRevision) || 0)
           || JSON.stringify(safeArray(projectSnapshot.data().categories)) !== JSON.stringify(baselineCategories)
+          || projectSnapshot.data().executiveCategoryDefaultApplied !== baselineProject.data().executiveCategoryDefaultApplied
           || (itemsInArea.length > 0 && safeArray(projectSnapshot.data().activeAreas).includes(newName))) {
           throw new Error('AREA_CHANGED');
         }
@@ -2793,13 +2776,14 @@ export default function ProjectDetail() {
         const revision = (Number(projectSnapshot.data().budgetRevision) || 0) + (itemsInArea.length > 0 ? 1 : 0);
         transaction.update(projectRef, {
           categories: newCategories,
+          executiveCategoryDefaultApplied: true,
           ...(itemsInArea.length > 0 ? { budgetRevision: revision } : {}),
           updatedAt: serverTimestamp(),
         });
         refs.forEach((budgetRef) => transaction.update(budgetRef, { area: newName, updatedAt: serverTimestamp() }));
         return revision;
       });
-      setProject((current: any) => current ? { ...current, budgetRevision: nextRevision } : current);
+      setProject((current: any) => current ? { ...current, categories: newCategories, executiveCategoryDefaultApplied: true, budgetRevision: nextRevision } : current);
       setCategories(newCategories);
       setBudgetItems((current) => current.map((item) => item.area === oldName ? { ...item, area: newName } : item));
     } catch (e) {
@@ -2964,11 +2948,12 @@ export default function ProjectDetail() {
     const name = prompt('Nombre de la nueva categoría:');
     if (!name || !id) return;
     const newCategories = [...categories, name];
-    setCategories(newCategories);
     try {
-      await updateDoc(doc(db, 'projects', id), { categories: newCategories });
+      await updateDoc(doc(db, 'projects', id), { categories: newCategories, executiveCategoryDefaultApplied: true });
+      setCategories(newCategories);
     } catch (e) {
       console.error("Error adding category:", e);
+      alert('No se pudo agregar la categoría. El presupuesto no fue modificado.');
     }
   };
 
@@ -3071,7 +3056,7 @@ export default function ProjectDetail() {
 
         if (categoriesChanged) {
           setCategories(currentCategories);
-          await updateDoc(doc(db, 'projects', id), { categories: currentCategories });
+          await updateDoc(doc(db, 'projects', id), { categories: currentCategories, executiveCategoryDefaultApplied: true });
         }
 
         setBudgetItems([...budgetItems, ...newItems]);
@@ -3172,6 +3157,7 @@ export default function ProjectDetail() {
         copiedItems.forEach(({ ref, payload }) => transaction.set(ref, payload));
         transaction.update(projectRef, {
           categories: nextCategories,
+          executiveCategoryDefaultApplied: true,
           budgetRevision: revision,
           updatedAt: serverTimestamp(),
         });
@@ -3205,44 +3191,50 @@ export default function ProjectDetail() {
         alert('No se puede borrar una categoría con gestión por área activa. Los gastos de esa área deben seguir visibles.');
         return;
       }
-      const newCategories = baselineCategories.filter((category) => category !== area);
+      const deletionPlan = categoryDeletionPlan(baselineProject.data(), area);
+      const newCategories = deletionPlan.categories;
       const newActiveAreas = baselineActiveAreas.filter((activeArea) => activeArea !== area);
       const budgetSnapshot = await getDocsFromServer(collection(db, 'projects', id, 'budgetItems'));
       const itemsToDelete = budgetSnapshot.docs
         .map((entry) => ({ id: entry.id, ...entry.data() } as BudgetItem))
         .filter((item) => item.area === area);
+      const collaboratorSnapshot = await getDocsFromServer(collection(db, 'projects', id, 'collaborators'));
+      const collaboratorsToUpdate = collaboratorSnapshot.docs.filter(entry => safeArray(entry.data().allowedCategories).includes(area)
+        || safeArray(entry.data().allowedSubcategories).some(key => areaFromSubcategoryKey(key) === area));
       await assertNoLinkedCashMovements(itemsToDelete, 'budgetItems');
       const nextRevision = await runTransaction(db, async (transaction) => {
         const projectSnapshot = await transaction.get(projectRef);
         if (!projectSnapshot.exists()
           || (Number(projectSnapshot.data().budgetRevision) || 0) !== (Number(baselineProject.data().budgetRevision) || 0)
           || JSON.stringify(safeArray(projectSnapshot.data().categories)) !== JSON.stringify(baselineCategories)
+          || projectSnapshot.data().executiveCategoryDefaultApplied !== baselineProject.data().executiveCategoryDefaultApplied
           || JSON.stringify(safeArray(projectSnapshot.data().activeAreas)) !== JSON.stringify(baselineActiveAreas)) {
           throw new Error('AREA_CHANGED');
         }
+        const currentCollaborators = await Promise.all(collaboratorsToUpdate.map(entry => transaction.get(entry.ref)));
+        if (itemsToDelete.length + currentCollaborators.length > 450) throw new Error('TOO_MANY_EXPENSES');
         if (itemsToDelete.length > 0) {
           await queueExpenseRowsDeletion(transaction, itemsToDelete, 'budgetItems', 'category_deleted');
         }
         const revision = (Number(projectSnapshot.data().budgetRevision) || 0) + (itemsToDelete.length > 0 ? 1 : 0);
         transaction.update(projectRef, {
-          categories: newCategories,
+          ...deletionPlan,
           activeAreas: newActiveAreas,
           ...(itemsToDelete.length > 0 ? { budgetRevision: revision } : {}),
           updatedAt: serverTimestamp(),
         });
+        currentCollaborators.forEach(entry => {
+          if (!entry.exists()) return;
+          transaction.update(entry.ref, {
+            allowedCategories: safeArray(entry.data().allowedCategories).filter(cat => cat !== area),
+            allowedSubcategories: safeArray(entry.data().allowedSubcategories).filter(key => areaFromSubcategoryKey(key) !== area),
+            updatedAt: serverTimestamp(),
+          });
+        });
         return revision;
       });
-      setProject((current: any) => current ? { ...current, budgetRevision: nextRevision } : current);
+      setProject((current: any) => current ? { ...current, ...deletionPlan, activeAreas: newActiveAreas, budgetRevision: nextRevision } : current);
 
-      const collaboratorsToUpdate = collaborators.filter(col => safeArray(col.allowedCategories).includes(area));
-      for (const col of collaboratorsToUpdate) {
-        await updateDoc(doc(db, 'projects', id, 'collaborators', normalizeEmail(col.email)), {
-          allowedCategories: safeArray(col.allowedCategories).filter(cat => cat !== area),
-          allowedSubcategories: safeArray(col.allowedSubcategories).filter(key => areaFromSubcategoryKey(key) !== area),
-          updatedAt: serverTimestamp(),
-        });
-      }
-      
       setCategories(newCategories);
       setActiveAreas(newActiveAreas);
       setSelectedAreaTabs(current => current.filter(tab => tab !== area));
@@ -3254,6 +3246,11 @@ export default function ProjectDetail() {
       })));
     } catch (e) {
       console.error("Error deleting category:", e);
+      alert(e instanceof Error && e.message === 'PAID_EXPENSE_LOCKED'
+        ? 'No se puede eliminar la categoría porque tiene partidas con pagos o historial financiero. Revisá primero Gestión de pagos; el presupuesto no fue modificado.'
+        : e instanceof Error && e.message === 'EXPENSE_HAS_CASH_MOVEMENT'
+          ? 'No se puede eliminar la categoría porque tiene movimientos de caja asociados. El presupuesto no fue modificado.'
+          : 'No se pudo eliminar la categoría. El presupuesto no fue modificado. Actualizá la página y volvé a intentarlo.');
     }
   };
 
