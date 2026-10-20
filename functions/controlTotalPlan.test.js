@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { buildPlan, parseSheetData, effectiveExpenses, sheetRequests, appliedState, inputs, dateSerial } = require('./controlTotalPlan');
+const { buildPlan, parseSheetData, effectiveExpenses, sheetRequests, appliedState, inputs, dateSerial, resolveProjectDefaults } = require('./controlTotalPlan');
 
 const projectId = 'project-local';
 const project = { activeAreas: ['Producción'], controlTotalProjectId: 'G ZZ 0001 Local', shootingDate: '2026-09-23' };
@@ -9,6 +9,34 @@ const row = (overrides = {}) => Object.assign(Array(27).fill(''), { 0: 'SRV-loca
 const sheet = { sheetId: 100, title: 'Servicios_Recibidos', gridProperties: { rowCount: 999 } };
 const ct = (rows = []) => ({ rows: rows.map((values, i) => ({ row: i + 5, values })), ids: new Map(rows.map((values, i) => [values[0], { row: i + 5, values }])), providers: [{ id: 'PROV1', name: 'Proveedor local', selector: 'PROV1 | Proveedor local', taxId: '' }], projects: [{ id: project.controlTotalProjectId, unit: 'GB' }], sheet, lastRow: rows.length + 4, payments: [], advances: [] });
 const plan = (overrides = {}) => buildPlan({ projectId, project, documents: [expense()], ct: ct(), ...overrides });
+
+test('project code resolves to the current CT name and stale full names remain linked by code', () => {
+  for (const metadata of [{ projectCode: 'G ZZ 0001' }, { controlTotalProjectId: 'G ZZ 0001 Previous name' }]) {
+    assert.equal(resolveProjectDefaults(projectId, metadata, ct()).projectId, project.controlTotalProjectId);
+  }
+  assert.equal(resolveProjectDefaults('ct-G-ZZ-0001', {}, ct()).projectId, project.controlTotalProjectId);
+  assert.equal(resolveProjectDefaults(projectId, { name: 'Local' }, ct()).projectId, '');
+  assert.equal(resolveProjectDefaults(projectId, project, ct(), { projectId: 'G XX 9999 Missing' }).projectId, '');
+  const ambiguous = ct(); ambiguous.projects.push({ id: 'G ZZ 0001 Duplicate', unit: 'GB' });
+  assert.equal(resolveProjectDefaults(projectId, { projectCode: 'G ZZ 0001' }, ambiguous).projectId, '');
+});
+
+test('new services use the last shooting day, then first day, then legacy date', () => {
+  const p = plan({ project: { ...project, shootingStartDate: '2026-09-22', shootingEndDate: '2026-09-25' } });
+  assert.equal(p.config.serviceDate, '2026-09-25'); assert.equal(p.actions[0].values[1], dateSerial('2026-09-25'));
+  assert.equal(resolveProjectDefaults(projectId, { shootingEndDate: 'invalid', shootingStartDate: '2026-09-22' }, ct()).serviceDate, '2026-09-22');
+  assert.equal(resolveProjectDefaults(projectId, { shootingDate: '2026-09-23' }, ct()).serviceDate, '2026-09-23');
+  assert.equal(resolveProjectDefaults(projectId, { shootingEndDate: { toDate: () => new Date('2026-09-25T15:00:00Z') } }, ct()).serviceDate, '2026-09-25');
+});
+
+test('automatic dates follow changed shooting dates while explicit overrides and historical service dates persist', () => {
+  const state = { config: { serviceDate: '2026-09-23', serviceDateMode: 'project' } };
+  const current = { ...project, shootingEndDate: '2026-09-25' };
+  assert.equal(resolveProjectDefaults(projectId, current, ct(), { serviceDate: '2026-09-23', serviceDateMode: 'project' }, state).serviceDate, '2026-09-25');
+  assert.equal(resolveProjectDefaults(projectId, current, ct(), { serviceDate: '2026-09-21', serviceDateMode: 'manual' }).serviceDate, '2026-09-21');
+  assert.equal(plan({ project: current, ct: ct([row()]) }).actions[0].values[1], row()[1]);
+  assert.equal(plan({ project: current, documents: [expense({ serviceDate: '2026-09-20' })] }).actions[0].values[1], dateSerial('2026-09-20'));
+});
 
 test('effective source excludes residual inactive areas and active-area budgets', () => {
   const docs = [expense(), expense({ id: 'residual', collection: 'areaExpenses' }), expense({ id: 'budget', area: 'Producción' }), expense({ id: 'real', collection: 'areaExpenses', area: 'Producción' })];

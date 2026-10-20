@@ -70,13 +70,37 @@ function providerFor(expense, sourceProvider, ct, selectedId) {
   return matches.length === 1 ? matches[0] : undefined;
 }
 
+function resolveProjectDefaults(projectId, project, ct, config = {}, state = {}) {
+  const canonical = value => {
+    const text = String(value || '').trim().replace(/\s+/g, ' ');
+    if (!text) return '';
+    const exact = ct.projects.filter(p => p.id === text);
+    if (exact.length === 1) return exact[0].id;
+    const code = /^([GB]\s+[A-Z0-9_-]+\s+\d{4,8})(?:\s|$)/i.exec(text)?.[1].toUpperCase();
+    const matches = code ? ct.projects.filter(p => p.id === code || p.id.startsWith(`${code} `)) : [];
+    return matches.length === 1 ? matches[0].id : '';
+  };
+  // Use CT's current full key, including its name, without guessing a project from a fuzzy name.
+  const defaultProject = config.projectId ? canonical(config.projectId) :
+    canonical(state.config?.projectId) || canonical(project.controlTotalProjectId) ||
+    canonical(project.projectCode) || canonical(String(projectId).replace(/^ct-([GB])-(.+)-(\d{4,8})$/, '$1 $2 $3'));
+  const day = value => {
+    const text = typeof value?.toDate === 'function' ? value.toDate().toISOString().slice(0, 10) :
+      value instanceof Date ? value.toISOString().slice(0, 10) : String(value || '').slice(0, 10);
+    return dateSerial(text) === null ? '' : text;
+  };
+  const projectDate = day(project.shootingEndDate) || day(project.shootingStartDate) || day(project.shootingDate);
+  const savedManual = state.config?.serviceDateMode === 'manual' ? day(state.config.serviceDate) : '';
+  const manual = config.serviceDateMode === 'project' ? '' : day(config.serviceDate) || savedManual;
+  const serviceDateMode = manual ? 'manual' : 'project';
+  return { projectId: defaultProject, serviceDate: manual || projectDate, serviceDateMode };
+}
+
 function buildPlan({ projectId, project, documents, sourceProviders = {}, ct, state = {}, config = {}, resolutions = {} }) {
   const entries = effectiveExpenses(project, documents);
   const actions = [], items = [], bindings = { ...(state.bindings || {}) };
-  const projectCode = String(config.projectId || state.config?.projectId || project.controlTotalProjectId || '').trim();
-  const codeCandidates = ct.projects.filter(p => project.projectCode && p.id.startsWith(`${project.projectCode} `));
-  const defaultProject = projectCode || (codeCandidates.length === 1 ? codeCandidates[0].id : '');
-  const defaultDate = String(config.serviceDate || state.config?.serviceDate || project.shootingDate || '').slice(0, 10);
+  const defaults = resolveProjectDefaults(projectId, project, ct, config, state);
+  const defaultProject = defaults.projectId, defaultDate = defaults.serviceDate;
   const knownProjects = new Set(ct.projects.map(p => p.id));
   let nextRow = ct.lastRow + 1;
   const targets = new Set();
@@ -201,7 +225,7 @@ function buildPlan({ projectId, project, documents, sourceProviders = {}, ct, st
   if (nextRow > 601) throw Error('El lote supera la fila 600. Primero hay que ampliar y verificar el alcance de las fórmulas mensuales de CT.');
   const sourceHash = hash({ project, documents });
   const ctHash = hash({ rows: ct.rows.map(r => [r.row, inputs(r.values)]), providers: ct.providers, projects: ct.projects });
-  const payload = { sourceHash, ctHash, config: { projectId: defaultProject, serviceDate: defaultDate }, items, actions, bindings };
+  const payload = { sourceHash, ctHash, config: defaults, items, actions, bindings };
   return { ...payload, fingerprint: hash(payload), summary: { create: actions.filter(a => a.type === 'create').length, update: actions.filter(a => a.type === 'update').length, void: actions.filter(a => a.type === 'void').length, pending: items.filter(i => i.status === 'pending').length, included: items.filter(i => i.status === 'included').length, same: items.filter(i => i.status === 'same').length, paymentsPending: items.reduce((n, i) => n + (i.paymentCount || 0), 0) } };
 }
 
@@ -252,4 +276,4 @@ function appliedState(actions, ct) {
   return states.every(s => s === 'after') ? 'after' : states.every(s => s === 'before') ? 'before' : 'conflict';
 }
 
-module.exports = { BOOK_ID, INPUT_COLUMNS, norm, hash, inputs, dateSerial, parseSheetData, effectiveExpenses, buildPlan, sheetRequests, appliedState };
+module.exports = { BOOK_ID, INPUT_COLUMNS, norm, hash, inputs, dateSerial, parseSheetData, effectiveExpenses, buildPlan, sheetRequests, appliedState, resolveProjectDefaults };

@@ -15,7 +15,7 @@ export function ControlTotalSync({ projectId }: { projectId: string }) {
   const [preview, setPreview] = useState<SyncPreview | null>(null);
   const [result, setResult] = useState<SyncResult | null>(null);
   const [last, setLast] = useState<SyncResult | null>(null);
-  const [config, setConfig] = useState({ projectId: '', serviceDate: '' });
+  const [config, setConfig] = useState<SyncPreview['config']>({ projectId: '', serviceDate: '', serviceDateMode: 'project' });
   const [resolutions, setResolutions] = useState<Record<string, SyncResolution>>({});
   const [expanded, setExpanded] = useState('');
   const [uncertain, setUncertain] = useState(false);
@@ -24,7 +24,7 @@ export function ControlTotalSync({ projectId }: { projectId: string }) {
   const allowed = canSyncControlTotal(user?.email, isAdmin);
   useEffect(() => {
     let active = true;
-    setPreview(null); setResult(null); setLast(null); setConfig({ projectId: '', serviceDate: '' }); setResolutions({});
+    setPreview(null); setResult(null); setLast(null); setConfig({ projectId: '', serviceDate: '', serviceDateMode: 'project' }); setResolutions({});
     if (allowed) void controlTotalRequest<{ lastRun: SyncResult | null; config?: typeof config }>({ action: 'status', projectId }).then(s => {
       if (active) { setLast(s.lastRun); if (s.config) setConfig(s.config); }
     }).catch(() => { /* A not-yet-deployed endpoint must not break the project. */ });
@@ -82,8 +82,9 @@ export function ControlTotalSync({ projectId }: { projectId: string }) {
               <option value="">Elegí el proyecto</option>{preview.projects.map(p => <option key={p.id} value={p.id}>{p.id}</option>)}
             </select>
           </label>
-          <label className="text-xs font-semibold text-slate-600">Fecha de servicio para costos nuevos
-            <input type="date" value={config.serviceDate} disabled={!!busy || uncertain} onChange={e => { setConfig(c => ({ ...c, serviceDate: e.target.value })); setNeedsCompare(true); }} className="mt-1 block w-full rounded-lg border p-2 font-normal" />
+          <label className="text-xs font-semibold text-slate-600">Fecha por defecto para servicios nuevos
+            <input type="date" value={config.serviceDate} disabled={!!busy || uncertain} onChange={e => { const value = e.target.value; setConfig(c => ({ ...c, serviceDate: value, serviceDateMode: value ? 'manual' : 'project' })); setNeedsCompare(true); }} className="mt-1 block w-full rounded-lg border p-2 font-normal" />
+            <span className="mt-1 block font-normal">Se toma el último día de rodaje o, si falta, el primero. Podés cambiarla; vaciala para volver a usar el rodaje.</span>
           </label>
         </div>
         <div className="my-3 flex flex-wrap gap-2 text-xs font-bold">

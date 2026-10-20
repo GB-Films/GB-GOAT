@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, CalendarDays, CheckCircle2, Clapperboard, Clock, MapPin, RefreshCw } from 'lucide-react';
 import { motion } from 'motion/react';
-import { collection, getDocs, query, orderBy, where, or, updateDoc, doc } from 'firebase/firestore';
+import { collection, getDocs, updateDoc, doc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { readAuthorizedProject } from '../lib/projectCommercial';
 import { loadDashboardData } from '../lib/dashboardLoad';
+import { dashboardProjectsQuery, sortDashboardProjects } from '../lib/dashboardProjects';
 import { Link, Navigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
 import { useAuth } from '../context/AuthContext';
@@ -203,21 +204,15 @@ export default function Dashboard() {
       setLoading(true);
       setLoadError('');
       try {
-        const pq = role === 'admin'
-          ? query(collection(db, 'projects'), orderBy('createdAt', 'desc'))
-          : query(
-              collection(db, 'projects'),
-              or(
-                where('createdBy', '==', uid),
-                where('collaboratorEmails', 'array-contains', email)
-              ),
-              orderBy('createdAt', 'desc')
-            );
+        const pq = dashboardProjectsQuery(db, { uid, email, isAdmin: role === 'admin' });
 
         await loadDashboardData({
           loadProjects: async () => {
             const pSnap = await getDocs(pq);
-            return Promise.all(pSnap.docs.map(projectDoc => readAuthorizedProject(db, { ...projectDoc.data(), id: projectDoc.id }, { uid, email, isAppAdmin: role === 'admin' })));
+            return sortDashboardProjects(await Promise.all(pSnap.docs.map(async projectDoc => ({
+              ...await readAuthorizedProject(db, { ...projectDoc.data(), id: projectDoc.id }, { uid, email, isAppAdmin: role === 'admin' }),
+              id: projectDoc.id,
+            }))));
           },
           onProjects: (projectsData) => {
             if (cancelled) return;
