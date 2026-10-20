@@ -24,8 +24,10 @@ quedan para revisión. El vaciado automático se limita a texto operativo permit
 
 ## Uso
 
-1. Ingresar a GOAT con una de las dos cuentas administrativas de CT. El botón no
-   aparece para productores, otros administradores o colaboradores.
+1. Ingresar a GOAT con rol global **admin** y email verificado. El botón no aparece
+   para productores ni colaboradores, aunque administren un proyecto. Cada admin
+   necesita además acceso de edición al libro CT en Google; esta conexión no comparte
+   el libro ni amplía sus permisos.
 2. Abrir **Actualizar con CT → Conectar Google y comparar**. Google pide permiso de
    Sheets con la misma cuenta. El acceso OAuth queda sólo en memoria, por tiempo
    limitado; no se guarda en Firebase, archivos, logs ni almacenamiento del navegador.
@@ -78,8 +80,11 @@ aplicación, ni ejecutar otro escritor administrativo externo sobre ese libro.
 ## Backend, autenticación y estado
 
 Callable: `updateProjectControlTotal`, región `us-central1`, sin scheduler.
-Valida Firebase Auth, email verificado, lista cerrada de dos cuentas CT y rol
-administrativo (excepto el propietario ya reconocido por GOAT). Comprueba que el
+Valida Firebase Auth, email verificado y el rol global `admin` leído de `users/{uid}`
+en cada pedido (estado, comparación y aplicación), incluso si el rol fue revocado
+después de crear una vista previa. No acepta roles de proyecto ni permisos enviados
+por el navegador. El propietario usa el mismo rol global admin que mantiene GOAT.
+Comprueba que el
 token OAuth pertenezca a esa misma cuenta. El libro destino es constante y coincide
 con el importador CT existente. No se acepta otro ID de libro desde el navegador.
 

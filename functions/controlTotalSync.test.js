@@ -82,10 +82,41 @@ function environment() {
   return { db, tables, call, request, writes: () => writes, loseResponse: () => { failAfterWrite = true; }, hold: promise => { holdWrite = promise; }, setIdentity: value => { identity = value; }, breakFormula: () => { missingFormula = true; } };
 }
 
-test('anonymous/unverified/other-account requests are rejected before any financial access', () => {
-  assert.throws(() => validateRequest({ data: {} }), /administrativas/);
-  assert.throws(() => validateRequest({ auth: { uid: 'x', token: { email: 'tomas@granberta.com' } }, data: {} }), /administrativas/);
-  assert.throws(() => validateRequest({ auth: { uid: 'x', token: { email: 'other@example.invalid', email_verified: true } }, data: {} }), /administrativas/);
+test('anonymous, unverified and missing-email requests are rejected before financial access', () => {
+  assert.throws(() => validateRequest({ data: {} }), /verificada/);
+  assert.throws(() => validateRequest({ auth: { uid: 'x', token: { email: 'tomas@granberta.com' } }, data: {} }), /verificada/);
+  assert.throws(() => validateRequest({ auth: { uid: 'x', token: { email_verified: true } }, data: {} }), /verificada/);
+});
+test('any verified global app administrator can preview with their own Google identity', async () => {
+  const env = environment();
+  const request = env.request('preview');
+  request.auth.token.email = 'another-admin@example.invalid';
+  env.setIdentity(request.auth.token.email);
+  const preview = await env.call(request);
+  assert.equal(preview.summary.create, 1);
+  assert.equal(env.writes(), 0);
+});
+test('project admins, collaborators and missing profiles cannot access even private status', async () => {
+  const env = environment();
+  for (const role of ['colaborador', 'productor', undefined]) {
+    if (role) env.db.records.set('users/admin-local', { role });
+    else env.db.records.delete('users/admin-local');
+    for (const action of ['status', 'preview', 'apply']) {
+      const request = env.request(action, { runId: '00000000-0000-0000-0000-000000000000' });
+      request.auth.token.role = 'admin'; // A client/token claim cannot replace the global profile.
+      request.auth.token.projectRole = 'admin';
+      await assert.rejects(env.call(request), /administradores globales/);
+    }
+  }
+  assert.equal(env.writes(), 0);
+  assert.equal([...env.db.records.keys()].some(k => k.startsWith('ctSync')), false);
+});
+test('revoking global admin after preview denies apply without writes', async () => {
+  const env = environment(); const preview = await env.call(env.request('preview'));
+  env.db.records.get('users/admin-local').role = 'colaborador';
+  await assert.rejects(env.call(env.request('apply', { runId: preview.runId })), /administradores globales/);
+  assert.equal(env.writes(), 0);
+  assert.equal(env.db.records.get(`ctSyncProjects/${projectId}/runs/${preview.runId}`).status, 'preview');
 });
 test('preview writes only private run state; apply and repeat produce one Sheet write', async () => {
   const env = environment();

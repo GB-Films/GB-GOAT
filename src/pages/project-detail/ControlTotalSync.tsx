@@ -8,7 +8,7 @@ const money = (value: number) => Number(value || 0).toLocaleString('es-AR', { ma
 const labels: Record<string, string> = { create: 'Nuevo', update: 'Modificado', same: 'Coincide', included: 'Ya incluido', pending: 'Pendiente', void: 'Anular' };
 
 export function ControlTotalSync({ projectId }: { projectId: string }) {
-  const { user, isAdmin, isOwner } = useAuth();
+  const { user, isAdmin } = useAuth();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
@@ -21,7 +21,7 @@ export function ControlTotalSync({ projectId }: { projectId: string }) {
   const [uncertain, setUncertain] = useState(false);
   const [needsCompare, setNeedsCompare] = useState(false);
   const inFlight = useRef(false);
-  const allowed = canSyncControlTotal(user?.email, isAdmin || isOwner);
+  const allowed = canSyncControlTotal(user?.email, isAdmin);
   useEffect(() => {
     let active = true;
     setPreview(null); setResult(null); setLast(null); setConfig({ projectId: '', serviceDate: '' }); setResolutions({});

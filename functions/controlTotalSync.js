@@ -2,13 +2,12 @@ const crypto = require('node:crypto');
 const { HttpsError } = require('firebase-functions/v2/https');
 const { BOOK_ID, buildPlan, parseSheetData, sheetRequests, appliedState, hash } = require('./controlTotalPlan');
 
-const EMAILS = ['info@granbertafilms.com', 'tomas@granberta.com'];
 const RANGE_NAMES = ['Servicios_Recibidos', 'Proveedores', 'Proyectos', 'Pagos_Proveedores', 'Gastos_Adelantados'];
 const RANGES = ["'Servicios_Recibidos'!A4:AB", "'Proveedores'!A4:Q", "'Proyectos'!A4:O", "'Pagos_Proveedores'!A4:R", "'Gastos_Adelantados'!A4:Q"];
 
 function validateRequest(request) {
   const email = String(request.auth?.token?.email || '').toLowerCase();
-  if (!request.auth || request.auth.token.email_verified !== true || !EMAILS.includes(email)) throw new HttpsError('permission-denied', 'Sólo las cuentas administrativas de CT pueden usar esta conexión.');
+  if (!request.auth || request.auth.token.email_verified !== true || !email) throw new HttpsError('permission-denied', 'Ingresá con una cuenta verificada de GOAT para usar esta conexión.');
   const data = request.data || {};
   if (!['status', 'preview', 'apply'].includes(data.action) || !/^[\w-]{1,120}$/.test(data.projectId || '')) throw new HttpsError('invalid-argument', 'Pedido de actualización inválido.');
   if (JSON.stringify(data).length > 160000) throw new HttpsError('invalid-argument', 'El pedido es demasiado grande.');
@@ -71,7 +70,7 @@ function publicPlan(plan, runId, ct, lastRun, resolutions = {}) {
   return { runId, summary: plan.summary, items: plan.items, config: plan.config, lastRun: lastRun || null,
     resolutions: { ...savedChoices, ...resolutions },
     projects: ct.projects, providers: ct.providers.map(p => ({ id: p.id, name: p.name })),
-    // Restricted to the two CT administrators. Cross-project links are needed for
+    // Restricted to global app administrators. Cross-project links are needed for
     // a shared campaign, monthly salary or aggregate; no bank or payroll notes are returned.
     services: ct.rows.map(r => ({ id: String(r.values[0]), projectId: String(r.values[5]), name: String(r.values[7] || ''), provider: String(r.values[2] || ''), amount: Number(r.values[10]) || 0 })),
   };
@@ -111,7 +110,7 @@ function createControlTotalHandler({ db, fetchImpl = fetch, now = () => new Date
   return async request => {
     const { email, data } = validateRequest(request);
     const user = await db.collection('users').doc(request.auth.uid).get();
-    if (email !== 'info@granbertafilms.com' && user.data()?.role !== 'admin') throw new HttpsError('permission-denied', 'Falta el permiso administrativo.');
+    if (user.data()?.role !== 'admin') throw new HttpsError('permission-denied', 'Sólo los administradores globales de GOAT pueden actualizar CT.');
     const stateRef = db.collection('ctSyncProjects').doc(data.projectId);
     const state = (await stateRef.get()).data() || {};
     if (data.action === 'status') return { lastRun: state.lastRun || null, config: state.config || null };

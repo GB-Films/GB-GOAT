@@ -14,7 +14,7 @@ export type SyncPreview = {
   services: Array<{ id: string; projectId: string; name: string; provider: string; amount: number }>;
 };
 
-export const canSyncControlTotal = (email?: string | null, isAdmin = false) => isAdmin && ['info@granbertafilms.com', 'tomas@granberta.com'].includes((email || '').toLowerCase());
+export const canSyncControlTotal = (email?: string | null, isAdmin = false) => isAdmin && !!email;
 
 // Only memory, scoped to a Firebase UID and short expiry. Never localStorage, Firestore, logs or exports.
 let grant: { uid: string; token: string; expiresAt: number } | null = null;
