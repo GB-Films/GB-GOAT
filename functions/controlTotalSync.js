@@ -14,7 +14,7 @@ function validateRequest(request) {
   if (data.action !== 'status' && (typeof data.accessToken !== 'string' || data.accessToken.length < 20 || data.accessToken.length > 5000)) throw new HttpsError('unauthenticated', 'Volvé a autorizar Google para acceder a CT.');
   if (data.action === 'apply' && !/^[a-f0-9-]{36}$/.test(data.runId || '')) throw new HttpsError('invalid-argument', 'Falta la vista previa del lote.');
   if (data.action === 'preview') {
-    data.config = { projectId: String(data.config?.projectId || '').slice(0, 250), serviceDate: String(data.config?.serviceDate || '').slice(0, 10) };
+    data.config = { projectId: String(data.config?.projectId || '').slice(0, 250), serviceDate: String(data.config?.serviceDate || '').slice(0, 10), ...(data.config?.serviceDateMode ? { serviceDateMode: data.config.serviceDateMode === 'manual' ? 'manual' : 'project' } : {}) };
     const resolutions = {};
     for (const [key, choice] of Object.entries(data.resolutions || {})) {
       if (!/^(budgetItems|areaExpenses)\/[\w-]{1,150}$/.test(key) || !choice || !['new', 'direct', 'included', 'exclude', 'void'].includes(choice.mode)) throw new HttpsError('invalid-argument', 'Vínculo de gasto inválido.');

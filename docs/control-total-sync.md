@@ -31,8 +31,14 @@ quedan para revisión. El vaciado automático se limita a texto operativo permit
 2. Abrir **Actualizar con CT → Conectar Google y comparar**. Google pide permiso de
    Sheets con la misma cuenta. El acceso OAuth queda sólo en memoria, por tiempo
    limitado; no se guarda en Firebase, archivos, logs ni almacenamiento del navegador.
-3. Confirmar el proyecto CT y la fecha de servicio de los costos nuevos. Los códigos
-   sólo se eligen del maestro CT; no se crean proyectos comerciales.
+3. El proyecto se completa desde su vínculo/código y se resuelve al nombre vigente
+   del maestro CT, incluso si ese nombre cambió. Un código ambiguo o inexistente
+   requiere revisión; no se deduce por parecido de nombres ni se crean proyectos.
+   La fecha por defecto de servicios nuevos es el último día de rodaje, en su defecto
+   el primero o la fecha única antigua. Si no hay rodaje registrado, queda pendiente.
+   Se puede indicar una fecha manual; vaciarla vuelve al rodaje. En modo automático
+   sigue las correcciones del rodaje. Fechas particulares del gasto y fechas CT ya
+   registradas se conservan: la nueva preferencia no reabre períodos históricos.
 4. Revisar nuevos, modificados, coincidencias y pendientes. Un vínculo inicial con
    importe distinto exige decisión explícita. Si el proyecto ya tenía costos CT,
    un gasto no vinculado debe seleccionarse o confirmarse como nuevo: no se adivina

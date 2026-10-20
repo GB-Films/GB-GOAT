@@ -6,7 +6,7 @@ export type SyncResolution = { mode: 'new' | 'direct' | 'included' | 'exclude' |
 export type SyncSummary = { create: number; update: number; void: number; pending: number; same: number; included: number; paymentsPending: number };
 export type SyncResult = { runId: string; at: string; status: 'partial' | 'verified'; sourceChanged?: boolean; summary: SyncSummary };
 export type SyncPreview = {
-  runId: string; recover?: boolean; summary: SyncSummary; config: { projectId: string; serviceDate: string }; lastRun: SyncResult | null;
+  runId: string; recover?: boolean; summary: SyncSummary; config: { projectId: string; serviceDate: string; serviceDateMode?: 'project' | 'manual' }; lastRun: SyncResult | null;
   resolutions?: Record<string, SyncResolution>;
   items: Array<{ key: string; name: string; provider?: string; amount: number; currency?: string; ctAmount?: number | null; status: string; message: string; canVoid?: boolean; paymentCount?: number; documents?: number }>;
   projects: Array<{ id: string; unit: string }>;
