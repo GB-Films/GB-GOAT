@@ -46,6 +46,7 @@ import { MobileExpenseDocuments } from './project-detail/MobileExpenseDocuments'
 import { ShootingDateInput } from './project-detail/ShootingDateInput';
 import { ProjectTeam } from './project-detail/ProjectTeam';
 import { ProjectDialog } from './project-detail/ProjectDialog';
+import { ControlTotalSync } from './project-detail/ControlTotalSync';
 import { ProjectDataBoundary } from './project-detail/ProjectDataBoundary';
 import { projectLoadStatus, type ProjectLoadState } from '../lib/projectLoadState';
 import { CashBoxPicker } from './project-detail/CashBoxPicker';
@@ -5384,6 +5385,7 @@ export default function ProjectDetail() {
             </div>
 
             <div className="absolute right-3 top-2 flex gap-1.5 sm:static lg:gap-2 lg:pt-0">
+              <span key={id}><ControlTotalSync projectId={id!} /></span>
               {isProjectAdmin && (
                 <button 
                   onClick={() => setShowEditProjectModal(true)}

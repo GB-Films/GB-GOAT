@@ -6,11 +6,17 @@ const { onDocumentWritten } = require('firebase-functions/v2/firestore');
 const { syncGoatProject } = require('./baniProjectSync');
 const { createImportHandler } = require('./crmProjectImport');
 const admin = require('firebase-admin');
+const { createControlTotalHandler } = require('./controlTotalSync');
 
 setGlobalOptions({ region: 'us-central1', maxInstances: 5, memory: '256MiB' });
 admin.initializeApp();
 
 const db = admin.firestore();
+// On-demand only. Server-only state uses collections denied to browser SDKs by default.
+// A fresh user Sheets grant is checked against the verified Firebase administrator.
+exports.updateProjectControlTotal = onCall({
+  region: 'us-central1', timeoutSeconds: 120, maxInstances: 2, concurrency: 10,
+}, createControlTotalHandler({ db }));
 exports.importCrmProject = onRequest({
   region: 'us-central1',
   invoker: 'private',

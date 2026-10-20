@@ -51,3 +51,10 @@ firebase deploy --only firestore:rules,storage --project gb-goat
 - `security_spec.md`: matriz de permisos y criterios de auditoría.
 
 Las condiciones de seguridad deben existir en las reglas de Firebase. Ocultar un botón en la interfaz mejora la experiencia, pero no reemplaza una regla de autorización.
+
+## Actualización con Control Total
+
+Las cuentas administrativas de CT cuentan con una comparación por proyecto y
+aplicación revisada de costos. Alcance, controles, límites y publicación acotada:
+[`docs/control-total-sync.md`](docs/control-total-sync.md). Esta conexión no registra
+pagos ni movimientos de caja automáticamente.
