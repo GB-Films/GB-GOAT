@@ -23,7 +23,7 @@ La lista Proyectos usa una suscripción en tiempo real con los mismos filtros de
 
 ## Configuración y verificación
 
-`node scripts/configure-crm-import.cjs` presenta un plan sin escrituras; `--apply` configura sólo esta integración, preservando políticas y sus versiones. Requiere el CLI de Firebase ya autorizado con la cuenta de la empresa. No cambia planes de facturación. Después de desplegar únicamente `functions:importCrmProject`, repetir para conceder invocación al servicio y obtener su URL. Si cambia la URL/provider, actualizar los valores públicos del workflow CRM y la URL admitida por `goat_destino.py` y el verificador; no son secretos.
+`node scripts/configure-crm-import.cjs` presenta un plan sin escrituras; `--apply` configura sólo esta integración, preservando políticas y sus versiones. Requiere el CLI de Firebase ya autorizado con la cuenta de la empresa. No cambia planes de facturación. El despliegue de `functions:importCrmProject` conserva al caller mediante su lista declarativa de `invoker`; no hace falta volver a concederle acceso manualmente. Después comprobar IAM con el verificador. Si cambia la URL/provider, actualizar los valores públicos del workflow CRM y la URL admitida por `goat_destino.py` y el verificador; no son secretos.
 
 Pruebas:
 
@@ -33,7 +33,17 @@ Pruebas:
 - Modo manual `verificar_goat=true` del workflow CRM: prueba la identidad efímera de Actions con JSON vacío, rechazado por el validador; omite cola, correcciones y planillas.
 - CRM: `python code_generator/verificar_goat.py` y `python verificar_repo.py --completo`.
 
-La prueba de punta a punta de negocio queda para el próximo código G real elegido por una persona. No se generan ventas ni códigos ficticios en producción.
+Prueba real completada el 21/10/2026 con `G GB 0556 GOAT ZOOTOPIA`, elegido por Tomás.
+Tras reparar el permiso borrado por el antiguo `invoker: private`, el diagnóstico CRM
+[39542512417](https://github.com/Klausstin/gran-crm/actions/runs/39542512417), la vista
+previa [39542664978](https://github.com/Klausstin/gran-crm/actions/runs/39542664978) y
+la recuperación [39542740323](https://github.com/Klausstin/gran-crm/actions/runs/39542740323)
+terminaron correctamente. Lectura posterior confirmó proyecto `ct-G-GB-0556`, datos
+comerciales y recibo `created`; consulta por código limitada a dos devolvió uno.
+CRM `7f88603` agrega reintento de una G pendiente, en seco por defecto, dentro del mismo
+carril exclusivo, sin procesar cola ni otros destinos. No se generaron ventas/códigos
+ficticios. Las pruebas locales específicas pasaron; el verificador completo CRM dejó
+cuatro controles sin completar por rutas/datos privados locales no configurados en esta PC.
 
 ## Consumo y reversibilidad
 
