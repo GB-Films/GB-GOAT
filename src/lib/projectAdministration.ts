@@ -11,6 +11,7 @@ export interface CustomerInvoice {
   sentDate: string;
   portalDate: string;
   amount: number;
+  netAmount?: number | null;
   currency: Currency;
   dueDate: string;
   documentRef: string;
@@ -38,6 +39,8 @@ export interface ProjectAdministrationRecord {
   agreementRef: string;
   agreementFilePath?: string;
   agreedAmount: number | null;
+  /** Historical records without this field stored a tax-inclusive amount. */
+  agreedAmountTaxBasis?: 'gross' | 'net';
   agreedCurrency: '' | Currency;
   orderStatus: DocumentStatus;
   orderNumber: string;
@@ -59,15 +62,24 @@ export interface ProjectAdministrationRecord {
 
 export type AdministrationAction = 'untracked' | 'agreement' | 'order' | 'billing_review' | 'billing' | 'send' | 'terms' | 'overdue' | 'upcoming' | 'collection' | 'complete';
 
+export const normalizeIssuerEntity = (value: string): string => {
+  const normalized = value.trim().toUpperCase().replace(/[^A-Z]/g, '');
+  if (normalized === 'GRANBERTASRL') return 'Gran Berta SRL';
+  if (normalized === 'BANIVFXLLC') return 'BANI VFX LLC';
+  if (normalized === 'SINFACTURA') return 'Sin factura';
+  return value;
+};
+
 export const emptyProjectAdministration = (projectId: string): ProjectAdministrationRecord => ({
   schemaVersion: 1,
   projectId,
   clientLegalName: '',
   issuerEntity: '',
-  agreementStatus: 'pending',
+  agreementStatus: 'confirmed',
   agreementRef: '',
   agreementFilePath: '',
   agreedAmount: null,
+  agreedAmountTaxBasis: 'net',
   agreedCurrency: '',
   orderStatus: 'pending',
   orderNumber: '',
@@ -92,6 +104,8 @@ export const normalizeProjectAdministration = (projectId: string, source?: Parti
   ...source,
   projectId,
   schemaVersion: 1,
+  issuerEntity: normalizeIssuerEntity(source?.issuerEntity || ''),
+  agreedAmountTaxBasis: source?.agreedAmountTaxBasis || (source?.agreedAmount != null ? 'gross' : 'net'),
   invoices: Array.isArray(source?.invoices) ? source.invoices : [],
   collections: Array.isArray(source?.collections) ? source.collections : [],
 });
@@ -103,9 +117,10 @@ export const invoiceBalance = (record: ProjectAdministrationRecord, invoice: Cus
   Math.max(0, Math.round((Number(invoice.amount || 0) - amountAppliedToInvoice(record, invoice.id)) * 100) / 100);
 
 export function unbilledAmount(record: ProjectAdministrationRecord): number | null {
-  if (record.agreedAmount === null || !record.agreedCurrency) return null;
+  if (record.agreedAmount === null || !record.agreedCurrency || record.agreedAmountTaxBasis !== 'net') return null;
   if (record.invoices.some(invoice => invoice.currency !== record.agreedCurrency)) return null;
-  return Math.max(0, Math.round((record.agreedAmount - record.invoices.reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0)) * 100) / 100);
+  if (record.invoices.some(invoice => invoice.netAmount == null)) return null;
+  return Math.max(0, Math.round((record.agreedAmount - record.invoices.reduce((sum, invoice) => sum + Number(invoice.netAmount || 0), 0)) * 100) / 100);
 }
 
 const validDate = (value: string) => {
@@ -130,8 +145,7 @@ export function resolvedInvoiceDueDate(record: ProjectAdministrationRecord, invo
 
 export function administrationAction(record: ProjectAdministrationRecord | null | undefined, today: string): AdministrationAction {
   if (!record) return 'untracked';
-  if (record.agreementStatus === 'pending') return 'agreement';
-  if (record.orderStatus === 'pending') return 'order';
+  if (record.issuerEntity === 'Sin factura' && record.invoices.length === 0) return 'complete';
   if (record.billingStatus === 'ready' && record.invoices.length === 0) return 'billing';
   const open = record.invoices.filter(invoice => invoiceBalance(record, invoice) > 0.009);
   if (open.some(invoice => (
@@ -147,7 +161,7 @@ export function administrationAction(record: ProjectAdministrationRecord | null 
   if (open.some(invoice => resolvedInvoiceDueDate(record, invoice) <= soon.toISOString().slice(0, 10))) return 'upcoming';
   if (record.billingStatus === 'ready' && (unbilledAmount(record) ?? 0) > 0.009) return 'billing';
   if (open.length > 0) return 'collection';
-  if (record.billingStatus === 'pending' || (record.agreementStatus === 'confirmed' && unbilledAmount(record) === null)) return 'billing_review';
+  if (record.billingStatus === 'pending' || unbilledAmount(record) === null) return 'billing_review';
   return 'complete';
 }
 
@@ -166,16 +180,17 @@ export const administrationActionLabel: Record<AdministrationAction, string> = {
 };
 
 export function validateAdministration(record: ProjectAdministrationRecord): string | null {
-  if ((record.billingStatus === 'ready' || record.invoices.length > 0) && !record.clientLegalName.trim()) return 'Indicá la razón social del cliente antes de facturar.';
-  if ((record.billingStatus === 'ready' || record.invoices.length > 0) && !record.issuerEntity.trim()) return 'Indicá qué empresa emite la factura.';
-  if (record.agreementStatus === 'confirmed' && !record.agreementRef.trim() && !record.agreementFilePath?.trim()) return 'Agregá la referencia o el archivo del acuerdo aprobado.';
+  if (!record.clientLegalName.trim()) return 'Completá el cliente en los datos del proyecto.';
+  if (record.issuerEntity && !['Gran Berta SRL', 'BANI VFX LLC', 'Sin factura'].includes(record.issuerEntity)) return 'Elegí una empresa que factura válida.';
+  if ((record.billingStatus === 'ready' || record.invoices.length > 0) && !record.issuerEntity.trim()) return 'Elegí qué empresa emite la factura.';
+  if (record.issuerEntity === 'Sin factura' && record.invoices.length > 0) return 'Un proyecto sin factura no puede tener facturas emitidas.';
   if (record.agreedAmount !== null && (!Number.isFinite(record.agreedAmount) || record.agreedAmount <= 0 || !record.agreedCurrency)) return 'Indicá un importe aprobado positivo y su moneda.';
   if (record.agreedCurrency && record.agreedAmount === null) return 'Indicá el importe aprobado.';
-  if (record.orderStatus === 'confirmed' && !record.orderNumber.trim()) return 'Agregá el número de OC.';
+  if (record.agreedAmount !== null && !['gross', 'net'].includes(record.agreedAmountTaxBasis || '')) return 'Indicá si el importe aprobado es neto o incluye impuestos.';
   if (record.paymentTermDays !== null && (!Number.isInteger(record.paymentTermDays) || record.paymentTermDays < 0 || record.paymentTermDays > 3650)) return 'El plazo de pago debe ser un número entero de días.';
-  if (record.paymentTermDays !== null && (!record.paymentTermBasis || !record.paymentTermSource.trim())) return 'Indicá desde cuándo corre el plazo y su fuente.';
   for (const invoice of record.invoices) {
     if (!invoice.number.trim() || !validDate(invoice.issueDate) || !(invoice.amount > 0)) return 'Cada factura necesita número, fecha de emisión e importe positivo.';
+    if (invoice.netAmount != null && (!Number.isFinite(invoice.netAmount) || invoice.netAmount <= 0 || invoice.netAmount > invoice.amount)) return `El neto sin IVA de ${invoice.number} debe ser positivo y no superar su importe final.`;
     if (!invoice.documentRef.trim() && !invoice.documentPath?.trim() && !invoice.ctRef.trim()) return `Agregá el comprobante o la referencia de CT de ${invoice.number}.`;
     if (invoice.dueDate && !validDate(invoice.dueDate)) return `La fecha de vencimiento de ${invoice.number} no es válida.`;
     if (invoice.sentDate && !validDate(invoice.sentDate)) return `La fecha de envío de ${invoice.number} no es válida.`;
