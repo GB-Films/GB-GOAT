@@ -2,8 +2,9 @@ import { useEffect, useMemo, useRef, useState, type ReactNode, type FormEvent } 
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { Plus, X, Paperclip, Ban } from 'lucide-react';
 import { db } from '../lib/firebase';
+import { ProviderPaymentForm } from './ProviderPaymentForm';
 import { providerDisplayName, inferLegacyIdentifiers } from '../lib/providerConstants';
-import { discardStagedProviderFile, expenseAllocationKey, moneyCents, openProviderFile, providerFinanceRequest, sharedInvoiceCapacity, uploadProviderFile, validateProviderFile, validateSharedAllocations } from '../lib/providerFinance';
+import { discardStagedProviderFile, expenseAllocationKey, moneyCents, openProviderFile, providerFileHash, providerFinanceRequest, sharedInvoiceCapacity, uploadProviderFile, validateProviderFile, validateSharedAllocations } from '../lib/providerFinance';
 
 const money = (cents: number) => (cents / 100).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const inputClass = 'w-full rounded border border-slate-200 px-3 py-2 text-sm focus:border-slate-600 outline-none';
@@ -20,7 +21,7 @@ export function ProviderFinancePanel({ provider, lines, onChanged }: { provider:
   const [currency, setCurrency] = useState('ARS');
   const [rate, setRate] = useState('1');
   const [net, setNet] = useState('');
-  const [method, setMethod] = useState('transfer');
+  const paymentReceipt = useRef<File | null>(null);
   const attempt = useRef<{ id: string; payload?: Record<string, unknown>; file?: { path: string } }>({ id: crypto.randomUUID() });
   const [uncertain, setUncertain] = useState(false);
   const [formVersion, setFormVersion] = useState(0);
@@ -30,11 +31,10 @@ export function ProviderFinancePanel({ provider, lines, onChanged }: { provider:
   const expenses = useMemo(() => lines.filter(line => line.expenseId && line.collectionName), [lines]);
   const allocated = (Object.values(selected) as Array<{ amount: string; invoiceId: string }>).reduce<number>((sum, row) => sum + moneyCents(row.amount), 0);
   const expected = Math.round(moneyCents(net) * (currency === 'USD' ? Number(rate) : 1));
-  const invoicesFor = (line: any) => records.filter(record => record.kind === 'invoice' && record.status === 'active'
-    && record.allocations.some((allocation: any) => expenseAllocationKey(allocation) === expenseAllocationKey(line)));
   const start = (value: Kind) => {
-    setKind(value); setFile(null); setSelected({}); setNet(''); setCurrency('ARS'); setRate('1'); setMethod('transfer'); setError(''); setUncertain(false);
+    setKind(value); setFile(null); setSelected({}); setNet(''); setCurrency('ARS'); setRate('1'); setError(''); setUncertain(false);
     attempt.current = { id: crypto.randomUUID() };
+    paymentReceipt.current = null;
     setFormVersion(value => value + 1);
   };
   const submit = async (event: FormEvent<HTMLFormElement>) => {
@@ -76,18 +76,41 @@ export function ProviderFinancePanel({ provider, lines, onChanged }: { provider:
     catch (error: any) { setError(error.message || 'No se pudo anular.'); }
     finally { setBusy(false); }
   };
+  const savePayment = async (payload: Record<string, unknown> | null, receipt: File | null) => {
+    if (busy) return;
+    setError(''); setBusy(true);
+    try {
+      if (!attempt.current.payload) {
+        if (!payload) throw Error('Volvé a abrir la carga del pago.');
+        if (payload.method === 'transfer' && !receipt) throw Error('Adjuntá el comprobante de pago.');
+        const reference = payload.method === 'transfer' ? `comprobante-${await providerFileHash(receipt!)}` : `efectivo-${attempt.current.id}`;
+        attempt.current.payload = { ...payload, action: 'create', id: attempt.current.id, kind: 'payment', providerId: provider.id,
+          reference };
+        paymentReceipt.current = receipt;
+      }
+      if (paymentReceipt.current && !attempt.current.file) attempt.current.file = await uploadProviderFile(provider.id, attempt.current.id, paymentReceipt.current);
+      await providerFinanceRequest({ ...attempt.current.payload, file: attempt.current.file || null });
+      setKind(null); setUncertain(false); onChanged?.();
+    } catch (error: any) {
+      const isNetwork = ['functions/unavailable', 'functions/deadline-exceeded', 'functions/internal', 'storage/retry-limit-exceeded'].includes(error.code);
+      if (isNetwork || uncertain) setUncertain(true);
+      else { await discardStagedProviderFile(attempt.current.file); attempt.current = { id: crypto.randomUUID() }; setUncertain(false); }
+      setError(error.message || 'No se pudo registrar el pago.');
+    } finally { setBusy(false); }
+  };
   return <section className="rounded-xl border border-slate-200 bg-white p-4 space-y-4">
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div><h3 className="font-bold text-sm">Facturas, pagos y comprobantes</h3><p className="text-xs text-slate-500">Una carga, con aplicaciones a uno o varios proyectos. No agrega costos ni registra movimientos en CT.</p></div>
       <div className="flex flex-wrap gap-2">{(['invoice', 'payment', 'other'] as Kind[]).map(value => <button key={value} type="button" disabled={busy || uncertain} onClick={() => start(value)} className="flex items-center gap-1 rounded border px-3 py-2 text-xs font-bold hover:bg-slate-50 disabled:opacity-40"><Plus size={14}/>{value === 'invoice' ? 'Factura' : value === 'payment' ? 'Pago' : 'Comprobante'}</button>)}</div>
     </div>
     {error && <p role="alert" className="rounded bg-rose-50 p-3 text-sm text-rose-800">{error}</p>}
-    {kind && <form key={formVersion} onSubmit={submit} className="rounded-lg border border-slate-200 p-4 space-y-4">
-      <div className="flex justify-between"><h4 className="text-sm font-bold">{kind === 'invoice' ? 'Nueva factura' : kind === 'payment' ? 'Registrar pago realizado' : 'Nuevo comprobante'}</h4><button type="button" disabled={busy || uncertain} onClick={() => setKind(null)} aria-label="Cerrar carga"><X size={18}/></button></div>
+    {kind === 'payment' && <div key={formVersion}><ProviderPaymentForm provider={provider} lines={expenses} invoices={records} busy={busy} uncertain={uncertain} onClose={() => setKind(null)} onSave={savePayment}/></div>}
+    {kind && kind !== 'payment' && <form key={formVersion} onSubmit={submit} className="rounded-lg border border-slate-200 p-4 space-y-4">
+      <div className="flex justify-between"><h4 className="text-sm font-bold">{kind === 'invoice' ? 'Nueva factura' : 'Nuevo comprobante'}</h4><button type="button" disabled={busy || uncertain} onClick={() => setKind(null)} aria-label="Cerrar carga"><X size={18}/></button></div>
       <fieldset disabled={busy || uncertain} className="space-y-4 disabled:opacity-60">
         <div className="grid gap-3 md:grid-cols-3">
           <Field label="Fecha"><input name="date" type="date" required defaultValue={localToday()} className={inputClass}/></Field>
-          {kind !== 'other' && <><Field label="Moneda del documento / pago"><select value={currency} onChange={event => { setCurrency(event.target.value); if (event.target.value === 'USD') setMethod('transfer'); }} className={inputClass}><option>ARS</option><option>USD</option></select></Field>
+          {kind !== 'other' && <><Field label="Moneda del documento"><select value={currency} onChange={event => setCurrency(event.target.value)} className={inputClass}><option>ARS</option><option>USD</option></select></Field>
           {currency === 'USD' && <Field label="Cotización ARS por USD"><input type="number" step="0.0001" min="0.0001" required value={rate} onChange={event => setRate(event.target.value)} className={inputClass}/></Field>}</>}
           {kind === 'invoice' && <>
             <Field label="Emisor fiscal"><input name="issuerName" required defaultValue={providerDisplayName(provider)} className={inputClass}/></Field>
@@ -95,33 +118,23 @@ export function ProviderFinancePanel({ provider, lines, onChanged }: { provider:
             <Field label="CUIT de la empresa receptora"><input name="recipientCuit" required placeholder="CUIT de quien recibe la factura" className={inputClass}/></Field>
             <Field label="Tipo y número"><input name="number" required placeholder="C 00001-00000123" className={inputClass}/></Field>
           </>}
-          {kind === 'payment' && <>
-            <Field label="Destinatario del pago"><input name="payeeName" required defaultValue={providerDisplayName(provider)} className={inputClass}/></Field>
-            <Field label="Medio"><select name="method" value={method} onChange={event => setMethod(event.target.value)} className={inputClass}><option value="transfer">Transferencia / banco</option><option value="cash" disabled={currency !== 'ARS'}>Efectivo pesos · Caja General</option></select></Field>
-            <Field label="Cuenta de origen"><input name="account" required placeholder="Ej.: GB BBVA" className={inputClass}/></Field>
-            <Field label="N° de operación / referencia única"><input name="reference" required maxLength={160} placeholder="Referencia que identifica este pago" className={inputClass}/></Field>
-            {method === 'cash' && <Field label="Registrar una sola salida en"><select name="cashProjectId" required className={inputClass}><option value="">Proyecto de la Caja General</option>{Array.from(new Map<string, any>(expenses.filter(line => selected[expenseAllocationKey(line)]).map(line => [line.projectId, line])).values()).map(line => <option key={line.projectId} value={line.projectId}>{line.projectName}</option>)}</select></Field>}
-          </>}
           {kind !== 'other' && <>
-            <Field label={kind === 'invoice' ? 'Neto del costo (sin IVA recuperable)' : 'Costo neto cancelado'}><input type="number" min="0.01" step="0.01" required value={net} onChange={event => setNet(event.target.value)} className={inputClass}/></Field>
-            <Field label={kind === 'invoice' ? 'Total fiscal (con IVA)' : 'Importe transferido / entregado'}><input name="total" type="number" min="0.01" step="0.01" required className={inputClass}/></Field>
-            {kind === 'payment' && <><Field label="Retenciones aplicadas"><input name="withheld" type="number" min="0" step="0.01" defaultValue="0" className={inputClass}/></Field><Field label="Comisión adicional"><input name="fee" type="number" min="0" step="0.01" defaultValue="0" className={inputClass}/></Field></>}
+            <Field label="Neto del costo (sin IVA recuperable)"><input type="number" min="0.01" step="0.01" required value={net} onChange={event => setNet(event.target.value)} className={inputClass}/></Field>
+            <Field label="Total fiscal (con IVA)"><input name="total" type="number" min="0.01" step="0.01" required className={inputClass}/></Field>
           </>}
         </div>
-        <Field label={kind === 'other' ? 'Detalle del comprobante (ej.: retención y factura)' : 'Notas / referencia del pago'}><textarea name="notes" required={kind === 'other'} maxLength={2000} className={inputClass}/></Field>
-        <Field label={`Documento original · PDF o imagen · hasta 2 MB${kind === 'payment' ? ' (opcional)' : ''}`}><input type="file" accept="application/pdf,image/jpeg,image/png,image/webp" required={kind !== 'payment'} onChange={event => setFile(event.target.files?.[0] || null)} className="text-sm"/></Field>
+        <Field label={kind === 'other' ? 'Detalle del comprobante (ej.: retención y factura)' : 'Notas'}><textarea name="notes" required={kind === 'other'} maxLength={2000} className={inputClass}/></Field>
+        <Field label="Documento original · PDF o imagen · hasta 2 MB"><input type="file" accept="application/pdf,image/jpeg,image/png,image/webp" required onChange={event => setFile(event.target.files?.[0] || null)} className="text-sm"/></Field>
         <div className="space-y-2">
           <h5 className="text-xs font-bold">Aplicar a gastos existentes · importes en pesos</h5>
           {expenses.map(line => {
             const rowKey = expenseAllocationKey(line), value = selected[rowKey];
             const capacity = kind === 'invoice' ? sharedInvoiceCapacity(line) : line.debt;
-            const invoices = invoicesFor(line);
             return <div key={rowKey} className={`grid gap-2 rounded border p-3 md:grid-cols-[1fr_150px_220px] ${value ? 'border-indigo-200 bg-indigo-50/30' : 'border-slate-100'}`}>
               <label className="flex gap-2 text-xs"><input type="checkbox" checked={!!value} onChange={event => setSelected(current => {
-                const next = { ...current }; if (event.target.checked) next[rowKey] = { amount: String(capacity || line.total), invoiceId: kind === 'payment' && invoices.length === 1 ? invoices[0].id : '' }; else delete next[rowKey]; return next;
+                const next = { ...current }; if (event.target.checked) next[rowKey] = { amount: String(capacity || line.total), invoiceId: '' }; else delete next[rowKey]; return next;
               })}/><span><strong>{line.projectName}</strong><span className="block text-slate-500">{line.description} · {kind === 'invoice' ? 'Sin facturar' : 'Saldo'} ${capacity.toLocaleString('es-AR')}</span></span></label>
               {value && <><input aria-label={`Aplicar a ${line.projectName}: ${line.description}`} type="number" min="0.01" step="0.01" max={kind !== 'other' ? capacity : undefined} required value={value.amount} onChange={event => setSelected(current => ({ ...current, [rowKey]: { ...value, amount: event.target.value } }))} className={inputClass}/>
-                {kind === 'payment' && <select aria-label={`Factura de ${line.projectName}`} value={value.invoiceId} onChange={event => setSelected(current => ({ ...current, [rowKey]: { ...value, invoiceId: event.target.value } }))} className={inputClass}><option value="">Sin factura vinculada</option>{invoices.map(invoice => <option key={invoice.id} value={invoice.id}>{invoice.number}</option>)}</select>}
               </>}
             </div>;
           })}
