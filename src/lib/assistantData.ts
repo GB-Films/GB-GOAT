@@ -170,6 +170,7 @@ export const loadAssistantProjectContext = async ({
         brandName: String(project.brandName || ''),
         status: String(project.status || ''),
         budgetTotal: Number(project.budgetTotal) || 0,
+        budgetRevision: Number(project.budgetRevision) || 0,
         shootingStartDate: String(project.shootingStartDate || ''),
         shootingEndDate: String(project.shootingEndDate || ''),
         location: String(project.location || ''),
