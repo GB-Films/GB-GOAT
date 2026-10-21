@@ -1,6 +1,7 @@
 import type { ReimbursementRecord } from '../../lib/reimbursements';
 
 export interface Payment {
+  sharedRecordId?: string;
   id: string;
   amount: number;
   detail: string;
@@ -33,6 +34,10 @@ export interface Payment {
 }
 
 export interface BudgetItem {
+  sharedInvoices?: Array<{ id: string; amountCents: number; number: string; issuerName: string }>;
+  sharedReceipts?: Array<{ id: string; amountCents: number; title: string }>;
+  sharedPaymentIds?: string[];
+  sharedPaymentRecords?: Payment[];
   id: string;
   projectId: string;
   area: string;

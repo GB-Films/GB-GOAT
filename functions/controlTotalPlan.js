@@ -58,7 +58,7 @@ function sourceProjection(expense) {
     amount: Number(expense.total), currency: String(expense.currency || 'ARS'),
     serviceDate: String(expense.serviceDate || expense.expenseDate || ''),
     paid: expense.paid === true, paymentCount: Array.isArray(expense.paymentHistory) ? expense.paymentHistory.length : 0,
-    documents: (expense.invoices || (expense.invoice ? [expense.invoice] : [])).map(d => ({ id: String(d.id || ''), path: String(d.path || ''), name: cleanText(d.originalFileName || d.fileName) })),
+    documents: (expense.invoices || (expense.invoice ? [expense.invoice] : [])).map(d => ({ id: String(d.id || ''), path: String(d.path || ''), name: cleanText(d.originalFileName || d.fileName) })).concat((expense.sharedInvoices || []).map(d => ({ id: String(d.id || ''), path: `providerFinancialRecords/${d.id}`, name: cleanText(d.number) }))),
   };
 }
 

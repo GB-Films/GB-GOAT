@@ -65,6 +65,23 @@ Pruebas: `tests/projectCommercialRules.emulator.mjs`, política compartida front
 
 La sintaxis se valida localmente con `npm run lint:rules`. La validación funcional completa debe ejecutarse contra Firebase Emulator Suite antes de desplegar reglas.
 
+## Documentos y pagos compartidos de proveedores
+
+El diseño agrega reglas preliminares para proteger referencias de gasto y
+archivos compartidos, verificadas con emuladores antes de activarse. La callable
+`manageProviderFinance` exige rol global admin y aplica operación y proyecciones
+en una única transacción. El cliente no escribe `providerFinancialRecords`, las
+claves fiscales/de pago ni las referencias compartidas de gastos. Sólo administra
+estos registros el servidor, que comprueba identidad del prestador, estado,
+gestión activa del gasto, importes y saldo actualizado.
+
+Los documentos completos multiproyecto son privados para administradores. Los
+miembros del proyecto ven sólo la aplicación de su gasto; la referencia no amplía
+sus permisos. Los originales confirmados son inmutables y la anulación global
+conserva evidencia y auditoría. Ningún rol puede corregir una sola proyección de
+pago compartido por el SDK cliente. El circuito no concede permisos nuevos sobre
+CT, cuentas bancarias o proyectos ajenos. Ver `docs/provider-finance.md`.
+
 ## Riesgo de dependencia pendiente
 
 La versión de `xlsx` publicada en npm mantiene avisos de seguridad sin corrección disponible en ese registro. Las importaciones quedaron limitadas por tipo y a 5 MB para reducir exposición, pero esto no elimina el riesgo de un archivo malicioso. La actualización recomendada por SheetJS se distribuye fuera de npm y requiere aprobación explícita del origen, o bien reemplazar el parser en una migración dedicada.

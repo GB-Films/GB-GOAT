@@ -1091,6 +1091,7 @@ export function PaymentModal({
                               <div>Reintegrado: ${(getReimbursedCents(payment) / 100).toLocaleString('es-AR')} · Pendiente: ${reimbursementBalance.toLocaleString('es-AR')}</div>
                             </div>
                           )}
+                          {payment.sharedRecordId && <p className="mt-2 text-xs text-indigo-600">Pago compartido · comprobante y anulación en la ficha del proveedor.</p>}
                           {payment.receipt?.url && (
                             <a
                               href={payment.receipt.url}

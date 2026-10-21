@@ -57,6 +57,9 @@ jobs:
           npm ci --prefix functions
           npm test --prefix functions
 
+      - name: Verify shared supplier invoices, payments and private documents
+        run: npx --yes firebase-tools@15.22.1 emulators:exec --only firestore,storage --project demo-goat-provider-finance "node tests/providerFinance.emulator.mjs"
+
       - name: Configure Pages
         uses: actions/configure-pages@v5
 

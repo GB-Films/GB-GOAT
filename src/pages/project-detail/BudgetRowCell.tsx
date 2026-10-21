@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { Copy, Link2, Plus } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import {
@@ -9,6 +9,7 @@ import {
   providerDisplayName,
   providerMatchesSearch,
 } from '../../lib/providerConstants';
+const ProviderProfileDialog = lazy(() => import('../../components/ProviderProfileDialog'));
 
 interface BudgetRowCellProps {
   item: any;
@@ -27,6 +28,7 @@ interface BudgetRowCellProps {
 export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment, disabledPayment, disabled, canCopyProviderInfo, onCreateProviderInvite, creatingProviderInvite }: BudgetRowCellProps) {
   const [isEditingProvider, setIsEditingProvider] = useState(false);
   const [showProviderInfo, setShowProviderInfo] = useState(false);
+  const [showProviderDetail, setShowProviderDetail] = useState(false);
   const [providerSearch, setProviderSearch] = useState('');
   const [copiedProviderField, setCopiedProviderField] = useState('');
   const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0, width: 256 });
@@ -105,7 +107,7 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
   const providerCuit = formatIdentifier(providerCuitRaw) || '';
   const providerCbu = provider?.bankAccount_cbu || provider?.bankAccount || '';
   const providerAlias = provider?.bankAccount_alias || '';
-  const canShowProviderInfo = Boolean(canCopyProviderInfo && provider && (providerCuit || providerCbu || providerAlias));
+  const canShowProviderInfo = Boolean(provider);
   const pendingProviderInvite = !item.providerId && !item.providerName && item.providerInviteLink?.status === 'pending'
     ? item.providerInviteLink
     : null;
@@ -213,7 +215,7 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
               { label: 'Copiar CUIT', value: providerCuit, copyValue: providerCuitRaw || providerCuit },
               { label: 'Copiar CBU', value: providerCbu },
               { label: 'Copiar Alias', value: providerAlias },
-            ].filter((entry) => entry.value).map((entry) => (
+            ].filter((entry) => canCopyProviderInfo && entry.value).map((entry) => (
               <div key={entry.label} className="flex items-center justify-between gap-2 py-1.5 border-t border-slate-50 first:border-0">
                 <div className="min-w-0">
                   <div className="text-[8px] font-black uppercase tracking-widest text-slate-300">{entry.label.replace('Copiar ', '')}</div>
@@ -235,8 +237,13 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
                 </button>
               </div>
             ))}
+            <button type="button" onClick={() => { setShowProviderInfo(false); setShowProviderDetail(true); }} className="mt-2 w-full rounded bg-slate-900 px-3 py-2 text-xs font-bold text-white">Ver ficha y comprobantes</button>
           </div>
         )}
+        {showProviderDetail && provider && <Suspense fallback={<div className="fixed inset-0 z-[500] grid place-items-center bg-white/80 text-sm">Cargando proveedor…</div>}><ProviderProfileDialog provider={provider} onClose={() => setShowProviderDetail(false)} /></Suspense>}
+        {((item.sharedInvoices?.length || 0) + (item.sharedReceipts?.length || 0) + (item.sharedPaymentIds?.length || 0)) > 0 && <button type="button" disabled={!provider} onClick={() => setShowProviderDetail(true)} className="mt-1 text-[9px] text-indigo-600 hover:underline" title="Ver aplicaciones sin duplicar el documento">
+          {item.sharedInvoices?.length ? `${item.sharedInvoices.length} factura(s) vinculada(s)` : 'Comprobantes / pago vinculado'}
+        </button>}
         
         {isEditingProvider && !disabled && (
            <div 
