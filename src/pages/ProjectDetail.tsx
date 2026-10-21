@@ -94,34 +94,9 @@ import { buildLinkedProviderInviteExpiration } from '../lib/providerInvites';
 import { resolveCashMovementTarget } from '../lib/cashMovementTargets';
 import { canChangePaymentCash, assertCanChangePaymentCash } from '../lib/paymentCashAccess';
 import { assertCashPaymentLink, buildUnpaidAmountCorrectionAudit, findCurrentPayment, hasRecordedPayment, hasActiveExpensePayments, isUnpaidAmountCorrection, prepareExpenseEdit, sameExpenseVersion, samePaymentTarget } from '../lib/expenseEdits';
+import { collapseAroundDraggedRow } from '../lib/dragPointerAnchor';
 
 const StructureDraggable = Draggable as any;
-
-// El colapso previo a la captura de dimensiones no debe despegar la fila del
-// puntero. Compensamos el cambio de posición con el scroll real de la página.
-const collapseAroundDraggedRow = (draggableId: string, collapse: () => void) => {
-  const source = Array.from(document.querySelectorAll<HTMLElement>('[data-structure-drag-id]'))
-    .find((element) => element.dataset.structureDragId === draggableId);
-  if (!source) { collapse(); return; }
-  const originalTop = source.getBoundingClientRect().top;
-  let scrollParent: HTMLElement | null = null;
-  for (let parent = source.parentElement; parent; parent = parent.parentElement) {
-    const overflow = window.getComputedStyle(parent).overflowY;
-    if ((overflow === 'auto' || overflow === 'scroll') && parent.scrollHeight > parent.clientHeight + 1) {
-      scrollParent = parent;
-      break;
-    }
-  }
-  collapse();
-  if (!source.isConnected) return;
-  const shift = source.getBoundingClientRect().top - originalTop;
-  if (Math.abs(shift) < 1) return;
-  if (scrollParent) {
-    scrollParent.scrollTop += shift;
-    const remainder = source.getBoundingClientRect().top - originalTop;
-    if (Math.abs(remainder) >= 1) window.scrollBy(0, remainder);
-  } else window.scrollBy(0, shift);
-};
 
 const tabs = [
   { id: 'resumen', label: 'Resumen', icon: Info },
@@ -783,6 +758,7 @@ export default function ProjectDetail() {
   const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>({});
   const [collapsedAreaSubcategories, setCollapsedAreaSubcategories] = useState<Record<string, boolean>>({});
   const [structureDragKind, setStructureDragKind] = useState<'area-category' | 'area-subcategory' | null>(null);
+  const [structureDragAnchorGap, setStructureDragAnchorGap] = useState(0);
   const [isSavingAreaStructure, setIsSavingAreaStructure] = useState(false);
   const [isCompactAreas, setIsCompactAreas] = useState(() => (
     typeof window !== 'undefined' && Boolean(window.matchMedia?.('(max-width: 767px)').matches)
@@ -3893,6 +3869,7 @@ export default function ProjectDetail() {
 
   const onAreaDragEnd = (result: any) => {
     setStructureDragKind(null);
+    setStructureDragAnchorGap(0);
     if (result?.type === 'area-category' || result?.type === 'area-subcategory') {
       void onAreaStructureDragEnd(result);
       return;
@@ -6739,13 +6716,20 @@ export default function ProjectDetail() {
                     const kind = draggableId.startsWith('area-category|')
                       ? 'area-category'
                       : draggableId.startsWith('area-subcategory|') ? 'area-subcategory' : null;
-                    if (kind) collapseAroundDraggedRow(draggableId, () => flushSync(() => setStructureDragKind(kind)));
+                    if (kind) {
+                      const gap = collapseAroundDraggedRow(draggableId, () => flushSync(() => setStructureDragKind(kind)));
+                      if (gap > 0) flushSync(() => setStructureDragAnchorGap(gap));
+                    }
                   }}
                   onDragEnd={onAreaDragEnd}
                 >
                 <Droppable droppableId="area-category-list" type="area-category" isDropDisabled={!isProjectAdmin || Boolean(areaExpenseSearch.trim())}>
                 {(categoryListProvided) => (
-                <div ref={categoryListProvided.innerRef} {...categoryListProvided.droppableProps}>
+                <div
+                  ref={categoryListProvided.innerRef}
+                  {...categoryListProvided.droppableProps}
+                  style={{ paddingTop: structureDragAnchorGap || undefined, overflowAnchor: 'none' }}
+                >
                 {selectedAreaDashboardRows.map((areaRow, areaIndex) => (
                 <StructureDraggable
                   key={areaRow.area}
