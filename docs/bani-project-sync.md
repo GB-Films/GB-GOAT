@@ -1,5 +1,9 @@
 # GOAT to BANI project sync
 
+## Control Total source transition
+
+When BANI's server-only `projectSourceControl/{ownerUid}` document has `mode: sheets`, the GOAT mirror stops inside its target transaction. This read participates in the transaction to prevent a concurrent source switch from racing an old GOAT event. Individual documents with `sheetProjectKey` are protected even if the workspace switch is later changed. Deploy this guard before enabling BANI's `syncControlTotalProjects` scheduler; the scheduler and migration live in BANI-VAULT. Existing GOAT data and links are retained, not deleted.
+
 All GOAT projects are the source of project identity in BANI LAB. The second-generation `syncProjectToBani` function listens to `projects/{projectId}` in GOAT's default database and writes into BANI's named database, under the configured workspace owner. It works without either app open.
 
 ## Ownership

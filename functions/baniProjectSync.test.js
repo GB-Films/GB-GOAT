@@ -4,6 +4,17 @@ const { buildBaniPatch, syncGoatProject } = require('./baniProjectSync');
 
 const input = { projectId: 'test-project', data: { name: 'Test', clientName: 'Client', projectCode: 'G AS 0001', budgetTotal: 12345, status: 'Post', shootingDate: '2026-10-01' }, version: { seconds: 10, nanoseconds: 1 }, now: 100 };
 
+test('Sheet-owned projects cannot be renamed by later GOAT events', () => {
+  assert.equal(buildBaniPatch({ ...input, existing: { sheetProjectKey: 'AS-0001' } }), null);
+});
+
+test('switching the workspace source to Sheets stops GOAT creation and updates', async () => {
+  const sourceDb = fakeDb({ 'projects/test-project': input.data });
+  const targetDb = fakeDb({ 'projectSourceControl/owner': { mode: 'sheets' } });
+  assert.equal((await syncGoatProject({ sourceDb, targetDb, projectId: input.projectId, ownerUid: 'owner' })).outcome, 'source-is-sheets');
+  assert.equal(targetDb.writes, 0);
+});
+
 test('creates only identity and neutral BANI defaults, without money or invented dates', () => {
   const result = buildBaniPatch(input);
   assert.equal(result.id, 'goat-test-project');

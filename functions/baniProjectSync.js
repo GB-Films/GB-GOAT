@@ -19,6 +19,7 @@ function compareVersions(a, b) {
 }
 
 function buildBaniPatch({ projectId, data, version, existing, now = Date.now() }) {
+  if (existing?.sheetProjectKey) return null;
   if (!projectId || projectId.includes('/')) throw new Error('Invalid GOAT project ID');
   const source = sourceMetadata(data);
   if (!source.name) throw new Error('GOAT project has no name');
@@ -78,6 +79,8 @@ async function syncGoatProject({ sourceDb, targetDb, ownerUid, projectId, target
   const version = { seconds: source.updateTime.seconds, nanoseconds: source.updateTime.nanoseconds };
   const collection = targetDb.collection('users').doc(ownerUid).collection('postProjects');
   return targetDb.runTransaction(async transaction => {
+    const control = await transaction.get(targetDb.collection('projectSourceControl').doc(ownerUid));
+    if (control.data()?.mode === 'sheets') return { outcome: 'source-is-sheets', projectId };
     const linked = await transaction.get(collection.where('goatProjectId', '==', projectId).limit(2));
     if (linked.size > 1) throw new Error(`Multiple BANI projects linked to GOAT ${projectId}`);
     const ref = linked.empty ? collection.doc(targetId || `goat-${projectId}`) : linked.docs[0].ref;
