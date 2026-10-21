@@ -13,11 +13,14 @@ export function validateProviderFile(file: File) {
   if (!['application/pdf', 'image/jpeg', 'image/png', 'image/webp'].includes(file.type)
     || file.size <= 0 || file.size > 2 * 1024 * 1024) throw Error('Usá PDF, JPG, PNG o WEBP de hasta 2 MB.');
 }
+export async function providerFileHash(file: File) {
+  return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await file.arrayBuffer())), byte => byte.toString(16).padStart(2, '0')).join('');
+}
 export async function uploadProviderFile(providerId: string, id: string, file: File) {
   validateProviderFile(file);
   const path = `providerFinance/${providerId}/${id}/${sanitizeFileName(file.name).slice(0, 120)}`;
   const fileRef = ref(storage, path);
-  const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await file.arrayBuffer())), byte => byte.toString(16).padStart(2, '0')).join('');
+  const hash = await providerFileHash(file);
   try {
     const metadata = await getMetadata(fileRef);
     if (metadata.customMetadata?.sha256 !== hash) throw Error('El archivo del intento anterior es distinto. Cerrá la carga y volvé a empezar.');

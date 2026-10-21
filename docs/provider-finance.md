@@ -8,9 +8,10 @@ adjuntos anteriores y ofrece tres cargas para administradores globales:
 
 - **Factura:** original fiscal, emisor y CUIT propios, CUIT receptor, tipo/número,
   fecha, moneda, neto y total. Seleccionar gastos existentes y distribuir su neto.
-- **Pago:** una operación ya realizada, destinatario, cuenta, referencia única,
-  fecha, importe entregado, costo neto cancelado, retenciones y comisión. Elegir
-  gastos y, cuando corresponda, la factura compartida que cancela cada aplicación.
+- **Pago:** elegir proyectos con saldo, revisar el importe (por defecto el saldo
+  seleccionado), indicar fecha y adjuntar el comprobante o elegir Efectivo y la
+  Caja General. Los gastos saldados no aparecen en esta selección. El formulario
+  no pide destinatario, cuenta bancaria, referencia, impuestos ni comisiones.
 - **Comprobante:** documento general o relacionado con gastos seleccionados,
   por ejemplo un certificado de retención. Las notas identifican la operación.
 
@@ -20,9 +21,17 @@ El indicador del gasto muestra la factura vinculada y abre la ficha. Las
 aplicaciones de pago aparecen en su historial y sus saldos habituales.
 
 El neto aplicado a gastos siempre se expresa en pesos, como los costos de GOAT.
-Para documentos o transferencias USD se conserva moneda, importes originales y
-cotización explícita. Neto, total fiscal, importe entregado, retenciones y comisión
-son campos diferentes. El IVA recuperable no aumenta el costo de producción.
+El pago simplificado cancela ese costo operativo, igual que la carga habitual
+desde una fila. No reconstruye IVA, retenciones, comisiones ni el débito bancario
+a partir del importe aplicado; el comprobante conserva la operación real y CT se
+concilia por separado. Los campos fiscales y la moneda de las facturas no cambian.
+Los registros previos conservan sus monedas e importes originales.
+
+Un pago parcial cubre los gastos de los proyectos seleccionados en el orden
+mostrado, hasta completar su importe. Se vincula automáticamente con la factura
+compartida sólo si hay una única factura activa y su aplicación pendiente alcanza
+el importe; en casos ambiguos se conserva la aplicación al gasto sin inventar una
+relación fiscal. El servidor vuelve a validar los saldos al confirmar.
 
 Una transferencia no mueve cajas de GOAT. Un pago en efectivo pesos crea **una
 sola salida de Caja General**, en uno de los proyectos seleccionados; sus
@@ -47,9 +56,14 @@ huella de la solicitud para recuperar un reintento sin repetir pagos.
 
 La identidad fiscal (emisor + receptor + tipo/número) se reserva globalmente en
 `providerFiscalKeys`. Los pagos reservan cuenta + referencia en
-`providerPaymentKeys`. No reemplazan una conciliación bancaria: usar el número
-real de operación y la misma denominación de cuenta. Las claves se pueden volver
-a usar después de anular, conservando el vínculo con el registro anterior.
+`providerPaymentKeys`. El formulario simplificado calcula automáticamente la
+referencia SHA-256 del comprobante con la cuenta técnica «Comprobante bancario»;
+esa etiqueta no atribuye una cuenta bancaria real. Un mismo archivo no se carga
+otra vez como otro pago activo desde este formulario. Para efectivo se conserva
+la cuenta de caja y una referencia única estable durante los reintentos. No
+reemplaza la conciliación bancaria ni detecta dos archivos diferentes del mismo
+comprobante. Las claves se pueden volver a usar después de anular, conservando
+el vínculo con el registro anterior.
 
 Las facturas se rechazan si la fila ya tiene un adjunto fiscal legado; revisar y
 retirarlo administrativamente antes de reemplazarlo por una factura compartida.
