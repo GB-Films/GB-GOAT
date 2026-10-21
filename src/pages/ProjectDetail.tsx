@@ -35,7 +35,8 @@ import {
   Truck,
   CheckCircle2,
   Clock3,
-  Copy
+  Copy,
+  Pencil
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
@@ -54,6 +55,7 @@ import { cashLedgerPeople } from '../lib/cashLedgerPeople';
 import { ProjectCommercialSummary } from './project-detail/ProjectCommercialSummary';
 import { ProjectSummaryMetrics } from './project-detail/ProjectSummaryMetrics';
 import { ProjectKeyContacts } from './project-detail/ProjectKeyContacts';
+import { ProjectAdministration } from './project-detail/ProjectAdministration';
 import { readAuthorizedProject, readProjectCommercial } from '../lib/projectCommercial';
 import { splitProjectCommercial } from '../lib/projectCommercialFields';
 import { DEFAULT_BUDGET_CATEGORIES, resolveBudgetCategories, categoryDeletionPlan } from '../lib/budgetCategories';
@@ -95,12 +97,15 @@ const tabs = [
   { id: 'areas', label: 'Áreas', icon: LayoutGrid },
   { id: 'cajas', label: 'Cajas', icon: Wallet },
   { id: 'saldos', label: 'Finanzas', icon: Wallet },
+  { id: 'administracion', label: 'Administración', icon: FileText },
   { id: 'documentos', label: 'Documentos', icon: FileText },
   { id: 'resultado', label: 'Resultado', icon: BarChart2 },
   { id: 'proveedores', label: 'Proveedores', icon: Truck },
   { id: 'equipo', label: 'Equipo', icon: Users },
   { id: 'permisos', label: 'Permisos', icon: Settings },
 ];
+
+const DEFAULT_CASH_RETURN_RECIPIENT = 'tomas@granberta.com';
 
 const RESULT_INCIDENCES = [
   { id: 'imprevistos', label: 'Imprevistos' },
@@ -121,6 +126,7 @@ const DOCUMENT_FAMILIES = [
 const MANUAL_DOCUMENT_FAMILIES = DOCUMENT_FAMILIES.filter((family) => family.id !== 'todos' && family.id !== 'finanzas');
 
 const DEFAULT_AREA_EXPENSE_SUBCATEGORY = 'Sin subcategoria';
+const DEFAULT_AREA_EXPENSE_SUBCATEGORY_LABEL = 'Subcategoria';
 
 const isFileDrag = (event: React.DragEvent<HTMLElement>) => (
   Array.from(event.dataTransfer.types || []).includes('Files')
@@ -138,6 +144,7 @@ type AreaSubcategoryBudgetDraft = {
   area: string;
   originalSubcategory?: string;
   name: string;
+  assignBudget: boolean;
   budget: string;
   notes: string;
 };
@@ -1818,17 +1825,18 @@ export default function ProjectDetail() {
       : {};
     const entry = map[key];
     if (typeof entry === 'number') {
-      return { area, subcategory: cleanAreaExpenseSubcategory(subcategory), budget: entry, notes: '' };
+      return { area, subcategory: cleanAreaExpenseSubcategory(subcategory), budget: entry, assignBudget: entry > 0, notes: '' };
     }
     if (entry && typeof entry === 'object') {
       return {
         area: entry.area || area,
         subcategory: entry.subcategory || cleanAreaExpenseSubcategory(subcategory),
         budget: Number(entry.budget) || 0,
+        assignBudget: entry.budgetAssigned === false ? false : entry.budgetAssigned === true || Number(entry.budget) > 0,
         notes: entry.notes || '',
       };
     }
-    return { area, subcategory: cleanAreaExpenseSubcategory(subcategory), budget: 0, notes: '' };
+    return { area, subcategory: cleanAreaExpenseSubcategory(subcategory), budget: 0, assignBudget: false, notes: '' };
   };
 
   const saveAreaSubcategories = async (area: string, subcategories: string[]) => {
@@ -1858,7 +1866,8 @@ export default function ProjectDetail() {
       mode: cleanSubcategory || editDefault ? 'edit' : 'create',
       area,
       originalSubcategory: editDefault ? DEFAULT_AREA_EXPENSE_SUBCATEGORY : cleanSubcategory || undefined,
-      name: editDefault ? DEFAULT_AREA_EXPENSE_SUBCATEGORY : cleanSubcategory,
+      name: editDefault ? DEFAULT_AREA_EXPENSE_SUBCATEGORY_LABEL : cleanSubcategory,
+      assignBudget: existingEntry?.assignBudget || false,
       budget: existingEntry ? String(existingEntry.budget || '') : '',
       notes: existingEntry?.notes || '',
     });
@@ -1884,7 +1893,9 @@ export default function ProjectDetail() {
       return;
     }
 
-    const budget = Math.max(0, Number(subcategoryBudgetDraft.budget) || 0);
+    const budget = subcategoryBudgetDraft.assignBudget
+      ? Math.max(0, Number(subcategoryBudgetDraft.budget) || 0)
+      : 0;
     const nextSubcategories = Array.from(new Set([
       ...existing.filter((item) => !original || item.toLowerCase() !== original.toLowerCase()),
       name,
@@ -1903,6 +1914,7 @@ export default function ProjectDetail() {
         area,
         subcategory: name,
         budget,
+        budgetAssigned: subcategoryBudgetDraft.assignBudget,
         notes: subcategoryBudgetDraft.notes.trim(),
         updatedAt: new Date(),
         updatedByEmail: currentUserEmail,
@@ -1999,7 +2011,7 @@ export default function ProjectDetail() {
     ));
     const firstConfirmation = confirm(
       `Eliminar la subcategoria "${subcategory}" de ${area}?\n\n` +
-      `Sus ${affectedExpenses.length} gastos no se borran: quedaran como "Sin subcategoria".`
+      `Sus ${affectedExpenses.length} gastos no se borran: quedaran en "Subcategoria".`
     );
     if (!firstConfirmation) return;
     const secondConfirmation = confirm(
@@ -3257,6 +3269,7 @@ export default function ProjectDetail() {
 
   // Filtered views based on permissions
   const visibleTabs = tabs.filter(tab => {
+    if (tab.id === 'administracion') return isGlobalAdmin;
     if (tab.id === 'resultado') return isProjectAdmin;
     if (tab.id === 'permisos' && userPermissions?.role === 'jefe_produccion') return true;
     if (isProjectAdmin) return true;
@@ -3378,9 +3391,9 @@ export default function ProjectDetail() {
       const usedPercent = visibleAssigned > 0 ? Math.min(100, (spent / visibleAssigned) * 100) : 0;
       const knownSubcategories = (areaExpenseSubcategoriesByArea[area] || [])
         .filter((subcategory) => hasFullAreaAccess || canSeeAreaSubcategory(area, subcategory));
-      const subcategoryBudgetByName = new Map<string, number>(knownSubcategories.map((subcategory) => [
+      const subcategoryBudgetByName = new Map<string, { budget: number; assignBudget: boolean }>(knownSubcategories.map((subcategory) => [
         subcategory,
-        getAreaSubcategoryBudgetEntry(area, subcategory).budget,
+        getAreaSubcategoryBudgetEntry(area, subcategory),
       ]));
       const unassignedExpenses = sortAreaExpenses(
         hasFullAreaAccess ? expenses.filter((expense) => !hasAreaExpenseSubcategory(expense.subcategory)) : [],
@@ -3397,15 +3410,16 @@ export default function ProjectDetail() {
             subcategory,
             expenses: groupExpenses,
             subtotal: groupExpenses.reduce((acc: number, item) => acc + (Number(item.total) || 0), 0),
-            budget: subcategoryBudgetByName.get(subcategory) || 0,
-            balance: (subcategoryBudgetByName.get(subcategory) || 0) - groupExpenses.reduce((acc: number, item) => acc + (Number(item.total) || 0), 0),
-            usedPercent: (subcategoryBudgetByName.get(subcategory) || 0) > 0
-              ? Math.min(100, (groupExpenses.reduce((acc: number, item) => acc + (Number(item.total) || 0), 0) / (subcategoryBudgetByName.get(subcategory) || 1)) * 100)
+             budget: subcategoryBudgetByName.get(subcategory)?.budget || 0,
+             hasBudget: subcategoryBudgetByName.get(subcategory)?.assignBudget || false,
+             balance: (subcategoryBudgetByName.get(subcategory)?.budget || 0) - groupExpenses.reduce((acc: number, item) => acc + (Number(item.total) || 0), 0),
+             usedPercent: (subcategoryBudgetByName.get(subcategory)?.budget || 0) > 0
+               ? Math.min(100, (groupExpenses.reduce((acc: number, item) => acc + (Number(item.total) || 0), 0) / (subcategoryBudgetByName.get(subcategory)?.budget || 1)) * 100)
               : 0,
           };
         })
         .filter((group) => group.expenses.length > 0 || !searchTerm);
-      const visibleSubcategoryBudget = knownSubcategories.reduce((acc, subcategory) => acc + (subcategoryBudgetByName.get(subcategory) || 0), 0);
+      const visibleSubcategoryBudget = knownSubcategories.reduce((acc, subcategory) => acc + (subcategoryBudgetByName.get(subcategory)?.budget || 0), 0);
       const subcategoryGroups = [
         ...(unassignedExpenses.length > 0
           ? [{
@@ -3413,6 +3427,7 @@ export default function ProjectDetail() {
               expenses: unassignedExpenses,
               subtotal: unassignedExpenses.reduce((acc, item) => acc + (Number(item.total) || 0), 0),
               budget: 0,
+               hasBudget: false,
               balance: -unassignedExpenses.reduce((acc, item) => acc + (Number(item.total) || 0), 0),
               usedPercent: 0,
             }]
@@ -3864,7 +3879,11 @@ export default function ProjectDetail() {
 
   useEffect(() => {
     if (!cashReturnRecipients.some((recipient) => recipient.email === cashReturnRecipientEmail)) {
-      setCashReturnRecipientEmail(cashReturnRecipients[0]?.email || '');
+      setCashReturnRecipientEmail(
+        cashReturnRecipients.find((recipient) => normalizeEmail(recipient.email) === DEFAULT_CASH_RETURN_RECIPIENT)?.email
+        || cashReturnRecipients[0]?.email
+        || ''
+      );
     }
   }, [cashReturnRecipientEmail, cashReturnRecipients]);
 
@@ -5115,6 +5134,14 @@ export default function ProjectDetail() {
         alert('Este proyecto tiene registros financieros o de auditoría. No se puede borrar desde la aplicación.');
         return;
       }
+      const administrationSnapshot = await getDocFromServer(doc(db, 'projectAdministration', id));
+      if (administrationSnapshot.exists() && (
+        (administrationSnapshot.data().invoices || []).length > 0
+        || (administrationSnapshot.data().collections || []).length > 0
+      )) {
+        alert('Este proyecto tiene facturas o cobros de clientes registrados. No se puede borrar desde la aplicación.');
+        return;
+      }
       const subcollections = [
         'budgetItems',
         'areaExpenses',
@@ -5135,6 +5162,7 @@ export default function ProjectDetail() {
       }
 
       const deletion = writeBatch(db);
+      deletion.delete(doc(db, 'projectAdministration', id));
       deletion.delete(doc(db, 'projectCommercial', id));
       deletion.delete(doc(db, 'projects', id));
       await deletion.commit();
@@ -5227,7 +5255,9 @@ export default function ProjectDetail() {
     <button type="button" onClick={retryProjectLoad} className="mt-3 rounded-lg border border-slate-300 px-4 py-2 font-bold">Volver a intentar</button>
   </div>;
   if (!project) return <div className="p-8 text-center text-slate-900 font-bold uppercase tracking-widest">Proyecto no encontrado</div>;
-  const sectionLoad = projectLoadStatus(financialLoad, loadScope) !== 'ready' || activeTab === 'resumen' ? financialLoad : auxiliaryLoad;
+  const sectionLoad = activeTab === 'administracion'
+    ? { scope: loadScope, ready: true, error: '' }
+    : projectLoadStatus(financialLoad, loadScope) !== 'ready' || activeTab === 'resumen' ? financialLoad : auxiliaryLoad;
 
   return (
     <div className="mx-auto max-w-[1600px] text-[11px] sm:text-xs">
@@ -6363,8 +6393,8 @@ export default function ProjectDetail() {
                       const subcategoryKey = `${areaRow.area}__${subcategoryGroup.subcategory}`;
                       const isSubcategoryCollapsed = collapsedAreaSubcategories[subcategoryKey];
                       const hasNamedSubcategory = Boolean(subcategoryGroup.subcategory);
-                      const hasSubcategoryBudget = Number(subcategoryGroup.budget) > 0;
-                      const subcategoryLabel = subcategoryGroup.subcategory || DEFAULT_AREA_EXPENSE_SUBCATEGORY;
+                      const hasSubcategoryBudget = subcategoryGroup.hasBudget;
+                      const subcategoryLabel = subcategoryGroup.subcategory || DEFAULT_AREA_EXPENSE_SUBCATEGORY_LABEL;
                       const canEditThisSubcategory = canEditAreaSubcategory(areaRow.area, subcategoryGroup.subcategory);
 
                       return (
@@ -6372,8 +6402,8 @@ export default function ProjectDetail() {
                           <div className={cn(
                             "flex items-center gap-1 border-y px-3 py-2",
                             hasNamedSubcategory
-                              ? "border-slate-800 bg-slate-900 text-white"
-                              : "border-slate-300 bg-slate-200 text-slate-800"
+                               ? "border-indigo-200 bg-indigo-100 text-slate-900"
+                               : "border-slate-200 bg-slate-100 text-slate-800"
                           )}>
                             <button
                               type="button"
@@ -6386,28 +6416,28 @@ export default function ProjectDetail() {
                               <span className="min-w-0 pr-1">
                                 <span className={cn(
                                   "block truncate text-[9px] font-black uppercase tracking-widest",
-                                  hasNamedSubcategory ? "text-white" : "text-slate-800"
+                                   "text-slate-800"
                                 )}>
                                   {subcategoryLabel}
                                 </span>
                               </span>
                               {hasSubcategoryBudget && (
                               <span className="grid w-full grid-cols-3 gap-1">
-                                <span className={cn("rounded px-1.5 py-1", hasNamedSubcategory ? "bg-white/10" : "bg-white/70")}>
-                                  <span className={cn("block text-[7px] font-black uppercase tracking-widest", hasNamedSubcategory ? "text-slate-300" : "text-slate-500")}>Presu</span>
-                                  <span className={cn("block truncate font-mono text-[9px] font-black", hasNamedSubcategory ? "text-white" : "text-slate-800")}>${subcategoryGroup.budget.toLocaleString()}</span>
+                                 <span className="rounded bg-white/70 px-1.5 py-1">
+                                   <span className="block text-[7px] font-black uppercase tracking-widest text-slate-500">Presu</span>
+                                   <span className="block truncate font-mono text-[9px] font-black text-slate-800">${subcategoryGroup.budget.toLocaleString()}</span>
                                 </span>
-                                <span className={cn("rounded px-1.5 py-1", hasNamedSubcategory ? "bg-white/10" : "bg-white/70")}>
-                                  <span className={cn("block text-[7px] font-black uppercase tracking-widest", hasNamedSubcategory ? "text-slate-300" : "text-slate-500")}>Real</span>
-                                  <span className={cn("block truncate font-mono text-[9px] font-black", hasNamedSubcategory ? "text-emerald-300" : "text-emerald-700")}>${subcategoryGroup.subtotal.toLocaleString()}</span>
+                                 <span className="rounded bg-white/70 px-1.5 py-1">
+                                   <span className="block text-[7px] font-black uppercase tracking-widest text-slate-500">Real</span>
+                                   <span className="block truncate font-mono text-[9px] font-black text-emerald-700">${subcategoryGroup.subtotal.toLocaleString()}</span>
                                 </span>
-                                <span className={cn("rounded px-1.5 py-1", hasNamedSubcategory ? "bg-white/10" : "bg-white/70")}>
-                                  <span className={cn("block text-[7px] font-black uppercase tracking-widest", hasNamedSubcategory ? "text-slate-300" : "text-slate-500")}>Saldo</span>
+                                 <span className="rounded bg-white/70 px-1.5 py-1">
+                                   <span className="block text-[7px] font-black uppercase tracking-widest text-slate-500">Saldo</span>
                                   <span className={cn(
                                     "block truncate font-mono text-[9px] font-black",
                                     subcategoryGroup.balance < 0
-                                      ? "text-red-400"
-                                      : hasNamedSubcategory ? "text-white" : "text-slate-800"
+                                       ? "text-red-600"
+                                       : "text-slate-800"
                                   )}>${subcategoryGroup.balance.toLocaleString()}</span>
                                 </span>
                               </span>
@@ -6417,7 +6447,7 @@ export default function ProjectDetail() {
                               <div
                                 className={cn(
                                   "shrink-0 font-mono text-[10px] font-black",
-                                  hasNamedSubcategory ? "text-emerald-300" : "text-emerald-700"
+                                   "text-emerald-700"
                                 )}
                                 title="Total gastado"
                               >
@@ -6429,14 +6459,12 @@ export default function ProjectDetail() {
                                 type="button"
                                 onClick={() => openAreaExpenseSubcategoryModal(areaRow.area, subcategoryGroup.subcategory, !hasNamedSubcategory)}
                                 className={cn(
-                                  "rounded px-1.5 py-1 text-[8px] font-black uppercase tracking-widest transition-colors",
-                                  hasNamedSubcategory
-                                    ? "border border-white/20 bg-white/10 text-white hover:bg-white/20"
-                                    : "border border-slate-300 bg-white text-slate-600 hover:border-slate-500"
+                                   "rounded border border-slate-300 bg-white p-1 text-slate-600 transition-colors hover:border-indigo-400 hover:text-indigo-700"
                                 )}
-                                title="Editar presupuesto"
+                                 title="Editar subcategoria"
+                                 aria-label="Editar subcategoria"
                               >
-                                Presu
+                                 <Pencil className="h-3.5 w-3.5" />
                               </button>
                             )}
                             {canEditThisSubcategory && (
@@ -6547,8 +6575,8 @@ export default function ProjectDetail() {
                         const subcategoryKey = `${areaRow.area}__${subcategoryGroup.subcategory}`;
                         const isSubcategoryCollapsed = collapsedAreaSubcategories[subcategoryKey];
                         const hasNamedSubcategory = Boolean(subcategoryGroup.subcategory);
-                        const hasSubcategoryBudget = Number(subcategoryGroup.budget) > 0;
-                        const subcategoryLabel = subcategoryGroup.subcategory || DEFAULT_AREA_EXPENSE_SUBCATEGORY;
+                        const hasSubcategoryBudget = subcategoryGroup.hasBudget;
+                        const subcategoryLabel = subcategoryGroup.subcategory || DEFAULT_AREA_EXPENSE_SUBCATEGORY_LABEL;
                         const canEditThisSubcategory = canEditAreaSubcategory(areaRow.area, subcategoryGroup.subcategory);
 
                         return (
@@ -6559,8 +6587,8 @@ export default function ProjectDetail() {
                             <div className={cn(
                               "flex items-center justify-between gap-3 border-b px-6 py-2.5",
                               hasNamedSubcategory
-                                ? "border-slate-800 bg-slate-900 text-white"
-                                : "border-slate-300 bg-slate-200 text-slate-800"
+                                 ? "border-indigo-200 bg-indigo-100 text-slate-900"
+                                 : "border-slate-200 bg-slate-100 text-slate-800"
                             )}>
                               <div className="flex items-center gap-2 min-w-0 flex-1">
                                 <button
@@ -6571,7 +6599,7 @@ export default function ProjectDetail() {
                                   }))}
                                   className={cn(
                                     "p-1 transition-colors",
-                                    hasNamedSubcategory ? "text-slate-300 hover:text-white" : "text-slate-500 hover:text-slate-900"
+                                     "text-slate-500 hover:text-slate-900"
                                   )}
                                   title={isSubcategoryCollapsed ? 'Expandir subcategoria' : 'Colapsar subcategoria'}
                                 >
@@ -6580,13 +6608,13 @@ export default function ProjectDetail() {
                                 <div className="min-w-0">
                                   <div className={cn(
                                     "truncate text-[10px] font-black uppercase tracking-widest",
-                                    hasNamedSubcategory ? "text-white" : "text-slate-800"
+                                     "text-slate-800"
                                   )}>
                                     {subcategoryLabel}
                                   </div>
                                   <div className={cn(
                                     "mt-1 h-1.5 w-40 overflow-hidden rounded-full",
-                                    hasNamedSubcategory ? "bg-white/20" : "bg-white"
+                                     "bg-white/70"
                                   )}>
                                     <div
                                       className={cn("h-full rounded-full", subcategoryGroup.balance < 0 ? "bg-red-500" : subcategoryGroup.usedPercent >= 85 ? "bg-yellow-400" : "bg-emerald-500")}
@@ -6594,27 +6622,27 @@ export default function ProjectDetail() {
                                     />
                                   </div>
                                 </div>
-                                <span className={cn("text-[9px] font-bold", hasNamedSubcategory ? "text-slate-300" : "text-slate-500")}>
+                                 <span className="text-[9px] font-bold text-slate-500">
                                   {subcategoryGroup.expenses.length} gastos
                                 </span>
                               </div>
                               {hasSubcategoryBudget ? (
                                 <div className="grid grid-cols-3 gap-3 text-right">
                                   <div>
-                                    <div className={cn("text-[8px] font-black uppercase tracking-widest", hasNamedSubcategory ? "text-slate-300" : "text-slate-500")}>Presu</div>
-                                    <div className={cn("text-[10px] font-black font-mono", hasNamedSubcategory ? "text-white" : "text-slate-800")}>${subcategoryGroup.budget.toLocaleString()}</div>
+                                     <div className="text-[8px] font-black uppercase tracking-widest text-slate-500">Presu</div>
+                                     <div className="text-[10px] font-black font-mono text-slate-800">${subcategoryGroup.budget.toLocaleString()}</div>
                                   </div>
                                   <div>
-                                    <div className={cn("text-[8px] font-black uppercase tracking-widest", hasNamedSubcategory ? "text-slate-300" : "text-slate-500")}>Real</div>
-                                    <div className={cn("text-[10px] font-black font-mono", hasNamedSubcategory ? "text-emerald-300" : "text-emerald-700")}>${subcategoryGroup.subtotal.toLocaleString()}</div>
+                                     <div className="text-[8px] font-black uppercase tracking-widest text-slate-500">Real</div>
+                                     <div className="text-[10px] font-black font-mono text-emerald-700">${subcategoryGroup.subtotal.toLocaleString()}</div>
                                   </div>
                                   <div>
                                     <div className={cn("text-[8px] font-black uppercase tracking-widest", hasNamedSubcategory ? "text-slate-300" : "text-slate-500")}>Saldo</div>
                                     <div className={cn(
                                       "text-[10px] font-black font-mono",
                                       subcategoryGroup.balance < 0
-                                        ? "text-red-400"
-                                        : hasNamedSubcategory ? "text-white" : "text-slate-800"
+                                         ? "text-red-600"
+                                         : "text-slate-800"
                                     )}>${subcategoryGroup.balance.toLocaleString()}</div>
                                   </div>
                                 </div>
@@ -6622,7 +6650,7 @@ export default function ProjectDetail() {
                                 <div
                                   className={cn(
                                     "shrink-0 text-right font-mono text-[11px] font-black",
-                                    hasNamedSubcategory ? "text-emerald-300" : "text-emerald-700"
+                                     "text-emerald-700"
                                   )}
                                   title="Total gastado"
                                 >
@@ -6634,14 +6662,12 @@ export default function ProjectDetail() {
                                   type="button"
                                   onClick={() => openAreaExpenseSubcategoryModal(areaRow.area, subcategoryGroup.subcategory, !hasNamedSubcategory)}
                                   className={cn(
-                                    "rounded px-2 py-1 text-[9px] font-black uppercase tracking-widest transition-colors",
-                                    hasNamedSubcategory
-                                      ? "border border-white/20 bg-white/10 text-white hover:bg-white/20"
-                                      : "border border-slate-300 bg-white text-slate-600 hover:border-slate-500"
+                                     "rounded border border-slate-300 bg-white p-1 text-slate-600 transition-colors hover:border-indigo-400 hover:text-indigo-700"
                                   )}
-                                  title="Editar presupuesto de subcategoria"
+                                   title="Editar subcategoria"
+                                   aria-label="Editar subcategoria"
                                 >
-                                  Presu
+                                   <Pencil className="h-3.5 w-3.5" />
                                 </button>
                               )}
                               {canEditThisSubcategory && (
@@ -8215,6 +8241,10 @@ export default function ProjectDetail() {
           </div>
         )}
 
+        {activeTab === 'administracion' && isGlobalAdmin && id && (
+          <ProjectAdministration projectId={id} projectName={project.name || 'Proyecto'} clientName={project.clientName} isAdmin={isGlobalAdmin} />
+        )}
+
         {activeTab === 'documentos' && (
           <div className="space-y-4 pb-20">
             <header className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
@@ -8469,7 +8499,7 @@ export default function ProjectDetail() {
                             <div>
                               <div className="mb-1.5 text-[9px] font-bold uppercase tracking-widest text-slate-500">Pestañas</div>
                               <div className="flex flex-wrap gap-1.5">
-                                {tabs.filter(t => t.id !== 'permisos' && t.id !== 'resultado').map(tab => {
+                                {tabs.filter(t => t.id !== 'permisos' && t.id !== 'resultado' && t.id !== 'administracion').map(tab => {
                                   const enabled = safeArray(col.allowedTabs).includes(tab.id);
                                   return (
                                     <button
@@ -8589,7 +8619,7 @@ export default function ProjectDetail() {
         )}
 
 
-        {(activeTab !== 'resumen' && activeTab !== 'presupuesto' && activeTab !== 'equipo' && activeTab !== 'areas' && activeTab !== 'saldos' && activeTab !== 'documentos' && activeTab !== 'resultado' && activeTab !== 'proveedores' && activeTab !== 'permisos') && (
+        {(activeTab !== 'resumen' && activeTab !== 'presupuesto' && activeTab !== 'equipo' && activeTab !== 'areas' && activeTab !== 'saldos' && activeTab !== 'administracion' && activeTab !== 'documentos' && activeTab !== 'resultado' && activeTab !== 'proveedores' && activeTab !== 'permisos') && (
            <div className="py-32 text-center border border-dashed border-slate-200 rounded-2xl bg-white">
               <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest animate-pulse">Integrando módulo {activeTab}...</span>
            </div>
@@ -8915,7 +8945,7 @@ export default function ProjectDetail() {
                 <div>
                   <h2 className="text-xs font-bold uppercase tracking-widest text-slate-900 flex items-center gap-2">
                     <LayoutGrid className="w-4 h-4" />
-                    {subcategoryBudgetDraft.mode === 'edit' ? 'Editar subpresupuesto' : 'Nueva subcategoria'}
+                     {subcategoryBudgetDraft.mode === 'edit' ? 'Editar subcategoria' : 'Nueva subcategoria'}
                   </h2>
                   <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">
                     {subcategoryBudgetDraft.area}
@@ -8938,19 +8968,31 @@ export default function ProjectDetail() {
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Presupuesto asignado</label>
-                  <div className="relative">
-                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold">$</span>
+                  <label className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-slate-700">
                     <input
-                      value={subcategoryBudgetDraft.budget}
-                      onChange={(event) => setSubcategoryBudgetDraft((current) => current ? { ...current, budget: event.target.value } : current)}
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      className="w-full pl-8 pr-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm font-black focus:outline-none focus:border-black"
-                      placeholder="0"
+                      type="checkbox"
+                      checked={subcategoryBudgetDraft.assignBudget}
+                      onChange={(event) => setSubcategoryBudgetDraft((current) => current ? { ...current, assignBudget: event.target.checked } : current)}
+                      className="h-4 w-4 accent-indigo-600"
                     />
-                  </div>
+                    Asignar presupuesto a esta subcategoria
+                  </label>
+                  <p className="mt-1 text-xs text-slate-500">Si no lo asignás, la subcategoria sólo organiza los gastos.</p>
+                  {subcategoryBudgetDraft.assignBudget && (
+                    <div className="relative mt-3">
+                      <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold">$</span>
+                      <input
+                        value={subcategoryBudgetDraft.budget}
+                        onChange={(event) => setSubcategoryBudgetDraft((current) => current ? { ...current, budget: event.target.value } : current)}
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        aria-label="Presupuesto asignado"
+                        className="w-full pl-8 pr-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm font-black focus:outline-none focus:border-black"
+                        placeholder="0"
+                      />
+                    </div>
+                  )}
                 </div>
                 <div>
                   <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Notas</label>
@@ -8989,7 +9031,7 @@ export default function ProjectDetail() {
                       disabled={isSavingSubcategoryBudget}
                       className="px-5 py-3 bg-black text-white rounded text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 disabled:bg-slate-300"
                     >
-                      {isSavingSubcategoryBudget ? 'Guardando...' : 'Guardar subpresupuesto'}
+                      {isSavingSubcategoryBudget ? 'Guardando...' : 'Guardar subcategoria'}
                     </button>
                   </div>
                 </div>

@@ -6,6 +6,7 @@ export const PROJECT_TAB_IDS = [
   'areas',
   'cajas',
   'saldos',
+  'administracion',
   'documentos',
   'resultado',
   'proveedores',

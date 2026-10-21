@@ -29,6 +29,7 @@ La privacidad comercial tiene pruebas de autorización específicas (requiere Ja
 
 ```bash
 firebase emulators:exec --only firestore --project demo-gb-goat-commercial "node tests/projectCommercialRules.emulator.mjs"
+npm run test:admin-rules
 ```
 
 ## Publicación
@@ -58,3 +59,19 @@ Las cuentas administrativas de CT cuentan con una comparación por proyecto y
 aplicación revisada de costos. Alcance, controles, límites y publicación acotada:
 [`docs/control-total-sync.md`](docs/control-total-sync.md). Esta conexión no registra
 pagos ni movimientos de caja automáticamente.
+
+## Administración de proyectos
+
+La pestaña **Administración** de cada proyecto es exclusiva de administradores
+globales. Registra acuerdo aprobado, OC, requisitos de facturación, plazo con su
+fuente, facturas emitidas y cobros aplicados (incluidas las retenciones). Los
+documentos se enlazan por su referencia original; los archivos siguen en su
+repositorio privado. El importe aprobado debe expresarse en la misma moneda y
+base impositiva que el total de las facturas para calcular lo que resta facturar.
+
+El dashboard administrativo señala proyectos por facturar, facturas sin envío o
+carga, plazos sin confirmar y cobros vencidos. Sólo calcula un vencimiento cuando
+se conoce la condición pactada y su fecha de inicio. Los cobros de esta pestaña
+son seguimiento por proyecto: **Control Total sigue siendo el registro de los
+movimientos reales** y se concilia por separado. No se importan ni se alteran
+facturas o pagos históricos automáticamente al abrir esta pestaña.
