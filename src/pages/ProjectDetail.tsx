@@ -84,6 +84,7 @@ import {
 import { calculateProjectResult, getPaymentTotal } from '../lib/projectFinance';
 import { getSubcategoryBudgetCapacity } from '../lib/subcategoryBudget';
 import { moveAreaSubcategory, reorderDisplayedCategories } from '../lib/areaStructureOrder';
+import { readAreaSelectionPreference, resolveAreaSelection, writeAreaSelectionPreference } from '../lib/areaSelectionPreference';
 import { getReimbursementBalanceCents, getReimbursedCents, isThirdPartyPayment } from '../lib/reimbursements';
 import { getFileExtension, sanitizeFileName, validateSpreadsheetImport } from '../lib/files';
 import { PROJECT_STATUSES } from '../lib/projects';
@@ -111,6 +112,14 @@ const tabs = [
 ];
 
 const DEFAULT_CASH_RETURN_RECIPIENT = 'tomas@granberta.com';
+
+const areaSelectionStorage = (): Storage | null => {
+  try {
+    return typeof window === 'undefined' ? null : window.localStorage;
+  } catch {
+    return null;
+  }
+};
 
 const RESULT_INCIDENCES = [
   { id: 'imprevistos', label: 'Imprevistos' },
@@ -889,13 +898,8 @@ export default function ProjectDetail() {
 
           if (data.activeAreas) {
             setActiveAreas(data.activeAreas);
-            setSelectedAreaTabs((current) => {
-              const stillVisible = current.filter((area) => data.activeAreas.includes(area));
-              return stillVisible.length > 0 ? stillVisible : data.activeAreas;
-            });
           } else {
             setActiveAreas([]);
-            setSelectedAreaTabs([]);
           }
 
           // Loading is read-only. Resolve legacy defaults identically to edits;
@@ -1563,6 +1567,12 @@ export default function ProjectDetail() {
 
       setActiveAreas(newActiveAreas);
       setSelectedAreaTabs((current) => Array.from(new Set([...current, areaName])));
+      if (id && user?.uid) {
+        const preference = readAreaSelectionPreference(areaSelectionStorage(), user.uid, id);
+        if (preference !== null) {
+          writeAreaSelectionPreference(areaSelectionStorage(), user.uid, id, [...preference, areaName]);
+        }
+      }
       if (migratedExpenses.length > 0) {
         setAreaExpenses((current) => [...current, ...migratedExpenses.map((expense) => ({
           ...expense,
@@ -3496,12 +3506,16 @@ export default function ProjectDetail() {
   }, [areaExpenses, project?.areaExpenseSubcategories, project?.areaExpenseSubcategoryBudgets, visibleCategoryKey]);
 
   useEffect(() => {
-    setSelectedAreaTabs((current) => {
-      const stillVisible = current.filter((area) => visibleCategories.includes(area));
-      if (stillVisible.length > 0 || visibleCategories.length === 0) return stillVisible;
-      return visibleCategories;
-    });
-  }, [visibleCategoryKey]);
+    if (activeTab !== 'areas' || loadedProjectScope !== loadScope || !id || !user?.uid) return;
+    const preference = readAreaSelectionPreference(areaSelectionStorage(), user.uid, id);
+    setSelectedAreaTabs(resolveAreaSelection(visibleCategories, preference));
+  }, [activeTab, visibleCategoryKey, loadedProjectScope, loadScope, id, user?.uid]);
+
+  const saveSelectedAreaTabs = (areas: string[]) => {
+    const selection = visibleCategories.filter((area) => areas.includes(area));
+    setSelectedAreaTabs(selection);
+    if (id && user?.uid) writeAreaSelectionPreference(areaSelectionStorage(), user.uid, id, selection);
+  };
 
   const areaDashboardRows = React.useMemo(() => (
     visibleCategories.map((area) => {
@@ -6618,14 +6632,14 @@ export default function ProjectDetail() {
                 <>
                   <button
                     type="button"
-                    onClick={() => setSelectedAreaTabs(visibleCategories)}
+                    onClick={() => saveSelectedAreaTabs(visibleCategories)}
                     className="shrink-0 px-3 py-2 text-[9px] uppercase font-black tracking-widest rounded-md bg-white border border-slate-200 text-slate-500 hover:border-black hover:text-black transition-colors"
                   >
                     Todas
                   </button>
                   <button
                     type="button"
-                    onClick={() => setSelectedAreaTabs([])}
+                    onClick={() => saveSelectedAreaTabs([])}
                     className="shrink-0 px-3 py-2 text-[9px] uppercase font-black tracking-widest rounded-md bg-white border border-slate-200 text-slate-500 hover:border-black hover:text-black transition-colors"
                   >
                     Limpiar
@@ -6636,11 +6650,11 @@ export default function ProjectDetail() {
               {visibleCategories.map((area) => (
                 <button
                   key={area}
-                  onClick={() => setSelectedAreaTabs((current) => (
-                    current.includes(area)
-                      ? current.filter((item) => item !== area)
-                      : [...current, area]
-                  ))}
+                  onClick={() => saveSelectedAreaTabs(
+                    selectedVisibleAreas.includes(area)
+                      ? selectedVisibleAreas.filter((item) => item !== area)
+                      : [...selectedVisibleAreas, area]
+                  )}
                   className={cn(
                     "px-4 py-2 text-[10px] uppercase font-bold tracking-widest rounded-md transition-all whitespace-nowrap",
                     selectedVisibleAreas.includes(area)
