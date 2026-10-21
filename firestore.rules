@@ -73,7 +73,9 @@ service cloud.firestore {
     }
 
     function isProjectOwner(projectId) {
-      return isSignedIn() && projectDoc(projectId).createdBy == request.auth.uid;
+      // Imported projects may have no creator; ownership must then be false,
+      // so assigned collaborators can still be evaluated through their ACL.
+      return isSignedIn() && projectDoc(projectId).get('createdBy', '') == request.auth.uid;
     }
 
     function isProjectCollaborator(projectId) {
