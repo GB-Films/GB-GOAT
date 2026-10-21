@@ -32,6 +32,16 @@ firebase emulators:exec --only firestore --project demo-gb-goat-commercial "node
 npm run test:admin-rules
 ```
 
+Para verificar la edición de Áreas en proyectos importados sin usuario creador
+(requiere Java 21 y Firebase Emulator Suite):
+
+```bash
+npm run test:area-access
+```
+
+Esta prueba cubre la creación y edición por colaboradores asignados, los proyectos
+con creador y los rechazos fuera del área, sobre pagos o por escalada de permisos.
+
 ## Publicación
 
 Un push a `main` ejecuta las validaciones y publica la interfaz en GitHub Pages. Las reglas de Firebase se publican por separado:
