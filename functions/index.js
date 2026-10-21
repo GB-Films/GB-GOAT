@@ -19,7 +19,9 @@ exports.updateProjectControlTotal = onCall({
 }, createControlTotalHandler({ db }));
 exports.importCrmProject = onRequest({
   region: 'us-central1',
-  invoker: 'private',
+  // Keep the caller declarative: 'private' clears manually added invokers on
+  // the next Firebase deployment, silently breaking the CRM delivery queue.
+  invoker: ['crm-goat-caller@gb-goat.iam.gserviceaccount.com'],
   serviceAccount: 'crm-project-import@gb-goat.iam.gserviceaccount.com',
   maxInstances: 2,
   minInstances: 0,

@@ -9,6 +9,7 @@ El mensaje versión 1 usa el mismo mapeo que Control Total: código completo, no
 `importCrmProject` es una función HTTP privada en `gb-goat`, base Standard `(default)`, región `us-central1`. GitHub Actions obtiene un ID token efímero por Workload Identity Federation. El provider limita el acceso al ID numérico `1324272374`, propietario `280508939`, rama main y workflow `Klausstin/gran-crm/.github/workflows/code-generator.yml@refs/heads/main`. No se exportan llaves permanentes ni archivos de credenciales.
 
 - Cuenta llamadora: `crm-goat-caller@gb-goat.iam.gserviceaccount.com`, sólo invoca este servicio.
+- El invocador se declara explícitamente en `functions/index.js`. No usar `invoker: 'private'` más un permiso manual posterior: el CLI reemplaza el binding `roles/run.invoker` al volver a desplegar y quitaría ese permiso. La prueba `crmProjectDeployment.test.js` inspecciona el manifiesto real del SDK en cada CI para evitar esa regresión. El servicio sigue sin acceso público.
 - Cuenta del receptor: `crm-project-import@gb-goat.iam.gserviceaccount.com`, rol de lectura y creación en `(default)`, sin permisos de actualización, eliminación o Firebase Auth.
 - Los recibos `crmProjectImports/{id}` no están accesibles desde el cliente; el Admin SDK usa IAM.
 
