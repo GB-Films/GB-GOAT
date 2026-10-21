@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { flushSync } from 'react-dom';
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { doc, getDoc, getDocFromServer, collection, query, getDocs, getDocsFromServer, onSnapshot, addDoc, serverTimestamp, deleteDoc, updateDoc, setDoc, writeBatch, runTransaction, Timestamp, type Transaction } from 'firebase/firestore';
 import { deleteObject, getDownloadURL, ref, uploadBytes } from 'firebase/storage';
@@ -82,7 +83,7 @@ import {
 } from '../lib/projectAccess';
 import { calculateProjectResult, getPaymentTotal } from '../lib/projectFinance';
 import { getSubcategoryBudgetCapacity } from '../lib/subcategoryBudget';
-import { moveNamedSubcategory, reorderDisplayedCategories } from '../lib/areaStructureOrder';
+import { moveAreaSubcategory, reorderDisplayedCategories } from '../lib/areaStructureOrder';
 import { getReimbursementBalanceCents, getReimbursedCents, isThirdPartyPayment } from '../lib/reimbursements';
 import { getFileExtension, sanitizeFileName, validateSpreadsheetImport } from '../lib/files';
 import { PROJECT_STATUSES } from '../lib/projects';
@@ -746,6 +747,7 @@ export default function ProjectDetail() {
   const [activeAreas, setActiveAreas] = useState<string[]>([]);
   const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>({});
   const [collapsedAreaSubcategories, setCollapsedAreaSubcategories] = useState<Record<string, boolean>>({});
+  const [structureDragKind, setStructureDragKind] = useState<'area-category' | 'area-subcategory' | null>(null);
   const [isSavingAreaStructure, setIsSavingAreaStructure] = useState(false);
   const [isCompactAreas, setIsCompactAreas] = useState(() => (
     typeof window !== 'undefined' && Boolean(window.matchMedia?.('(max-width: 767px)').matches)
@@ -3574,6 +3576,19 @@ export default function ProjectDetail() {
           : []),
         ...namedSubcategoryGroups,
       ];
+      const storedOrder = Array.isArray(project?.areaExpenseSubcategories?.[area])
+        ? project.areaExpenseSubcategories[area].map(normalizeAreaExpenseSubcategory)
+        : [];
+      const orderedNames = storedOrder.includes(DEFAULT_AREA_EXPENSE_SUBCATEGORY)
+        ? storedOrder
+        : [DEFAULT_AREA_EXPENSE_SUBCATEGORY, ...storedOrder];
+      subcategoryGroups.sort((left, right) => {
+        const leftName = normalizeAreaExpenseSubcategory(left.subcategory);
+        const rightName = normalizeAreaExpenseSubcategory(right.subcategory);
+        const leftIndex = orderedNames.indexOf(leftName);
+        const rightIndex = orderedNames.indexOf(rightName);
+        return (leftIndex < 0 ? orderedNames.length : leftIndex) - (rightIndex < 0 ? orderedNames.length : rightIndex);
+      });
 
       const delegatedAssigned = hasFullAreaAccess ? visibleAssigned : visibleSubcategoryBudget;
       const delegatedBalance = delegatedAssigned - spent;
@@ -3592,7 +3607,7 @@ export default function ProjectDetail() {
         hasSubcategories: knownSubcategories.length > 0,
       };
     })
-  ), [areaExpenseSearch, areaExpenseSort, areaExpenseSubcategoriesByArea, areaExpenses, budgetItems, isProjectAdmin, project?.areaExpenseSubcategoryBudgets, userAllowedSubcategories, userPermissions, visibleCategoryKey]);
+  ), [areaExpenseSearch, areaExpenseSort, areaExpenseSubcategoriesByArea, areaExpenses, budgetItems, isProjectAdmin, project?.areaExpenseSubcategories, project?.areaExpenseSubcategoryBudgets, userAllowedSubcategories, userPermissions, visibleCategoryKey]);
 
   const selectedAreaDashboardRows = areaDashboardRows.filter((row) => selectedVisibleAreas.includes(row.area));
   const areaDashboardTotals = selectedAreaDashboardRows.reduce((acc, row) => ({
@@ -3656,26 +3671,30 @@ export default function ProjectDetail() {
     const targetArea = decodeURIComponent(destination.droppableId.slice(prefix.length));
     if (!activeAreas.includes(sourceArea) || !activeAreas.includes(targetArea)) return;
     if (areaExpenseSearch.trim()) return;
-    const sourceHasDefault = selectedAreaDashboardRows.find((row) => row.area === sourceArea)?.subcategoryGroups[0]?.subcategory === '';
-    const targetHasDefault = selectedAreaDashboardRows.find((row) => row.area === targetArea)?.subcategoryGroups[0]?.subcategory === '';
-    const move = moveNamedSubcategory(
-      areaExpenseSubcategoriesByArea[sourceArea] || [],
-      areaExpenseSubcategoriesByArea[targetArea] || [],
+    const sourceGroups = selectedAreaDashboardRows.find((row) => row.area === sourceArea)?.subcategoryGroups || [];
+    const targetGroups = selectedAreaDashboardRows.find((row) => row.area === targetArea)?.subcategoryGroups || [];
+    const sourceName = sourceGroups[source.index]?.subcategory;
+    if (sourceName === undefined) return;
+    if (sourceArea !== targetArea && targetGroups.some((group) => group.subcategory.toLowerCase() === sourceName.toLowerCase())) {
+      alert(`La subcategoria «${sourceName || DEFAULT_AREA_EXPENSE_SUBCATEGORY_LABEL}» ya existe en ${targetArea}.`);
+      return;
+    }
+    const move = moveAreaSubcategory(
+      sourceGroups.map((group) => group.subcategory),
+      targetGroups.map((group) => group.subcategory),
       source.index,
       destination.index,
-      sourceHasDefault,
-      targetHasDefault,
       sourceArea === targetArea,
     );
     if (!move) return;
     const { subcategory, source: sourceList, target: targetList } = move;
-    if (sourceArea !== targetArea && targetList.some((item) => item.toLowerCase() === subcategory.toLowerCase())) {
-      alert(`La subcategoria «${subcategory}» ya existe en ${targetArea}.`);
-      return;
-    }
     const oldKey = areaSubcategoryKey(sourceArea, subcategory);
     const newKey = areaSubcategoryKey(targetArea, subcategory);
     const currentMap = project?.areaExpenseSubcategoryBudgets || {};
+    if (sourceArea !== targetArea && currentMap[newKey] !== undefined) {
+      alert(`La subcategoria «${subcategory || DEFAULT_AREA_EXPENSE_SUBCATEGORY_LABEL}» ya tiene una asignación en ${targetArea}.`);
+      return;
+    }
     const budgetEntry = currentMap[oldKey];
     const assignedBudget = typeof budgetEntry === 'number'
       ? budgetEntry
@@ -3701,7 +3720,7 @@ export default function ProjectDetail() {
     if (sourceArea !== targetArea) {
       const sourceAreaDelegates = collaborators.filter((person) => safeArray(person.allowedCategories).includes(sourceArea));
       const targetAreaDelegates = collaborators.filter((person) => safeArray(person.allowedCategories).includes(targetArea));
-      const warning = `Mover «${subcategory}» de ${sourceArea} a ${targetArea} cambiará el área de ${movedExpenses.length} gastos.\n\n`
+      const warning = `Mover «${subcategory || DEFAULT_AREA_EXPENSE_SUBCATEGORY_LABEL}» de ${sourceArea} a ${targetArea} cambiará el área de ${movedExpenses.length} gastos.\n\n`
         + `${collaboratorsToUpdate.length} permisos específicos seguirán a la subcategoria. `
         + `${sourceAreaDelegates.length} colaboradores con acceso al área de origen pueden dejar de verla; `
         + `${targetAreaDelegates.length} colaboradores con acceso al área de destino podrán verla.\n\n`
@@ -3736,8 +3755,8 @@ export default function ProjectDetail() {
       }
       const nextLists = {
         ...currentLists,
-        [sourceArea]: sourceList,
-        [targetArea]: targetList,
+        [sourceArea]: sourceList.map(normalizeAreaExpenseSubcategory),
+        [targetArea]: targetList.map(normalizeAreaExpenseSubcategory),
       };
       const nextBudgets = { ...currentBudgets };
       if (sourceArea !== targetArea && budgetEntry !== undefined) {
@@ -3833,6 +3852,7 @@ export default function ProjectDetail() {
   };
 
   const onAreaDragEnd = (result: any) => {
+    setStructureDragKind(null);
     if (result?.type === 'area-category' || result?.type === 'area-subcategory') {
       void onAreaStructureDragEnd(result);
       return;
@@ -6674,7 +6694,15 @@ export default function ProjectDetail() {
                 />
 
                 <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-                <DragDropContext onDragEnd={onAreaDragEnd}>
+                <DragDropContext
+                  onBeforeCapture={({ draggableId }) => {
+                    const kind = draggableId.startsWith('area-category|')
+                      ? 'area-category'
+                      : draggableId.startsWith('area-subcategory|') ? 'area-subcategory' : null;
+                    if (kind) flushSync(() => setStructureDragKind(kind));
+                  }}
+                  onDragEnd={onAreaDragEnd}
+                >
                 <Droppable droppableId="area-category-list" type="area-category" isDropDisabled={!isProjectAdmin || Boolean(areaExpenseSearch.trim())}>
                 {(categoryListProvided) => (
                 <div ref={categoryListProvided.innerRef} {...categoryListProvided.droppableProps}>
@@ -6722,7 +6750,7 @@ export default function ProjectDetail() {
                          className="p-1 text-slate-300 hover:text-white transition-colors"
                          title={collapsedCategories[areaRow.area] ? 'Expandir área' : 'Colapsar área'}
                        >
-                         {collapsedCategories[areaRow.area] ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                          {collapsedCategories[areaRow.area] || structureDragKind === 'area-category' ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                        </button>
                       <h3 className="min-w-0 text-[10px] sm:text-[12px] font-black uppercase tracking-widest sm:tracking-[0.18em] text-white flex items-center gap-1.5 sm:gap-2">
                         <LayoutGrid className="w-3 h-3 shrink-0" />
@@ -6785,7 +6813,7 @@ export default function ProjectDetail() {
                   </div>
                     )}
                   </Droppable>
-                  {!collapsedCategories[areaRow.area] && (
+                  {!collapsedCategories[areaRow.area] && structureDragKind !== 'area-category' && (
                   <>
                   {isCompactAreas && (
                   <Droppable
@@ -6812,7 +6840,7 @@ export default function ProjectDetail() {
                           key={`mobile-${subcategoryKey}`}
                           draggableId={`area-subcategory|${encodeURIComponent(areaRow.area)}|${hasNamedSubcategory ? `named|${encodeURIComponent(subcategoryGroup.subcategory)}` : 'general'}`}
                           index={subcategoryIndex}
-                          isDragDisabled={!isProjectAdmin || !hasNamedSubcategory || isSavingAreaStructure || Boolean(areaExpenseSearch.trim())}
+                          isDragDisabled={!isProjectAdmin || isSavingAreaStructure || Boolean(areaExpenseSearch.trim())}
                         >
                         {(subcategoryProvided: any, subcategorySnapshot: any) => (
                         <div
@@ -6822,11 +6850,9 @@ export default function ProjectDetail() {
                         >
                           <div className={cn(
                             "flex items-center gap-1 border-y px-3 py-2",
-                            hasNamedSubcategory
-                               ? "border-slate-300 bg-slate-200 text-slate-900"
-                               : "border-slate-200 bg-slate-100 text-slate-800"
+                            "border-slate-300 bg-slate-200 text-slate-900 transition-colors duration-200"
                           )}>
-                            {isProjectAdmin && hasNamedSubcategory && (
+                            {isProjectAdmin && (
                               <div
                                 {...subcategoryProvided.dragHandleProps}
                                 className={cn('cursor-grab rounded p-1 text-slate-600 hover:bg-slate-300', Boolean(areaExpenseSearch.trim()) && 'cursor-not-allowed opacity-40')}
@@ -6910,7 +6936,7 @@ export default function ProjectDetail() {
                             )}
                           </div>
 
-                          {!isSubcategoryCollapsed && (
+                          {!isSubcategoryCollapsed && structureDragKind !== 'area-subcategory' && (
                             <div className="space-y-2 bg-slate-100/80 p-2">
                               {subcategoryGroup.expenses.map((item) => (
                                 <div key={`mobile-${item.id}`} className="rounded-lg border border-slate-300 bg-white p-2 shadow-sm">
@@ -7032,7 +7058,7 @@ export default function ProjectDetail() {
                             key={subcategoryKey}
                             draggableId={`area-subcategory|${encodeURIComponent(areaRow.area)}|${hasNamedSubcategory ? `named|${encodeURIComponent(subcategoryGroup.subcategory)}` : 'general'}`}
                             index={subcategoryIndex}
-                            isDragDisabled={!isProjectAdmin || !hasNamedSubcategory || isSavingAreaStructure || Boolean(areaExpenseSearch.trim())}
+                            isDragDisabled={!isProjectAdmin || isSavingAreaStructure || Boolean(areaExpenseSearch.trim())}
                           >
                           {(subcategoryProvided: any, subcategorySnapshot: any) => (
                           <div
@@ -7042,12 +7068,10 @@ export default function ProjectDetail() {
                           >
                             <div className={cn(
                               "flex items-center justify-between gap-3 border-b px-6 py-2.5",
-                              hasNamedSubcategory
-                                 ? "border-slate-300 bg-slate-200 text-slate-900"
-                                 : "border-slate-200 bg-slate-100 text-slate-800"
+                              "border-slate-300 bg-slate-200 text-slate-900 transition-colors duration-200"
                             )}>
                               <div className="flex items-center gap-2 min-w-0 flex-1">
-                                {isProjectAdmin && hasNamedSubcategory && (
+                                {isProjectAdmin && (
                                   <div
                                     {...subcategoryProvided.dragHandleProps}
                                     className={cn('cursor-grab rounded p-1 text-slate-600 hover:bg-slate-300', Boolean(areaExpenseSearch.trim()) && 'cursor-not-allowed opacity-40')}
@@ -7069,7 +7093,7 @@ export default function ProjectDetail() {
                                   )}
                                   title={isSubcategoryCollapsed ? 'Expandir subcategoria' : 'Colapsar subcategoria'}
                                 >
-                                  {isSubcategoryCollapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                                  {isSubcategoryCollapsed || structureDragKind === 'area-subcategory' ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                                 </button>
                                 <div className="min-w-0">
                                   <div className={cn(
@@ -7147,7 +7171,7 @@ export default function ProjectDetail() {
                                 </button>
                               )}
                             </div>
-                            {!isSubcategoryCollapsed && (
+                            {!isSubcategoryCollapsed && structureDragKind !== 'area-subcategory' && (
                               <Droppable
                                 droppableId={areaExpenseGroupDroppableId(areaRow.area, subcategoryGroup.subcategory)}
                                 type="area-expense"

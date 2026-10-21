@@ -14,23 +14,20 @@ export function reorderDisplayedCategories(
   return categories.map((category) => displayedSet.has(category) ? reordered[nextIndex++] : category);
 }
 
-export function moveNamedSubcategory(
+export function moveAreaSubcategory(
   sourceNames: string[],
   targetNames: string[],
   sourceIndex: number,
   destinationIndex: number,
-  sourceHasDefault: boolean,
-  targetHasDefault: boolean,
   sameCategory: boolean,
 ) {
   const source = [...sourceNames];
   const target = sameCategory ? source : [...targetNames];
-  const namedSourceIndex = sourceIndex - Number(sourceHasDefault);
-  const namedDestinationIndex = destinationIndex - Number(targetHasDefault);
-  if (namedSourceIndex < 0 || namedSourceIndex >= source.length
-    || namedDestinationIndex < 0 || namedDestinationIndex > target.length) return null;
-  const [subcategory] = source.splice(namedSourceIndex, 1);
-  if (!subcategory) return null;
-  target.splice(namedDestinationIndex, 0, subcategory);
+  if (sourceIndex < 0 || sourceIndex >= source.length
+    || destinationIndex < 0 || destinationIndex > target.length) return null;
+  const [subcategory] = source.splice(sourceIndex, 1);
+  if (subcategory === undefined) return null;
+  if (!sameCategory && target.some((item) => item.toLowerCase() === subcategory.toLowerCase())) return null;
+  target.splice(destinationIndex, 0, subcategory);
   return { subcategory, source, target };
 }
