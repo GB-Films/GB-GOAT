@@ -13,6 +13,7 @@
     "test": "tsx --test src/**/*.test.ts",
     "test:rules": "firebase emulators:exec --only firestore --project demo-gb-goat-financial-rules \"node tests/financialRules.emulator.mjs\"",
     "test:admin-rules": "firebase emulators:exec --only firestore --project demo-gb-goat-administration \"node tests/projectAdministrationRules.emulator.mjs\"",
+    "test:admin-docs": "firebase emulators:exec --only firestore,storage --project demo-gb-goat-admin-documents \"node tests/administrativeDocumentsRules.emulator.mjs\"",
     "test:storage": "firebase emulators:exec --only firestore,storage --project demo-gb-goat-storage-receipts \"node tests/storagePaymentReceipts.emulator.mjs\""
   },
   "dependencies": {

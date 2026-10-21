@@ -14,6 +14,7 @@ export interface CustomerInvoice {
   currency: Currency;
   dueDate: string;
   documentRef: string;
+  documentPath?: string;
   ctRef: string;
 }
 
@@ -35,11 +36,13 @@ export interface ProjectAdministrationRecord {
   issuerEntity: string;
   agreementStatus: DocumentStatus;
   agreementRef: string;
+  agreementFilePath?: string;
   agreedAmount: number | null;
   agreedCurrency: '' | Currency;
   orderStatus: DocumentStatus;
   orderNumber: string;
   orderRef: string;
+  orderFilePath?: string;
   billingStatus: BillingStatus;
   billingRequirement: string;
   billingChannel: BillingChannel;
@@ -63,11 +66,13 @@ export const emptyProjectAdministration = (projectId: string): ProjectAdministra
   issuerEntity: '',
   agreementStatus: 'pending',
   agreementRef: '',
+  agreementFilePath: '',
   agreedAmount: null,
   agreedCurrency: '',
   orderStatus: 'pending',
   orderNumber: '',
   orderRef: '',
+  orderFilePath: '',
   billingStatus: 'pending',
   billingRequirement: '',
   billingChannel: '',
@@ -163,7 +168,7 @@ export const administrationActionLabel: Record<AdministrationAction, string> = {
 export function validateAdministration(record: ProjectAdministrationRecord): string | null {
   if ((record.billingStatus === 'ready' || record.invoices.length > 0) && !record.clientLegalName.trim()) return 'Indicá la razón social del cliente antes de facturar.';
   if ((record.billingStatus === 'ready' || record.invoices.length > 0) && !record.issuerEntity.trim()) return 'Indicá qué empresa emite la factura.';
-  if (record.agreementStatus === 'confirmed' && !record.agreementRef.trim()) return 'Agregá la referencia del acuerdo aprobado.';
+  if (record.agreementStatus === 'confirmed' && !record.agreementRef.trim() && !record.agreementFilePath?.trim()) return 'Agregá la referencia o el archivo del acuerdo aprobado.';
   if (record.agreedAmount !== null && (!Number.isFinite(record.agreedAmount) || record.agreedAmount <= 0 || !record.agreedCurrency)) return 'Indicá un importe aprobado positivo y su moneda.';
   if (record.agreedCurrency && record.agreedAmount === null) return 'Indicá el importe aprobado.';
   if (record.orderStatus === 'confirmed' && !record.orderNumber.trim()) return 'Agregá el número de OC.';
@@ -171,7 +176,7 @@ export function validateAdministration(record: ProjectAdministrationRecord): str
   if (record.paymentTermDays !== null && (!record.paymentTermBasis || !record.paymentTermSource.trim())) return 'Indicá desde cuándo corre el plazo y su fuente.';
   for (const invoice of record.invoices) {
     if (!invoice.number.trim() || !validDate(invoice.issueDate) || !(invoice.amount > 0)) return 'Cada factura necesita número, fecha de emisión e importe positivo.';
-    if (!invoice.documentRef.trim() && !invoice.ctRef.trim()) return `Agregá el comprobante o la referencia de CT de ${invoice.number}.`;
+    if (!invoice.documentRef.trim() && !invoice.documentPath?.trim() && !invoice.ctRef.trim()) return `Agregá el comprobante o la referencia de CT de ${invoice.number}.`;
     if (invoice.dueDate && !validDate(invoice.dueDate)) return `La fecha de vencimiento de ${invoice.number} no es válida.`;
     if (invoice.sentDate && !validDate(invoice.sentDate)) return `La fecha de envío de ${invoice.number} no es válida.`;
     if (invoice.portalDate && !validDate(invoice.portalDate)) return `La fecha de portal de ${invoice.number} no es válida.`;

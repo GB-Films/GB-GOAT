@@ -1,7 +1,11 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { doc, getDoc, runTransaction, serverTimestamp } from 'firebase/firestore';
-import { db } from '../../lib/firebase';
+import { getDownloadURL, ref } from 'firebase/storage';
+import { db, storage } from '../../lib/firebase';
 import { useAuth } from '../../context/AuthContext';
+import { useAdministrativeDocuments } from '../../hooks/useAdministrativeDocuments';
+import { AdministrativeDocumentList, AdministrativeDocumentUpload } from '../../components/AdministrativeDocumentControls';
 import {
   administrationAction, administrationActionLabel, emptyProjectAdministration, invoiceBalance, localDateKey,
   normalizeProjectAdministration, resolvedInvoiceDueDate, unbilledAmount, validateAdministration,
@@ -11,6 +15,14 @@ import {
 const today = () => localDateKey();
 const money = (amount: number, currency: string) => new Intl.NumberFormat('es-AR', { style: 'currency', currency }).format(amount || 0);
 const documentLink = (reference: string) => /^https:\/\//i.test(reference) ? <a href={reference} target="_blank" rel="noopener noreferrer" className="font-semibold text-blue-700 underline">Abrir respaldo</a> : reference || 'Sin respaldo';
+const fileLink = (path?: string) => path ? <button type="button" className="font-semibold text-blue-700 underline" onClick={async () => {
+  const tab = window.open('', '_blank');
+  try {
+    const url = await getDownloadURL(ref(storage, path));
+    if (tab) tab.location.href = url;
+    else window.location.href = url;
+  } catch { tab?.close(); alert('No se pudo abrir el archivo.'); }
+}}>Abrir archivo</button> : null;
 const inputClass = 'w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-blue-400 focus:outline-none';
 const labelClass = 'block space-y-1 text-xs font-semibold text-slate-600';
 
@@ -26,6 +38,7 @@ export function ProjectAdministration({ projectId, projectName, clientName, isAd
   const [message, setMessage] = useState('');
   const [invoiceDraft, setInvoiceDraft] = useState<CustomerInvoice | null>(null);
   const [collectionDraft, setCollectionDraft] = useState<CustomerCollection | null>(null);
+  const projectDocuments = useAdministrativeDocuments('project', projectId);
 
   useEffect(() => {
     if (!isAdmin || !projectId) return;
@@ -76,7 +89,7 @@ export function ProjectAdministration({ projectId, projectName, clientName, isAd
     } finally { setSaving(false); }
   };
 
-  const addInvoice = () => setInvoiceDraft({ id: crypto.randomUUID(), number: '', issueDate: today(), sentDate: '', portalDate: '', amount: 0, currency: 'ARS', dueDate: '', documentRef: '', ctRef: '' });
+  const addInvoice = () => setInvoiceDraft({ id: crypto.randomUUID(), number: '', issueDate: today(), sentDate: '', portalDate: '', amount: 0, currency: 'ARS', dueDate: '', documentRef: '', documentPath: '', ctRef: '' });
   const addCollection = (invoiceId: string) => setCollectionDraft({ id: crypto.randomUUID(), invoiceId, date: today(), appliedAmount: 0, netReceived: 0, withholding: 0, reference: '', documentRef: '' });
   const upsertInvoice = () => {
     if (!invoiceDraft) return;
@@ -116,6 +129,7 @@ export function ProjectAdministration({ projectId, projectName, clientName, isAd
           <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Cliente · Contrato · OC · Facturación · Cobros</p>
           <h2 className="mt-1 text-xl font-bold text-slate-900">Administración de {projectName}</h2>
           <p className="mt-1 text-xs text-slate-500">Registrá aquí las condiciones y enlazá los originales. Los pagos reales se concilian en Control Total.</p>
+          <Link to="/clientes" className="mt-2 inline-block text-xs font-semibold text-blue-700 hover:underline">Ver fichas generales de Clientes</Link>
         </div>
         <span className="rounded-full border border-blue-100 bg-blue-50 px-3 py-1.5 text-xs font-bold text-blue-700">{administrationActionLabel[action]}</span>
       </div>
@@ -138,7 +152,11 @@ export function ProjectAdministration({ projectId, projectName, clientName, isAd
         </div>
         <p className="text-xs text-slate-500">El total aprobado y las facturas se comparan con la misma base impositiva y moneda. Si la OC expresa neto + IVA, cargá aquí el total facturable.</p>
         <label className={labelClass}>Referencia o vínculo de la OC<input className={inputClass} value={record.orderRef} onChange={event => change('orderRef', event.target.value)} placeholder="Archivo, correo o URL" /></label>
-        <p className="text-xs text-slate-500">Acuerdo: {documentLink(record.agreementRef)} · OC: {documentLink(record.orderRef)}</p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1"><p className="text-xs font-semibold text-slate-600">Contrato / propuesta aprobada</p><AdministrativeDocumentUpload kind="agreement" title={`${projectName} · Contrato / acuerdo`} upload={projectDocuments.upload} uploading={projectDocuments.uploading} onUploaded={document => change('agreementFilePath', document.path)} />{fileLink(record.agreementFilePath)}</div>
+          <div className="space-y-1"><p className="text-xs font-semibold text-slate-600">Orden de compra</p><AdministrativeDocumentUpload kind="purchase_order" title={`${projectName} · OC ${record.orderNumber || ''}`} upload={projectDocuments.upload} uploading={projectDocuments.uploading} onUploaded={document => change('orderFilePath', document.path)} />{fileLink(record.orderFilePath)}</div>
+        </div>
+        <p className="text-xs text-slate-500">Acuerdo: {documentLink(record.agreementRef)} · OC: {documentLink(record.orderRef)}. Guardá administración para vincular los archivos cargados.</p>
       </div>
 
       <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
@@ -158,10 +176,12 @@ export function ProjectAdministration({ projectId, projectName, clientName, isAd
 
     <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 p-4 sm:px-5"><div><h3 className="text-sm font-bold text-slate-900">3 · Facturas emitidas al cliente</h3><p className="text-xs text-slate-500">Emisión, envío o carga en portal, vencimiento y saldo. No incluye facturas de proveedores.</p></div><button type="button" onClick={addInvoice} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white">Agregar factura</button></div>
-      <div className="divide-y divide-slate-100">{record.invoices.map(invoice => <div key={invoice.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-5"><div><b className="text-sm text-slate-900">{invoice.number}</b><p className="text-xs text-slate-500">Emitida {invoice.issueDate} · {invoice.sentDate ? `enviada ${invoice.sentDate}` : invoice.portalDate ? `portal ${invoice.portalDate}` : 'sin presentación registrada'} · {resolvedInvoiceDueDate(record, invoice) ? `vence ${resolvedInvoiceDueDate(record, invoice)}${invoice.dueDate ? '' : ' (calculado)'}` : 'plazo sin confirmar'}</p><p className="text-xs text-slate-500">{documentLink(invoice.documentRef)}{invoice.ctRef && ` · CT: ${invoice.ctRef}`}</p></div><div className="flex items-center gap-3"><div className="text-right"><b className="text-sm">{money(invoice.amount, invoice.currency)}</b><p className="text-xs text-rose-700">Saldo {money(invoiceBalance(record, invoice), invoice.currency)}</p></div><button type="button" onClick={() => setInvoiceDraft({ ...invoice })} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold">Editar</button><button type="button" onClick={() => addCollection(invoice.id)} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold">Cobro</button></div></div>)}{record.invoices.length === 0 && <p className="p-5 text-xs text-slate-500">Todavía no hay facturas registradas.</p>}</div>
+      <div className="divide-y divide-slate-100">{record.invoices.map(invoice => <div key={invoice.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-5"><div><b className="text-sm text-slate-900">{invoice.number}</b><p className="text-xs text-slate-500">Emitida {invoice.issueDate} · {invoice.sentDate ? `enviada ${invoice.sentDate}` : invoice.portalDate ? `portal ${invoice.portalDate}` : 'sin presentación registrada'} · {resolvedInvoiceDueDate(record, invoice) ? `vence ${resolvedInvoiceDueDate(record, invoice)}${invoice.dueDate ? '' : ' (calculado)'}` : 'plazo sin confirmar'}</p><p className="text-xs text-slate-500">{invoice.documentRef ? documentLink(invoice.documentRef) : invoice.documentPath ? fileLink(invoice.documentPath) : 'Sin respaldo'}{invoice.documentPath && invoice.documentRef && <> · {fileLink(invoice.documentPath)}</>}{invoice.ctRef && ` · CT: ${invoice.ctRef}`}</p></div><div className="flex items-center gap-3"><div className="text-right"><b className="text-sm">{money(invoice.amount, invoice.currency)}</b><p className="text-xs text-rose-700">Saldo {money(invoiceBalance(record, invoice), invoice.currency)}</p></div><button type="button" onClick={() => setInvoiceDraft({ ...invoice })} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold">Editar</button><button type="button" onClick={() => addCollection(invoice.id)} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold">Cobro</button></div></div>)}{record.invoices.length === 0 && <p className="p-5 text-xs text-slate-500">Todavía no hay facturas registradas.</p>}</div>
     </section>
 
     <section className="rounded-xl border border-slate-200 bg-white shadow-sm"><div className="border-b border-slate-100 p-4 sm:px-5"><h3 className="text-sm font-bold text-slate-900">4 · Cobros y retenciones</h3><p className="text-xs text-slate-500">Aplicá cobros parciales a su factura. Neto recibido + retención = importe aplicado.</p></div><div className="divide-y divide-slate-100">{record.collections.map(item => { const invoice = record.invoices.find(candidate => candidate.id === item.invoiceId); return <div key={item.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-5"><div><b className="text-xs">{invoice?.number || 'Factura no encontrada'} · {item.date}</b><p className="text-xs text-slate-500">{item.reference || 'Sin referencia'} · {documentLink(item.documentRef)}</p></div><div className="flex items-center gap-3"><div className="text-right text-xs">Aplicado <b>{money(item.appliedAmount, invoice?.currency || 'ARS')}</b><br />Neto {money(item.netReceived, invoice?.currency || 'ARS')} · retención {money(item.withholding, invoice?.currency || 'ARS')}</div><button type="button" onClick={() => setCollectionDraft({ ...item })} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold">Editar</button></div></div>; })}{record.collections.length === 0 && <p className="p-5 text-xs text-slate-500">No hay cobros aplicados.</p>}</div></section>
+
+    <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5"><h3 className="mb-1 text-sm font-bold text-slate-900">5 · Archivos administrativos del proyecto</h3><p className="mb-4 text-xs text-slate-500">Contratos, OC y facturas cargados en este proyecto. Los originales se conservan en su archivo de administración.</p><AdministrativeDocumentList {...projectDocuments} /></section>
 
     <div className="sticky bottom-3 z-10 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white/95 p-3 shadow-xl backdrop-blur"><div role="status" className={`text-xs ${error ? 'text-rose-700' : 'text-slate-600'}`}>{error || message || 'Los cambios se guardan con el botón.'}</div><button type="button" disabled={saving} onClick={save} className="rounded-lg bg-blue-700 px-5 py-2.5 text-xs font-bold text-white disabled:opacity-50">{saving ? 'Guardando…' : 'Guardar administración'}</button></div>
 
@@ -174,6 +194,7 @@ export function ProjectAdministration({ projectId, projectName, clientName, isAd
       <label className={labelClass}>Cargada al portal<input className={inputClass} type="date" value={invoiceDraft.portalDate} onChange={event => setInvoiceDraft({ ...invoiceDraft, portalDate: event.target.value })} /></label>
       <label className={labelClass}>Vencimiento verificado<input className={inputClass} type="date" value={invoiceDraft.dueDate} onChange={event => setInvoiceDraft({ ...invoiceDraft, dueDate: event.target.value })} /></label>
       <label className={labelClass}>Referencia del PDF<input className={inputClass} value={invoiceDraft.documentRef} onChange={event => setInvoiceDraft({ ...invoiceDraft, documentRef: event.target.value })} /></label>
+      <div className="space-y-1"><p className="text-xs font-semibold text-slate-600">PDF de nuestra factura</p><AdministrativeDocumentUpload kind="invoice" title={`${projectName} · Factura ${invoiceDraft.number || 'sin número'}`} upload={projectDocuments.upload} uploading={projectDocuments.uploading} onUploaded={document => setInvoiceDraft(current => current ? { ...current, documentPath: document.path } : current)} />{fileLink(invoiceDraft.documentPath)}</div>
       <label className={labelClass}>Referencia en Control Total<input className={inputClass} value={invoiceDraft.ctRef} onChange={event => setInvoiceDraft({ ...invoiceDraft, ctRef: event.target.value })} /></label>
     </div><p className="text-xs text-slate-500">Dejá el vencimiento vacío si no surge de un documento o de una condición confirmada.</p><div className="flex justify-end gap-2"><button type="button" onClick={() => setInvoiceDraft(null)} className="rounded-lg border px-3 py-2 text-xs font-bold">Cancelar</button><button type="button" onClick={upsertInvoice} className="rounded-lg bg-blue-700 px-3 py-2 text-xs font-bold text-white">Agregar al formulario</button></div></div></div>}
 

@@ -65,9 +65,18 @@ pagos ni movimientos de caja automáticamente.
 La pestaña **Administración** de cada proyecto es exclusiva de administradores
 globales. Registra acuerdo aprobado, OC, requisitos de facturación, plazo con su
 fuente, facturas emitidas y cobros aplicados (incluidas las retenciones). Los
-documentos se enlazan por su referencia original; los archivos siguen en su
-repositorio privado. El importe aprobado debe expresarse en la misma moneda y
+documentos se enlazan por su referencia original y también pueden adjuntarse
+al proyecto (contrato, OC y facturas propias). Los archivos cargados desde GOAT
+quedan en Firebase Storage con acceso exclusivo para administradores; conservar
+los originales en el archivo privado de administración. El importe aprobado debe expresarse en la misma moneda y
 base impositiva que el total de las facturas para calcular lo que resta facturar.
+
+En **Clientes**, el perfil administrativo permite guardar datos de facturación,
+contacto, portal y condiciones habituales, y adjuntar instructivos, requisitos
+y certificados que sirven para varios proyectos. Esta ficha y sus documentos
+también son exclusivos de administradores; las condiciones específicas de cada
+proyecto se confirman en su pestaña Administración. Se aceptan PDF, JPG, PNG,
+DOCX y XLSX de hasta 10 MB. La carga de archivos no registra ni envía facturas.
 
 El dashboard administrativo señala proyectos por facturar, facturas sin envío o
 carga, plazos sin confirmar y cobros vencidos. Sólo calcula un vencimiento cuando

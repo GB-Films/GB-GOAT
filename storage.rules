@@ -363,6 +363,37 @@ service firebase.storage {
       allow delete: if isProjectAdmin(projectId);
     }
 
+    match /administration/projects/{projectId}/{documentId}/{fileName} {
+      allow read: if isAppAdmin();
+      allow create: if isAppAdmin()
+        && firestore.exists(/databases/(default)/documents/projects/$(projectId))
+        && validAdministrativeUpload(projectId, documentId);
+      allow update: if false;
+      allow delete: if isAppAdmin();
+    }
+
+    match /administration/clients/{clientId}/{documentId}/{fileName} {
+      allow read: if isAppAdmin();
+      allow create: if isAppAdmin()
+        && firestore.exists(/databases/(default)/documents/clients/$(clientId))
+        && validAdministrativeUpload(clientId, documentId);
+      allow update: if false;
+      allow delete: if isAppAdmin();
+    }
+
+    function validAdministrativeUpload(scopeId, documentId) {
+      return request.resource.size > 0
+        && request.resource.size <= 10 * 1024 * 1024
+        && request.resource.contentType in [
+          'application/pdf', 'image/jpeg', 'image/png',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        ]
+        && request.resource.metadata.scopeId == scopeId
+        && request.resource.metadata.documentId == documentId
+        && request.resource.metadata.uploadedBy == userEmail();
+    }
+
     // Legacy path kept so previously uploaded invoices can still be managed.
     match /projects/{projectId}/areaExpenses/{expenseId}/{fileName} {
       allow read: if hasProjectAccess(projectId);
