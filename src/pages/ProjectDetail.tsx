@@ -6712,6 +6712,9 @@ export default function ProjectDetail() {
 
                 <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
                 <DragDropContext
+                  // Al contraer la estructura, el puntero puede quedar junto al borde
+                  // de la pantalla; el auto-scroll de DnD movería la página sin intención.
+                  autoScrollerOptions={{ disabled: structureDragKind !== null }}
                   onBeforeCapture={({ draggableId }) => {
                     const kind = draggableId.startsWith('area-category|')
                       ? 'area-category'
