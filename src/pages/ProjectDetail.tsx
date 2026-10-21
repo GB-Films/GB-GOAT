@@ -92,6 +92,7 @@ import { getExpenseInvoices, getInvoiceDocumentKey, type ExpenseInvoiceDocument 
 import { buildPaymentCashBoxOptions, calculateCashBalances, calculateGeneralCashSummary, GENERAL_CASH_ACCOUNT } from '../lib/cashBoxes';
 import { buildLinkedProviderInviteExpiration } from '../lib/providerInvites';
 import { resolveCashMovementTarget } from '../lib/cashMovementTargets';
+import { resolveCashReturnRecipientEmail } from '../lib/cashReturnRecipient';
 import { canChangePaymentCash, assertCanChangePaymentCash } from '../lib/paymentCashAccess';
 import { assertCashPaymentLink, buildUnpaidAmountCorrectionAudit, findCurrentPayment, hasRecordedPayment, hasActiveExpensePayments, isUnpaidAmountCorrection, prepareExpenseEdit, sameExpenseVersion, samePaymentTarget } from '../lib/expenseEdits';
 import { collapseAroundDraggedRow } from '../lib/dragPointerAnchor';
@@ -112,7 +113,6 @@ const tabs = [
   { id: 'permisos', label: 'Permisos', icon: Settings },
 ];
 
-const DEFAULT_CASH_RETURN_RECIPIENT = 'tomas@granberta.com';
 
 const areaSelectionStorage = (): Storage | null => {
   try {
@@ -771,7 +771,7 @@ export default function ProjectDetail() {
   const [cashMovements, setCashMovements] = useState<CashMovement[]>([]);
   const [cashRecipientEmail, setCashRecipientEmail] = useState('');
   const [cashTransferTargetEmail, setCashTransferTargetEmail] = useState('');
-  const [cashReturnRecipientEmail, setCashReturnRecipientEmail] = useState('');
+  const [cashReturnRecipientChoice, setCashReturnRecipientChoice] = useState('');
   const [isCreatingCashDelivery, setIsCreatingCashDelivery] = useState(false);
   const [isCreatingCashReturn, setIsCreatingCashReturn] = useState(false);
   const [cashDeliveryNotice, setCashDeliveryNotice] = useState<{ message: string } | null>(null);
@@ -4209,6 +4209,7 @@ export default function ProjectDetail() {
   const cashReturnRecipients = React.useMemo(() => cashResponsibles.filter((responsible) =>
     responsible.role === 'admin' && normalizeEmail(responsible.email) !== currentUserEmail
   ), [cashResponsibles, currentUserEmail]);
+  const cashReturnRecipientEmail = resolveCashReturnRecipientEmail(cashReturnRecipients, cashReturnRecipientChoice);
   const productionTransferTargets = React.useMemo(() => (
     cashResponsibles.filter((responsible) => {
       if (responsible.role !== 'jefe_area') return false;
@@ -4293,14 +4294,8 @@ export default function ProjectDetail() {
   }, [cashTransferTargetEmail, productionTransferTargets]);
 
   useEffect(() => {
-    if (!cashReturnRecipients.some((recipient) => recipient.email === cashReturnRecipientEmail)) {
-      setCashReturnRecipientEmail(
-        cashReturnRecipients.find((recipient) => normalizeEmail(recipient.email) === DEFAULT_CASH_RETURN_RECIPIENT)?.email
-        || cashReturnRecipients[0]?.email
-        || ''
-      );
-    }
-  }, [cashReturnRecipientEmail, cashReturnRecipients]);
+    setCashReturnRecipientChoice('');
+  }, [loadScope]);
 
   const providerSaldosByArea = React.useMemo(() => {
     const allowedCategories = isProjectAdmin ? categories : safeArray(userPermissions?.allowedCategories);
@@ -5226,6 +5221,7 @@ export default function ProjectDetail() {
       setCashMovements((current) => [{ id: ref.id, ...payload, createdAt: new Date(), updatedAt: new Date() } as CashMovement, ...current]);
       form.reset();
       showExpenseConfirmation(`Devolución de $${amount.toLocaleString()} pendiente de confirmación por ${recipient.displayName || recipient.email}.`, 'warning');
+      setCashReturnRecipientChoice('');
     } catch (error) {
       console.error('Error creating cash return:', error);
       alert('No se pudo registrar la devolución. Intentá nuevamente.');
@@ -7661,9 +7657,9 @@ export default function ProjectDetail() {
                     <div>
                       <label htmlFor="cash-return-recipient" className="mb-2 block text-[10px] font-black text-slate-700">Administrador que recibe</label>
                       <select id="cash-return-recipient" name="toUserEmail" value={cashReturnRecipientEmail}
-                        onChange={(event) => setCashReturnRecipientEmail(event.target.value)}
+                        onChange={(event) => setCashReturnRecipientChoice(event.target.value)}
                         className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-bold" required>
-                        {cashReturnRecipients.length === 0 && <option value="">No hay otro administrador disponible</option>}
+                        <option value="" disabled>{cashReturnRecipients.length === 0 ? 'No hay otro administrador disponible' : 'Seleccioná el administrador que recibe'}</option>
                         {cashReturnRecipients.map((recipient) => <option key={recipient.email} value={recipient.email}>{formatCashResponsibleOption(recipient)}</option>)}
                       </select>
                     </div>
