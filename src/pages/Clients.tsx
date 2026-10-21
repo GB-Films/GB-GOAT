@@ -11,11 +11,13 @@ import Papa from 'papaparse';
 import { cn } from '../lib/utils';
 import { PageHeader } from '../components/PageHeader';
 import { validateSpreadsheetImport } from '../lib/files';
+import { ClientProfile } from './ClientProfile';
 
 export default function Clients() {
   const [clients, setClients] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showNewModal, setShowNewModal] = useState(false);
+  const [selectedClient, setSelectedClient] = useState<any | null>(null);
   const { profile } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -258,12 +260,14 @@ export default function Clients() {
 
               <div className="pt-4 border-t border-slate-50 flex justify-between items-center">
                 <div className="text-[10px] text-slate-300 uppercase font-bold tracking-tighter">Proyectos Activos: {client.activeProjects || 0}</div>
-                <button className="text-[10px] font-bold uppercase tracking-widest text-slate-400 hover:text-black">Perfil Corporativo</button>
+                {profile?.role === 'admin' && <button type="button" onClick={() => setSelectedClient(client)} className="text-[10px] font-bold uppercase tracking-widest text-slate-500 hover:text-black">Abrir perfil</button>}
               </div>
             </motion.div>
           ))}
         </div>
       )}
+
+      {selectedClient && <ClientProfile client={selectedClient} onClose={() => setSelectedClient(null)} />}
 
       {/* New Client Modal */}
       <AnimatePresence>

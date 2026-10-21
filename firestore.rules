@@ -1331,7 +1331,7 @@ service cloud.firestore {
     function validProjectAdministration(data, projectId) {
       return data.keys().hasOnly([
           'schemaVersion', 'projectId', 'clientLegalName', 'issuerEntity',
-          'agreementStatus', 'agreementRef', 'agreedAmount', 'agreedCurrency', 'orderStatus', 'orderNumber', 'orderRef',
+          'agreementStatus', 'agreementRef', 'agreementFilePath', 'agreedAmount', 'agreedCurrency', 'orderStatus', 'orderNumber', 'orderRef', 'orderFilePath',
           'billingStatus', 'billingRequirement', 'billingChannel', 'portalRef',
           'paymentTermDays', 'paymentTermBasis', 'paymentTermSource', 'notes',
           'invoices', 'collections', 'updatedBy', 'updatedAt', 'revision'
@@ -1352,12 +1352,14 @@ service cloud.firestore {
         && administrationText(data, 'issuerEntity', 200)
         && data.agreementStatus in ['pending', 'confirmed', 'not_required']
         && administrationText(data, 'agreementRef', 2048)
+        && (!('agreementFilePath' in data) || (data.agreementFilePath is string && (data.agreementFilePath == '' || data.agreementFilePath.matches('administration/projects/' + projectId + '/.*'))))
         && (data.agreedAmount == null || (data.agreedAmount is number && data.agreedAmount > 0 && data.agreedAmount <= 1000000000000000))
         && data.agreedCurrency in ['', 'ARS', 'USD']
         && ((data.agreedAmount == null && data.agreedCurrency == '') || (data.agreedAmount != null && data.agreedCurrency in ['ARS', 'USD']))
         && data.orderStatus in ['pending', 'confirmed', 'not_required']
         && administrationText(data, 'orderNumber', 200)
         && administrationText(data, 'orderRef', 2048)
+        && (!('orderFilePath' in data) || (data.orderFilePath is string && (data.orderFilePath == '' || data.orderFilePath.matches('administration/projects/' + projectId + '/.*'))))
         && data.billingStatus in ['pending', 'ready', 'not_required']
         && administrationText(data, 'billingRequirement', 1000)
         && data.billingChannel in ['', 'email', 'portal', 'both']
@@ -1380,6 +1382,83 @@ service cloud.firestore {
         && validProjectAdministration(request.resource.data, projectId)
         && request.resource.data.revision == resource.data.revision + 1;
       allow delete: if isAppAdmin();
+
+      match /documents/{documentId} {
+        allow get, list: if isAppAdmin();
+        allow create: if isAppAdmin()
+          && exists(/databases/$(database)/documents/projects/$(projectId))
+          && validAdministrativeDocument(request.resource.data, projectId, documentId, 'projects');
+        allow update, delete: if false;
+      }
+    }
+
+    function validAdministrativeDocument(data, scopeId, documentId, folder) {
+      return data.keys().hasOnly([
+          'scopeId', 'kind', 'title', 'fileName', 'originalFileName', 'path',
+          'contentType', 'size', 'uploadedBy', 'createdAt'
+        ])
+        && data.keys().hasAll([
+          'scopeId', 'kind', 'title', 'fileName', 'originalFileName', 'path',
+          'contentType', 'size', 'uploadedBy', 'createdAt'
+        ])
+        && data.scopeId == scopeId
+        && data.kind in ['agreement', 'purchase_order', 'invoice', 'billing_guide', 'supplier_guide', 'tax_certificate', 'other']
+        && data.title is string && data.title.size() > 0 && data.title.size() <= 200
+        && data.fileName is string && data.fileName.size() > 0 && data.fileName.size() <= 120
+        && data.originalFileName is string && data.originalFileName.size() > 0 && data.originalFileName.size() <= 255
+        && data.path == 'administration/' + folder + '/' + scopeId + '/' + documentId + '/' + data.fileName
+        && data.contentType in [
+          'application/pdf', 'image/jpeg', 'image/png',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        ]
+        && data.size is int && data.size > 0 && data.size <= 10 * 1024 * 1024
+        && data.uploadedBy == userEmail()
+        && data.createdAt == request.time;
+    }
+
+    function validClientAdministration(data, clientId) {
+      return data.keys().hasOnly([
+          'schemaVersion', 'clientId', 'fiscalAddress', 'billingContactName', 'billingContactEmail',
+          'supplierPortalUrl', 'billingInstructions', 'paymentInstructions', 'notes',
+          'revision', 'updatedBy', 'updatedAt'
+        ])
+        && data.keys().hasAll([
+          'schemaVersion', 'clientId', 'fiscalAddress', 'billingContactName', 'billingContactEmail',
+          'supplierPortalUrl', 'billingInstructions', 'paymentInstructions', 'notes',
+          'revision', 'updatedBy', 'updatedAt'
+        ])
+        && data.schemaVersion == 1 && data.clientId == clientId
+        && data.fiscalAddress is string && data.fiscalAddress.size() <= 500
+        && data.billingContactName is string && data.billingContactName.size() <= 200
+        && data.billingContactEmail is string && data.billingContactEmail.size() <= 320
+        && data.supplierPortalUrl is string && data.supplierPortalUrl.size() <= 2048
+        && (data.supplierPortalUrl == '' || data.supplierPortalUrl.matches('https://.*'))
+        && data.billingInstructions is string && data.billingInstructions.size() <= 3000
+        && data.paymentInstructions is string && data.paymentInstructions.size() <= 3000
+        && data.notes is string && data.notes.size() <= 3000
+        && data.revision is int && data.revision >= 1
+        && data.updatedBy == userEmail() && data.updatedAt == request.time;
+    }
+
+    match /clientAdministration/{clientId} {
+      allow get, list: if isAppAdmin();
+      allow create: if isAppAdmin()
+        && exists(/databases/$(database)/documents/clients/$(clientId))
+        && validClientAdministration(request.resource.data, clientId)
+        && request.resource.data.revision == 1;
+      allow update: if isAppAdmin()
+        && validClientAdministration(request.resource.data, clientId)
+        && request.resource.data.revision == resource.data.revision + 1;
+      allow delete: if false;
+
+      match /documents/{documentId} {
+        allow get, list: if isAppAdmin();
+        allow create: if isAppAdmin()
+          && exists(/databases/$(database)/documents/clients/$(clientId))
+          && validAdministrativeDocument(request.resource.data, clientId, documentId, 'clients');
+        allow update, delete: if false;
+      }
     }
 
     match /projects/{projectId} {
