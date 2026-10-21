@@ -97,6 +97,32 @@ import { assertCashPaymentLink, buildUnpaidAmountCorrectionAudit, findCurrentPay
 
 const StructureDraggable = Draggable as any;
 
+// El colapso previo a la captura de dimensiones no debe despegar la fila del
+// puntero. Compensamos el cambio de posición con el scroll real de la página.
+const collapseAroundDraggedRow = (draggableId: string, collapse: () => void) => {
+  const source = Array.from(document.querySelectorAll<HTMLElement>('[data-structure-drag-id]'))
+    .find((element) => element.dataset.structureDragId === draggableId);
+  if (!source) { collapse(); return; }
+  const originalTop = source.getBoundingClientRect().top;
+  let scrollParent: HTMLElement | null = null;
+  for (let parent = source.parentElement; parent; parent = parent.parentElement) {
+    const overflow = window.getComputedStyle(parent).overflowY;
+    if ((overflow === 'auto' || overflow === 'scroll') && parent.scrollHeight > parent.clientHeight + 1) {
+      scrollParent = parent;
+      break;
+    }
+  }
+  collapse();
+  if (!source.isConnected) return;
+  const shift = source.getBoundingClientRect().top - originalTop;
+  if (Math.abs(shift) < 1) return;
+  if (scrollParent) {
+    scrollParent.scrollTop += shift;
+    const remainder = source.getBoundingClientRect().top - originalTop;
+    if (Math.abs(remainder) >= 1) window.scrollBy(0, remainder);
+  } else window.scrollBy(0, shift);
+};
+
 const tabs = [
   { id: 'resumen', label: 'Resumen', icon: Info },
   { id: 'presupuesto', label: 'Presu Ppal', icon: DollarSign },
@@ -6713,7 +6739,7 @@ export default function ProjectDetail() {
                     const kind = draggableId.startsWith('area-category|')
                       ? 'area-category'
                       : draggableId.startsWith('area-subcategory|') ? 'area-subcategory' : null;
-                    if (kind) flushSync(() => setStructureDragKind(kind));
+                    if (kind) collapseAroundDraggedRow(draggableId, () => flushSync(() => setStructureDragKind(kind)));
                   }}
                   onDragEnd={onAreaDragEnd}
                 >
@@ -6731,6 +6757,7 @@ export default function ProjectDetail() {
                 <div
                   ref={categoryProvided.innerRef}
                   {...categoryProvided.draggableProps}
+                  data-structure-drag-id={`area-category|${encodeURIComponent(areaRow.area)}`}
                   className={cn('border-b border-slate-100 last:border-0 transition-colors', categorySnapshot.isDragging && 'shadow-xl')}
                 >
                   <Droppable
@@ -6860,6 +6887,7 @@ export default function ProjectDetail() {
                         <div
                           ref={subcategoryProvided.innerRef}
                           {...subcategoryProvided.draggableProps}
+                          data-structure-drag-id={`area-subcategory|${encodeURIComponent(areaRow.area)}|${hasNamedSubcategory ? `named|${encodeURIComponent(subcategoryGroup.subcategory)}` : 'general'}`}
                           className={cn('bg-slate-50', subcategorySnapshot.isDragging && 'shadow-lg')}
                         >
                           <div className={cn(
@@ -7078,6 +7106,7 @@ export default function ProjectDetail() {
                           <div
                             ref={subcategoryProvided.innerRef}
                             {...subcategoryProvided.draggableProps}
+                            data-structure-drag-id={`area-subcategory|${encodeURIComponent(areaRow.area)}|${hasNamedSubcategory ? `named|${encodeURIComponent(subcategoryGroup.subcategory)}` : 'general'}`}
                             className={cn('bg-slate-50', subcategorySnapshot.isDragging && 'shadow-lg')}
                           >
                             <div className={cn(
