@@ -41,6 +41,7 @@ npm run test:area-access
 
 Esta prueba cubre la creación y edición por colaboradores asignados, los proyectos
 con creador y los rechazos fuera del área, sobre pagos o por escalada de permisos.
+También se ejecuta en el flujo de publicación; si falla, la interfaz no se publica.
 
 ## Publicación
 

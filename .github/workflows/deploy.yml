@@ -37,6 +37,21 @@ jobs:
       - name: Run domain tests
         run: npm test
 
+      - name: Set up Java for Firestore permission tests
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Cache Firebase emulators
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/firebase/emulators
+          key: ${{ runner.os }}-firebase-emulators-cli-15.22.1
+
+      - name: Verify assigned area editing on imported projects
+        run: npx --yes firebase-tools@15.22.1 emulators:exec --only firestore --project demo-goat-area-access "node tests/areaExpenseAccessRules.emulator.mjs"
+
       - name: Validate project integration functions
         run: |
           npm ci --prefix functions
