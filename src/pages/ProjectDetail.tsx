@@ -82,6 +82,7 @@ import {
 } from '../lib/projectAccess';
 import { calculateProjectResult, getPaymentTotal } from '../lib/projectFinance';
 import { getSubcategoryBudgetCapacity } from '../lib/subcategoryBudget';
+import { moveNamedSubcategory, reorderDisplayedCategories } from '../lib/areaStructureOrder';
 import { getReimbursementBalanceCents, getReimbursedCents, isThirdPartyPayment } from '../lib/reimbursements';
 import { getFileExtension, sanitizeFileName, validateSpreadsheetImport } from '../lib/files';
 import { PROJECT_STATUSES } from '../lib/projects';
@@ -745,8 +746,10 @@ export default function ProjectDetail() {
   const [activeAreas, setActiveAreas] = useState<string[]>([]);
   const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>({});
   const [collapsedAreaSubcategories, setCollapsedAreaSubcategories] = useState<Record<string, boolean>>({});
-  const [isOrganizingAreas, setIsOrganizingAreas] = useState(false);
   const [isSavingAreaStructure, setIsSavingAreaStructure] = useState(false);
+  const [isCompactAreas, setIsCompactAreas] = useState(() => (
+    typeof window !== 'undefined' && Boolean(window.matchMedia?.('(max-width: 767px)').matches)
+  ));
   const [areaExpenseSort, setAreaExpenseSort] = useState<AreaExpenseSortKey>('manual');
   const [areaExpenseSearch, setAreaExpenseSearch] = useState('');
   const [budgetSearch, setBudgetSearch] = useState('');
@@ -815,6 +818,15 @@ export default function ProjectDetail() {
   const expenseConfirmationTimeoutRef = useRef<number | null>(null);
   const areaSelectorRef = useRef<HTMLDivElement>(null);
   const isGlobalAdmin = profile?.role === 'admin';
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const query = window.matchMedia('(max-width: 767px)');
+    const updateLayout = () => setIsCompactAreas(query.matches);
+    updateLayout();
+    query.addEventListener('change', updateLayout);
+    return () => query.removeEventListener('change', updateLayout);
+  }, []);
   
   useEffect(() => {
     let cancelled = false;
@@ -3614,13 +3626,9 @@ export default function ProjectDetail() {
     if (source.droppableId === destination.droppableId && source.index === destination.index) return;
 
     if (type === 'area-category') {
-      const reordered = [...visibleCategories];
-      const [moved] = reordered.splice(source.index, 1);
-      if (!moved) return;
-      reordered.splice(destination.index, 0, moved);
-      const visibleSet = new Set(visibleCategories);
-      let nextVisibleIndex = 0;
-      const nextCategories = categories.map((area) => visibleSet.has(area) ? reordered[nextVisibleIndex++] : area);
+      const displayedCategories = selectedAreaDashboardRows.map((row) => row.area);
+      const nextCategories = reorderDisplayedCategories(categories, displayedCategories, source.index, destination.index);
+      if (!nextCategories) return;
       setIsSavingAreaStructure(true);
       try {
         await runTransaction(db, async (transaction) => {
@@ -3647,16 +3655,24 @@ export default function ProjectDetail() {
     const sourceArea = decodeURIComponent(source.droppableId.slice(prefix.length));
     const targetArea = decodeURIComponent(destination.droppableId.slice(prefix.length));
     if (!activeAreas.includes(sourceArea) || !activeAreas.includes(targetArea)) return;
-    const sourceList = [...(areaExpenseSubcategoriesByArea[sourceArea] || [])];
-    const targetList = sourceArea === targetArea ? sourceList : [...(areaExpenseSubcategoriesByArea[targetArea] || [])];
-    const [subcategory] = sourceList.splice(source.index, 1);
-    if (!subcategory) return;
+    if (areaExpenseSearch.trim()) return;
+    const sourceHasDefault = selectedAreaDashboardRows.find((row) => row.area === sourceArea)?.subcategoryGroups[0]?.subcategory === '';
+    const targetHasDefault = selectedAreaDashboardRows.find((row) => row.area === targetArea)?.subcategoryGroups[0]?.subcategory === '';
+    const move = moveNamedSubcategory(
+      areaExpenseSubcategoriesByArea[sourceArea] || [],
+      areaExpenseSubcategoriesByArea[targetArea] || [],
+      source.index,
+      destination.index,
+      sourceHasDefault,
+      targetHasDefault,
+      sourceArea === targetArea,
+    );
+    if (!move) return;
+    const { subcategory, source: sourceList, target: targetList } = move;
     if (sourceArea !== targetArea && targetList.some((item) => item.toLowerCase() === subcategory.toLowerCase())) {
       alert(`La subcategoria «${subcategory}» ya existe en ${targetArea}.`);
       return;
     }
-    targetList.splice(destination.index, 0, subcategory);
-
     const oldKey = areaSubcategoryKey(sourceArea, subcategory);
     const newKey = areaSubcategoryKey(targetArea, subcategory);
     const currentMap = project?.areaExpenseSubcategoryBudgets || {};
@@ -3814,6 +3830,14 @@ export default function ProjectDetail() {
     } finally {
       setIsSavingAreaStructure(false);
     }
+  };
+
+  const onAreaDragEnd = (result: any) => {
+    if (result?.type === 'area-category' || result?.type === 'area-subcategory') {
+      void onAreaStructureDragEnd(result);
+      return;
+    }
+    void onAreaExpenseDragEnd(result);
   };
 
   const isProductionLead = userPermissions?.role === 'jefe_produccion';
@@ -6530,17 +6554,6 @@ export default function ProjectDetail() {
               <div>
                 <h2 className="text-base font-bold text-slate-900">Áreas</h2>
               </div>
-              {isProjectAdmin && visibleCategories.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setIsOrganizingAreas((current) => !current)}
-                  disabled={isSavingAreaStructure}
-                  className="inline-flex items-center gap-2 rounded border border-indigo-200 bg-indigo-50 px-3 py-2 text-[10px] font-bold text-indigo-800 hover:bg-indigo-100 disabled:opacity-50"
-                >
-                  <GripVertical className="h-4 w-4" />
-                  {isOrganizingAreas ? 'Terminar de ordenar' : 'Ordenar categorías y subcategorías'}
-                </button>
-              )}
               {isProjectAdmin && (
                 <div className="relative" ref={areaSelectorRef}>
                   <button 
@@ -6651,98 +6664,7 @@ export default function ProjectDetail() {
             </div>
             </div>
 
-            {isOrganizingAreas && (
-              <div className="rounded-xl border border-indigo-200 bg-indigo-50/50 p-3 sm:p-4">
-                <p className="mb-3 text-xs text-slate-600">
-                  Arrastrá desde el control de cada fila. Los gastos quedan ocultos mientras ordenás; al terminar vuelven a su estado anterior.
-                </p>
-                <DragDropContext onDragEnd={onAreaStructureDragEnd}>
-                  <Droppable droppableId="area-category-list" type="area-category">
-                    {(areaProvided) => (
-                      <div ref={areaProvided.innerRef} {...areaProvided.droppableProps} className="space-y-3">
-                        {visibleCategories.map((area, areaIndex) => {
-                          const names = areaExpenseSubcategoriesByArea[area] || [];
-                          const categoryBudget = budgetItems.filter((item) => item.area === area)
-                            .reduce((total, item) => total + (Number(item.total) || 0), 0);
-                          return (
-                            <StructureDraggable
-                              key={area}
-                              draggableId={`area-category|${encodeURIComponent(area)}`}
-                              index={areaIndex}
-                              isDragDisabled={isSavingAreaStructure}
-                            >
-                              {(categoryProvided: any, categorySnapshot: any) => (
-                                <section
-                                  ref={categoryProvided.innerRef}
-                                  {...categoryProvided.draggableProps}
-                                  className={cn(
-                                    'rounded-lg border border-slate-200 bg-white shadow-sm',
-                                    categorySnapshot.isDragging && 'shadow-xl',
-                                  )}
-                                >
-                                  <div className="flex items-center gap-3 rounded-t-lg bg-slate-900 px-3 py-2 text-white">
-                                    <div {...categoryProvided.dragHandleProps} className="cursor-grab rounded p-1 hover:bg-white/10" aria-label={`Mover categoría ${area}`}>
-                                      <GripVertical className="h-4 w-4" />
-                                    </div>
-                                    <strong className="min-w-0 flex-1 truncate text-xs uppercase tracking-wide">{area}</strong>
-                                    <span className="text-[10px] text-slate-300">Presu ${categoryBudget.toLocaleString('es-AR')}</span>
-                                  </div>
-                                  <Droppable droppableId={`area-subcategories|${encodeURIComponent(area)}`} type="area-subcategory">
-                                    {(subcategoryProvided, subcategorySnapshot) => (
-                                      <div
-                                        ref={subcategoryProvided.innerRef}
-                                        {...subcategoryProvided.droppableProps}
-                                        className={cn('min-h-12 space-y-1 p-2', subcategorySnapshot.isDraggingOver && 'bg-indigo-100')}
-                                      >
-                                        {names.map((name, subcategoryIndex) => {
-                                          const entry = getAreaSubcategoryBudgetEntry(area, name);
-                                          const expenseCount = areaExpenses.filter((item) => item.area === area && cleanAreaExpenseSubcategory(item.subcategory) === name).length;
-                                          return (
-                                            <StructureDraggable
-                                              key={name}
-                                              draggableId={`area-subcategory|${encodeURIComponent(area)}|${encodeURIComponent(name)}`}
-                                              index={subcategoryIndex}
-                                              isDragDisabled={isSavingAreaStructure}
-                                            >
-                                              {(subcategoryDragProvided: any, subcategorySnapshot: any) => (
-                                                <div
-                                                  ref={subcategoryDragProvided.innerRef}
-                                                  {...subcategoryDragProvided.draggableProps}
-                                                  className={cn(
-                                                    'flex items-center gap-2 rounded border border-indigo-200 bg-indigo-50 px-2 py-2 text-xs text-slate-800',
-                                                    subcategorySnapshot.isDragging && 'shadow-lg',
-                                                  )}
-                                                >
-                                                  <div {...subcategoryDragProvided.dragHandleProps} className="cursor-grab rounded p-1 hover:bg-indigo-100" aria-label={`Mover subcategoría ${name}`}>
-                                                    <GripVertical className="h-4 w-4 text-indigo-600" />
-                                                  </div>
-                                                  <span className="min-w-0 flex-1 truncate font-semibold">{name}</span>
-                                                  <span className="shrink-0 text-[10px] text-slate-500">{expenseCount} gastos</span>
-                                                  {entry.assignBudget && <span className="shrink-0 text-[10px] font-bold">${entry.budget.toLocaleString('es-AR')}</span>}
-                                                </div>
-                                              )}
-                                            </StructureDraggable>
-                                          );
-                                        })}
-                                        {subcategoryProvided.placeholder}
-                                        {names.length === 0 && <p className="px-2 py-2 text-xs text-slate-400">Soltá aquí una subcategoría</p>}
-                                      </div>
-                                    )}
-                                  </Droppable>
-                                </section>
-                              )}
-                            </StructureDraggable>
-                          );
-                        })}
-                        {areaProvided.placeholder}
-                      </div>
-                    )}
-                  </Droppable>
-                </DragDropContext>
-              </div>
-            )}
-
-            {!isOrganizingAreas && selectedAreaDashboardRows.length > 0 && (
+            {selectedAreaDashboardRows.length > 0 && (
               <div className="space-y-4">
                 <AreaBudgetSummary
                   assigned={areaDashboardTotals.assigned}
@@ -6752,11 +6674,22 @@ export default function ProjectDetail() {
                 />
 
                 <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-                <DragDropContext onDragEnd={onAreaExpenseDragEnd}>
-                {selectedAreaDashboardRows.map((areaRow) => (
-                <div
+                <DragDropContext onDragEnd={onAreaDragEnd}>
+                <Droppable droppableId="area-category-list" type="area-category" isDropDisabled={!isProjectAdmin || Boolean(areaExpenseSearch.trim())}>
+                {(categoryListProvided) => (
+                <div ref={categoryListProvided.innerRef} {...categoryListProvided.droppableProps}>
+                {selectedAreaDashboardRows.map((areaRow, areaIndex) => (
+                <StructureDraggable
                   key={areaRow.area}
-                  className="border-b border-slate-100 last:border-0 transition-colors"
+                  draggableId={`area-category|${encodeURIComponent(areaRow.area)}`}
+                  index={areaIndex}
+                  isDragDisabled={!isProjectAdmin || isSavingAreaStructure || Boolean(areaExpenseSearch.trim())}
+                >
+                {(categoryProvided: any, categorySnapshot: any) => (
+                <div
+                  ref={categoryProvided.innerRef}
+                  {...categoryProvided.draggableProps}
+                  className={cn('border-b border-slate-100 last:border-0 transition-colors', categorySnapshot.isDragging && 'shadow-xl')}
                 >
                   <Droppable
                     droppableId={areaExpenseAreaDroppableId(areaRow.area)}
@@ -6773,6 +6706,16 @@ export default function ProjectDetail() {
                     )}
                   >
                     <div className="flex min-w-0 items-center gap-1.5 sm:gap-3">
+                      {isProjectAdmin && (
+                        <div
+                          {...categoryProvided.dragHandleProps}
+                          className={cn('cursor-grab rounded p-1 text-slate-300 hover:bg-white/10 hover:text-white', Boolean(areaExpenseSearch.trim()) && 'cursor-not-allowed opacity-40')}
+                          title={areaExpenseSearch.trim() ? 'Quitá la búsqueda para ordenar categorías' : `Mover categoría ${areaRow.area}`}
+                          aria-label={`Mover categoría ${areaRow.area}`}
+                        >
+                          <GripVertical className="h-4 w-4" />
+                        </div>
+                      )}
                        <button
                          type="button"
                          onClick={() => toggleCategory(areaRow.area)}
@@ -6844,8 +6787,19 @@ export default function ProjectDetail() {
                   </Droppable>
                   {!collapsedCategories[areaRow.area] && (
                   <>
-                  <div className="divide-y divide-slate-100 md:hidden">
-                    {areaRow.subcategoryGroups.map((subcategoryGroup) => {
+                  {isCompactAreas && (
+                  <Droppable
+                    droppableId={`area-subcategories|${encodeURIComponent(areaRow.area)}`}
+                    type="area-subcategory"
+                    isDropDisabled={!isProjectAdmin || isSavingAreaStructure || Boolean(areaExpenseSearch.trim())}
+                  >
+                  {(subcategoryListProvided, subcategoryListSnapshot) => (
+                  <div
+                    ref={subcategoryListProvided.innerRef}
+                    {...subcategoryListProvided.droppableProps}
+                    className={cn('divide-y divide-slate-100', subcategoryListSnapshot.isDraggingOver && 'bg-slate-100')}
+                  >
+                    {areaRow.subcategoryGroups.map((subcategoryGroup, subcategoryIndex) => {
                       const subcategoryKey = `${areaRow.area}__${subcategoryGroup.subcategory}`;
                       const isSubcategoryCollapsed = collapsedAreaSubcategories[subcategoryKey];
                       const hasNamedSubcategory = Boolean(subcategoryGroup.subcategory);
@@ -6854,13 +6808,34 @@ export default function ProjectDetail() {
                       const canEditThisSubcategory = canEditAreaSubcategory(areaRow.area, subcategoryGroup.subcategory);
 
                       return (
-                        <div key={`mobile-${subcategoryKey}`} className="bg-slate-50">
+                        <StructureDraggable
+                          key={`mobile-${subcategoryKey}`}
+                          draggableId={`area-subcategory|${encodeURIComponent(areaRow.area)}|${hasNamedSubcategory ? `named|${encodeURIComponent(subcategoryGroup.subcategory)}` : 'general'}`}
+                          index={subcategoryIndex}
+                          isDragDisabled={!isProjectAdmin || !hasNamedSubcategory || isSavingAreaStructure || Boolean(areaExpenseSearch.trim())}
+                        >
+                        {(subcategoryProvided: any, subcategorySnapshot: any) => (
+                        <div
+                          ref={subcategoryProvided.innerRef}
+                          {...subcategoryProvided.draggableProps}
+                          className={cn('bg-slate-50', subcategorySnapshot.isDragging && 'shadow-lg')}
+                        >
                           <div className={cn(
                             "flex items-center gap-1 border-y px-3 py-2",
                             hasNamedSubcategory
-                               ? "border-indigo-200 bg-indigo-100 text-slate-900"
+                               ? "border-slate-300 bg-slate-200 text-slate-900"
                                : "border-slate-200 bg-slate-100 text-slate-800"
                           )}>
+                            {isProjectAdmin && hasNamedSubcategory && (
+                              <div
+                                {...subcategoryProvided.dragHandleProps}
+                                className={cn('cursor-grab rounded p-1 text-slate-600 hover:bg-slate-300', Boolean(areaExpenseSearch.trim()) && 'cursor-not-allowed opacity-40')}
+                                title={areaExpenseSearch.trim() ? 'Quitá la búsqueda para ordenar subcategorías' : `Mover subcategoría ${subcategoryLabel}`}
+                                aria-label={`Mover subcategoría ${subcategoryLabel}`}
+                              >
+                                <GripVertical className="h-4 w-4" />
+                              </div>
+                            )}
                             <button
                               type="button"
                               onClick={() => setCollapsedAreaSubcategories((current) => ({
@@ -7008,11 +6983,18 @@ export default function ProjectDetail() {
                             </div>
                           )}
                         </div>
+                        )}
+                        </StructureDraggable>
                       );
                     })}
+                    {subcategoryListProvided.placeholder}
                   </div>
+                  )}
+                  </Droppable>
+                  )}
 
-                  <div className="hidden overflow-x-auto md:block">
+                  {!isCompactAreas && (
+                  <div className="overflow-x-auto">
                     <div className="grid min-w-[1360px] grid-cols-[minmax(160px,1.45fr)_minmax(180px,1.6fr)_78px_100px_76px_92px_96px_104px_150px_78px] bg-slate-50 border-b border-slate-200 px-6 py-3 gap-2">
                       <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Proveedor / Concepto</div>
                       <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Descripcion Detallada</div>
@@ -7026,8 +7008,18 @@ export default function ProjectDetail() {
                       <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Pagado</div>
                     </div>
 
-                    <div className="divide-y divide-slate-100">
-                      {areaRow.subcategoryGroups.map((subcategoryGroup) => {
+                    <Droppable
+                      droppableId={`area-subcategories|${encodeURIComponent(areaRow.area)}`}
+                      type="area-subcategory"
+                      isDropDisabled={!isProjectAdmin || isSavingAreaStructure || Boolean(areaExpenseSearch.trim())}
+                    >
+                    {(subcategoryListProvided, subcategoryListSnapshot) => (
+                    <div
+                      ref={subcategoryListProvided.innerRef}
+                      {...subcategoryListProvided.droppableProps}
+                      className={cn('divide-y divide-slate-100', subcategoryListSnapshot.isDraggingOver && 'bg-slate-100')}
+                    >
+                      {areaRow.subcategoryGroups.map((subcategoryGroup, subcategoryIndex) => {
                         const subcategoryKey = `${areaRow.area}__${subcategoryGroup.subcategory}`;
                         const isSubcategoryCollapsed = collapsedAreaSubcategories[subcategoryKey];
                         const hasNamedSubcategory = Boolean(subcategoryGroup.subcategory);
@@ -7036,17 +7028,35 @@ export default function ProjectDetail() {
                         const canEditThisSubcategory = canEditAreaSubcategory(areaRow.area, subcategoryGroup.subcategory);
 
                         return (
-                          <div
+                          <StructureDraggable
                             key={subcategoryKey}
-                            className="bg-slate-50"
+                            draggableId={`area-subcategory|${encodeURIComponent(areaRow.area)}|${hasNamedSubcategory ? `named|${encodeURIComponent(subcategoryGroup.subcategory)}` : 'general'}`}
+                            index={subcategoryIndex}
+                            isDragDisabled={!isProjectAdmin || !hasNamedSubcategory || isSavingAreaStructure || Boolean(areaExpenseSearch.trim())}
+                          >
+                          {(subcategoryProvided: any, subcategorySnapshot: any) => (
+                          <div
+                            ref={subcategoryProvided.innerRef}
+                            {...subcategoryProvided.draggableProps}
+                            className={cn('bg-slate-50', subcategorySnapshot.isDragging && 'shadow-lg')}
                           >
                             <div className={cn(
                               "flex items-center justify-between gap-3 border-b px-6 py-2.5",
                               hasNamedSubcategory
-                                 ? "border-indigo-200 bg-indigo-100 text-slate-900"
+                                 ? "border-slate-300 bg-slate-200 text-slate-900"
                                  : "border-slate-200 bg-slate-100 text-slate-800"
                             )}>
                               <div className="flex items-center gap-2 min-w-0 flex-1">
+                                {isProjectAdmin && hasNamedSubcategory && (
+                                  <div
+                                    {...subcategoryProvided.dragHandleProps}
+                                    className={cn('cursor-grab rounded p-1 text-slate-600 hover:bg-slate-300', Boolean(areaExpenseSearch.trim()) && 'cursor-not-allowed opacity-40')}
+                                    title={areaExpenseSearch.trim() ? 'Quitá la búsqueda para ordenar subcategorías' : `Mover subcategoría ${subcategoryLabel}`}
+                                    aria-label={`Mover subcategoría ${subcategoryLabel}`}
+                                  >
+                                    <GripVertical className="h-4 w-4" />
+                                  </div>
+                                )}
                                 <button
                                   type="button"
                                   onClick={() => setCollapsedAreaSubcategories((current) => ({
@@ -7093,7 +7103,7 @@ export default function ProjectDetail() {
                                      <div className="text-[10px] font-black font-mono text-emerald-700">${subcategoryGroup.subtotal.toLocaleString()}</div>
                                   </div>
                                   <div>
-                                    <div className={cn("text-[8px] font-black uppercase tracking-widest", hasNamedSubcategory ? "text-slate-300" : "text-slate-500")}>Saldo</div>
+                                    <div className="text-[8px] font-black uppercase tracking-widest text-slate-500">Saldo</div>
                                     <div className={cn(
                                       "text-[10px] font-black font-mono",
                                       subcategoryGroup.balance < 0
@@ -7286,24 +7296,36 @@ export default function ProjectDetail() {
                               </Droppable>
                             )}
                           </div>
+                          )}
+                          </StructureDraggable>
                         );
                       })}
+                      {subcategoryListProvided.placeholder}
                       {areaRow.expenses.length === 0 && (
                         <div className="p-12 text-center text-slate-300 font-bold uppercase tracking-widest text-[10px] italic">
                           Sin gastos registrados en esta área
                         </div>
                       )}
                     </div>
+                    )}
+                    </Droppable>
                   </div>
+                  )}
                   </>
                   )}
                  </div>
+                )}
+                </StructureDraggable>
                 ))}
+                {categoryListProvided.placeholder}
+                </div>
+                )}
+                </Droppable>
                 </DragDropContext>
                 </div>
               </div>
             )}
-            {!isOrganizingAreas && visibleCategories.length > 0 && selectedAreaDashboardRows.length === 0 && (
+            {visibleCategories.length > 0 && selectedAreaDashboardRows.length === 0 && (
               <div className="bg-white border border-dashed border-slate-200 rounded-xl p-6 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
                 Seleccioná una o más áreas para ver gastos y presupuesto
               </div>
