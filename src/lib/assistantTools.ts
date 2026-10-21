@@ -22,6 +22,7 @@ import { getExpenseInvoices } from './invoices';
 import { sanitizeFileName } from './files';
 import { validateMaxUploadSize } from './uploadLimits';
 import { calculateProjectResult } from './projectFinance';
+import { getSubcategoryBudgetCapacity } from './subcategoryBudget';
 import { collection, doc, getDocs, runTransaction, serverTimestamp } from 'firebase/firestore';
 import { db } from './firebase';
 import { cleanAreaExpenseSubcategory } from './projectAccess';
@@ -112,6 +113,7 @@ export type AssistantProjectContext = {
     brandName?: string;
     status?: string;
     budgetTotal?: number;
+    budgetRevision?: number;
     shootingStartDate?: string;
     shootingEndDate?: string;
     location?: string;
@@ -1191,13 +1193,36 @@ export const buildAssistantTools = ({
 
         const rowRef = doc(db, 'projects', context.projectId, collectionName, item.id);
         await runTransaction(db, async (transaction) => {
+          const projectRef = doc(db, 'projects', context.projectId);
+          const projectSnapshot = collectionName === 'budgetItems' && updates.total !== undefined
+            ? await transaction.get(projectRef) : null;
           const snapshot = await transaction.get(rowRef);
           if (!snapshot.exists()) throw new Error('La fila ya no existe.');
           const latest = snapshot.data();
           if (!sameExpenseVersion(latest.updatedAt, item.updatedAt) || !samePaymentTarget(latest, item)) {
             throw new Error('La fila cambió mientras se editaba.');
           }
+          if (projectSnapshot) {
+            if (!projectSnapshot.exists() || (Number(projectSnapshot.data().budgetRevision) || 0) !== (context.meta.budgetRevision || 0)) {
+              throw new Error('El presupuesto cambió. Volvé a consultar el proyecto.');
+            }
+            const nextCategoryBudget = context.budgetItems
+              .filter((row) => row.area === item.area)
+              .reduce((total, row) => total + (row.id === item.id ? updates.total : (Number(row.total) || 0)), 0);
+            const capacity = getSubcategoryBudgetCapacity(
+              nextCategoryBudget,
+              projectSnapshot.data().areaExpenseSubcategoryBudgets || {},
+              item.area,
+            );
+            if (capacity.assignedElsewhere > capacity.categoryBudget) {
+              throw new Error('El total de subcategorías asignadas superaría el presupuesto de la categoría.');
+            }
+          }
           transaction.update(rowRef, { ...updates, updatedAt: serverTimestamp() });
+          if (projectSnapshot) transaction.update(projectRef, {
+            budgetRevision: (Number(projectSnapshot.data().budgetRevision) || 0) + 1,
+            updatedAt: serverTimestamp(),
+          });
         });
         projectCache.delete(context.projectId);
         return { ok: true, mensaje: `Fila editada: ${rowLabel({ ...item, ...updates }, item.subcategory)}.`, cambios: updates };
@@ -1247,8 +1272,22 @@ export const buildAssistantTools = ({
             const projectSnapshot = await transaction.get(projectRef);
             const snapshot = await transaction.get(rowRef);
             if (!projectSnapshot.exists() || !snapshot.exists()) throw new Error('La fila ya no existe.');
+            if ((Number(projectSnapshot.data().budgetRevision) || 0) !== (context.meta.budgetRevision || 0)) {
+              throw new Error('El presupuesto cambió. Volvé a consultar el proyecto.');
+            }
             if ((Array.isArray(projectSnapshot.data().activeAreas) ? projectSnapshot.data().activeAreas : []).includes(area)) {
               throw new Error('El área destino quedó activa.');
+            }
+            const remainingSourceBudget = context.budgetItems
+              .filter((row) => row.area === item.area && row.id !== item.id)
+              .reduce((total, row) => total + (Number(row.total) || 0), 0);
+            const capacity = getSubcategoryBudgetCapacity(
+              remainingSourceBudget,
+              projectSnapshot.data().areaExpenseSubcategoryBudgets || {},
+              item.area,
+            );
+            if (capacity.assignedElsewhere > capacity.categoryBudget) {
+              throw new Error('Mover la partida dejaría subcategorías por encima del presupuesto de origen.');
             }
             transaction.update(rowRef, { area, order, updatedAt: serverTimestamp() });
             transaction.update(projectRef, {
@@ -1301,6 +1340,21 @@ export const buildAssistantTools = ({
             const projectSnapshot = await transaction.get(projectRef);
             const snapshot = await transaction.get(rowRef);
             if (!projectSnapshot.exists() || !snapshot.exists()) throw new Error('La fila ya no existe.');
+            if ((Number(projectSnapshot.data().budgetRevision) || 0) !== (context.meta.budgetRevision || 0)
+              || !sameExpenseVersion(snapshot.data().updatedAt, item.updatedAt)) {
+              throw new Error('El presupuesto cambió. Volvé a consultar el proyecto.');
+            }
+            const remainingCategoryBudget = context.budgetItems
+              .filter((row) => row.area === item.area && row.id !== item.id)
+              .reduce((total, row) => total + (Number(row.total) || 0), 0);
+            const capacity = getSubcategoryBudgetCapacity(
+              remainingCategoryBudget,
+              projectSnapshot.data().areaExpenseSubcategoryBudgets || {},
+              item.area,
+            );
+            if (capacity.assignedElsewhere > capacity.categoryBudget) {
+              throw new Error('Eliminar la partida dejaría subcategorías por encima del presupuesto de la categoría.');
+            }
             transaction.delete(rowRef);
             transaction.update(projectRef, {
               budgetRevision: (Number(projectSnapshot.data().budgetRevision) || 0) + 1,
@@ -1716,6 +1770,18 @@ export const buildAssistantTools = ({
         const budget = args?.presupuesto !== undefined && args?.presupuesto !== null
           ? Math.max(0, Number(args.presupuesto) || 0)
           : budgetAssigned ? Math.max(0, Number(typeof previousBudget === 'object' ? previousBudget?.budget : previousBudget) || 0) : 0;
+        const categoryBudget = context.budgetItems
+          .filter((item) => item.area === area)
+          .reduce((total, item) => total + (Number(item.total) || 0), 0);
+        const capacity = getSubcategoryBudgetCapacity(
+          categoryBudget,
+          currentBudgets,
+          area,
+          original ? subcategoryKeyOf(area, original) : '',
+        );
+        if (budgetAssigned && capacity.exceeds(budget)) {
+          return { error: `El presupuesto de las subcategorías supera el de ${area}. Disponible para esta subcategoría: $${capacity.available.toLocaleString('es-AR')}.` };
+        }
         if (isRename) delete currentBudgets[subcategoryKeyOf(area, original)];
         const nextBudgets = {
           ...currentBudgets,
@@ -1723,7 +1789,7 @@ export const buildAssistantTools = ({
             area,
             subcategory: name,
             budget,
-             budgetAssigned,
+            budgetAssigned,
             notes: String(args?.notas || '').trim(),
             updatedAt: new Date(),
             updatedByEmail: userEmail,

@@ -91,6 +91,7 @@ export const ASSISTANT_HELP_SECTIONS: AssistantHelpSection[] = [
       'Subcategorías:',
       'Se crean con el botón "Subcategoria" del encabezado del área.',
       'Las subcategorías organizan gastos sin asignarles presupuesto por defecto. Al crearlas o editarlas, se puede activar "Asignar presupuesto" y agregar notas; el lápiz abre la edición.',
+      'Si se asigna presupuesto, la suma de subcategorías no puede superar el presupuesto de su categoría. La edición muestra cuánto queda disponible.',
       'Cuando tienen presupuesto, el sistema muestra asignado, gastado y saldo, y avisa si se supera lo asignado: el gasto se guarda igual y el saldo queda en rojo.',
       'Si se elimina una subcategoría, sus gastos no se borran: quedan en "Subcategoria".',
       'Orden: igual que en Presu Ppal, las filas se reordenan arrastrando desde el grip; el selector "Orden" permite ver por fecha de pago, proveedor o monto, y el buscador filtra los gastos.',

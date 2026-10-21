@@ -81,6 +81,7 @@ import {
   normalizeProjectRole,
 } from '../lib/projectAccess';
 import { calculateProjectResult, getPaymentTotal } from '../lib/projectFinance';
+import { getSubcategoryBudgetCapacity } from '../lib/subcategoryBudget';
 import { getReimbursementBalanceCents, getReimbursedCents, isThirdPartyPayment } from '../lib/reimbursements';
 import { getFileExtension, sanitizeFileName, validateSpreadsheetImport } from '../lib/files';
 import { PROJECT_STATUSES } from '../lib/projects';
@@ -90,6 +91,8 @@ import { buildLinkedProviderInviteExpiration } from '../lib/providerInvites';
 import { resolveCashMovementTarget } from '../lib/cashMovementTargets';
 import { canChangePaymentCash, assertCanChangePaymentCash } from '../lib/paymentCashAccess';
 import { assertCashPaymentLink, buildUnpaidAmountCorrectionAudit, findCurrentPayment, hasRecordedPayment, hasActiveExpensePayments, isUnpaidAmountCorrection, prepareExpenseEdit, sameExpenseVersion, samePaymentTarget } from '../lib/expenseEdits';
+
+const StructureDraggable = Draggable as any;
 
 const tabs = [
   { id: 'resumen', label: 'Resumen', icon: Info },
@@ -271,6 +274,18 @@ const cleanAreaExpenseSubcategory = (value: any) => {
 };
 const areaSubcategoryKey = (area: any, subcategory: any) => `${String(area || '').trim()}||${cleanAreaExpenseSubcategory(subcategory)}`;
 const areaFromSubcategoryKey = (key: string) => key.split('||')[0] || '';
+const subcategoryBudgetFingerprint = (entries: Record<string, any>) => JSON.stringify(
+  Object.entries(entries).sort(([left], [right]) => left.localeCompare(right)).map(([key, value]) => [
+    key,
+    typeof value === 'number' ? value : {
+      area: value?.area || '',
+      subcategory: value?.subcategory || '',
+      budget: Number(value?.budget) || 0,
+      budgetAssigned: value?.budgetAssigned,
+      notes: value?.notes || '',
+    },
+  ]),
+);
 
 // Identificadores de arrastre de gastos por área. Se usan con @hello-pangea/dnd,
 // la misma librería que ordena las partidas de Presu Ppal.
@@ -730,6 +745,8 @@ export default function ProjectDetail() {
   const [activeAreas, setActiveAreas] = useState<string[]>([]);
   const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>({});
   const [collapsedAreaSubcategories, setCollapsedAreaSubcategories] = useState<Record<string, boolean>>({});
+  const [isOrganizingAreas, setIsOrganizingAreas] = useState(false);
+  const [isSavingAreaStructure, setIsSavingAreaStructure] = useState(false);
   const [areaExpenseSort, setAreaExpenseSort] = useState<AreaExpenseSortKey>('manual');
   const [areaExpenseSearch, setAreaExpenseSearch] = useState('');
   const [budgetSearch, setBudgetSearch] = useState('');
@@ -1137,6 +1154,18 @@ export default function ProjectDetail() {
     const nextRevision = await runTransaction(db, async (transaction) => {
       const projectRef = doc(db, 'projects', id!);
       const projectSnapshot = collectionName === 'budgetItems' ? await transaction.get(projectRef) : null;
+      if (projectSnapshot?.exists() && reason === 'row_deleted') {
+        if ((Number(projectSnapshot.data().budgetRevision) || 0) !== (Number(project?.budgetRevision) || 0)) {
+          throw new Error('EXPENSE_CHANGED');
+        }
+        const affectedAreas = Array.from(new Set(items.map((item) => String(item.area || ''))));
+        affectedAreas.forEach((area) => {
+          const remaining = budgetItems.filter((item) => item.area === area && !items.some((deleted) => deleted.id === item.id))
+            .reduce((total, item) => total + (Number(item.total) || 0), 0);
+          const capacity = getSubcategoryBudgetCapacity(remaining, projectSnapshot.data().areaExpenseSubcategoryBudgets || {}, area);
+          if (capacity.assignedElsewhere > capacity.categoryBudget) throw new Error('SUBCATEGORY_BUDGET_EXCEEDED');
+        });
+      }
       await queueExpenseRowsDeletion(transaction, items, collectionName, reason);
       if (projectSnapshot?.exists()) {
         const revision = (Number(projectSnapshot.data().budgetRevision) || 0) + 1;
@@ -1158,13 +1187,34 @@ export default function ProjectDetail() {
       const projectRef = doc(db, 'projects', id);
       const amountAuditRef = doc(collection(db, 'projects', id, 'activityLog'));
       const nextRevision = await runTransaction(db, async (transaction) => {
-        const projectSnapshot = 'area' in updates ? await transaction.get(projectRef) : null;
+        const projectSnapshot = await transaction.get(projectRef);
         const latestSnap = await transaction.get(itemRef);
         if (!latestSnap.exists()) throw new Error('EXPENSE_MISSING');
         const nextUpdates = prepareExpenseEdit(latestSnap.data(), updates, {
           isProjectAdmin: true, expectedUpdatedAt: currentItem?.updatedAt,
         });
         const assignedUpdates = await cancelPendingProviderInviteIfAssigning(transaction, latestSnap.data(), nextUpdates);
+        if (!projectSnapshot.exists()) throw new Error('PROJECT_MISSING');
+        const originalArea = String(latestSnap.data().area || '');
+        const nextArea = String(assignedUpdates.area ?? originalArea);
+        const originalTotal = Number(latestSnap.data().total) || 0;
+        const nextTotal = Number(assignedUpdates.total ?? originalTotal) || 0;
+        const budgetChanged = originalArea !== nextArea || originalTotal !== nextTotal;
+        if (budgetChanged) {
+          if ((Number(projectSnapshot.data().budgetRevision) || 0) !== (Number(project?.budgetRevision) || 0)) {
+            throw new Error('EXPENSE_CHANGED');
+          }
+          const remainingOriginalBudget = budgetItems
+            .filter((item) => item.area === originalArea && item.id !== itemId)
+            .reduce((total, item) => total + (Number(item.total) || 0), 0)
+            + (nextArea === originalArea ? nextTotal : 0);
+          const capacity = getSubcategoryBudgetCapacity(
+            remainingOriginalBudget,
+            projectSnapshot.data().areaExpenseSubcategoryBudgets || {},
+            originalArea,
+          );
+          if (capacity.assignedElsewhere > capacity.categoryBudget) throw new Error('SUBCATEGORY_BUDGET_EXCEEDED');
+        }
         if (isUnpaidAmountCorrection(latestSnap.data(), updates, isProjectAdmin)) {
           transaction.set(amountAuditRef, {
             ...buildUnpaidAmountCorrectionAudit(latestSnap.data(), nextUpdates),
@@ -1176,10 +1226,15 @@ export default function ProjectDetail() {
           assignedUpdates.lastAmountCorrectionAuditId = amountAuditRef.id;
         }
         if ('area' in assignedUpdates && assignedUpdates.area !== latestSnap.data().area) {
-          if (!projectSnapshot?.exists()
-            || safeArray(projectSnapshot.data().activeAreas).includes(assignedUpdates.area)) {
+          if (safeArray(projectSnapshot.data().activeAreas).includes(assignedUpdates.area)) {
             throw new Error('AREA_CHANGED');
           }
+          const revision = (Number(projectSnapshot.data().budgetRevision) || 0) + 1;
+          transaction.update(projectRef, { budgetRevision: revision, updatedAt: serverTimestamp() });
+          transaction.update(itemRef, { ...assignedUpdates, updatedAt: serverTimestamp() });
+          return revision;
+        }
+        if (budgetChanged) {
           const revision = (Number(projectSnapshot.data().budgetRevision) || 0) + 1;
           transaction.update(projectRef, { budgetRevision: revision, updatedAt: serverTimestamp() });
           transaction.update(itemRef, { ...assignedUpdates, updatedAt: serverTimestamp() });
@@ -1195,9 +1250,13 @@ export default function ProjectDetail() {
       if (saved.exists()) setBudgetItems(items => items.map(i => i.id === itemId ? { id: i.id, ...saved.data() } as BudgetItem : i));
     } catch (e) {
       console.error("Error updating budget item:", e);
-      if (propagateFailure) throw new Error('No se pudo guardar el importe. El gasto cambió o tiene pagos asociados; revisá la fila.');
+      if (propagateFailure) throw new Error(e instanceof Error && e.message === 'SUBCATEGORY_BUDGET_EXCEEDED'
+        ? 'No se puede reducir la categoría por debajo del presupuesto asignado a sus subcategorías.'
+        : 'No se pudo guardar el importe. El gasto cambió o tiene pagos asociados; revisá la fila.');
       alert(e instanceof Error && e.message === 'PAID_EXPENSE_LOCKED'
         ? 'Para corregir el importe, primero eliminá todos los pagos de la fila. Los demás datos del gasto conservan su bloqueo histórico.'
+        : e instanceof Error && e.message === 'SUBCATEGORY_BUDGET_EXCEEDED'
+          ? 'No se puede reducir la categoría por debajo del presupuesto asignado a sus subcategorías.'
         : 'No se pudo guardar el importe. La partida cambió o no se pudo validar la corrección. Actualizá y revisá la fila antes de intentarlo otra vez.');
     }
   };
@@ -1218,6 +1277,8 @@ export default function ProjectDetail() {
       }
       alert(e instanceof Error && e.message === 'PAID_EXPENSE_LOCKED'
         ? 'No se puede eliminar esta partida mientras tenga pagos vigentes. Eliminá primero los pagos autorizados desde Gestión de pagos.'
+        : e instanceof Error && e.message === 'SUBCATEGORY_BUDGET_EXCEEDED'
+          ? 'No se puede eliminar: la categoría quedaría por debajo del presupuesto asignado a sus subcategorías.'
         : e instanceof Error && e.message === 'EXPENSE_HAS_CASH_MOVEMENT'
           ? 'No se puede eliminar esta partida porque todavía tiene movimientos de caja asociados. Revisá Gestión de pagos y Cajas.'
           : 'No se pudo eliminar la partida. Actualizá la página y revisá sus pagos y permisos antes de intentarlo otra vez.');
@@ -1337,6 +1398,16 @@ export default function ProjectDetail() {
         return;
       }
       const movedItem = { ...originalItem, area: destArea };
+      const remainingSourceBudget = sourceItems.reduce((total, item) => total + (Number(item.total) || 0), 0);
+      const sourceCapacity = getSubcategoryBudgetCapacity(
+        remainingSourceBudget,
+        project?.areaExpenseSubcategoryBudgets || {},
+        sourceArea,
+      );
+      if (sourceCapacity.assignedElsewhere > sourceCapacity.categoryBudget) {
+        alert(`No se puede mover esta partida: ${sourceArea} quedaría por debajo del presupuesto asignado a sus subcategorias.`);
+        return;
+      }
       destItems.splice(destination.index, 0, movedItem);
 
       // Update orders for both categories
@@ -1359,10 +1430,19 @@ export default function ProjectDetail() {
           const projectSnapshot = await transaction.get(projectRef);
           const itemSnapshot = await transaction.get(itemRef);
           if (!projectSnapshot.exists() || safeArray(projectSnapshot.data().activeAreas).includes(destArea)
+            || (Number(projectSnapshot.data().budgetRevision) || 0) !== (Number(project?.budgetRevision) || 0)
             || !itemSnapshot.exists() || hasRecordedPayment(itemSnapshot.data())
             || itemSnapshot.data().area !== sourceArea
             || !sameExpenseVersion(itemSnapshot.data().updatedAt, originalItem.updatedAt)) {
             throw new Error('EXPENSE_CHANGED');
+          }
+          const currentSourceCapacity = getSubcategoryBudgetCapacity(
+            remainingSourceBudget,
+            projectSnapshot.data().areaExpenseSubcategoryBudgets || {},
+            sourceArea,
+          );
+          if (currentSourceCapacity.assignedElsewhere > currentSourceCapacity.categoryBudget) {
+            throw new Error('SUBCATEGORY_BUDGET_EXCEEDED');
           }
           const revision = (Number(projectSnapshot.data().budgetRevision) || 0) + 1;
           transaction.update(projectRef, { budgetRevision: revision, updatedAt: serverTimestamp() });
@@ -1896,6 +1976,20 @@ export default function ProjectDetail() {
     const budget = subcategoryBudgetDraft.assignBudget
       ? Math.max(0, Number(subcategoryBudgetDraft.budget) || 0)
       : 0;
+    const currentBudgetKey = original ? areaSubcategoryKey(area, original) : '';
+    const categoryBudget = budgetItems
+      .filter((item) => item.area === area)
+      .reduce((total, item) => total + (Number(item.total) || 0), 0);
+    const capacity = getSubcategoryBudgetCapacity(
+      categoryBudget,
+      project?.areaExpenseSubcategoryBudgets || {},
+      area,
+      currentBudgetKey,
+    );
+    if (subcategoryBudgetDraft.assignBudget && capacity.exceeds(budget)) {
+      alert(`El presupuesto de las subcategorias no puede superar el de ${area}. Disponible para esta subcategoria: $${capacity.available.toLocaleString('es-AR')}.`);
+      return;
+    }
     const nextSubcategories = Array.from(new Set([
       ...existing.filter((item) => !original || item.toLowerCase() !== original.toLowerCase()),
       name,
@@ -1924,6 +2018,29 @@ export default function ProjectDetail() {
 
     setIsSavingSubcategoryBudget(true);
     try {
+      const projectRef = doc(db, 'projects', id);
+      const [serverProject, serverBudgetItems] = await Promise.all([
+        getDocFromServer(projectRef),
+        getDocsFromServer(collection(db, 'projects', id, 'budgetItems')),
+      ]);
+      if (!serverProject.exists()) throw new Error('PROJECT_MISSING');
+      const serverCategoryBudget = serverBudgetItems.docs
+        .filter((item) => item.data().area === area)
+        .reduce((total, item) => total + (Number(item.data().total) || 0), 0);
+      const serverCapacity = getSubcategoryBudgetCapacity(
+        serverCategoryBudget,
+        serverProject.data().areaExpenseSubcategoryBudgets || {},
+        area,
+        currentBudgetKey,
+      );
+      if (subcategoryBudgetDraft.assignBudget && serverCapacity.exceeds(budget)) {
+        throw new Error('SUBCATEGORY_BUDGET_EXCEEDED');
+      }
+      if (subcategoryBudgetFingerprint(serverProject.data().areaExpenseSubcategoryBudgets || {})
+        !== subcategoryBudgetFingerprint(project?.areaExpenseSubcategoryBudgets || {})
+        || JSON.stringify(serverProject.data().areaExpenseSubcategories || {}) !== JSON.stringify(project?.areaExpenseSubcategories || {})) {
+        throw new Error('SUBCATEGORIES_CHANGED');
+      }
       const expenseUpdates = isRename
         ? areaExpenses.filter((expense) => (
             expense.area === area
@@ -1936,6 +2053,13 @@ export default function ProjectDetail() {
       const collaboratorsToUpdate = isRename && oldPermissionKey
         ? collaborators.filter((col) => safeArray(col.allowedSubcategories).includes(oldPermissionKey)) : [];
       await runTransaction(db, async (transaction) => {
+        const currentProject = await transaction.get(projectRef);
+        if (!currentProject.exists()
+          || (Number(currentProject.data().budgetRevision) || 0) !== (Number(serverProject.data().budgetRevision) || 0)
+          || subcategoryBudgetFingerprint(currentProject.data().areaExpenseSubcategoryBudgets || {})
+            !== subcategoryBudgetFingerprint(serverProject.data().areaExpenseSubcategoryBudgets || {})) {
+          throw new Error('SUBCATEGORIES_CHANGED');
+        }
         const refs = expenseUpdates.map((expense) => doc(db, 'projects', id, 'areaExpenses', expense.id));
         const snapshots = await Promise.all(refs.map((expenseRef) => transaction.get(expenseRef)));
         snapshots.forEach((snapshot, index) => {
@@ -1943,7 +2067,7 @@ export default function ProjectDetail() {
             || !sameExpenseVersion(snapshot.data().updatedAt, expenseUpdates[index].updatedAt)
             || !samePaymentTarget(snapshot.data(), expenseUpdates[index])) throw new Error('EXPENSE_CHANGED');
         });
-        transaction.update(doc(db, 'projects', id), {
+        transaction.update(projectRef, {
           areaExpenseSubcategories: { ...(project?.areaExpenseSubcategories || {}), [area]: nextSubcategories },
           areaExpenseSubcategoryBudgets: nextBudgetMap,
           updatedAt: serverTimestamp(),
@@ -1993,7 +2117,11 @@ export default function ProjectDetail() {
       setSubcategoryBudgetDraft(null);
     } catch (error) {
       console.error('Error saving area expense subcategory:', error);
-      alert('No se pudo guardar la subcategoria.');
+      alert(error instanceof Error && error.message === 'SUBCATEGORY_BUDGET_EXCEEDED'
+        ? `El presupuesto disponible de ${area} cambió. Actualizá la página y revisá el importe antes de guardar.`
+        : error instanceof Error && error.message === 'SUBCATEGORIES_CHANGED'
+          ? 'El presupuesto o las subcategorias cambiaron. Actualizá la página y revisá los importes antes de guardar.'
+          : 'No se pudo guardar la subcategoria.');
     } finally {
       setIsSavingSubcategoryBudget(false);
     }
@@ -3461,6 +3589,232 @@ export default function ProjectDetail() {
     balance: acc.balance + row.balance,
     records: acc.records + row.expenses.length,
   }), { assigned: 0, spent: 0, balance: 0, records: 0 });
+  const subcategoryBudgetCapacity = subcategoryBudgetDraft
+    ? getSubcategoryBudgetCapacity(
+        budgetItems
+          .filter((item) => item.area === subcategoryBudgetDraft.area)
+          .reduce((total, item) => total + (Number(item.total) || 0), 0),
+        project?.areaExpenseSubcategoryBudgets || {},
+        subcategoryBudgetDraft.area,
+        subcategoryBudgetDraft.originalSubcategory === DEFAULT_AREA_EXPENSE_SUBCATEGORY
+          ? ''
+          : subcategoryBudgetDraft.originalSubcategory
+            ? areaSubcategoryKey(subcategoryBudgetDraft.area, subcategoryBudgetDraft.originalSubcategory)
+            : '',
+      )
+    : null;
+  const subcategoryBudgetExceeds = Boolean(
+    subcategoryBudgetDraft?.assignBudget
+    && subcategoryBudgetCapacity?.exceeds(Number(subcategoryBudgetDraft.budget) || 0),
+  );
+
+  const onAreaStructureDragEnd = async (result: any) => {
+    const { source, destination, type } = result || {};
+    if (!destination || !id || !isProjectAdmin || isSavingAreaStructure) return;
+    if (source.droppableId === destination.droppableId && source.index === destination.index) return;
+
+    if (type === 'area-category') {
+      const reordered = [...visibleCategories];
+      const [moved] = reordered.splice(source.index, 1);
+      if (!moved) return;
+      reordered.splice(destination.index, 0, moved);
+      const visibleSet = new Set(visibleCategories);
+      let nextVisibleIndex = 0;
+      const nextCategories = categories.map((area) => visibleSet.has(area) ? reordered[nextVisibleIndex++] : area);
+      setIsSavingAreaStructure(true);
+      try {
+        await runTransaction(db, async (transaction) => {
+          const projectRef = doc(db, 'projects', id);
+          const snapshot = await transaction.get(projectRef);
+          if (!snapshot.exists() || JSON.stringify(resolveBudgetCategories(snapshot.data())) !== JSON.stringify(categories)) {
+            throw new Error('AREA_CHANGED');
+          }
+          transaction.update(projectRef, { categories: nextCategories, updatedAt: serverTimestamp() });
+        });
+        setCategories(nextCategories);
+      } catch (error) {
+        console.error('Error reordering areas:', error);
+        alert('Las categorias cambiaron. Actualizá la página antes de reordenarlas.');
+      } finally {
+        setIsSavingAreaStructure(false);
+      }
+      return;
+    }
+
+    if (type !== 'area-subcategory') return;
+    const prefix = 'area-subcategories|';
+    if (!source.droppableId.startsWith(prefix) || !destination.droppableId.startsWith(prefix)) return;
+    const sourceArea = decodeURIComponent(source.droppableId.slice(prefix.length));
+    const targetArea = decodeURIComponent(destination.droppableId.slice(prefix.length));
+    if (!activeAreas.includes(sourceArea) || !activeAreas.includes(targetArea)) return;
+    const sourceList = [...(areaExpenseSubcategoriesByArea[sourceArea] || [])];
+    const targetList = sourceArea === targetArea ? sourceList : [...(areaExpenseSubcategoriesByArea[targetArea] || [])];
+    const [subcategory] = sourceList.splice(source.index, 1);
+    if (!subcategory) return;
+    if (sourceArea !== targetArea && targetList.some((item) => item.toLowerCase() === subcategory.toLowerCase())) {
+      alert(`La subcategoria «${subcategory}» ya existe en ${targetArea}.`);
+      return;
+    }
+    targetList.splice(destination.index, 0, subcategory);
+
+    const oldKey = areaSubcategoryKey(sourceArea, subcategory);
+    const newKey = areaSubcategoryKey(targetArea, subcategory);
+    const currentMap = project?.areaExpenseSubcategoryBudgets || {};
+    const budgetEntry = currentMap[oldKey];
+    const assignedBudget = typeof budgetEntry === 'number'
+      ? budgetEntry
+      : budgetEntry?.budgetAssigned === false ? 0 : Number(budgetEntry?.budget) || 0;
+    const movedExpenses = sourceArea === targetArea ? [] : areaExpenses.filter((item) => (
+      item.area === sourceArea && cleanAreaExpenseSubcategory(item.subcategory) === subcategory
+    ));
+    if (movedExpenses.some(hasRecordedPayment)) {
+      alert('Esta subcategoria tiene gastos con pagos registrados. No se puede cambiar de categoria sin alterar su historial.');
+      return;
+    }
+    if (movedExpenses.length > 400) {
+      alert('Hay demasiados gastos para mover esta subcategoria de una vez.');
+      return;
+    }
+    const collaboratorsToUpdate = sourceArea === targetArea ? [] : collaborators.filter((person) => (
+      safeArray(person.allowedSubcategories).includes(oldKey)
+    ));
+    if (movedExpenses.length + collaboratorsToUpdate.length > 450) {
+      alert('Hay demasiados gastos o permisos para mover esta subcategoria de una vez.');
+      return;
+    }
+    if (sourceArea !== targetArea) {
+      const sourceAreaDelegates = collaborators.filter((person) => safeArray(person.allowedCategories).includes(sourceArea));
+      const targetAreaDelegates = collaborators.filter((person) => safeArray(person.allowedCategories).includes(targetArea));
+      const warning = `Mover «${subcategory}» de ${sourceArea} a ${targetArea} cambiará el área de ${movedExpenses.length} gastos.\n\n`
+        + `${collaboratorsToUpdate.length} permisos específicos seguirán a la subcategoria. `
+        + `${sourceAreaDelegates.length} colaboradores con acceso al área de origen pueden dejar de verla; `
+        + `${targetAreaDelegates.length} colaboradores con acceso al área de destino podrán verla.\n\n`
+        + `Presupuesto asignado que se trasladará: $${assignedBudget.toLocaleString('es-AR')}. ¿Continuar?`;
+      if (!confirm(warning)) return;
+    }
+
+    setIsSavingAreaStructure(true);
+    try {
+      const projectRef = doc(db, 'projects', id);
+      const [baselineProject, serverBudgetItems] = await Promise.all([
+        getDocFromServer(projectRef),
+        sourceArea === targetArea ? Promise.resolve(null) : getDocsFromServer(collection(db, 'projects', id, 'budgetItems')),
+      ]);
+      if (!baselineProject.exists()) throw new Error('PROJECT_MISSING');
+      if (sourceArea !== targetArea && assignedBudget > 0) {
+        const targetCategoryBudget = serverBudgetItems!.docs
+          .filter((item) => item.data().area === targetArea)
+          .reduce((total, item) => total + (Number(item.data().total) || 0), 0);
+        const capacity = getSubcategoryBudgetCapacity(
+          targetCategoryBudget,
+          baselineProject.data().areaExpenseSubcategoryBudgets || {},
+          targetArea,
+        );
+        if (capacity.exceeds(assignedBudget)) throw new Error('SUBCATEGORY_BUDGET_EXCEEDED');
+      }
+      const currentLists = baselineProject.data().areaExpenseSubcategories || {};
+      const currentBudgets = baselineProject.data().areaExpenseSubcategoryBudgets || {};
+      if (subcategoryBudgetFingerprint(currentBudgets) !== subcategoryBudgetFingerprint(currentMap)
+        || JSON.stringify(currentLists) !== JSON.stringify(project?.areaExpenseSubcategories || {})) {
+        throw new Error('SUBCATEGORIES_CHANGED');
+      }
+      const nextLists = {
+        ...currentLists,
+        [sourceArea]: sourceList,
+        [targetArea]: targetList,
+      };
+      const nextBudgets = { ...currentBudgets };
+      if (sourceArea !== targetArea && budgetEntry !== undefined) {
+        delete nextBudgets[oldKey];
+        nextBudgets[newKey] = typeof budgetEntry === 'number' ? budgetEntry : { ...budgetEntry, area: targetArea };
+      }
+      const expenseRefs = movedExpenses.map((expense) => doc(db, 'projects', id, 'areaExpenses', expense.id));
+      const collaboratorRefs = collaboratorsToUpdate.map((person) => doc(db, 'projects', id, 'collaborators', normalizeEmail(person.email)));
+      const auditRef = sourceArea === targetArea ? null : doc(collection(db, 'projects', id, 'activityLog'));
+      await runTransaction(db, async (transaction) => {
+        const currentProject = await transaction.get(projectRef);
+        const expenseSnapshots = await Promise.all(expenseRefs.map((ref) => transaction.get(ref)));
+        const collaboratorSnapshots = await Promise.all(collaboratorRefs.map((ref) => transaction.get(ref)));
+        if (!currentProject.exists()
+          || (Number(currentProject.data().budgetRevision) || 0) !== (Number(baselineProject.data().budgetRevision) || 0)
+          || subcategoryBudgetFingerprint(currentProject.data().areaExpenseSubcategoryBudgets || {})
+            !== subcategoryBudgetFingerprint(currentBudgets)
+          || JSON.stringify(currentProject.data().areaExpenseSubcategories || {}) !== JSON.stringify(currentLists)) {
+          throw new Error('SUBCATEGORIES_CHANGED');
+        }
+        expenseSnapshots.forEach((snapshot, index) => {
+          const original = movedExpenses[index];
+          if (!snapshot.exists() || hasRecordedPayment(snapshot.data())
+            || snapshot.data().area !== sourceArea
+            || cleanAreaExpenseSubcategory(snapshot.data().subcategory) !== subcategory
+            || !sameExpenseVersion(snapshot.data().updatedAt, original.updatedAt)
+            || !samePaymentTarget(snapshot.data(), original)) throw new Error('EXPENSE_CHANGED');
+        });
+        collaboratorSnapshots.forEach((snapshot) => {
+          if (!snapshot.exists() || !safeArray(snapshot.data().allowedSubcategories).includes(oldKey)) {
+            throw new Error('PERMISSIONS_CHANGED');
+          }
+        });
+        transaction.update(projectRef, {
+          areaExpenseSubcategories: nextLists,
+          areaExpenseSubcategoryBudgets: nextBudgets,
+          updatedAt: serverTimestamp(),
+        });
+        expenseRefs.forEach((ref) => transaction.update(ref, { area: targetArea, updatedAt: serverTimestamp() }));
+        collaboratorRefs.forEach((ref, index) => transaction.update(ref, {
+          allowedSubcategories: Array.from(new Set(
+            safeArray(collaboratorSnapshots[index].data()?.allowedSubcategories).map((key) => key === oldKey ? newKey : key),
+          )),
+          updatedAt: serverTimestamp(),
+        }));
+        if (auditRef) transaction.set(auditRef, {
+          action: 'area_subcategory_moved',
+          subcategory,
+          fromArea: sourceArea,
+          toArea: targetArea,
+          expenseCount: movedExpenses.length,
+          assignedBudget,
+          permissionCount: collaboratorsToUpdate.length,
+          movedBy: user?.uid || '',
+          movedByEmail: normalizeEmail(user?.email),
+          createdAt: serverTimestamp(),
+        });
+      });
+      setProject((current: any) => current ? {
+        ...current,
+        areaExpenseSubcategories: nextLists,
+        areaExpenseSubcategoryBudgets: nextBudgets,
+      } : current);
+      if (sourceArea !== targetArea) {
+        setAreaExpenses((current) => current.map((expense) => (
+          expense.area === sourceArea && cleanAreaExpenseSubcategory(expense.subcategory) === subcategory
+            ? { ...expense, area: targetArea }
+            : expense
+        )));
+        setCollaborators((current) => current.map((person) => (
+          safeArray(person.allowedSubcategories).includes(oldKey)
+            ? { ...person, allowedSubcategories: safeArray(person.allowedSubcategories).map((key) => key === oldKey ? newKey : key) }
+            : person
+        )));
+        setCollapsedAreaSubcategories((current) => {
+          const next = { ...current };
+          const oldCollapseKey = `${sourceArea}__${subcategory}`;
+          if (oldCollapseKey in next) {
+            next[`${targetArea}__${subcategory}`] = next[oldCollapseKey];
+            delete next[oldCollapseKey];
+          }
+          return next;
+        });
+      }
+    } catch (error) {
+      console.error('Error moving area subcategory:', error);
+      alert(error instanceof Error && error.message === 'SUBCATEGORY_BUDGET_EXCEEDED'
+        ? `La subcategoria supera el presupuesto disponible de ${targetArea}. Reducí su asignación antes de moverla.`
+        : 'No se pudo mover la subcategoria. Actualizá la página y revisá gastos, presupuestos y permisos.');
+    } finally {
+      setIsSavingAreaStructure(false);
+    }
+  };
 
   const isProductionLead = userPermissions?.role === 'jefe_produccion';
   const canEditProjectOperations = isProjectAdmin || isProductionLead;
@@ -6176,6 +6530,17 @@ export default function ProjectDetail() {
               <div>
                 <h2 className="text-base font-bold text-slate-900">Áreas</h2>
               </div>
+              {isProjectAdmin && visibleCategories.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setIsOrganizingAreas((current) => !current)}
+                  disabled={isSavingAreaStructure}
+                  className="inline-flex items-center gap-2 rounded border border-indigo-200 bg-indigo-50 px-3 py-2 text-[10px] font-bold text-indigo-800 hover:bg-indigo-100 disabled:opacity-50"
+                >
+                  <GripVertical className="h-4 w-4" />
+                  {isOrganizingAreas ? 'Terminar de ordenar' : 'Ordenar categorías y subcategorías'}
+                </button>
+              )}
               {isProjectAdmin && (
                 <div className="relative" ref={areaSelectorRef}>
                   <button 
@@ -6286,7 +6651,98 @@ export default function ProjectDetail() {
             </div>
             </div>
 
-            {selectedAreaDashboardRows.length > 0 && (
+            {isOrganizingAreas && (
+              <div className="rounded-xl border border-indigo-200 bg-indigo-50/50 p-3 sm:p-4">
+                <p className="mb-3 text-xs text-slate-600">
+                  Arrastrá desde el control de cada fila. Los gastos quedan ocultos mientras ordenás; al terminar vuelven a su estado anterior.
+                </p>
+                <DragDropContext onDragEnd={onAreaStructureDragEnd}>
+                  <Droppable droppableId="area-category-list" type="area-category">
+                    {(areaProvided) => (
+                      <div ref={areaProvided.innerRef} {...areaProvided.droppableProps} className="space-y-3">
+                        {visibleCategories.map((area, areaIndex) => {
+                          const names = areaExpenseSubcategoriesByArea[area] || [];
+                          const categoryBudget = budgetItems.filter((item) => item.area === area)
+                            .reduce((total, item) => total + (Number(item.total) || 0), 0);
+                          return (
+                            <StructureDraggable
+                              key={area}
+                              draggableId={`area-category|${encodeURIComponent(area)}`}
+                              index={areaIndex}
+                              isDragDisabled={isSavingAreaStructure}
+                            >
+                              {(categoryProvided: any, categorySnapshot: any) => (
+                                <section
+                                  ref={categoryProvided.innerRef}
+                                  {...categoryProvided.draggableProps}
+                                  className={cn(
+                                    'rounded-lg border border-slate-200 bg-white shadow-sm',
+                                    categorySnapshot.isDragging && 'shadow-xl',
+                                  )}
+                                >
+                                  <div className="flex items-center gap-3 rounded-t-lg bg-slate-900 px-3 py-2 text-white">
+                                    <div {...categoryProvided.dragHandleProps} className="cursor-grab rounded p-1 hover:bg-white/10" aria-label={`Mover categoría ${area}`}>
+                                      <GripVertical className="h-4 w-4" />
+                                    </div>
+                                    <strong className="min-w-0 flex-1 truncate text-xs uppercase tracking-wide">{area}</strong>
+                                    <span className="text-[10px] text-slate-300">Presu ${categoryBudget.toLocaleString('es-AR')}</span>
+                                  </div>
+                                  <Droppable droppableId={`area-subcategories|${encodeURIComponent(area)}`} type="area-subcategory">
+                                    {(subcategoryProvided, subcategorySnapshot) => (
+                                      <div
+                                        ref={subcategoryProvided.innerRef}
+                                        {...subcategoryProvided.droppableProps}
+                                        className={cn('min-h-12 space-y-1 p-2', subcategorySnapshot.isDraggingOver && 'bg-indigo-100')}
+                                      >
+                                        {names.map((name, subcategoryIndex) => {
+                                          const entry = getAreaSubcategoryBudgetEntry(area, name);
+                                          const expenseCount = areaExpenses.filter((item) => item.area === area && cleanAreaExpenseSubcategory(item.subcategory) === name).length;
+                                          return (
+                                            <StructureDraggable
+                                              key={name}
+                                              draggableId={`area-subcategory|${encodeURIComponent(area)}|${encodeURIComponent(name)}`}
+                                              index={subcategoryIndex}
+                                              isDragDisabled={isSavingAreaStructure}
+                                            >
+                                              {(subcategoryDragProvided: any, subcategorySnapshot: any) => (
+                                                <div
+                                                  ref={subcategoryDragProvided.innerRef}
+                                                  {...subcategoryDragProvided.draggableProps}
+                                                  className={cn(
+                                                    'flex items-center gap-2 rounded border border-indigo-200 bg-indigo-50 px-2 py-2 text-xs text-slate-800',
+                                                    subcategorySnapshot.isDragging && 'shadow-lg',
+                                                  )}
+                                                >
+                                                  <div {...subcategoryDragProvided.dragHandleProps} className="cursor-grab rounded p-1 hover:bg-indigo-100" aria-label={`Mover subcategoría ${name}`}>
+                                                    <GripVertical className="h-4 w-4 text-indigo-600" />
+                                                  </div>
+                                                  <span className="min-w-0 flex-1 truncate font-semibold">{name}</span>
+                                                  <span className="shrink-0 text-[10px] text-slate-500">{expenseCount} gastos</span>
+                                                  {entry.assignBudget && <span className="shrink-0 text-[10px] font-bold">${entry.budget.toLocaleString('es-AR')}</span>}
+                                                </div>
+                                              )}
+                                            </StructureDraggable>
+                                          );
+                                        })}
+                                        {subcategoryProvided.placeholder}
+                                        {names.length === 0 && <p className="px-2 py-2 text-xs text-slate-400">Soltá aquí una subcategoría</p>}
+                                      </div>
+                                    )}
+                                  </Droppable>
+                                </section>
+                              )}
+                            </StructureDraggable>
+                          );
+                        })}
+                        {areaProvided.placeholder}
+                      </div>
+                    )}
+                  </Droppable>
+                </DragDropContext>
+              </div>
+            )}
+
+            {!isOrganizingAreas && selectedAreaDashboardRows.length > 0 && (
               <div className="space-y-4">
                 <AreaBudgetSummary
                   assigned={areaDashboardTotals.assigned}
@@ -6847,7 +7303,7 @@ export default function ProjectDetail() {
                 </div>
               </div>
             )}
-            {visibleCategories.length > 0 && selectedAreaDashboardRows.length === 0 && (
+            {!isOrganizingAreas && visibleCategories.length > 0 && selectedAreaDashboardRows.length === 0 && (
               <div className="bg-white border border-dashed border-slate-200 rounded-xl p-6 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
                 Seleccioná una o más áreas para ver gastos y presupuesto
               </div>
@@ -8979,18 +9435,31 @@ export default function ProjectDetail() {
                   </label>
                   <p className="mt-1 text-xs text-slate-500">Si no lo asignás, la subcategoria sólo organiza los gastos.</p>
                   {subcategoryBudgetDraft.assignBudget && (
-                    <div className="relative mt-3">
-                      <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold">$</span>
-                      <input
-                        value={subcategoryBudgetDraft.budget}
-                        onChange={(event) => setSubcategoryBudgetDraft((current) => current ? { ...current, budget: event.target.value } : current)}
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        aria-label="Presupuesto asignado"
-                        className="w-full pl-8 pr-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm font-black focus:outline-none focus:border-black"
-                        placeholder="0"
-                      />
+                    <div className="mt-3 space-y-2">
+                      <div className="grid grid-cols-2 gap-2 rounded-lg bg-indigo-50 px-3 py-2 text-xs text-slate-700">
+                        <span>Presupuesto de {subcategoryBudgetDraft.area}</span>
+                        <strong className="text-right">${subcategoryBudgetCapacity?.categoryBudget.toLocaleString('es-AR') || '0'}</strong>
+                        <span>Asignado a otras subcategorias</span>
+                        <strong className="text-right">${subcategoryBudgetCapacity?.assignedElsewhere.toLocaleString('es-AR') || '0'}</strong>
+                        <span className="font-semibold">Disponible para esta subcategoria</span>
+                        <strong className="text-right text-indigo-700">${subcategoryBudgetCapacity?.available.toLocaleString('es-AR') || '0'}</strong>
+                      </div>
+                      <div className="relative">
+                        <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold">$</span>
+                        <input
+                          value={subcategoryBudgetDraft.budget}
+                          onChange={(event) => setSubcategoryBudgetDraft((current) => current ? { ...current, budget: event.target.value } : current)}
+                          type="number"
+                          min="0"
+                          max={subcategoryBudgetCapacity?.available}
+                          step="0.01"
+                          aria-label="Presupuesto asignado"
+                          aria-invalid={subcategoryBudgetExceeds}
+                          className="w-full pl-8 pr-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm font-black focus:outline-none focus:border-black"
+                          placeholder="0"
+                        />
+                      </div>
+                      {subcategoryBudgetExceeds && <p className="text-xs font-semibold text-red-600">El importe supera el presupuesto disponible de la categoria.</p>}
                     </div>
                   )}
                 </div>
@@ -9028,7 +9497,7 @@ export default function ProjectDetail() {
                     </button>
                     <button
                       type="submit"
-                      disabled={isSavingSubcategoryBudget}
+                      disabled={isSavingSubcategoryBudget || subcategoryBudgetExceeds}
                       className="px-5 py-3 bg-black text-white rounded text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 disabled:bg-slate-300"
                     >
                       {isSavingSubcategoryBudget ? 'Guardando...' : 'Guardar subcategoria'}
