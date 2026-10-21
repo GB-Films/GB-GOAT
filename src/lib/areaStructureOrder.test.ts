@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { moveNamedSubcategory, reorderDisplayedCategories } from './areaStructureOrder';
+import { moveAreaSubcategory, reorderDisplayedCategories } from './areaStructureOrder';
 
 test('reordering visible areas preserves positions of hidden categories', () => {
   assert.deepEqual(
@@ -9,17 +9,17 @@ test('reordering visible areas preserves positions of hidden categories', () => 
   );
 });
 
-test('the general Subcategoria row stays first while named rows are reordered', () => {
+test('the general Subcategoria row can move among named rows', () => {
   assert.deepEqual(
-    moveNamedSubcategory(['Vestuario', 'Utilería'], ['Vestuario', 'Utilería'], 2, 1, true, true, true),
-    { subcategory: 'Utilería', source: ['Utilería', 'Vestuario'], target: ['Utilería', 'Vestuario'] },
+    moveAreaSubcategory(['', 'Vestuario', 'Utilería'], ['', 'Vestuario', 'Utilería'], 0, 2, true),
+    { subcategory: '', source: ['Vestuario', 'Utilería', ''], target: ['Vestuario', 'Utilería', ''] },
   );
-  assert.equal(moveNamedSubcategory(['Vestuario'], ['Vestuario'], 0, 1, true, true, true), null);
 });
 
-test('moving a named row across areas accounts for the general row in the destination', () => {
+test('moving rows across areas keeps their requested position and rejects duplicate defaults', () => {
   assert.deepEqual(
-    moveNamedSubcategory(['Vestuario'], ['Catering'], 0, 1, false, true, false),
-    { subcategory: 'Vestuario', source: [], target: ['Vestuario', 'Catering'] },
+    moveAreaSubcategory(['Vestuario'], ['', 'Catering'], 0, 1, false),
+    { subcategory: 'Vestuario', source: [], target: ['', 'Vestuario', 'Catering'] },
   );
+  assert.equal(moveAreaSubcategory(['', 'Vestuario'], ['', 'Catering'], 0, 1, false), null);
 });
