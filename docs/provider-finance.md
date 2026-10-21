@@ -62,6 +62,10 @@ distribución: anular y volver a registrar. El historial de la operación conser
 motivo y autor. Una anulación del registro no revierte un pago bancario real.
 Los proveedores y proyectos con este historial no se eliminan físicamente;
 se conservan sus referencias aun cuando las operaciones hayan sido anuladas.
+Las áreas con aplicaciones activas no pueden cambiar de gestión Presu Ppal/Áreas
+ni cambiar de nombre; primero se anulan las aplicaciones desde el proveedor.
+Esto evita ocultar la fila vinculada. Se mantiene el reordenamiento y la gestión
+de otras áreas sin aplicaciones compartidas.
 
 ## Acceso y archivos
 
@@ -76,7 +80,8 @@ se puede reescribir un pago compartido desde la fila, aunque sea admin.
 Storage `providerFinance/{providerId}/{operationId}/{file}` acepta PDF, JPG, PNG o
 WEBP, máximo 2 MB. El cliente calcula SHA-256 para recuperar una carga interrumpida.
 Después de confirmar el registro, el archivo no se sobrescribe ni elimina. Se
-descarga con SDK autenticado; no se distribuye su token de descarga.
+descarga mediante la callable, que verifica nuevamente el rol administrador y
+entrega los bytes; no se distribuyen tokens de descarga ni se amplía CORS del bucket.
 
 ## Verificación y publicación
 

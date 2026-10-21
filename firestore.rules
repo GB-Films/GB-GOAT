@@ -528,7 +528,7 @@ service cloud.firestore {
         || resource.data.get('sharedPaymentIds', []).size() > 0;
       return !changed.hasAny(['sharedInvoices', 'sharedReceipts', 'sharedPaymentIds', 'sharedPaymentRecords'])
         && (resource.data.get('sharedInvoices', []).size() == 0 || !changed.hasAny(['invoice', 'invoices']))
-        && (!linked || !changed.hasAny(['providerId', 'providerName', 'total', 'unitPrice', 'quantity']))
+        && (!linked || !changed.hasAny(['providerId', 'providerName', 'area', 'total', 'unitPrice', 'quantity']))
         && (resource.data.get('sharedPaymentIds', []).size() == 0
           || !changed.hasAny(['paymentHistory', 'paid', 'paymentLocked', 'paymentAuthorIds'])
           || request.resource.data.get('paymentHistory', []).hasAll(resource.data.sharedPaymentRecords));
@@ -545,6 +545,14 @@ service cloud.firestore {
         || (resource.data.get('sharedInvoices', []).size() == 0
         && resource.data.get('sharedReceipts', []).size() == 0
         && resource.data.get('sharedPaymentIds', []).size() == 0);
+    }
+
+    function preservesSharedExpenseManagement(projectId) {
+      let indexPath = /databases/$(database)/documents/providerFinanceProjectIndex/$(projectId);
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['activeAreas'])
+        || !exists(indexPath)
+        || (request.resource.data.get('activeAreas', []).hasAll(get(indexPath).data.get('managedAreas', []))
+          && !request.resource.data.get('activeAreas', []).hasAny(get(indexPath).data.get('budgetAreas', [])));
     }
 
     match /providerFinancialRecords/{recordId} {
@@ -1520,7 +1528,8 @@ service cloud.firestore {
       allow get: if hasProjectAccess(projectId);
       allow create: if isAppAdmin() && request.resource.data.createdBy == request.auth.uid
         && !request.resource.data.keys().hasAny(commercialFieldNames());
-      allow update: if !request.resource.data.diff(resource.data).affectedKeys().hasAny(commercialFieldNames()) && (isProjectAdmin(projectId)
+      allow update: if preservesSharedExpenseManagement(projectId)
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(commercialFieldNames()) && (isProjectAdmin(projectId)
         || canAppendCollaboratorEmailAsProductionLead(projectId)
         || canUpdateProjectOperations(projectId)
         || canUpdateAreaExpenseSubcategories(projectId));

@@ -17,6 +17,11 @@ const cents = value => {
 const key = row => `${row.projectId}/${row.collectionName}/${row.itemId}`;
 const list = value => Array.isArray(value) ? value : [];
 const paid = row => list(row.paymentHistory).reduce((sum, payment) => sum + cents(payment.amount), 0);
+const projectIndex = records => ({
+  records,
+  managedAreas: [...new Set(Object.values(records).flat().filter(row => row.collectionName === 'areaExpenses').map(row => row.area))],
+  budgetAreas: [...new Set(Object.values(records).flat().filter(row => row.collectionName === 'budgetItems').map(row => row.area))],
+});
 function normalizeRecord(input) {
   if (!['invoice', 'payment', 'other'].includes(input.kind)) fail('Tipo de comprobante inválido.');
   if (input.currency && !['ARS', 'USD'].includes(input.currency)) fail('Moneda inválida.');
@@ -66,7 +71,7 @@ function normalizeRecord(input) {
   return result;
 }
 
-function createProviderFinanceHandler({ db, timestamp, verifyFile }) {
+function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile }) {
   return async request => {
     if (!request.auth?.uid || !request.auth.token?.email) throw new HttpsError('unauthenticated', 'Iniciá sesión.');
     const user = await db.doc(`users/${request.auth.uid}`).get();
@@ -76,6 +81,12 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile }) {
     const recordRef = db.doc(`providerFinancialRecords/${recordId}`);
     const actor = { uid: request.auth.uid, email: request.auth.token.email };
     const now = timestamp();
+    if (input.action === 'download') {
+      const snapshot = await recordRef.get();
+      const file = snapshot.data()?.file;
+      if (!file || !readFile) fail('El registro no tiene un archivo descargable.');
+      return { fileName: file.fileName, contentType: file.contentType, base64: await readFile(file) };
+    }
     if (input.action === 'cancel') {
       const reason = text(input.reason, 1000);
       if (!reason) fail('Indicá el motivo de anulación.');
@@ -89,6 +100,8 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile }) {
         const rows = await Promise.all(refs.map(ref => tx.get(ref)));
         const invoiceIds = [...new Set(record.allocations.map(row => row.invoiceId).filter(Boolean))];
         const invoices = await Promise.all(invoiceIds.map(value => tx.get(db.doc(`providerFinancialRecords/${value}`))));
+        const projectIds = [...new Set(record.allocations.map(row => row.projectId))];
+        const indices = await Promise.all(projectIds.map(value => tx.get(db.doc(`providerFinanceProjectIndex/${value}`))));
         const cashRef = record.cashProjectId && record.kind === 'payment' && record.method === 'cash'
           ? db.doc(`projects/${record.cashProjectId}/cashMovements/shared-${recordId}`) : null;
         const cash = cashRef ? await tx.get(cashRef) : null;
@@ -124,6 +137,10 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile }) {
           if (!cash.exists || cash.data().sharedRecordId !== recordId) fail('No coincide el movimiento de caja.');
           tx.delete(cashRef);
         }
+        indices.forEach(snapshot => {
+          const records = { ...(snapshot.data()?.records || {}) }; delete records[recordId];
+          tx.set(snapshot.ref, { ...projectIndex(records), updatedAt: now });
+        });
         tx.update(recordRef, { status: 'cancelled', cancellation: { reason, actor, at: now }, updatedAt: now });
         return { id: recordId, status: 'cancelled' };
       });
@@ -158,6 +175,7 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile }) {
       const rows = await Promise.all(refs.map(ref => tx.get(ref)));
       const projectIds = [...new Set(record.allocations.map(row => row.projectId))];
       const projects = await Promise.all(projectIds.map(value => tx.get(db.doc(`projects/${value}`))));
+      const indices = await Promise.all(projectIds.map(value => tx.get(db.doc(`providerFinanceProjectIndex/${value}`))));
       const projectMap = new Map(projects.map(snapshot => [snapshot.id, snapshot.data()]));
       const invoiceIds = [...new Set(record.allocations.map(row => row.invoiceId).filter(Boolean))];
       const invoices = await Promise.all(invoiceIds.map(value => tx.get(db.doc(`providerFinancialRecords/${value}`))));
@@ -178,7 +196,7 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile }) {
           if (record.kind !== 'payment' || invoice?.kind !== 'invoice' || invoice.providerId !== record.providerId
             || invoice.status !== 'active' || !original || settled + allocation.amountCents > original.amountCents) fail('La aplicación supera el saldo de la factura vinculada.');
         }
-        return { ...allocation, projectName: text(project.name), projectCode: text(project.projectCode), description: text(expense.description) };
+        return { ...allocation, area: text(expense.area), projectName: text(project.name), projectCode: text(project.projectCode), description: text(expense.description) };
       });
       allocations.forEach((allocation, index) => {
         const expense = rows[index].data();
@@ -218,7 +236,9 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile }) {
       }
       tx.create(recordRef, { ...record, allocations, file, fingerprint, status: 'active', settlements: {}, createdBy: actor, createdAt: now, updatedAt: now });
       tx.set(db.doc(`providerFinanceProviderIndex/${record.providerId}`), { updatedAt: now });
-      projectIds.forEach(projectId => tx.set(db.doc(`providerFinanceProjectIndex/${projectId}`), { updatedAt: now }));
+      indices.forEach(snapshot => tx.set(snapshot.ref, {
+        ...projectIndex({ ...(snapshot.data()?.records || {}), [recordId]: allocations.filter(row => row.projectId === snapshot.id).map(row => ({ area: row.area, collectionName: row.collectionName })) }), updatedAt: now,
+      }));
       if (fiscalRef) tx.set(fiscalRef, { recordId, previousRecordId: fiscal?.data()?.recordId || '', createdAt: now });
       if (paymentKeyRef) tx.set(paymentKeyRef, { recordId, previousRecordId: previousPayment?.data()?.recordId || '', createdAt: now });
       return { id: recordId, status: 'active' };

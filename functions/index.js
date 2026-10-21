@@ -25,6 +25,13 @@ exports.manageProviderFinance = onCall({ timeoutSeconds: 60, maxInstances: 2 }, 
       || Number(metadata.size) <= 0 || Number(metadata.size) > 2 * 1024 * 1024) throw new HttpsError('invalid-argument', 'El documento debe ser PDF o imagen de hasta 2 MB.');
     return { path: input.path, fileName: input.path.slice(prefix.length), contentType: metadata.contentType, size: Number(metadata.size) };
   },
+  readFile: async file => {
+    const source = admin.storage().bucket().file(file.path);
+    const [metadata] = await source.getMetadata();
+    if (Number(metadata.size) > 2 * 1024 * 1024) throw new HttpsError('failed-precondition', 'El documento supera el tamaño permitido.');
+    const [bytes] = await source.download();
+    return bytes.toString('base64');
+  },
 }));
 // On-demand only. Server-only state uses collections denied to browser SDKs by default.
 // A fresh user Sheets grant is checked against the verified Firebase administrator.

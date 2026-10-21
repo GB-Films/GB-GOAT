@@ -1,5 +1,5 @@
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { deleteObject, getBlob, getMetadata, ref, uploadBytes } from 'firebase/storage';
+import { deleteObject, getMetadata, ref, uploadBytes } from 'firebase/storage';
 import { auth, storage } from './firebase';
 import { sanitizeFileName } from './files';
 
@@ -29,8 +29,12 @@ export async function uploadProviderFile(providerId: string, id: string, file: F
 export async function discardStagedProviderFile(file?: { path: string }) {
   if (file) await deleteObject(ref(storage, file.path)).catch(() => {});
 }
-export async function openProviderFile(file: { path: string; fileName: string }) {
-  const blob = await getBlob(ref(storage, file.path), 2 * 1024 * 1024);
+export async function openProviderFile(recordId: string) {
+  // The callable rechecks admin access for every download. It needs neither
+  // a permanent public download token nor a broader bucket CORS policy.
+  const file = await providerFinanceRequest({ action: 'download', id: recordId }) as { base64: string; contentType: string; fileName: string };
+  const bytes = Uint8Array.from(atob(file.base64), character => character.charCodeAt(0));
+  const blob = new Blob([bytes], { type: file.contentType });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a'); link.href = url; link.download = file.fileName;
   link.click();

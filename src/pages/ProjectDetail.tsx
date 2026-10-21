@@ -1490,8 +1490,12 @@ export default function ProjectDetail() {
 
   const [isAreaSelectorOpen, setIsAreaSelectorOpen] = useState(false);
   
+  const areaHasSharedSupplierRecords = (areaName: string) => [...budgetItems, ...areaExpenses].some(item => item.area === areaName && ((item.sharedInvoices?.length || 0) + (item.sharedReceipts?.length || 0) + (item.sharedPaymentIds?.length || 0)) > 0);
+  const sharedAreaMessage = 'Esta área tiene documentos o pagos compartidos. Anulá sus aplicaciones desde la ficha del proveedor antes de cambiar la gestión del área.';
+
   const addActiveArea = async (areaName: string) => {
     if (!id || !isProjectAdmin) return;
+    if (areaHasSharedSupplierRecords(areaName)) { alert(sharedAreaMessage); return; }
     try {
       const projectRef = doc(db, 'projects', id);
       const baselineProject = await getDocFromServer(projectRef);
@@ -1597,14 +1601,16 @@ export default function ProjectDetail() {
   };
 
   const removeActiveArea = async (areaName: string) => {
+    if (areaHasSharedSupplierRecords(areaName)) { alert(sharedAreaMessage); return; }
     if (!confirm(`¿Estás seguro de que deseas desactivar la gestión del área "${areaName}"? Los gastos registrados no se borrarán pero no se verán aquí.`)) return;
     
     const newActiveAreas = activeAreas.filter(a => a !== areaName);
-    setActiveAreas(newActiveAreas);
-    setSelectedAreaTabs((current) => current.filter((area) => area !== areaName));
-    if (id) {
+    try {
+      if (!id) return;
       await updateDoc(doc(db, 'projects', id), { activeAreas: newActiveAreas });
-    }
+      setActiveAreas(newActiveAreas);
+      setSelectedAreaTabs((current) => current.filter((area) => area !== areaName));
+    } catch { alert('No se pudo desactivar. Revisá si el área tiene documentos o pagos compartidos y actualizá el proyecto.'); }
   };
 
   // Elimina todo lo cargado en la gestión del área y la saca de Gestión por

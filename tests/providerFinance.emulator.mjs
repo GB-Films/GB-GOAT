@@ -17,7 +17,7 @@ const db = app.firestore();
 const context = env.authenticatedContext('admin', { email: 'admin@example.test' });
 const editor = env.authenticatedContext('editor', { email: 'editor@example.test' });
 const stranger = env.authenticatedContext('stranger', { email: 'stranger@example.test' });
-const call = createProviderFinanceHandler({ db, timestamp: () => admin.firestore.FieldValue.serverTimestamp(), verifyFile: async (_provider, _id, file) => file });
+const call = createProviderFinanceHandler({ db, timestamp: () => admin.firestore.FieldValue.serverTimestamp(), verifyFile: async (_provider, _id, file) => ({ ...file, contentType: 'application/pdf' }), readFile: async () => 'JVBERg==' });
 const request = data => ({ auth: { uid: 'admin', token: { email: 'admin@example.test' } }, data });
 const expenseRef = index => db.doc(`projects/project${index}/areaExpenses/expense`);
 const allocations = [300, 450, 450].map((amount, index) => ({ projectId: `project${index}`, collectionName: 'areaExpenses', itemId: 'expense', amount }));
@@ -37,6 +37,8 @@ try {
   });
   await assert.rejects(call({ auth: { uid: 'editor', token: { email: 'editor@example.test' } }, data: invoice }), /Sólo administradores/);
   await call(request(invoice));
+  assert.equal((await call(request({ action: 'download', id: 'invoice1' }))).base64, 'JVBERg==');
+  await assert.rejects(call({ auth: { uid: 'editor', token: { email: 'editor@example.test' } }, data: { action: 'download', id: 'invoice1' } }), /Sólo administradores/);
   assert.deepEqual(await call(request(invoice)), { id: 'invoice1', status: 'active' });
   await assert.rejects(call(request({ ...invoice, id: 'duplicate' })), /ya está registrada/);
   assert.equal((await expenseRef(0).get()).data().total, 300);
@@ -57,6 +59,8 @@ try {
   await assertFails(deleteDoc(doc(context.firestore(), 'providers/supplier')));
   await assertFails(deleteDoc(doc(context.firestore(), 'projects/project0')));
   await assertFails(updateDoc(doc(context.firestore(), 'projects/project0/areaExpenses/expense'), { invoice: { url: 'https://example.test/duplicate.pdf' } }));
+  await assertFails(updateDoc(doc(context.firestore(), 'projects/project0'), { activeAreas: [] }));
+  await assertSucceeds(updateDoc(doc(context.firestore(), 'projects/project0'), { activeAreas: ['Post', 'Nueva área'] }));
 
   const concurrent = await Promise.allSettled([call(request(pay('payment1'))), call(request(pay('payment2')))]);
   assert.equal(concurrent.filter(result => result.status === 'fulfilled').length, 1);
