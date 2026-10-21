@@ -1659,7 +1659,7 @@ export const buildAssistantTools = ({
 
     tools.push({
       name: 'guardar_subcategoria',
-      description: 'Crea o edita una subcategoría de un área con su presupuesto y notas (también sirve para renombrarla). Siempre requiere confirmación.',
+      description: 'Crea o edita una subcategoría de un área para ordenar gastos. El presupuesto es opcional; si se omite al crear, no se asigna. También permite renombrar. Siempre requiere confirmación.',
       requiresConfirmation: true,
       summarize: (args) => {
         const area = String(args?.area || '').trim();
@@ -1706,8 +1706,16 @@ export const buildAssistantTools = ({
         }
         if (affectedExpenses.length > 400) return { error: 'La subcategoría tiene demasiados gastos para renombrarla desde el asistente.' };
 
-        const budget = Math.max(0, Number(args?.presupuesto) || 0);
         const currentBudgets = { ...(context.meta.areaExpenseSubcategoryBudgets || {}) };
+        const previousBudget = currentBudgets[subcategoryKeyOf(area, original || name)];
+        const budgetAssigned = args?.presupuesto !== undefined && args?.presupuesto !== null
+          ? true
+          : previousBudget && typeof previousBudget === 'object'
+            ? previousBudget.budgetAssigned === false ? false : previousBudget.budgetAssigned === true || Number(previousBudget.budget) > 0
+            : Number(previousBudget) > 0;
+        const budget = args?.presupuesto !== undefined && args?.presupuesto !== null
+          ? Math.max(0, Number(args.presupuesto) || 0)
+          : budgetAssigned ? Math.max(0, Number(typeof previousBudget === 'object' ? previousBudget?.budget : previousBudget) || 0) : 0;
         if (isRename) delete currentBudgets[subcategoryKeyOf(area, original)];
         const nextBudgets = {
           ...currentBudgets,
@@ -1715,6 +1723,7 @@ export const buildAssistantTools = ({
             area,
             subcategory: name,
             budget,
+             budgetAssigned,
             notes: String(args?.notas || '').trim(),
             updatedAt: new Date(),
             updatedByEmail: userEmail,
