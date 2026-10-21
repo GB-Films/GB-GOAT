@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  administrationAction, emptyProjectAdministration, invoiceBalance,
-  resolvedInvoiceDueDate, validateAdministration,
+  administrationAction, emptyProjectAdministration, invoiceBalance, normalizeProjectAdministration,
+  resolvedInvoiceDueDate, unbilledAmount, validateAdministration,
   type CustomerInvoice, type ProjectAdministrationRecord,
 } from './projectAdministration';
 
 const invoice: CustomerInvoice = {
   id: 'factura-1', number: 'A 00001-00000353', issueDate: '2026-09-01',
-  sentDate: '2026-09-02', portalDate: '', amount: 1000, currency: 'ARS',
+  sentDate: '2026-09-02', portalDate: '', amount: 1000, netAmount: 1000, currency: 'ARS',
   dueDate: '', documentRef: 'Factura septiembre.pdf', ctRef: '',
 };
 
@@ -54,4 +54,21 @@ test('a client requiring portal and email stays pending until both submissions a
   record.invoices[0].portalDate = '2026-09-04';
   assert.equal(resolvedInvoiceDueDate(record, record.invoices[0]), '2026-10-04');
   assert.equal(administrationAction(record, '2026-09-03'), 'collection');
+});
+
+test('a historical tax-inclusive agreement is not presented as a net amount', () => {
+  const record = { ...base(), agreedAmountTaxBasis: 'gross' as const, invoices: [invoice] };
+  assert.equal(unbilledAmount(record), null);
+});
+
+test('agreement and purchase order flags do not block project billing review', () => {
+  const record = { ...base(), agreementStatus: 'pending' as const, orderStatus: 'pending' as const };
+  assert.equal(administrationAction(record, '2026-10-01'), 'billing');
+});
+
+test('existing Gran Berta issuer and tax-inclusive amount remain readable without reinterpretation', () => {
+  const record = normalizeProjectAdministration('project-1', { issuerEntity: 'GRAN BERTA S.R.L.', agreedAmount: 1210, agreedCurrency: 'ARS' });
+  assert.equal(record.issuerEntity, 'Gran Berta SRL');
+  assert.equal(record.agreedAmountTaxBasis, 'gross');
+  assert.equal(unbilledAmount(record), null);
 });

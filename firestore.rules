@@ -1331,7 +1331,7 @@ service cloud.firestore {
     function validProjectAdministration(data, projectId) {
       return data.keys().hasOnly([
           'schemaVersion', 'projectId', 'clientLegalName', 'issuerEntity',
-          'agreementStatus', 'agreementRef', 'agreementFilePath', 'agreedAmount', 'agreedCurrency', 'orderStatus', 'orderNumber', 'orderRef', 'orderFilePath',
+          'agreementStatus', 'agreementRef', 'agreementFilePath', 'agreedAmount', 'agreedAmountTaxBasis', 'agreedCurrency', 'orderStatus', 'orderNumber', 'orderRef', 'orderFilePath',
           'billingStatus', 'billingRequirement', 'billingChannel', 'portalRef',
           'paymentTermDays', 'paymentTermBasis', 'paymentTermSource', 'notes',
           'invoices', 'collections', 'updatedBy', 'updatedAt', 'revision'
@@ -1349,11 +1349,12 @@ service cloud.firestore {
         && data.updatedBy == userEmail()
         && data.revision is int && data.revision >= 1
         && administrationText(data, 'clientLegalName', 500)
-        && administrationText(data, 'issuerEntity', 200)
+        && data.issuerEntity in ['', 'Gran Berta SRL', 'BANI VFX LLC', 'Sin factura']
         && data.agreementStatus in ['pending', 'confirmed', 'not_required']
         && administrationText(data, 'agreementRef', 2048)
         && (!('agreementFilePath' in data) || (data.agreementFilePath is string && (data.agreementFilePath == '' || data.agreementFilePath.matches('administration/projects/' + projectId + '/.*'))))
         && (data.agreedAmount == null || (data.agreedAmount is number && data.agreedAmount > 0 && data.agreedAmount <= 1000000000000000))
+        && (!('agreedAmountTaxBasis' in data) || data.agreedAmountTaxBasis in ['gross', 'net'])
         && data.agreedCurrency in ['', 'ARS', 'USD']
         && ((data.agreedAmount == null && data.agreedCurrency == '') || (data.agreedAmount != null && data.agreedCurrency in ['ARS', 'USD']))
         && data.orderStatus in ['pending', 'confirmed', 'not_required']

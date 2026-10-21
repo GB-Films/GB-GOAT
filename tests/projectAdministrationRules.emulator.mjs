@@ -11,7 +11,7 @@ const manager = database('manager');
 const outsider = database('outsider');
 const path = 'projectAdministration/private-project';
 const valid = (revision, extra = {}) => ({
-  schemaVersion: 1, projectId: 'private-project', clientLegalName: 'Cliente SA', issuerEntity: 'GB SRL',
+  schemaVersion: 1, projectId: 'private-project', clientLegalName: 'Cliente SA', issuerEntity: 'Gran Berta SRL',
   agreementStatus: 'pending', agreementRef: '', orderStatus: 'pending', orderNumber: '', orderRef: '',
   agreedAmount: null, agreedCurrency: '',
   billingStatus: 'pending', billingRequirement: '', billingChannel: '', portalRef: '',
