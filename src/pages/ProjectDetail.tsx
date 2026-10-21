@@ -54,6 +54,7 @@ import { cashLedgerPeople } from '../lib/cashLedgerPeople';
 import { ProjectCommercialSummary } from './project-detail/ProjectCommercialSummary';
 import { ProjectSummaryMetrics } from './project-detail/ProjectSummaryMetrics';
 import { ProjectKeyContacts } from './project-detail/ProjectKeyContacts';
+import { ProjectAdministration } from './project-detail/ProjectAdministration';
 import { readAuthorizedProject, readProjectCommercial } from '../lib/projectCommercial';
 import { splitProjectCommercial } from '../lib/projectCommercialFields';
 import { DEFAULT_BUDGET_CATEGORIES, resolveBudgetCategories, categoryDeletionPlan } from '../lib/budgetCategories';
@@ -95,12 +96,15 @@ const tabs = [
   { id: 'areas', label: 'Áreas', icon: LayoutGrid },
   { id: 'cajas', label: 'Cajas', icon: Wallet },
   { id: 'saldos', label: 'Finanzas', icon: Wallet },
+  { id: 'administracion', label: 'Administración', icon: FileText },
   { id: 'documentos', label: 'Documentos', icon: FileText },
   { id: 'resultado', label: 'Resultado', icon: BarChart2 },
   { id: 'proveedores', label: 'Proveedores', icon: Truck },
   { id: 'equipo', label: 'Equipo', icon: Users },
   { id: 'permisos', label: 'Permisos', icon: Settings },
 ];
+
+const DEFAULT_CASH_RETURN_RECIPIENT = 'tomas@granberta.com';
 
 const RESULT_INCIDENCES = [
   { id: 'imprevistos', label: 'Imprevistos' },
@@ -3257,6 +3261,7 @@ export default function ProjectDetail() {
 
   // Filtered views based on permissions
   const visibleTabs = tabs.filter(tab => {
+    if (tab.id === 'administracion') return isGlobalAdmin;
     if (tab.id === 'resultado') return isProjectAdmin;
     if (tab.id === 'permisos' && userPermissions?.role === 'jefe_produccion') return true;
     if (isProjectAdmin) return true;
@@ -3864,7 +3869,11 @@ export default function ProjectDetail() {
 
   useEffect(() => {
     if (!cashReturnRecipients.some((recipient) => recipient.email === cashReturnRecipientEmail)) {
-      setCashReturnRecipientEmail(cashReturnRecipients[0]?.email || '');
+      setCashReturnRecipientEmail(
+        cashReturnRecipients.find((recipient) => normalizeEmail(recipient.email) === DEFAULT_CASH_RETURN_RECIPIENT)?.email
+        || cashReturnRecipients[0]?.email
+        || ''
+      );
     }
   }, [cashReturnRecipientEmail, cashReturnRecipients]);
 
@@ -5115,6 +5124,14 @@ export default function ProjectDetail() {
         alert('Este proyecto tiene registros financieros o de auditoría. No se puede borrar desde la aplicación.');
         return;
       }
+      const administrationSnapshot = await getDocFromServer(doc(db, 'projectAdministration', id));
+      if (administrationSnapshot.exists() && (
+        (administrationSnapshot.data().invoices || []).length > 0
+        || (administrationSnapshot.data().collections || []).length > 0
+      )) {
+        alert('Este proyecto tiene facturas o cobros de clientes registrados. No se puede borrar desde la aplicación.');
+        return;
+      }
       const subcollections = [
         'budgetItems',
         'areaExpenses',
@@ -5135,6 +5152,7 @@ export default function ProjectDetail() {
       }
 
       const deletion = writeBatch(db);
+      deletion.delete(doc(db, 'projectAdministration', id));
       deletion.delete(doc(db, 'projectCommercial', id));
       deletion.delete(doc(db, 'projects', id));
       await deletion.commit();
@@ -5227,7 +5245,9 @@ export default function ProjectDetail() {
     <button type="button" onClick={retryProjectLoad} className="mt-3 rounded-lg border border-slate-300 px-4 py-2 font-bold">Volver a intentar</button>
   </div>;
   if (!project) return <div className="p-8 text-center text-slate-900 font-bold uppercase tracking-widest">Proyecto no encontrado</div>;
-  const sectionLoad = projectLoadStatus(financialLoad, loadScope) !== 'ready' || activeTab === 'resumen' ? financialLoad : auxiliaryLoad;
+  const sectionLoad = activeTab === 'administracion'
+    ? { scope: loadScope, ready: true, error: '' }
+    : projectLoadStatus(financialLoad, loadScope) !== 'ready' || activeTab === 'resumen' ? financialLoad : auxiliaryLoad;
 
   return (
     <div className="mx-auto max-w-[1600px] text-[11px] sm:text-xs">
@@ -8215,6 +8235,10 @@ export default function ProjectDetail() {
           </div>
         )}
 
+        {activeTab === 'administracion' && isGlobalAdmin && id && (
+          <ProjectAdministration projectId={id} projectName={project.name || 'Proyecto'} clientName={project.clientName} isAdmin={isGlobalAdmin} />
+        )}
+
         {activeTab === 'documentos' && (
           <div className="space-y-4 pb-20">
             <header className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
@@ -8469,7 +8493,7 @@ export default function ProjectDetail() {
                             <div>
                               <div className="mb-1.5 text-[9px] font-bold uppercase tracking-widest text-slate-500">Pestañas</div>
                               <div className="flex flex-wrap gap-1.5">
-                                {tabs.filter(t => t.id !== 'permisos' && t.id !== 'resultado').map(tab => {
+                                {tabs.filter(t => t.id !== 'permisos' && t.id !== 'resultado' && t.id !== 'administracion').map(tab => {
                                   const enabled = safeArray(col.allowedTabs).includes(tab.id);
                                   return (
                                     <button
@@ -8589,7 +8613,7 @@ export default function ProjectDetail() {
         )}
 
 
-        {(activeTab !== 'resumen' && activeTab !== 'presupuesto' && activeTab !== 'equipo' && activeTab !== 'areas' && activeTab !== 'saldos' && activeTab !== 'documentos' && activeTab !== 'resultado' && activeTab !== 'proveedores' && activeTab !== 'permisos') && (
+        {(activeTab !== 'resumen' && activeTab !== 'presupuesto' && activeTab !== 'equipo' && activeTab !== 'areas' && activeTab !== 'saldos' && activeTab !== 'administracion' && activeTab !== 'documentos' && activeTab !== 'resultado' && activeTab !== 'proveedores' && activeTab !== 'permisos') && (
            <div className="py-32 text-center border border-dashed border-slate-200 rounded-2xl bg-white">
               <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest animate-pulse">Integrando módulo {activeTab}...</span>
            </div>

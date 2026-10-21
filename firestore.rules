@@ -1,5 +1,10 @@
 rules_version = '2';
 
+// Project administration: projectAdministration/{projectId}, schemaVersion=1,
+// projectId equals the document ID, revision increases by one, updatedAt=request.time,
+// updatedBy is the authenticated admin email. It holds bounded agreement/OC/terms
+// fields and bounded lists of customer invoices and applied collections.
+// Only global app admins can read or write this confidential record.
 // Commercial data model: projectCommercial/{projectId}, schemaVersion=1,
 // updatedAt=request.time, finite nonnegative budget/contract numbers, bounded
 // text/URLs and original import timestamps. Public projects retain operational
@@ -1316,6 +1321,64 @@ service cloud.firestore {
       allow list: if isAppAdmin();
       allow create, update: if existsAfter(/databases/$(database)/documents/projects/$(projectId))
         && (isAppAdmin() || isProjectAdmin(projectId)) && validCommercial(request.resource.data);
+      allow delete: if isAppAdmin();
+    }
+
+    function administrationText(data, key, max) {
+      return data[key] is string && data[key].size() <= max;
+    }
+
+    function validProjectAdministration(data, projectId) {
+      return data.keys().hasOnly([
+          'schemaVersion', 'projectId', 'clientLegalName', 'issuerEntity',
+          'agreementStatus', 'agreementRef', 'agreedAmount', 'agreedCurrency', 'orderStatus', 'orderNumber', 'orderRef',
+          'billingStatus', 'billingRequirement', 'billingChannel', 'portalRef',
+          'paymentTermDays', 'paymentTermBasis', 'paymentTermSource', 'notes',
+          'invoices', 'collections', 'updatedBy', 'updatedAt', 'revision'
+        ])
+        && data.keys().hasAll([
+          'schemaVersion', 'projectId', 'clientLegalName', 'issuerEntity',
+          'agreementStatus', 'agreementRef', 'agreedAmount', 'agreedCurrency', 'orderStatus', 'orderNumber', 'orderRef',
+          'billingStatus', 'billingRequirement', 'billingChannel', 'portalRef',
+          'paymentTermDays', 'paymentTermBasis', 'paymentTermSource', 'notes',
+          'invoices', 'collections', 'updatedBy', 'updatedAt', 'revision'
+        ])
+        && data.schemaVersion == 1
+        && data.projectId == projectId
+        && data.updatedAt == request.time
+        && data.updatedBy == userEmail()
+        && data.revision is int && data.revision >= 1
+        && administrationText(data, 'clientLegalName', 500)
+        && administrationText(data, 'issuerEntity', 200)
+        && data.agreementStatus in ['pending', 'confirmed', 'not_required']
+        && administrationText(data, 'agreementRef', 2048)
+        && (data.agreedAmount == null || (data.agreedAmount is number && data.agreedAmount > 0 && data.agreedAmount <= 1000000000000000))
+        && data.agreedCurrency in ['', 'ARS', 'USD']
+        && ((data.agreedAmount == null && data.agreedCurrency == '') || (data.agreedAmount != null && data.agreedCurrency in ['ARS', 'USD']))
+        && data.orderStatus in ['pending', 'confirmed', 'not_required']
+        && administrationText(data, 'orderNumber', 200)
+        && administrationText(data, 'orderRef', 2048)
+        && data.billingStatus in ['pending', 'ready', 'not_required']
+        && administrationText(data, 'billingRequirement', 1000)
+        && data.billingChannel in ['', 'email', 'portal', 'both']
+        && administrationText(data, 'portalRef', 2048)
+        && (data.paymentTermDays == null || (data.paymentTermDays is int && data.paymentTermDays >= 0 && data.paymentTermDays <= 3650))
+        && data.paymentTermBasis in ['', 'invoice', 'submission', 'delivery', 'fixed']
+        && administrationText(data, 'paymentTermSource', 1000)
+        && administrationText(data, 'notes', 3000)
+        && data.invoices is list && data.invoices.size() <= 100
+        && data.collections is list && data.collections.size() <= 200;
+    }
+
+    match /projectAdministration/{projectId} {
+      allow get, list: if isAppAdmin();
+      allow create: if isAppAdmin()
+        && exists(/databases/$(database)/documents/projects/$(projectId))
+        && validProjectAdministration(request.resource.data, projectId)
+        && request.resource.data.revision == 1;
+      allow update: if isAppAdmin()
+        && validProjectAdministration(request.resource.data, projectId)
+        && request.resource.data.revision == resource.data.revision + 1;
       allow delete: if isAppAdmin();
     }
 
