@@ -71,6 +71,13 @@ aplicación revisada de costos. Alcance, controles, límites y publicación acot
 [`docs/control-total-sync.md`](docs/control-total-sync.md). Esta conexión no registra
 pagos ni movimientos de caja automáticamente.
 
+## Facturas y pagos de proveedores
+
+La ficha del proveedor puede abrirse desde cualquier fila de gasto. Los
+administradores pueden cargar una única factura, pago o comprobante y distribuir
+sus aplicaciones entre varios proyectos sin duplicar costos o salidas de caja.
+Ver [circuito, permisos y activación](docs/provider-finance.md).
+
 ## Administración de proyectos
 
 La pestaña **Administración** de cada proyecto es exclusiva de administradores

@@ -403,6 +403,22 @@ service firebase.storage {
       allow delete: if isProjectAdmin(projectId);
     }
 
+    // Shared originals are immutable once committed and never expose download tokens.
+    match /providerFinance/{providerId}/{recordId}/{fileName} {
+      allow read: if isAppAdmin();
+      allow create: if isAppAdmin()
+        && resource == null
+        && request.resource.size > 0 && request.resource.size <= 2 * 1024 * 1024
+        && request.resource.contentType in ['application/pdf', 'image/jpeg', 'image/png', 'image/webp']
+        && request.resource.metadata.providerId == providerId
+        && request.resource.metadata.recordId == recordId
+        && request.resource.metadata.uploadedBy == userEmail()
+        && !firestore.exists(/databases/(default)/documents/providerFinancialRecords/$(recordId));
+      allow update: if false;
+      allow delete: if isAppAdmin()
+        && !firestore.exists(/databases/(default)/documents/providerFinancialRecords/$(recordId));
+    }
+
     match /{allPaths=**} {
       allow read, write: if false;
     }

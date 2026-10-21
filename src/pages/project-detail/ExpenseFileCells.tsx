@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { FileText, Link as LinkIcon, Paperclip, Plus, X } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { getExpenseInvoices, getInvoiceDocumentKey, type ExpenseInvoiceDocument } from '../../lib/invoices';
+import { ProviderProfileButton } from '../../components/ProviderProfileButton';
 
 export const INVOICE_INPUT_ACCEPT = 'application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png';
 export const RECEIPT_INPUT_ACCEPT = 'application/pdf,image/jpeg,image/png,image/webp,.pdf,.jpg,.jpeg,.png,.webp';
@@ -50,6 +51,7 @@ export function ExpenseInvoiceCell({
   return (
     <>
       <div className="flex items-center justify-center gap-1">
+      {!!item.sharedInvoices?.length && <ProviderProfileButton providerId={item.providerId}>Factura vinculada ({item.sharedInvoices.length})</ProviderProfileButton>}
       {singleInvoice ? (
         <>
           <a
@@ -83,11 +85,11 @@ export function ExpenseInvoiceCell({
           <FileText className="h-3.5 w-3.5" />
           <span className="text-[9px] font-black">{invoices.length}</span>
         </button>
-      ) : !canManage ? (
+      ) : !canManage && !item.sharedInvoices?.length ? (
         <span className="text-[9px] font-bold uppercase tracking-widest text-slate-300">Sin factura</span>
       ) : null}
 
-      {canManage && (
+      {canManage && !item.sharedInvoices?.length && (
         <>
           <label
             className={cn(

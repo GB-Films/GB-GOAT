@@ -296,6 +296,7 @@ service cloud.firestore {
         && request.resource.data.paymentHistory[oldCount].createdByEmail == userEmail()
         && request.resource.data.paymentHistory[oldCount].amount is number
         && request.resource.data.paymentHistory[oldCount].amount > 0
+        && !request.resource.data.paymentHistory[oldCount].keys().hasAny(['sharedRecordId'])
         && (
           request.resource.data.paymentHistory[oldCount].get('method', '') != 'tercero'
           || validThirdPartyPayment(request.resource.data.paymentHistory[oldCount])
@@ -492,26 +493,69 @@ service cloud.firestore {
       let changed = request.resource.data.diff(resource.data).affectedKeys();
       let newHistory = request.resource.data.get('paymentHistory', []);
       let newCount = newHistory is list ? newHistory.size() : 0;
+      // Reuse the audit action instead of resolving the same document three
+      // times; reimbursement reversals otherwise approach the expression cap.
+      let action = financialAuditAction(projectId);
       return !changed.hasAny(['paymentHistory', 'paymentLocked', 'paymentAuthorIds', 'lastFinancialAuditId'])
         || validPaymentAuditAppend()
         || (
-          isProjectAdmin(projectId)
-          && changed.hasAny(['paymentHistory'])
+          // Both call sites already require isProjectAdmin before this helper.
+          // Avoid evaluating that same ACL twice in complex cash corrections.
+          changed.hasAny(['paymentHistory'])
           && request.resource.data.paymentLocked == true
           && !changed.hasAny(['paymentAuthorIds'])
           && (
             (newCount == storedPaymentCount() - 1
-              && financialAuditAction(projectId) == 'payment_deleted'
+              && action == 'payment_deleted'
               && validFinancialAudit(projectId, collectionName, itemId, 'payment_deleted'))
             || (newCount == storedPaymentCount()
-              && ((financialAuditAction(projectId) == 'payment_corrected'
+              && ((action == 'payment_corrected'
                   && validFinancialAudit(projectId, collectionName, itemId, 'payment_corrected'))
-                || (financialAuditAction(projectId) == 'reimbursement_recorded'
+                || (action == 'reimbursement_recorded'
                   && validReimbursementAudit(projectId, collectionName, itemId, 'reimbursement_recorded'))
-                || (financialAuditAction(projectId) == 'reimbursement_deleted'
+                || (action == 'reimbursement_deleted'
                   && validReimbursementAudit(projectId, collectionName, itemId, 'reimbursement_deleted'))))
           )
         );
+    }
+
+    // Shared fiscal documents and payment applications are server-owned. Even a
+    // project admin must cancel them centrally; otherwise other projects drift.
+    function validatesExistingSharedSupplierRecords() {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      let linked = resource.data.get('sharedInvoices', []).size() > 0
+        || resource.data.get('sharedReceipts', []).size() > 0
+        || resource.data.get('sharedPaymentIds', []).size() > 0;
+      return !changed.hasAny(['sharedInvoices', 'sharedReceipts', 'sharedPaymentIds', 'sharedPaymentRecords'])
+        && (resource.data.get('sharedInvoices', []).size() == 0 || !changed.hasAny(['invoice', 'invoices']))
+        && (!linked || !changed.hasAny(['providerId', 'providerName', 'total', 'unitPrice', 'quantity']))
+        && (resource.data.get('sharedPaymentIds', []).size() == 0
+          || !changed.hasAny(['paymentHistory', 'paid', 'paymentLocked', 'paymentAuthorIds'])
+          || request.resource.data.get('paymentHistory', []).hasAll(resource.data.sharedPaymentRecords));
+    }
+
+    function preservesSharedSupplierRecords() {
+      return resource.data.keys().hasAny(['sharedInvoices', 'sharedReceipts', 'sharedPaymentIds', 'sharedPaymentRecords'])
+        ? validatesExistingSharedSupplierRecords()
+        : !request.resource.data.keys().hasAny(['sharedInvoices', 'sharedReceipts', 'sharedPaymentIds', 'sharedPaymentRecords']);
+    }
+
+    function hasNoSharedSupplierRecords() {
+      return !resource.data.keys().hasAny(['sharedInvoices', 'sharedReceipts', 'sharedPaymentIds', 'sharedPaymentRecords'])
+        || (resource.data.get('sharedInvoices', []).size() == 0
+        && resource.data.get('sharedReceipts', []).size() == 0
+        && resource.data.get('sharedPaymentIds', []).size() == 0);
+    }
+
+    match /providerFinancialRecords/{recordId} {
+      allow read: if isAppAdmin();
+      allow write: if false;
+    }
+    match /providerFiscalKeys/{key} {
+      allow read, write: if false;
+    }
+    match /providerPaymentKeys/{key} {
+      allow read, write: if false;
     }
 
     function preservesPaidExpenseIdentity() {
@@ -834,27 +878,28 @@ service cloud.firestore {
       let expense = getAfter(expensePath).data;
       let auditId = expense.get('lastFinancialAuditId', '');
       let auditPath = /databases/$(database)/documents/projects/$(projectId)/activityLog/$(auditId);
+      let audit = getAfter(auditPath).data;
       return existsAfter(expensePath)
         && auditId is string
         && auditId != ''
         && !exists(auditPath)
         && existsAfter(auditPath)
-        && getAfter(auditPath).data.action == action
-        && getAfter(auditPath).data.collectionName == resource.data.collectionName
-        && getAfter(auditPath).data.itemId == resource.data.itemId
-        && getAfter(auditPath).data.cashMovementId == movementId
-        && getAfter(auditPath).data.deletedBy == request.auth.uid
-        && getAfter(auditPath).data.paymentId == resource.data.paymentId
+        && audit.action == action
+        && audit.collectionName == resource.data.collectionName
+        && audit.itemId == resource.data.itemId
+        && audit.cashMovementId == movementId
+        && audit.deletedBy == request.auth.uid
+        && audit.paymentId == resource.data.paymentId
         && (
           (action == 'payment_deleted'
-            && getAfter(auditPath).data.amount == resource.data.amount)
+            && audit.amount == resource.data.amount)
           || (action == 'payment_corrected'
-            && getAfter(auditPath).data.oldAmount == resource.data.amount
-            && getAfter(auditPath).data.amount == request.resource.data.amount
-            && expense.paymentHistory[getAfter(auditPath).data.paymentIndex].cashMovementId == movementId
+            && audit.oldAmount == resource.data.amount
+            && audit.amount == request.resource.data.amount
+            && expense.paymentHistory[audit.paymentIndex].cashMovementId == movementId
             && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['cashAccount', 'fromUserEmail', 'fromUserName'])
-              || (expense.paymentHistory[getAfter(auditPath).data.paymentIndex].cashAccount == request.resource.data.cashAccount
-                && expense.paymentHistory[getAfter(auditPath).data.paymentIndex].paidByEmail == request.resource.data.fromUserEmail)))
+              || (expense.paymentHistory[audit.paymentIndex].cashAccount == request.resource.data.cashAccount
+                && expense.paymentHistory[audit.paymentIndex].paidByEmail == request.resource.data.fromUserEmail)))
         );
     }
 
@@ -1479,7 +1524,8 @@ service cloud.firestore {
         || canAppendCollaboratorEmailAsProductionLead(projectId)
         || canUpdateProjectOperations(projectId)
         || canUpdateAreaExpenseSubcategories(projectId));
-      allow delete: if isAppAdmin();
+      allow delete: if isAppAdmin()
+        && !exists(/databases/$(database)/documents/providerFinanceProjectIndex/$(projectId));
 
       match /collaborators/{email} {
         allow read: if hasProjectAccess(projectId);
@@ -1492,28 +1538,28 @@ service cloud.firestore {
       match /budgetItems/{itemId} {
         allow list: if hasProjectAccess(projectId);
         allow get: if hasProjectAccess(projectId) || publicProviderInviteTargetIsOpen();
-        allow create: if isProjectAdmin(projectId)
+        allow create: if !request.resource.data.keys().hasAny(['sharedInvoices', 'sharedReceipts', 'sharedPaymentIds', 'sharedPaymentRecords']) && isProjectAdmin(projectId)
           && !(request.resource.data.area in getAfter(/databases/$(database)/documents/projects/$(projectId)).data.get('activeAreas', []))
           && budgetMembershipAdvancesRevision(projectId)
           && request.resource.data.get('paymentHistory', []) == []
           && request.resource.data.get('paymentLocked', false) == false
           && request.resource.data.get('paid', false) == false;
-        allow delete: if isProjectAdmin(projectId) && (!hasReceivedPayment() || canDeleteClearedExpense(projectId, 'budgetItems', itemId))
-          && budgetMembershipAdvancesRevision(projectId);
-        allow update: if (isProjectAdmin(projectId)
+        allow delete: if hasNoSharedSupplierRecords() && (isProjectAdmin(projectId) && (!hasReceivedPayment() || canDeleteClearedExpense(projectId, 'budgetItems', itemId))
+          && budgetMembershipAdvancesRevision(projectId));
+        allow update: if preservesSharedSupplierRecords() && ((isProjectAdmin(projectId)
           && (preservesPaidExpenseIdentity() || validUnpaidAmountCorrection(projectId, 'budgetItems', itemId))
           && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['area'])
             || (!(request.resource.data.area in getAfter(/databases/$(database)/documents/projects/$(projectId)).data.get('activeAreas', []))
               && budgetMembershipAdvancesRevision(projectId)))
           && preservesAdminFinancialHistory(projectId, 'budgetItems', itemId))
           || (request.auth == null && canPublicAssignProviderFromInvite(projectId, 'budgetItems', itemId))
-          || (request.auth == null && canPublicUploadInvoice(projectId, 'budgetItems', itemId));
+          || (request.auth == null && canPublicUploadInvoice(projectId, 'budgetItems', itemId)));
       }
 
       match /areaExpenses/{expenseId} {
         allow list: if hasProjectAccess(projectId);
         allow get: if hasProjectAccess(projectId) || publicProviderInviteTargetIsOpen();
-        allow create: if (isProjectAdmin(projectId)
+        allow create: if !request.resource.data.keys().hasAny(['sharedInvoices', 'sharedReceipts', 'sharedPaymentIds', 'sharedPaymentRecords']) && (isProjectAdmin(projectId)
           || canWriteAreaExpense(projectId, request.resource.data.area, request.resource.data.subcategory))
             && request.resource.data.createdBy == request.auth.uid
             && request.resource.data.createdByEmail is string
@@ -1521,7 +1567,7 @@ service cloud.firestore {
             && request.resource.data.paymentLocked == false
             && request.resource.data.paymentAuthorIds == []
           ;
-        allow update: if (isProjectAdmin(projectId)
+        allow update: if preservesSharedSupplierRecords() && ((isProjectAdmin(projectId)
           && (preservesPaidExpenseIdentity()
             || validUnpaidAmountCorrection(projectId, 'areaExpenses', expenseId)
             || validPaidProviderCorrection(projectId, expenseId))
@@ -1532,8 +1578,8 @@ service cloud.firestore {
           ) && preservesExpensePaymentAudit() && preservesPaidExpenseIdentity()
             && preservesExpenseReceipts() && preservesExistingExpenseInvoice()))
           || (request.auth == null && canPublicAssignProviderFromInvite(projectId, 'areaExpenses', expenseId))
-          || (request.auth == null && canPublicUploadInvoice(projectId, 'areaExpenses', expenseId));
-        allow delete: if canDeleteAreaExpenseWithPayment(projectId) || canDeleteClearedExpense(projectId, 'areaExpenses', expenseId);
+          || (request.auth == null && canPublicUploadInvoice(projectId, 'areaExpenses', expenseId)));
+        allow delete: if hasNoSharedSupplierRecords() && (canDeleteAreaExpenseWithPayment(projectId) || canDeleteClearedExpense(projectId, 'areaExpenses', expenseId));
       }
 
       match /expenses/{expenseId} {
@@ -1602,8 +1648,8 @@ service cloud.firestore {
       match /cashMovements/{movementId} {
         allow read: if hasProjectAccess(projectId);
         allow create: if canCreateCashMovement(projectId, movementId);
-        allow update: if canUpdateCashMovement(projectId, movementId);
-        allow delete: if canDeleteCashMovement(projectId, movementId);
+        allow update: if resource.data.get('sharedRecordId', '') == '' && canUpdateCashMovement(projectId, movementId);
+        allow delete: if resource.data.get('sharedRecordId', '') == '' && canDeleteCashMovement(projectId, movementId);
       }
     }
 
@@ -1616,7 +1662,8 @@ service cloud.firestore {
       allow read: if isSignedIn();
       allow create: if canCreateGlobalProvider() || publicProviderCreateIsValid();
       allow update: if canEditGlobalProvider();
-      allow delete: if isAppAdmin();
+      allow delete: if isAppAdmin()
+        && !exists(/databases/$(database)/documents/providerFinanceProviderIndex/$(providerId));
     }
 
     match /providerInvites/{token} {

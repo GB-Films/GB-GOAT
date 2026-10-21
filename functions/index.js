@@ -7,11 +7,25 @@ const { syncGoatProject } = require('./baniProjectSync');
 const { createImportHandler } = require('./crmProjectImport');
 const admin = require('firebase-admin');
 const { createControlTotalHandler } = require('./controlTotalSync');
+const { createProviderFinanceHandler } = require('./providerFinance');
 
 setGlobalOptions({ region: 'us-central1', maxInstances: 5, memory: '256MiB' });
 admin.initializeApp();
 
 const db = admin.firestore();
+exports.manageProviderFinance = onCall({ timeoutSeconds: 60, maxInstances: 2 }, createProviderFinanceHandler({
+  db,
+  timestamp: () => admin.firestore.FieldValue.serverTimestamp(),
+  verifyFile: async (providerId, recordId, input) => {
+    const prefix = `providerFinance/${providerId}/${recordId}/`;
+    if (typeof input.path !== 'string' || !input.path.startsWith(prefix)
+      || input.path.slice(prefix.length).includes('/')) throw new HttpsError('invalid-argument', 'Ruta de archivo inválida.');
+    const [metadata] = await admin.storage().bucket().file(input.path).getMetadata();
+    if (!['application/pdf', 'image/jpeg', 'image/png', 'image/webp'].includes(metadata.contentType)
+      || Number(metadata.size) <= 0 || Number(metadata.size) > 2 * 1024 * 1024) throw new HttpsError('invalid-argument', 'El documento debe ser PDF o imagen de hasta 2 MB.');
+    return { path: input.path, fileName: input.path.slice(prefix.length), contentType: metadata.contentType, size: Number(metadata.size) };
+  },
+}));
 // On-demand only. Server-only state uses collections denied to browser SDKs by default.
 // A fresh user Sheets grant is checked against the verified Firebase administrator.
 exports.updateProjectControlTotal = onCall({

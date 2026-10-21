@@ -3918,7 +3918,7 @@ export default function ProjectDetail() {
     return collectionName === 'areaExpenses' && canEditAreaSubcategory(item.area, item.subcategory);
   };
   const canEditPaymentRecord = (payment?: Payment | null) => {
-    if (!payment) return false;
+    if (!payment || payment.sharedRecordId) return false;
     return canEditExistingPayment(isProjectAdmin) && canChangePaymentCash(payment, currentUserEmail,
       cashMovements.find(movement => movement.id === payment.cashMovementId));
   };
