@@ -13,9 +13,7 @@ setGlobalOptions({ region: 'us-central1', maxInstances: 5, memory: '256MiB' });
 admin.initializeApp();
 
 const db = admin.firestore();
-exports.createCashSubdelivery = onCall({ timeoutSeconds: 60, maxInstances: 2 }, require('./cashSubdelivery').createCashSubdeliveryHandler({
-  db, timestamp: () => admin.firestore.FieldValue.serverTimestamp(),
-}));
+exports.createCashSubdelivery = require('./cashSubdeliveryEntrypoint').createCashSubdelivery;
 exports.manageProviderFinance = onCall({ timeoutSeconds: 60, maxInstances: 2 }, createProviderFinanceHandler({
   db,
   timestamp: () => admin.firestore.FieldValue.serverTimestamp(),
