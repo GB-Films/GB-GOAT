@@ -21,7 +21,7 @@ test('personal balance excludes General payments/pending deliveries, reserves re
 test('subdelivery input rejects forged source/role, missing auth and malformed values before reading data', async () => {
   const handler = createCashSubdeliveryHandler({ db: null });
   await assert.rejects(handler({ data: {} }), { code: 'unauthenticated' });
-  for (const input of [{ fromUserEmail: 'other@example.test' }, { cashAccount: 'general' }, { role: 'admin' }, { projectId: '../p' }, { amount: -1 }, { amount: 0 }, { amount: Infinity }, { amount: 1e14 }, { amount: 1.001 }, { amount: '50' }, { notes: 'x'.repeat(1001) }, { toUserEmail: 'bad/path@example.test' }, { requestId: 'bad' }, { toUserEmail: 'admin@example.test' }]) await assert.rejects(handler(request(input)), { code: 'invalid-argument' });
+  for (const input of [{ fromUserEmail: 'other@example.test' }, { cashAccount: 'general' }, { role: 'admin' }, { projectId: '../p' }, { amount: -1 }, { amount: 0 }, { amount: 0.00000001 }, { amount: Infinity }, { amount: 1e14 }, { amount: 1.001 }, { amount: '50' }, { notes: 'x'.repeat(1001) }, { toUserEmail: 'bad/path@example.test' }, { requestId: 'bad' }, { toUserEmail: 'admin@example.test' }]) await assert.rejects(handler(request(input)), { code: 'invalid-argument' });
 });
 
 test('real transactions enforce roles, live balance, immutable identity, retry and concurrent spend', { skip: !process.env.FIRESTORE_EMULATOR_HOST }, async () => {

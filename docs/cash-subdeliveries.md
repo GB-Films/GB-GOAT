@@ -6,6 +6,8 @@ En Cajas → Registrar movimiento → Subentrega desde mi caja asignada, el orig
 
 La callable `createCashSubdelivery` consulta roles y saldo vivos dentro de una transacción, reserva devoluciones pendientes y serializa subentregas simultáneas. Importes en centavos; clave estable por intento para reintentos idempotentes. El origen, autor y fecha son de servidor. El cliente no puede crear transferencias directamente, ni editar/borrar subentregas ya registradas. Los movimientos históricos no se migran ni borran.
 
+El entrypoint selecciona un worker mínimo para esta callable a través de `FUNCTION_TARGET`. La detección del manifiesto y los demás endpoints conservan el mapa original. Una prueba HTTP aislada verifica arranque y rechazo de solicitudes anónimas sin consultar ni modificar cajas.
+
 `projects/{id}.generalCashDeliveryBlockedEmails` es configuración de servidor: ningún cliente puede crearla o modificarla. Restringe iniciar/editar/eliminar entregas desde Caja General para cuentas seleccionadas; no impide recibir/confirmar una entrega. No cambia sus roles, acceso a proyectos, permisos de pagos ni la operación de otros administradores. `cashSubdeliveryRevision` también es de servidor.
 
 Pruebas: `tests/cashSubdeliveryRules.emulator.mjs`, `functions/cashSubdelivery.test.js`, suite financiera existente y tests de cajas. La nueva operación no cambia reglas de lectura de usuarios ni constituye una auditoría de toda la app. No se ejecutan movimientos reales para probar en producción.

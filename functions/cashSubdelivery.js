@@ -33,7 +33,7 @@ function createCashSubdeliveryHandler({ db, timestamp }) {
     if (typeof projectId !== 'string' || !/^[A-Za-z0-9_-]{1,150}$/.test(projectId)
       || typeof requestId !== 'string' || !/^[a-f0-9-]{36}$/i.test(requestId)
       || typeof input.toUserEmail !== 'string' || input.toUserEmail.length > 254 || !/^[^@\s/]+@[^@\s/]+\.[^@\s/]+$/.test(input.toUserEmail)
-      || typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0 || amount > 1e12
+      || typeof amount !== 'number' || !Number.isFinite(amount) || amount < 0.01 || amount > 1e12
       || Math.abs(amount * 100 - cents(amount)) > 0.0001
       || (input.notes !== undefined && (typeof input.notes !== 'string' || input.notes.length > 1000))) fail('invalid-argument', 'Revisá destino, importe y nota.');
     const actorEmail = email(request.auth.token.email), toEmail = email(input.toUserEmail);

@@ -2,7 +2,7 @@
   "name": "gb-goat-functions",
   "private": true,
   "description": "Cloud Functions de GB GOAT (proxy del asistente con IA)",
-  "main": "index.js",
+  "main": "entrypoint.js",
   "engines": {
     "node": "22"
   },
