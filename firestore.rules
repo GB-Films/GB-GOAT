@@ -1,5 +1,9 @@
 rules_version = '2';
 
+// Cash subdeliveries: trusted server-only projects fields generalCashDeliveryBlockedEmails
+// (normalized email list) and cashSubdeliveryRevision (integer). cashMovements with
+// subdelivery=true are immutable personal transfers created only by the admin callable.
+
 // Project administration: projectAdministration/{projectId}, schemaVersion=1,
 // projectId equals the document ID, revision increases by one, updatedAt=request.time,
 // updatedBy is the authenticated admin email. It holds bounded agreement/OC/terms

@@ -42,14 +42,13 @@ function createCashSubdeliveryHandler({ db, timestamp }) {
     const root = db.collection('projects').doc(projectId);
     const movement = root.collection('cashMovements').doc(`subdelivery-${requestId}`);
     return db.runTransaction(async transaction => {
-      const [project, actor, access, recipient, recipientUsers, existing] = await Promise.all([
-        transaction.get(root), transaction.get(db.collection('users').doc(request.auth.uid)),
-        transaction.get(root.collection('collaborators').doc(actorEmail)),
-        transaction.get(root.collection('collaborators').doc(toEmail)),
-        transaction.get(db.collection('users').where('email', '==', toEmail).limit(2)), transaction.get(movement),
-      ]);
+      const [project, actor, access, recipient, existing] = await transaction.getAll(
+        root, db.collection('users').doc(request.auth.uid), root.collection('collaborators').doc(actorEmail),
+        root.collection('collaborators').doc(toEmail), movement,
+      );
       if (!project.exists || !actor.exists || email(actor.data().email) !== actorEmail
         || !(actor.data().role === 'admin' || project.data().createdBy === request.auth.uid || access.data()?.role === 'admin')) fail('permission-denied', 'Sólo administradores del proyecto o de la app pueden hacer subentregas.');
+      const recipientUsers = await transaction.get(db.collection('users').where('email', '==', toEmail).limit(2));
       const recipientAdmin = recipientUsers.docs.find(doc => doc.data().role === 'admin');
       const recipientOwner = recipientUsers.docs.find(doc => doc.id === project.data().createdBy);
       const target = recipient.exists && ['admin', 'jefe_produccion', 'jefe_area'].includes(recipient.data().role) ? recipient.data() : (recipientAdmin || recipientOwner)?.data();
