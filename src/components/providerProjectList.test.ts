@@ -48,3 +48,24 @@ test('sin proyectos conserva el estado vacío', () => {
   assert.match(html, /Sin movimientos visibles/);
   assert.doesNotMatch(html, /<details/);
 });
+
+test('fechas Timestamp, Date y valores heredados no rompen la ficha del proveedor', () => {
+  const at = new Date('2026-10-22T15:00:00Z');
+  const values: unknown[] = [
+    { seconds: at.getTime() / 1000, nanoseconds: 0 },
+    { toDate: () => at }, at, at.getTime(),
+    {}, { seconds: 'incorrecto' }, new Date(NaN),
+    { toDate: () => { throw new Error('Fecha inválida'); } },
+  ];
+  for (const [index, value] of values.entries()) {
+    const html = renderToStaticMarkup(createElement(ProviderProjectList, {
+      projects: [projects[0]],
+      lines: [{ ...lines[0], payments: [{ id: 'pay', amount: 1000, date: value }] },
+        { ...lines[1], paymentDate: value }],
+    }));
+    assert.match(html, /Servicio Uno/);
+    assert.match(html, /Servicio Dos/);
+    assert.match(html, index < 4 ? /22\/10\/2026/ : /Sin fecha/);
+    assert.doesNotMatch(html, /\[object Object\]|Invalid Date/);
+  }
+});

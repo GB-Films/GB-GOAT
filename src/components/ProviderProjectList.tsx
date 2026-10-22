@@ -21,17 +21,33 @@ interface ProviderProjectExpense {
   total: number;
   paid: number;
   debt: number;
-  paymentDate?: string;
-  payments: { id: string | number; amount: number; date?: string; loadedBy?: string; detail?: string }[];
+  paymentDate?: unknown;
+  payments: { id: string | number; amount: number; date?: unknown; loadedBy?: string; detail?: string }[];
   invoiceDocuments?: ExpenseInvoiceDocument[];
   otherReceiptDocuments?: ExpenseInvoiceDocument[];
   paymentReceiptDocuments?: ExpenseInvoiceDocument[];
 }
 
 const money = (value: number) => `$${value.toLocaleString('es-AR')}`;
-const date = (value: string) => {
-  const key = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  return key ? `${key[3]}/${key[2]}/${key[1]}` : value;
+const date = (value: unknown): string => {
+  if (typeof value === 'string') {
+    const key = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    return key ? `${key[3]}/${key[2]}/${key[1]}` : value || 'Sin fecha';
+  }
+  try {
+    let parsed: Date | undefined;
+    if (value instanceof Date) parsed = value;
+    else if (typeof value === 'number') parsed = new Date(value);
+    else if (value && typeof value === 'object') {
+      if ('seconds' in value && typeof value.seconds === 'number') parsed = new Date(value.seconds * 1000);
+      else if ('toDate' in value && typeof value.toDate === 'function') parsed = value.toDate();
+    }
+    return parsed instanceof Date && Number.isFinite(parsed.getTime())
+      ? parsed.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+      : 'Sin fecha';
+  } catch {
+    return 'Sin fecha';
+  }
 };
 
 function Amounts({ total, paid, debt }: { total: number; paid: number; debt: number }) {
@@ -77,7 +93,7 @@ export function ProviderProjectList({ projects, lines }: { projects: ProviderPro
                     <div className="min-w-0">
                       <h4 className="break-words text-xs font-bold text-slate-900">{line.description}</h4>
                       <p className="mt-1 text-[10px] text-slate-500">{line.area} · {line.source}</p>
-                      {line.paymentDate && !line.payments.length && !line.paid && <p className="mt-1 text-[10px] text-slate-500">Fecha prevista: {date(line.paymentDate)}</p>}
+                      {!!line.paymentDate && !line.payments.length && !line.paid && <p className="mt-1 text-[10px] text-slate-500">Fecha prevista: {date(line.paymentDate)}</p>}
                     </div>
                     {expenses.length > 1 && <div className="md:w-[360px] md:shrink-0"><Amounts {...line} /></div>}
                   </div>
@@ -85,7 +101,7 @@ export function ProviderProjectList({ projects, lines }: { projects: ProviderPro
                     <h5 className="mb-2 text-[9px] font-bold uppercase tracking-widest text-slate-500">Pagos registrados</h5>
                     <ul className="space-y-2">{line.payments.map(payment => <li key={payment.id} className="break-words text-[11px] text-slate-600">
                       <span className="font-bold text-emerald-700">{money(payment.amount)}</span>
-                      {payment.date && <span> · {date(payment.date)}</span>}
+                      {!!payment.date && <span> · {date(payment.date)}</span>}
                       <span> · {payment.loadedBy ? `Cargado por ${payment.loadedBy}` : 'Autor no registrado'}</span>
                       {payment.detail && <div className="mt-1 text-slate-500">{payment.detail}</div>}
                     </li>)}</ul>
