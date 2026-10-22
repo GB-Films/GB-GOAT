@@ -3,7 +3,7 @@ import { motion } from 'motion/react';
 import { X, Copy } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { providerDisplayName, inferLegacyIdentifiers, formatIdentifier, normalizeDigits } from '../lib/providerConstants';
-import { ProviderDocumentLinks } from './ProviderDocumentLinks';
+import { ProviderProjectList } from './ProviderProjectList';
 import { ProviderFinancePanel } from './ProviderFinancePanel';
 const formatDate = (value: any) => typeof value === 'string' ? value.split('-').reverse().join('/') : value?.seconds ? new Date(value.seconds * 1000).toLocaleDateString('es-AR') : '-';
 export function ProviderDetailModal({ detail, loading, onClose, onChanged }: { detail: any; loading: boolean; onClose: () => void; onChanged?: () => void }) {
@@ -145,82 +145,8 @@ export function ProviderDetailModal({ detail, loading, onClose, onChanged }: { d
                 )}
               </section>
 
-              <section className="rounded-xl border border-slate-200 overflow-hidden">
-                <div className="bg-slate-50 px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-400">Proyectos donde trabajo</div>
-                {detail.projects.length === 0 ? (
-                  <div className="p-8 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">Sin movimientos visibles</div>
-                ) : (
-                  <div className="overflow-x-auto">
-                  <div className="min-w-[1050px] divide-y divide-slate-100">
-                    <div className="grid grid-cols-[minmax(180px,1.5fr)_100px_100px_100px_140px_140px_150px] gap-3 bg-slate-50 px-4 py-2 text-[9px] font-bold uppercase tracking-widest text-slate-400">
-                      <span>Proyecto</span><span className="text-right">Trabajado</span><span className="text-right">Pagado</span><span className="text-right">Deuda</span>
-                      <span className="text-center">Facturas</span><span className="text-center">Otros comprobantes</span><span className="text-center">Comprobantes de pago</span>
-                    </div>
-                    {detail.projects.map((project: any) => (
-                      <div key={project.id} className="grid grid-cols-[minmax(180px,1.5fr)_100px_100px_100px_140px_140px_150px] items-start gap-3 px-4 py-3 hover:bg-slate-50 transition-colors">
-                        <a href={`#/proyectos/${project.id}`} className="min-w-0 hover:underline">
-                          <div className="text-xs font-black text-slate-900 truncate">{project.name}</div>
-                          <div className="text-[9px] font-bold uppercase tracking-widest text-slate-300">{project.invoices} facturas / {project.receipts} comprobantes</div>
-                        </a>
-                        <div className="text-right text-xs font-bold text-slate-500">${project.total.toLocaleString()}</div>
-                        <div className="text-right text-xs font-bold text-emerald-600">${project.paid.toLocaleString()}</div>
-                        <div className={`text-right text-xs font-black ${project.debt > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>${project.debt.toLocaleString()}</div>
-                        <ProviderDocumentLinks documents={project.invoiceDocuments} kind="invoice" />
-                        <ProviderDocumentLinks documents={project.otherReceiptDocuments} kind="other" />
-                        <ProviderDocumentLinks documents={project.paymentReceiptDocuments} kind="payment" />
-                      </div>
-                    ))}
-                  </div>
-                  </div>
-                )}
-              </section>
+              <div key={provider.id}><ProviderProjectList projects={detail.projects} lines={detail.lines} /></div>
 
-              {detail.lines.length > 0 && (
-                <section className="rounded-xl border border-slate-200 overflow-hidden">
-                  <div className="bg-slate-50 px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-400">Movimientos</div>
-                  <div className="overflow-x-auto">
-                  <div className="min-w-[1050px] divide-y divide-slate-100">
-                    <div className="grid grid-cols-[minmax(480px,1fr)_140px_140px_150px] gap-3 bg-slate-50 px-4 py-2 text-[9px] font-bold uppercase tracking-widest text-slate-400">
-                      <span>Detalle del gasto y pagos</span><span className="text-center">Facturas</span><span className="text-center">Otros comprobantes</span><span className="text-center">Comprobantes de pago</span>
-                    </div>
-                    {detail.lines.map((line: any) => (
-                      <div key={line.id} className="grid grid-cols-[minmax(480px,1fr)_140px_140px_150px] items-start gap-3 px-4 py-3">
-                        <div>
-                        <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
-                          <div className="min-w-0">
-                            <div className="text-xs font-bold text-slate-900">{line.projectName} / {line.area}</div>
-                            <div className="text-[10px] text-slate-500">{line.description}</div>
-                            <div className="text-[9px] uppercase tracking-widest text-slate-300 font-bold mt-1">{line.source}{line.paymentDate ? ` / pago ${formatDate(line.paymentDate)}` : ''}</div>
-                          </div>
-                          <div className="flex gap-4 text-right font-mono text-xs">
-                            <span className="text-slate-500">${line.total.toLocaleString()}</span>
-                            <span className="text-emerald-600">${line.paid.toLocaleString()}</span>
-                            <span className={line.debt > 0 ? 'text-rose-600 font-black' : 'text-emerald-600 font-black'}>${line.debt.toLocaleString()}</span>
-                          </div>
-                        </div>
-                        {line.payments.length > 0 && (
-                          <div className="mt-2 space-y-1">
-                            {line.payments.map((payment: any) => (
-                              <div key={payment.id} className="text-[9px] font-bold uppercase tracking-widest text-slate-300">
-                                Pago ${payment.amount.toLocaleString()}
-                                {payment.date ? ` / ${formatDate(payment.date)}` : ''}
-                                {' / '}
-                                {payment.loadedBy ? `cargado por ${payment.loadedBy}` : 'cargado por usuario no registrado'}
-                                {payment.detail ? ` / ${payment.detail}` : ''}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                        </div>
-                        <ProviderDocumentLinks documents={line.invoiceDocuments} kind="invoice" />
-                        <ProviderDocumentLinks documents={line.otherReceiptDocuments} kind="other" />
-                        <ProviderDocumentLinks documents={line.paymentReceiptDocuments} kind="payment" />
-                      </div>
-                    ))}
-                  </div>
-                  </div>
-                </section>
-              )}
             </>
           )}
         </div>
