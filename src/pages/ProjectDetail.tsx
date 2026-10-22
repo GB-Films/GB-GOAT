@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { doc, getDoc, getDocFromServer, collection, query, getDocs, getDocsFromServer, onSnapshot, addDoc, serverTimestamp, deleteDoc, updateDoc, setDoc, writeBatch, runTransaction, Timestamp, type Transaction } from 'firebase/firestore';
 import { deleteObject, getDownloadURL, ref, uploadBytes } from 'firebase/storage';
-import { db, storage } from '../lib/firebase';
+import { db, storage, auth } from '../lib/firebase';
 import { handleFirestoreError } from '../lib/firestoreUtils';
 import { useAuth } from '../context/AuthContext';
 import { 
@@ -831,6 +832,9 @@ export default function ProjectDetail() {
   const expenseConfirmationTimeoutRef = useRef<number | null>(null);
   const areaSelectorRef = useRef<HTMLDivElement>(null);
   const isGlobalAdmin = profile?.role === 'admin';
+  const [isCreatingCashSubdelivery, setIsCreatingCashSubdelivery] = useState(false);
+  const cashSubdeliveryRequestId = useRef<string | null>(null);
+  const canDeliverGeneralCash = isProjectAdmin && !safeArray(project?.generalCashDeliveryBlockedEmails).includes(normalizeEmail(user?.email));
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return;
@@ -4218,9 +4222,9 @@ export default function ProjectDetail() {
   const cashReturnRecipientEmail = resolveCashReturnRecipientEmail(cashReturnRecipients, cashReturnRecipientChoice);
   const productionTransferTargets = React.useMemo(() => (
     cashResponsibles.filter((responsible) => {
-      if (responsible.role !== 'jefe_area') return false;
       if (normalizeEmail(responsible.email) === currentUserEmail) return false;
       if (isProjectAdmin) return true;
+      if (responsible.role !== 'jefe_area') return false;
       const ownAreas = safeArray(userPermissions?.allowedCategories);
       return safeArray(responsible.allowedCategories).some((area) => ownAreas.includes(area));
     })
@@ -5095,7 +5099,7 @@ export default function ProjectDetail() {
 
   const createCashDelivery = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!id || !isProjectAdmin || isCreatingCashDelivery) return;
+    if (!id || !canDeliverGeneralCash || isCreatingCashDelivery) return;
 
     const form = event.currentTarget;
     const formData = new FormData(form);
@@ -5292,7 +5296,7 @@ export default function ProjectDetail() {
   };
 
   const editCashDelivery = async (movement: CashMovement) => {
-    const canEditDelivery = isProjectAdmin || normalizeEmail(movement.createdByEmail) === currentUserEmail;
+    const canEditDelivery = canDeliverGeneralCash || (!isProjectAdmin && normalizeEmail(movement.createdByEmail) === currentUserEmail);
     if (!id || !canEditDelivery || movement.type !== 'entrega' || movement.status === 'confirmed') return;
     const amountText = window.prompt('Nuevo monto de la entrega:', String(Number(movement.amount) || 0));
     if (amountText === null) return;
@@ -5332,7 +5336,7 @@ export default function ProjectDetail() {
   };
 
   const deleteCashDelivery = async (movement: CashMovement) => {
-    if (!id || !isProjectAdmin || movement.type !== 'entrega') return;
+    if (!id || !canDeliverGeneralCash || movement.type !== 'entrega') return;
     if (!window.confirm('¿Eliminar definitivamente esta entrega de caja?')) return;
 
     try {
@@ -5361,38 +5365,28 @@ export default function ProjectDetail() {
 
   const createCashTransfer = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!id || !isProductionLead) return;
+    if (!id || !isProjectAdmin || isCreatingCashSubdelivery) return;
 
-    const formData = new FormData(event.currentTarget);
+    const form = event.currentTarget;
+    const formData = new FormData(form);
     const toEmail = normalizeEmail(formData.get('toUserEmail') as string);
     const amount = Number(formData.get('amount'));
     const notes = String(formData.get('notes') || '').trim();
     const recipient = productionTransferTargets.find((item) => normalizeEmail(item.email) === toEmail);
 
     if (!recipient || !amount || amount <= 0) return;
-    if (amount > currentCashBalance + 0.01) {
-      alert('El monto supera tu saldo disponible en caja.');
-      return;
-    }
-
-    const payload = {
-      type: 'transferencia',
-      amount,
-      date: new Date(),
-      fromUserEmail: currentUserEmail,
-      fromUserName: currentUserName,
-      toUserEmail: recipient.email,
-      toUserName: recipient.displayName || recipient.email,
-      notes,
-      createdByEmail: currentUserEmail,
-      createdByName: currentUserName,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    };
-
-    const docRef = await addDoc(collection(db, 'projects', id, 'cashMovements'), payload);
-    setCashMovements((current) => [{ id: docRef.id, ...payload, createdAt: new Date(), updatedAt: new Date() } as CashMovement, ...current]);
-    event.currentTarget.reset();
+    setIsCreatingCashSubdelivery(true);
+    cashSubdeliveryRequestId.current ||= crypto.randomUUID();
+    try {
+      await httpsCallable(getFunctions(auth.app, 'us-central1'), 'createCashSubdelivery')({
+        projectId: id, requestId: cashSubdeliveryRequestId.current, toUserEmail: toEmail, amount, notes,
+      });
+      cashSubdeliveryRequestId.current = null;
+      form.reset();
+      showExpenseConfirmation('Subentrega registrada desde tu caja asignada. Caja General no fue modificada.');
+    } catch (error: any) {
+      alert(error.message || 'No se pudo confirmar la subentrega. Reintentá sin cambiar los datos para evitar duplicados.');
+    } finally { setIsCreatingCashSubdelivery(false); }
   };
 
   const addCollaborator = async (selectedUser: any) => {
@@ -7538,7 +7532,7 @@ export default function ProjectDetail() {
             <details className="order-5 rounded-xl border border-slate-200 bg-white p-3">
               <summary className="cursor-pointer px-1 py-2 text-sm font-bold text-slate-900">Registrar movimiento · entrega, transferencia o devolución</summary>
               <div className="mt-3 grid grid-cols-1 gap-4 lg:grid-cols-2">
-              {isProjectAdmin && (
+              {canDeliverGeneralCash && (
                 <form onSubmit={createCashDelivery} className="bg-white border border-slate-200 rounded-xl shadow-sm p-5 space-y-4">
                   <div>
                     <div className="flex items-center gap-2">
@@ -7605,14 +7599,15 @@ export default function ProjectDetail() {
                 </form>
               )}
 
-              {isProductionLead && (
+              {isProjectAdmin && (
                 <form onSubmit={createCashTransfer} className="bg-white border border-slate-200 rounded-xl shadow-sm p-5 space-y-4">
                   <div>
                     <div className="flex items-center gap-2">
                       <span className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-900 text-[10px] font-black text-white">2</span>
-                      <h3 className="text-sm font-black text-slate-900">Transferir a un Jefe de Área</h3>
+                      <h3 className="text-sm font-black text-slate-900">Subentrega desde mi caja asignada</h3>
                     </div>
-                    <p className="mt-2 text-xs leading-5 text-slate-500">El monto saldrá de tu saldo disponible y se acreditará en la caja de la persona elegida.</p>
+                    <p className="mt-2 text-xs leading-5 text-slate-500">El monto saldrá de tu caja del proyecto y se acreditará en la caja de la persona elegida. No utiliza Caja General.</p>
+                    <p className="mt-2 text-xs font-bold text-slate-700">Origen: {currentUserName || currentUserEmail} · Disponible: ${availableReturnBalance.toLocaleString('es-AR')}</p>
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
@@ -7625,7 +7620,7 @@ export default function ProjectDetail() {
                         disabled={productionTransferTargets.length === 0}
                         className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-bold focus:border-black focus:outline-none disabled:text-slate-300"
                       >
-                        {productionTransferTargets.length === 0 && <option value="">No hay jefes de área disponibles</option>}
+                        {productionTransferTargets.length === 0 && <option value="">No hay destinatarios disponibles</option>}
                         {productionTransferTargets.map((responsible) => (
                           <option key={responsible.email} value={responsible.email}>
                             {formatCashResponsibleOption(responsible)}
@@ -7641,15 +7636,15 @@ export default function ProjectDetail() {
                     </div>
                     <div>
                       <label htmlFor="cash-transfer-amount" className="mb-2 block text-[10px] font-black text-slate-700">Monto a transferir</label>
-                      <input id="cash-transfer-amount" name="amount" type="number" min="0" max={Math.max(0, currentCashBalance)} step="0.01" required placeholder="$ 0" className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-bold focus:border-black focus:outline-none" />
+                      <input id="cash-transfer-amount" name="amount" type="number" min="0.01" max={availableReturnBalance} step="0.01" required placeholder="$ 0" className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-bold focus:border-black focus:outline-none" />
                     </div>
                   </div>
                   <div>
                     <label htmlFor="cash-transfer-notes" className="mb-2 block text-[10px] font-black text-slate-700">Nota (opcional)</label>
                     <input id="cash-transfer-notes" name="notes" placeholder="Ej.: fondos para Arte" className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs focus:border-black focus:outline-none" />
                   </div>
-                  <button type="submit" disabled={currentCashBalance <= 0 || productionTransferTargets.length === 0} className="w-full px-4 py-3 bg-black text-white rounded text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 transition-all disabled:bg-slate-300 disabled:cursor-not-allowed">
-                    Transferir efectivo
+                  <button type="submit" disabled={isCreatingCashSubdelivery || availableReturnBalance <= 0 || productionTransferTargets.length === 0} className="w-full px-4 py-3 bg-black text-white rounded text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 transition-all disabled:bg-slate-300 disabled:cursor-not-allowed">
+                    {isCreatingCashSubdelivery ? 'Registrando...' : 'Registrar subentrega'}
                   </button>
                 </form>
               )}
@@ -7794,7 +7789,7 @@ export default function ProjectDetail() {
                                 {cancellingCashReturnId === movement.id ? 'Cancelando...' : 'Cancelar devolución'}
                               </button>
                             )}
-                            {(isProjectAdmin || normalizeEmail(movement.createdByEmail) === currentUserEmail) && movement.type === 'entrega' && (
+                            {(canDeliverGeneralCash || (!isProjectAdmin && normalizeEmail(movement.createdByEmail) === currentUserEmail)) && movement.type === 'entrega' && (
                               <div className="mt-2 flex justify-end gap-1">
                                 {movement.status !== 'confirmed' && (
                                   <button

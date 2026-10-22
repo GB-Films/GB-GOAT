@@ -1,5 +1,9 @@
 rules_version = '2';
 
+// Cash subdeliveries: trusted server-only projects fields generalCashDeliveryBlockedEmails
+// (normalized email list) and cashSubdeliveryRevision (integer). cashMovements with
+// subdelivery=true are immutable personal transfers created only by the admin callable.
+
 // Project administration: projectAdministration/{projectId}, schemaVersion=1,
 // projectId equals the document ID, revision increases by one, updatedAt=request.time,
 // updatedBy is the authenticated admin email. It holds bounded agreement/OC/terms
@@ -911,12 +915,21 @@ service cloud.firestore {
         );
     }
 
+    // generalCashDeliveryBlockedEmails and cashSubdeliveryRevision are server-only
+    // project fields. subdelivery=true movements are immutable callable outputs.
+    function canInitiateGeneralCashDelivery(projectId) {
+      return isSignedIn() && !(userEmail().lower() in projectDoc(projectId).get('generalCashDeliveryBlockedEmails', []));
+    }
+
     function canCreateCashMovement(projectId, movementId) {
       return cashMovementBaseIsValid()
+        && !request.resource.data.get('subdelivery', false)
         && (
           (
             isProjectAdmin(projectId)
             && request.resource.data.type == 'entrega'
+            && canInitiateGeneralCashDelivery(projectId)
+            && request.resource.data.get('cashAccount', 'general') == 'general'
             && request.resource.data.status == 'pending'
             && request.resource.data.createdBy == request.auth.uid
             && request.resource.data.createdByEmail == userEmail()
@@ -958,14 +971,6 @@ service cloud.firestore {
             )
           )
           || (
-            isProjectProductionLead(projectId)
-            && request.resource.data.type == 'transferencia'
-            && request.resource.data.fromUserEmail == userEmail()
-            && hasCollaboratorDocByEmail(projectId, request.resource.data.toUserEmail)
-            && collaboratorDocByEmail(projectId, request.resource.data.toUserEmail).role == 'jefe_area'
-            && collaboratorDocByEmail(projectId, request.resource.data.toUserEmail).allowedCategories.hasAny(collaboratorDoc(projectId).allowedCategories)
-          )
-          || (
             request.resource.data.type == 'pago'
             && request.resource.data.fromUserEmail == userEmail()
             && request.resource.data.collectionName in ['budgetItems', 'areaExpenses']
@@ -992,6 +997,8 @@ service cloud.firestore {
 
     function canDeleteCashMovement(projectId, movementId) {
       return isProjectAdmin(projectId)
+        && !resource.data.get('subdelivery', false)
+        && (resource.data.type != 'entrega' || canInitiateGeneralCashDelivery(projectId))
         && ((resource.data.type != 'pago' && resource.data.type != 'reintegro' && resource.data.type != 'devolucion')
           || (resource.data.type == 'pago' && (cashPaymentHasAudit(projectId, movementId, 'payment_deleted')
             || cashPaymentIsUnlinked(projectId, movementId)))
@@ -1000,6 +1007,7 @@ service cloud.firestore {
 
     function canUpdateCashMovement(projectId, movementId) {
       return cashMovementBaseIsValid()
+        && !resource.data.get('subdelivery', false)
         && (
           (
             resource.data.type == 'devolucion'
@@ -1057,6 +1065,7 @@ service cloud.firestore {
             resource.data.type == 'entrega'
             && request.resource.data.type == resource.data.type
             && (!resource.data.keys().hasAny(['status']) || resource.data.status == 'pending')
+            && canInitiateGeneralCashDelivery(projectId)
             && (isProjectAdmin(projectId) || resource.data.createdByEmail == userEmail())
             && request.resource.data.createdByEmail == resource.data.createdByEmail
             && request.resource.data.toUserEmail == resource.data.toUserEmail
@@ -1527,8 +1536,10 @@ service cloud.firestore {
       );
       allow get: if hasProjectAccess(projectId);
       allow create: if isAppAdmin() && request.resource.data.createdBy == request.auth.uid
+        && !request.resource.data.keys().hasAny(['generalCashDeliveryBlockedEmails', 'cashSubdeliveryRevision'])
         && !request.resource.data.keys().hasAny(commercialFieldNames());
       allow update: if preservesSharedExpenseManagement(projectId)
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['generalCashDeliveryBlockedEmails', 'cashSubdeliveryRevision'])
         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(commercialFieldNames()) && (isProjectAdmin(projectId)
         || canAppendCollaboratorEmailAsProductionLead(projectId)
         || canUpdateProjectOperations(projectId)
