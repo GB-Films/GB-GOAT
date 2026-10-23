@@ -96,7 +96,7 @@ import { resolveCashMovementTarget } from '../lib/cashMovementTargets';
 import { resolveCashReturnRecipientEmail } from '../lib/cashReturnRecipient';
 import { canChangePaymentCash, assertCanChangePaymentCash } from '../lib/paymentCashAccess';
 import { assertCashPaymentLink, buildUnpaidAmountCorrectionAudit, findCurrentPayment, hasRecordedPayment, hasActiveExpensePayments, isUnpaidAmountCorrection, prepareExpenseEdit, sameExpenseVersion, samePaymentTarget } from '../lib/expenseEdits';
-import { collapseAroundDraggedRow } from '../lib/dragPointerAnchor';
+import { collapseAroundDraggedRow, type StructureDragLayout } from '../lib/dragPointerAnchor';
 
 const StructureDraggable = Draggable as any;
 
@@ -759,7 +759,7 @@ export default function ProjectDetail() {
   const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>({});
   const [collapsedAreaSubcategories, setCollapsedAreaSubcategories] = useState<Record<string, boolean>>({});
   const [structureDragKind, setStructureDragKind] = useState<'area-category' | 'area-subcategory' | null>(null);
-  const [structureDragAnchorGap, setStructureDragAnchorGap] = useState(0);
+  const [structureDragLayout, setStructureDragLayout] = useState<StructureDragLayout | null>(null);
   const [isSavingAreaStructure, setIsSavingAreaStructure] = useState(false);
   const [isCompactAreas, setIsCompactAreas] = useState(() => (
     typeof window !== 'undefined' && Boolean(window.matchMedia?.('(max-width: 767px)').matches)
@@ -3879,7 +3879,7 @@ export default function ProjectDetail() {
 
   const onAreaDragEnd = (result: any) => {
     setStructureDragKind(null);
-    setStructureDragAnchorGap(0);
+    setStructureDragLayout(null);
     if (result?.type === 'area-category' || result?.type === 'area-subcategory') {
       void onAreaStructureDragEnd(result);
       return;
@@ -6716,8 +6716,8 @@ export default function ProjectDetail() {
                       ? 'area-category'
                       : draggableId.startsWith('area-subcategory|') ? 'area-subcategory' : null;
                     if (kind) {
-                      const gap = collapseAroundDraggedRow(draggableId, () => flushSync(() => setStructureDragKind(kind)));
-                      if (gap > 0) flushSync(() => setStructureDragAnchorGap(gap));
+                      const layout = collapseAroundDraggedRow(draggableId, () => flushSync(() => setStructureDragKind(kind)));
+                      flushSync(() => setStructureDragLayout(layout));
                     }
                   }}
                   onDragEnd={onAreaDragEnd}
@@ -6727,7 +6727,8 @@ export default function ProjectDetail() {
                 <div
                   ref={categoryListProvided.innerRef}
                   {...categoryListProvided.droppableProps}
-                  style={{ paddingTop: structureDragAnchorGap || undefined, overflowAnchor: 'none' }}
+                  data-structure-drag-list
+                  style={{ ...structureDragLayout, overflowAnchor: 'none', boxSizing: 'border-box' }}
                 >
                 {selectedAreaDashboardRows.map((areaRow, areaIndex) => (
                 <StructureDraggable
