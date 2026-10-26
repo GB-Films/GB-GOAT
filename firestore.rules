@@ -16,8 +16,15 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    function isSignedIn() {
-      return request.auth != null;
+    function isAuthenticated() { return request.auth != null; }
+    function isSignedIn() { return request.auth != null && request.auth.token.email_verified; }
+    // Broad catalogs are for existing internal users. Project ACLs remain independent.
+    function isInternalUser() {
+      return isSignedIn() && (
+        request.auth.token.email == 'info@granbertafilms.com'
+        || (exists(/databases/$(database)/documents/users/$(request.auth.uid))
+          && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role','colaborador') in ['admin','ayudante_admin','jefe_produccion','colaborador'])
+      );
     }
 
     function userEmail() {
@@ -1280,11 +1287,14 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow get, list: if isSignedIn();
+      allow get: if isInternalUser() || (isAuthenticated() && request.auth.uid == userId);
+      allow list: if isInternalUser();
       allow create: if isSignedIn() && (
         isAppOwner()
         || (
           request.auth.uid == userId
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.email == userEmail()
           && request.resource.data.role == 'colaborador'
           && request.resource.data.inviteToken is string
           && userInviteMatchesSignedInEmail(request.resource.data.inviteToken)
@@ -1302,7 +1312,7 @@ service cloud.firestore {
         || (
           isSignedIn()
           && request.auth.uid == userId
-          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role'])
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName','photoURL','pinnedProjectIds'])
         );
       allow delete: if isAppOwner();
     }
@@ -1673,13 +1683,23 @@ service cloud.firestore {
       }
     }
 
+    // Portal data is served by callables that verify a current representation.
+    // Neither account owners nor global admins can forge signatures/reviews through the SDK.
+    match /providerPortalUsers/{uid}/{document=**} { allow read, write: if false; }
+    match /providerPortalDeclarations/{id} { allow read, write: if false; }
+    match /providerPortalCandidates/{id} { allow read, write: if false; }
+    match /providerPortalConfig/{id} { allow read, write: if false; }
+    match /providerPortalProjectLinks/{id} { allow read, write: if false; }
+    match /providerPortalFileGrants/{id} { allow read, write: if false; }
+    match /providerPortalAudit/{id} { allow read, write: if false; }
+
     match /clients/{clientId} {
-      allow read: if isSignedIn();
+      allow read: if isInternalUser();
       allow write: if isAppAdmin();
     }
 
     match /providers/{providerId} {
-      allow read: if isSignedIn();
+      allow read: if isInternalUser();
       allow create: if canCreateGlobalProvider() || publicProviderCreateIsValid();
       allow update: if canEditGlobalProvider();
       allow delete: if isAppAdmin()

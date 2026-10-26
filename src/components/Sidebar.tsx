@@ -18,8 +18,10 @@ import { hasGlobalRole, PROVIDER_ACCESS_ROLES } from '../lib/roles';
 import { normalizeEmail } from '../lib/identity';
 
 const menuItems = [
+  { icon: Truck, label: 'Mi proveedor', path: '/mi-proveedor', adminOnly: false },
   { icon: LayoutDashboard, label: 'Dashboard', path: '/', adminOnly: false },
   { icon: Clapperboard, label: 'Proyectos', path: '/proyectos', adminOnly: false },
+  { icon: Users, label: 'Revisiones de proveedores', path: '/portal-proveedores', adminOnly: true },
   { icon: Truck, label: 'Proveedores', path: '/proveedores', adminOnly: true, productionLead: true },
   { icon: Users, label: 'Clientes', path: '/clientes', adminOnly: true },
   { icon: Users, label: 'Equipo', path: '/equipo', adminOnly: true },
@@ -32,6 +34,7 @@ const roleLabels: Record<string, string> = {
   ayudante_admin: 'Ayudante Admin',
   jefe_produccion: 'Jefe de Producción',
   colaborador: 'Colaborador',
+  portal: 'Proveedor',
 };
 
 export default function Sidebar() {
@@ -40,7 +43,7 @@ export default function Sidebar() {
   const [pinnedProjects, setPinnedProjects] = useState<any[]>([]);
   const logoSrc = `${(import.meta as any).env.BASE_URL}gb-films-logo.png`;
 
-  const filteredMenuItems = menuItems.filter(item => (
+  const filteredMenuItems = menuItems.filter(item => (profile?.role !== 'portal' || item.path === '/mi-proveedor') && (
     profile?.role === 'admin'
     || !item.adminOnly
     || (item.productionLead && hasGlobalRole(profile?.role, PROVIDER_ACCESS_ROLES))

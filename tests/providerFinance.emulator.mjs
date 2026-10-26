@@ -14,9 +14,9 @@ const env = await initializeTestEnvironment({ projectId,
 });
 const app = admin.initializeApp({ projectId });
 const db = app.firestore();
-const context = env.authenticatedContext('admin', { email: 'admin@example.test' });
-const editor = env.authenticatedContext('editor', { email: 'editor@example.test' });
-const stranger = env.authenticatedContext('stranger', { email: 'stranger@example.test' });
+const context = env.authenticatedContext('admin', { email_verified: true, email: 'admin@example.test' });
+const editor = env.authenticatedContext('editor', { email_verified: true, email: 'editor@example.test' });
+const stranger = env.authenticatedContext('stranger', { email_verified: true, email: 'stranger@example.test' });
 const call = createProviderFinanceHandler({ db, timestamp: () => admin.firestore.FieldValue.serverTimestamp(), verifyFile: async (_provider, _id, file) => ({ ...file, contentType: 'application/pdf' }), readFile: async () => 'JVBERg==' });
 const request = data => ({ auth: { uid: 'admin', token: { email: 'admin@example.test' } }, data });
 const expenseRef = index => db.doc(`projects/project${index}/areaExpenses/expense`);

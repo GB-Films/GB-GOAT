@@ -1,0 +1,42 @@
+name: Validate provider portal and Sign integration
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: goat
+    env:
+      GB_SIGN_TEST_ROOT: ../sign
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: goat
+      - uses: actions/checkout@v4
+        with:
+          repository: GB-Films/GB-Sign
+          ref: 56810f223a100cb255b5fd4eff8acd694eb134db
+          path: sign
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: goat/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: npm ci
+      - run: npm ci --prefix functions
+      - run: npm ci --prefix ../sign/functions
+      - run: npm install --global firebase-tools@15.22.1
+      - run: npm run lint
+      - run: npm test
+      - run: npm test --prefix functions
+      - run: npm test --prefix ../sign/functions
+      - run: npm run test:portal-rules
+      - run: npm run build

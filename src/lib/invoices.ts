@@ -1,5 +1,6 @@
 export type ExpenseInvoiceDocument = {
   id?: string;
+  portalUploadId?: string;
   fileName?: string;
   originalFileName?: string;
   url?: string;
@@ -16,9 +17,9 @@ export const getInvoiceDocumentKey = (invoice?: ExpenseInvoiceDocument | null) =
 
 export const getExpenseInvoices = (item?: any | null): ExpenseInvoiceDocument[] => {
   const storedInvoices = Array.isArray(item?.invoices)
-    ? item.invoices.filter((invoice: any) => invoice && invoice.url)
+    ? item.invoices.filter((invoice: any) => invoice && (invoice.url || invoice.path))
     : [];
-  const legacyInvoice = item?.invoice?.url ? item.invoice : null;
+  const legacyInvoice = (item?.invoice?.url || item?.invoice?.path) ? item.invoice : null;
   const candidates = legacyInvoice ? [legacyInvoice, ...storedInvoices] : storedInvoices;
   const seen = new Set<string>();
 

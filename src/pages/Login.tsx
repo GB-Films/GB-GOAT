@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { signInWithPopup } from 'firebase/auth';
-import { auth, googleProvider } from '../lib/firebase';
+import { auth, googleProvider, microsoftProvider } from '../lib/firebase';
 import { Navigate, useLocation } from 'react-router-dom';
 import { USER_INVITE_TOKEN_KEY, useAuth } from '../context/AuthContext';
 import { motion } from 'motion/react';
@@ -31,7 +31,7 @@ export default function Login() {
   }, [authError]);
 
   if (user && profile) {
-    return <Navigate to="/" replace />;
+    return <Navigate to={profile.role === 'portal' || profile.role === 'unverified' ? '/mi-proveedor' : '/'} replace />;
   }
 
   if (loading) {
@@ -42,13 +42,13 @@ export default function Login() {
     );
   }
 
-  const handleLogin = async () => {
+  const handleLogin = async (provider = googleProvider) => {
     setIsSigningIn(true);
     setLoginError('');
 
     try {
       await Promise.race([
-        signInWithPopup(auth, googleProvider),
+        signInWithPopup(auth, googleProvider, microsoftProvider),
         new Promise((_, reject) => {
           window.setTimeout(() => reject(new Error('AUTH_POPUP_TIMEOUT')), 45000);
         }),
@@ -62,6 +62,8 @@ export default function Login() {
         'auth/cancelled-popup-request': 'Ya hay un inicio de sesión en curso. Cerralo y probá de nuevo.',
         'auth/operation-not-supported-in-this-environment': 'Abrí GB GOAT directamente en Chrome o Safari para iniciar sesión.',
         'auth/web-storage-unsupported': 'El navegador no permite guardar la sesión. Abrí GB GOAT en Chrome o Safari fuera del modo privado.',
+        'auth/account-exists-with-different-credential': 'Esa cuenta ya usa otro método de ingreso. Entrá con el método original; no crees otro proveedor.',
+        'auth/operation-not-allowed': 'Este método todavía no está habilitado. Usá el método disponible o contactá a administración.',
         AUTH_POPUP_TIMEOUT: 'La ventana de Google no respondió. Cerrala, verificá que los popups estén permitidos y probá de nuevo.',
       };
       setLoginError(errorMessages[errorCode] || 'No pudimos iniciar sesión con Google. Abrí GB GOAT en Chrome o Safari y probá de nuevo.');
@@ -93,13 +95,14 @@ export default function Login() {
             </div>
           )}
           <button
-            onClick={handleLogin}
+            onClick={() => handleLogin()}
             disabled={isSigningIn}
             className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-white border border-slate-200 rounded-xl font-medium text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition-all active:scale-[0.98]"
           >
             <img src="https://www.google.com/favicon.ico" alt="Google" className="w-5 h-5" />
             {isSigningIn ? 'Conectando...' : 'Continuar con Google'}
           </button>
+          <button onClick={() => handleLogin(microsoftProvider)} disabled={isSigningIn} className="w-full rounded-xl border border-slate-200 px-4 py-3 font-medium text-slate-700 hover:bg-slate-50">Continuar con Microsoft</button>
         </div>
 
         {loginError && (
@@ -109,7 +112,7 @@ export default function Login() {
         )}
 
         <p className="mt-8 text-center text-xs text-slate-400">
-          Usa tu cuenta corporativa para acceder a tus proyectos
+          Ingresá con tu cuenta verificada para ver tus trabajos y documentos.
         </p>
         <nav aria-label="Información de GB GOAT" className="mt-4 flex justify-center gap-4 text-xs text-slate-600">
           <a href={`${(import.meta as any).env.BASE_URL}about.html`} className="underline underline-offset-2 hover:text-slate-900">Sobre GB GOAT</a>

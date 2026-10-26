@@ -102,3 +102,7 @@ se conoce la condición pactada y su fecha de inicio. Los cobros de esta pestañ
 son seguimiento por proyecto: **Control Total sigue siendo el registro de los
 movimientos reales** y se concilia por separado. No se importan ni se alteran
 facturas o pagos históricos automáticamente al abrir esta pestaña.
+
+## Portal de proveedores e integración de firmas
+
+El portal externo, sus representaciones, declaraciones de datos y autorizaciones de terceros se documentan en [docs/provider-portal.md](docs/provider-portal.md). La implementación permanece deshabilitada hasta completar la activación de backend, reglas e identidad; no habilitar cuentas externas sobre las reglas anteriores.

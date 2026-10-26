@@ -1,3 +1,4 @@
+import { handlePortalInvoiceLink } from '../../lib/portalInvoiceLink';
 import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { FileText, Link as LinkIcon, Paperclip, Plus, X } from 'lucide-react';
@@ -55,7 +56,7 @@ export function ExpenseInvoiceCell({
       {singleInvoice ? (
         <>
           <a
-            href={singleInvoice.url}
+            href={singleInvoice.url || '#'} onClick={e=>handlePortalInvoiceLink(e,singleInvoice)}
             target="_blank"
             rel="noreferrer"
             className="flex h-7 w-7 items-center justify-center rounded border border-emerald-100 bg-emerald-50 text-emerald-600 transition-all hover:bg-emerald-600 hover:text-white"
@@ -157,7 +158,7 @@ export function ExpenseInvoiceCell({
                       {invoice.contentType || 'Documento'}{invoice.size ? ` · ${Math.ceil(invoice.size / 1024)} KB` : ''}
                     </div>
                   </div>
-                  <a href={invoice.url} target="_blank" rel="noreferrer" className="rounded border border-emerald-100 bg-emerald-50 px-3 py-2 text-[9px] font-black uppercase tracking-widest text-emerald-700 hover:bg-emerald-600 hover:text-white">
+                  <a href={invoice.url || '#'} onClick={e=>handlePortalInvoiceLink(e,invoice)} target="_blank" rel="noreferrer" className="rounded border border-emerald-100 bg-emerald-50 px-3 py-2 text-[9px] font-black uppercase tracking-widest text-emerald-700 hover:bg-emerald-600 hover:text-white">
                     Abrir
                   </a>
                   {canRemove && (

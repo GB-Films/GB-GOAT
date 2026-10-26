@@ -3,7 +3,7 @@ import { getExpenseInvoices, type ExpenseInvoiceDocument } from './invoices';
 export function uniqueProviderDocuments(documents: ExpenseInvoiceDocument[]) {
   const seen = new Set<string>();
   return documents.filter(document => {
-    if (!document?.url) return false;
+    if (!document?.url && !document?.path) return false;
     const key = document.path || document.url || document.id;
     if (seen.has(key)) return false;
     seen.add(key);

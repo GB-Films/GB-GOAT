@@ -3,6 +3,7 @@ import { User, onAuthStateChanged, signOut } from 'firebase/auth';
 import { doc, getDoc, runTransaction, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
 import { normalizeEmail } from '../lib/identity';
+import { portalRequest } from '../lib/providerPortal';
 
 interface AuthContextType {
   user: User | null;
@@ -55,6 +56,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
 
         setAuthError('');
+        if (!firebaseUser.emailVerified) {
+          setProfile({ uid:firebaseUser.uid, email:firebaseUser.email, role:'unverified' });
+          setLoading(false); return;
+        }
 
         const normalizedEmail = normalizeEmail(firebaseUser.email);
         const userRef = doc(db, 'users', firebaseUser.uid);
@@ -89,9 +94,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         if (normalizedEmail !== APP_OWNER_EMAIL) {
           if (!inviteToken) {
-            await rejectLogin('Tu email no tiene una invitación activa para ingresar a GB GOAT.');
-            setLoading(false);
-            return;
+            await portalRequest({action:'bootstrap'});
+            setProfile({uid:firebaseUser.uid,email:firebaseUser.email,displayName:firebaseUser.displayName,photoURL:firebaseUser.photoURL,role:'portal'});
+            setLoading(false);return;
           }
 
           await runTransaction(db, async (transaction) => {
@@ -131,7 +136,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             INVITE_EMAIL_MISMATCH: 'Este link fue creado para otro email. Iniciá sesión con la cuenta invitada.',
           };
 
-          await rejectLogin(messageByCode[(error as Error)?.message] || 'No pudimos validar tu invitación. Pedí un nuevo link de acceso.');
+          await rejectLogin(messageByCode[(error as Error)?.message] || (error as Error)?.message || 'No pudimos validar tu acceso.');
         }
       } finally {
         setLoading(false);

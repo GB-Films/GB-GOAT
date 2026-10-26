@@ -4,6 +4,8 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import Layout from './components/Layout';
 import { hasGlobalRole, PROVIDER_ACCESS_ROLES } from './lib/roles';
 
+const ProviderPortal = lazy(() => import('./pages/ProviderPortal'));
+const ProviderPortalAdmin = lazy(() => import('./pages/ProviderPortalAdmin'));
 const Login = lazy(() => import('./pages/Login'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Projects = lazy(() => import('./pages/Projects'));
@@ -53,6 +55,8 @@ export default function App() {
             <Route path="/carga-factura/:token" element={<InvoiceUploadInvite />} />
             
             <Route element={<Layout />}>
+              <Route path="/mi-proveedor" element={<ProviderPortal />} />
+              <Route path="/portal-proveedores" element={<AdminRoute><ProviderPortalAdmin /></AdminRoute>} />
               <Route path="/" element={<Dashboard />} />
               <Route path="/proyectos" element={<Projects />} />
               <Route path="/proyectos/:id" element={<ProjectDetail />} />

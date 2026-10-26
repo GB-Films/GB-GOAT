@@ -1,3 +1,4 @@
+import { handlePortalInvoiceLink } from '../lib/portalInvoiceLink';
 import { FileText, Paperclip } from 'lucide-react';
 import type { ExpenseInvoiceDocument } from '../lib/invoices';
 
@@ -13,7 +14,7 @@ export function ProviderDocumentLinks({ documents = [], kind }: {
   return <div className="flex flex-wrap justify-center gap-1">
     {documents.map((document, index) => {
       const fileName = document.originalFileName || document.fileName || `${label} ${index + 1}`;
-      return <a key={document.path || document.url || index} href={document.url} target="_blank" rel="noopener noreferrer"
+      return <a key={document.path || document.url || index} href={document.url || '#'} onClick={e=>handlePortalInvoiceLink(e,document)} target="_blank" rel="noopener noreferrer"
         title={fileName} aria-label={`${label}: ${fileName}`}
         className={`inline-flex items-center gap-1 rounded border px-2 py-1.5 text-[9px] font-bold transition-colors hover:text-white ${tone}`}>
         {kind === 'invoice' ? <FileText className="h-3 w-3" /> : <Paperclip className="h-3 w-3" />}

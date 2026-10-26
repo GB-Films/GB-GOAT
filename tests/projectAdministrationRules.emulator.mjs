@@ -4,7 +4,7 @@ import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebas
 import { collection, deleteDoc, doc, getDoc, getDocs, serverTimestamp, setDoc } from 'firebase/firestore';
 
 const env = await initializeTestEnvironment({ projectId: 'demo-gb-goat-administration', firestore: { rules: readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8') } });
-const database = uid => env.authenticatedContext(uid, { email: `${uid}@example.test` }).firestore();
+const database = uid => env.authenticatedContext(uid, { email_verified: true, email: `${uid}@example.test` }).firestore();
 const admin = database('admin');
 const owner = database('owner');
 const manager = database('manager');
