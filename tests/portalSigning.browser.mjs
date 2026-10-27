@@ -29,6 +29,22 @@ try {
       assert.ok(geometry.details.x >= geometry.document.right - 1, "form is to the right");
     } else assert.ok(geometry.details.y >= geometry.document.y + geometry.document.height - 1, "form is below PDF on mobile");
     await page.screenshot({ path: `test-results/portal-signing/${viewport.width}-initial.png` });
+    assert.equal(await page.locator("[data-pdf-page]").count(), 2, "all pages have continuous space in the viewer");
+    const viewerBox = await viewer.boundingBox();
+    await page.mouse.move(viewerBox.x + viewerBox.width / 2, viewerBox.y + viewerBox.height / 2);
+    await page.mouse.wheel(0, geometry.sheet.height + 20);
+    await page.getByText("Página 2 de 2", { exact: true }).waitFor();
+    await page.waitForFunction(() => document.querySelector('[data-pdf-page="2"]').getAttribute("aria-busy") === "false");
+    assert.ok(await viewer.evaluate(el => el.scrollTop) > 100, "wheel scroll reaches the second page");
+    assert.equal(await page.locator('[data-signature-field-id="second"]').getAttribute("aria-pressed"), "false");
+    await page.screenshot({ path: `test-results/portal-signing/${viewport.width}-scrolled.png` });
+    await page.getByRole("button", { name: "Página anterior", exact: true }).click();
+    await page.getByText("Página 1 de 2", { exact: true }).waitFor();
+    await viewer.focus();
+    await page.keyboard.press("End");
+    await page.getByText("Página 2 de 2", { exact: true }).waitFor();
+    await page.keyboard.press("Home");
+    await page.getByText("Página 1 de 2", { exact: true }).waitFor();
     const initialWidth = geometry.sheet.width;
     await page.getByRole("button", { name: "Acercar documento", exact: true }).click();
     await page.waitForFunction(initial => document.querySelector(".portal-pdf-sheet").getBoundingClientRect().width > initial * 1.2 && document.querySelector('[data-testid="pdf-viewport"]').getAttribute("aria-busy") === "false", initialWidth);
@@ -45,6 +61,12 @@ try {
     await page.getByLabel("Ir a mi recuadro de firma", { exact: true }).selectOption("second");
     await page.waitForFunction(() => document.querySelector('[data-signature-field-id="second"]')?.getBoundingClientRect().width > 0);
     assert.equal(await submit.isDisabled(), true, "navigation does not select a field");
+    await page.getByRole("button", { name: "Página anterior", exact: true }).click();
+    await viewer.scrollIntoViewIfNeeded();
+    const readBox = await viewer.boundingBox();
+    await page.mouse.move(readBox.x + readBox.width / 2, readBox.y + readBox.height / 2);
+    await page.mouse.wheel(0, geometry.sheet.height + 20);
+    await page.getByText("Página 2 de 2", { exact: true }).waitFor();
     await page.locator('[data-signature-field-id="second"]').click();
     assert.equal(await submit.isEnabled(), true);
     await page.getByLabel("DNI", { exact: true }).fill("23.456.789");
@@ -81,7 +103,26 @@ try {
     await page.getByRole("button", { name: "Cerrar", exact: true }).click();
     assert.equal(await page.evaluate(() => document.body.style.overflow), "");
     assert.deepEqual(errors, []);
-    console.log(`PASS ${viewport.width}x${viewport.height}: PDF layout, field selection, DNI, pad and exact payload`);
+    console.log(`PASS ${viewport.width}x${viewport.height}: continuous wheel/keyboard scrolling, zoom, field selection, DNI, pad and exact payload`);
+    await page.close();
+  }
+  {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    const errors = [];
+    page.on("pageerror", error => errors.push(error.message));
+    await page.goto(`${base}/tests/fixtures/portal-signing.html?long`);
+    await page.waitForFunction(() => document.querySelector('[data-testid="pdf-viewport"]')?.getAttribute("aria-busy") === "false");
+    const viewer = page.getByTestId("pdf-viewport");
+    await viewer.focus(); await page.keyboard.press("End");
+    await page.getByText("Página 8 de 8", { exact: true }).waitFor();
+    await page.waitForFunction(() => document.querySelector('[data-pdf-page="8"]').getAttribute("aria-busy") === "false" && document.querySelector('[data-pdf-page="1"] canvas').width === 0);
+    assert.ok(await page.locator(".portal-pdf-sheet canvas").evaluateAll(canvases => canvases.filter(c => c.width > 0).length) < 5, "distant pages release their canvas memory");
+    await page.keyboard.press("Home");
+    await page.getByText("Página 1 de 8", { exact: true }).waitFor();
+    await page.waitForFunction(() => document.querySelector('[data-pdf-page="1"]').getAttribute("aria-busy") === "false");
+    assert.equal(await page.locator('[data-signature-field-id="first"]').isVisible(), true);
+    assert.deepEqual(errors, []);
+    console.log("PASS eight pages: scrolling to the end and back restores released pages and signing fields");
     await page.close();
   }
   for (const query of ["broken", "foreign"]) {
