@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { GoogleAuthProvider, onAuthStateChanged, signInWithPopup, User } from 'firebase/auth';
 import { collection, doc, getDoc, runTransaction, serverTimestamp } from 'firebase/firestore';
 import { useParams } from 'react-router-dom';
@@ -7,10 +7,12 @@ import { auth, db } from '../lib/firebase';
 import {
   COMPANY_PROVIDER_CATEGORIES,
   PRODUCTION_AREA_CATEGORIES,
-  isValidCbu,
   normalizeDigits,
 } from '../lib/providerConstants';
 import { getProviderInviteTargetIssue } from '../lib/providerInvites';
+import { portalRequest } from '../lib/providerPortal';
+import { initialThirdPartyCapture, thirdPartyCapture, providerFiscalErrors } from '../lib/providerThirdParty';
+import { ProviderThirdPartyDialog, ProviderThirdPartyEntry } from '../components/ProviderThirdPartyDialog';
 
 type ProviderType = 'persona' | 'empresa';
 type DuplicateState = { dni?: boolean; cuit?: boolean };
@@ -34,7 +36,7 @@ const emptyForm = {
 };
 
 type ProviderForm = typeof emptyForm;
-type FormErrorKey = keyof ProviderForm | 'bankAccount';
+type FormErrorKey = keyof ProviderForm | 'bankAccount' | 'thirdParty';
 type FormErrors = Partial<Record<FormErrorKey, string>>;
 
 const inputClass = 'w-full px-4 py-3 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-black transition-all disabled:bg-slate-50 disabled:text-slate-400';
@@ -339,6 +341,7 @@ export default function ProviderInvite() {
   const [submitLoading, setSubmitLoading] = useState(false);
   const [checkingDuplicates, setCheckingDuplicates] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [registeredProviderId, setRegisteredProviderId] = useState('');
   const [error, setError] = useState('');
   const [duplicates, setDuplicates] = useState<DuplicateState>({});
   const [form, setForm] = useState(emptyForm);
@@ -347,6 +350,10 @@ export default function ProviderInvite() {
   const [googleUser, setGoogleUser] = useState<User | null>(auth.currentUser);
   const [personalAccountAccepted, setPersonalAccountAccepted] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
+  const [thirdPartyState, captureThirdParty] = useReducer(thirdPartyCapture, initialThirdPartyCapture);
+  const { enabled: thirdPartyMode, open: thirdPartyOpen, draft: thirdPartyDraft } = thirdPartyState;
+  const intakeAttempt = useRef(crypto.randomUUID());
+  const usesThirdParty = form.type === 'persona' && thirdPartyMode;
   const submitErrorRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => onAuthStateChanged(auth, (user) => {
@@ -470,21 +477,18 @@ export default function ProviderInvite() {
     const nextErrors: FormErrors = {};
     const requiredMessage = 'Falta completar este campo obligatorio.';
     const normalizedDni = normalizeDigits(values.dni);
-    const normalizedCuit = normalizeDigits(values.cuit);
 
     if (!values.type) nextErrors.type = 'Elegí si el alta corresponde a Persona física o Empresa.';
     if (values.type === 'persona') {
       if (!values.name.trim()) nextErrors.name = requiredMessage;
       if (!values.lastName.trim()) nextErrors.lastName = requiredMessage;
       if (!normalizedDni) nextErrors.dni = requiredMessage;
-      else if (normalizedDni.length < 7) nextErrors.dni = 'Ingresá un DNI válido.';
+      else if (normalizedDni.length < 7 || normalizedDni.length > 9) nextErrors.dni = 'Ingresá un DNI válido de 7 a 9 números.';
       else if (duplicateState.dni) nextErrors.dni = 'Ya existe una persona registrada con este DNI.';
     }
     if (values.type === 'empresa' && !values.businessName.trim()) nextErrors.businessName = requiredMessage;
 
-    if (!normalizedCuit) nextErrors.cuit = requiredMessage;
-    else if (normalizedCuit.length !== 11) nextErrors.cuit = 'El CUIT/CUIL debe tener 11 números.';
-    else if (duplicateState.cuit) nextErrors.cuit = 'Ya existe un proveedor registrado con este CUIT/CUIL.';
+    Object.assign(nextErrors, providerFiscalErrors(values, thirdPartyMode, thirdPartyDraft, duplicateState.cuit));
 
     if (!values.email.trim()) nextErrors.email = requiredMessage;
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(values.email.trim())) nextErrors.email = 'Ingresá un email válido.';
@@ -492,12 +496,6 @@ export default function ProviderInvite() {
     if (!values.address.trim()) nextErrors.address = requiredMessage;
     if (!values.category) nextErrors.category = requiredMessage;
     if (values.category === 'Otra' && !values.categoryOther.trim()) nextErrors.categoryOther = requiredMessage;
-
-    if (!values.bankAccount_cbu.trim() && !values.bankAccount_alias.trim()) {
-      nextErrors.bankAccount = 'Completá al menos un CBU o un Alias.';
-    } else if (values.bankAccount_cbu.trim() && !isValidCbu(normalizeDigits(values.bankAccount_cbu))) {
-      nextErrors.bankAccount_cbu = 'El CBU debe tener exactamente 22 números consecutivos.';
-    }
 
     return nextErrors;
   }
@@ -512,6 +510,7 @@ export default function ProviderInvite() {
   };
 
   const selectType = (type: ProviderType) => {
+    captureThirdParty({ type: 'changeType' });
     setForm({ ...emptyForm, type, email: googleUser?.email?.trim().toLowerCase() || '' });
     setDuplicates({});
     setFieldErrors({});
@@ -521,7 +520,7 @@ export default function ProviderInvite() {
 
   useEffect(() => {
     if (showFieldErrors) setFieldErrors(validateForm(form, duplicates));
-  }, [duplicates, showFieldErrors]);
+  }, [duplicates, showFieldErrors, thirdPartyMode, thirdPartyDraft]);
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -553,7 +552,10 @@ export default function ProviderInvite() {
         || String(identity.claims.email || '').toLowerCase() !== form.email) {
         throw new Error('Iniciá sesión con una cuenta Google con correo verificado.');
       }
-      await runTransaction(db, async (transaction) => {
+      if (usesThirdParty) {
+        const result = await portalRequest({ action: 'registerThirdPartyIntake', inviteToken: token, attemptId: intakeAttempt.current, form, party: thirdPartyDraft, personalAccountAccepted });
+        setRegisteredProviderId(result.providerId);
+      } else await runTransaction(db, async (transaction) => {
         const inviteRef = doc(db, 'providerInvites', token);
         const inviteSnap = await transaction.get(inviteRef);
         if (!inviteSnap.exists()) throw new Error('INVITE_NOT_FOUND');
@@ -685,6 +687,7 @@ export default function ProviderInvite() {
       };
       const rawDetail = err?.code || err?.message || 'sin detalle';
       const submitError = PROVIDER_INVITE_MESSAGES[err?.message]
+        || (usesThirdParty && err?.code === 'functions/failed-precondition' ? err.message : '')
         || firebaseMessageByCode[err?.code]
         || `Ocurrió un error inesperado al enviar (${rawDetail}). Los datos siguen cargados: recargá la página o pedí un link nuevo.`;
       if (err?.message === 'DNI_EXISTS' || err?.message === 'CUIT_EXISTS') {
@@ -726,8 +729,9 @@ export default function ProviderInvite() {
           <div className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate-400 mb-3">Gran Berta Films</div>
           <h1 className="text-2xl font-bold text-slate-900 mb-3">Alta recibida correctamente</h1>
           <p className="text-sm text-slate-500 leading-relaxed">
-            Tu información fue enviada. Este link ya no podrá volver a usarse.
+            {registeredProviderId ? 'Guardamos tus datos y la solicitud del tercero. Falta confirmar tu representación, firmar la autorización y completar la revisión administrativa.' : invite?.mode === 'multi_use' ? 'Tu información fue enviada correctamente.' : 'Tu información fue enviada. Este link ya no podrá volver a usarse.'}
           </p>
+          {registeredProviderId && <a href={`#/mi-proveedor?provider=${encodeURIComponent(registeredProviderId)}`} className="mt-5 inline-block rounded-xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white">Continuar a la declaración y firma</a>}
         </div>
       </div>
     );
@@ -771,6 +775,7 @@ export default function ProviderInvite() {
             <button
               type="button"
               onClick={() => selectType('persona')}
+              disabled={submitLoading}
               className={`p-5 rounded-xl border text-left transition-all ${form.type === 'persona' ? 'border-black bg-slate-950 text-white' : 'border-slate-200 hover:border-slate-400'}`}
             >
               <UserRound className="w-5 h-5 mb-3" />
@@ -780,6 +785,7 @@ export default function ProviderInvite() {
             <button
               type="button"
               onClick={() => selectType('empresa')}
+              disabled={submitLoading}
               className={`p-5 rounded-xl border text-left transition-all ${form.type === 'empresa' ? 'border-black bg-slate-950 text-white' : 'border-slate-200 hover:border-slate-400'}`}
             >
               <Building2 className="w-5 h-5 mb-3" />
@@ -790,6 +796,7 @@ export default function ProviderInvite() {
 
           {form.type && (
             <form onSubmit={handleSubmit} noValidate data-provider-form className="space-y-6">
+              <fieldset disabled={submitLoading} className="space-y-6">
               {form.type === 'persona' ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <Field label="Nombre" required error={fieldErrors.name}>
@@ -801,8 +808,8 @@ export default function ProviderInvite() {
                   <Field label="DNI" required error={dniError}>
                     <input aria-label="DNI" inputMode="numeric" value={form.dni} onChange={(e) => updateField('dni', e.target.value)} required aria-invalid={Boolean(dniError)} className={withFieldError(dniError)} />
                   </Field>
-                  <Field label="CUIT / CUIL" required error={cuitError}>
-                    <input aria-label="CUIT / CUIL" inputMode="numeric" value={form.cuit} onChange={(e) => updateField('cuit', e.target.value)} required aria-invalid={Boolean(cuitError)} className={withFieldError(cuitError)} />
+                  <Field label={usesThirdParty ? "CUIT / CUIL propio (si lo tenés)" : "CUIT / CUIL"} required={!usesThirdParty} error={cuitError}>
+                    <input aria-label="CUIT / CUIL" inputMode="numeric" value={form.cuit} onChange={(e) => updateField('cuit', e.target.value)} required={!usesThirdParty} aria-invalid={Boolean(cuitError)} className={withFieldError(cuitError)} />
                   </Field>
                   <Field label="Fecha de nacimiento">
                     <InlineDatePicker value={form.birthDate} onChange={(value) => updateField('birthDate', value)} />
@@ -852,7 +859,8 @@ export default function ProviderInvite() {
               </div>
 
               <div>
-                <div className={`${labelClass} ${fieldErrors.bankAccount ? 'text-red-600' : ''}`}>Datos bancarios<RequiredMark /></div>
+                <div className={`${labelClass} ${fieldErrors.bankAccount ? 'text-red-600' : ''}`}>Datos bancarios propios{!usesThirdParty && <RequiredMark />}</div>
+                {usesThirdParty && <p className="mb-3 text-sm text-slate-500">Son opcionales para esta solicitud. Los datos del tercero se conservan por separado.</p>}
                 <div className={`grid grid-cols-1 gap-4 rounded-xl md:grid-cols-2 ${fieldErrors.bankAccount ? 'border border-red-200 bg-red-50/50 p-3' : ''}`}>
                   <Field label="CBU" error={fieldErrors.bankAccount_cbu}>
                     <input
@@ -889,6 +897,7 @@ export default function ProviderInvite() {
               </div>
 
               {checkingDuplicates && <p className="text-xs text-slate-400 font-bold uppercase tracking-widest">Revisando duplicados...</p>}
+              <ProviderThirdPartyEntry providerType={form.type} enabled={usesThirdParty} name={thirdPartyDraft.name} error={fieldErrors.thirdParty} disabled={submitLoading} onOpen={() => captureThirdParty({ type: 'open' })} onOwn={() => captureThirdParty({ type: 'own' })} />
               {error && (
                 <div
                   ref={submitErrorRef}
@@ -908,12 +917,14 @@ export default function ProviderInvite() {
                 {submitLoading && <Loader2 className="w-4 h-4 animate-spin" />}
                 Enviar alta de proveedor
               </button>
+              </fieldset>
             </form>
           )}
         </div>
 
+        {form.type === 'persona' && thirdPartyOpen && <ProviderThirdPartyDialog draft={thirdPartyDraft} onChange={draft => captureThirdParty({ type: 'edit', draft })} onClose={() => captureThirdParty({ type: 'close' })} onSave={() => captureThirdParty({ type: 'save' })} />}
         <p className="text-center text-[11px] text-slate-400 mt-6">
-          Este link es personal y de un solo uso. No lo compartas con terceros.
+          {invite?.mode === 'multi_use' ? 'Completá el alta con tus datos y tu cuenta personal de Google.' : 'Este link es personal y de un solo uso. No lo compartas con terceros.'}
         </p>
       </div>
     </div>

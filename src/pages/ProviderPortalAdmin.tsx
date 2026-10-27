@@ -144,6 +144,9 @@ export default function ProviderPortalAdmin() {
                 {d.content.party.holder} ·{" "}
                 {d.content.party.cbu || d.content.party.alias}
               </p>
+              <p className="text-sm">Relación con el prestador: {d.content.party.relationship || "Sin informar en este antecedente"}</p>
+              <p className="text-sm">Actividad declarada del tercero: {d.content.party.activity || "Sin informar en este antecedente"}</p>
+              <p className="text-xs text-slate-500">El servicio real del prestador figura en los trabajos alcanzados. Revisá por separado el encuadre fiscal y la cuenta del beneficiario.</p>
               <p className="text-sm">Hasta {d.content.expiresOn}</p>
               <ul className="text-sm">
                 {d.content.workKeys.map((k: string) => (

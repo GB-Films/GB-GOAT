@@ -70,6 +70,8 @@ test("profile declaration freezes old/new values and separates critical fields f
 test("third-party authorization is scoped to own selected work and does not imply a payment", () => {
   const p = {
     name: "Tercero",
+    relationship: "Hermana",
+    activity: "Servicios de fotografía",
     cuit: "20111111112",
     holder: "Titular",
     alias: "alias.test",
@@ -85,6 +87,9 @@ test("third-party authorization is scoped to own selected work and does not impl
     { roles: ["admin"] },
     { roles: [] },
     { holder: "" },
+    { relationship: "" },
+    { activity: "" },
+    { activity: "a".repeat(501) },
     { expiresOn: "bad" },
   ])
     assert.throws(() => M.thirdParty({ ...p, ...c }, p.workKeys));

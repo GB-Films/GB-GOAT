@@ -36,6 +36,24 @@ Las descargas se verifican en cada callable y entregan bytes, sin devolver token
 
 ## Cambios de datos y terceros
 
+### Alta de persona sin factura propia — cambio preparado, pendiente de publicación
+
+El alta de persona física ofrece el enlace «No puedo emitir factura», al final del formulario. La ventana conserva el borrador al cerrar, corregir errores o cambiar de tipo; recoge nombre, relación, actividad del tercero, CUIT, titular y CBU/CVU o alias. Al guardar la alternativa, los datos fiscales/bancarios **propios** pasan a ser opcionales. Los valores del tercero nunca reemplazan los del prestador.
+
+Esta variante usa la acción `registerThirdPartyIntake` de `providerPortal`, con Google verificado y autenticación reciente. En una transacción valida invitación/estado/vencimiento, duplicados y fila no asignada/sin pagos; crea la persona y sus índices propios, consume la invitación o incrementa su uso múltiple y vincula la fila existente. Reintentar el mismo intento no crea otra ficha ni vuelve a consumir el enlace. El CUIT del tercero no se agrega al índice del prestador.
+
+La captura queda en `providerPortalIntakeRequests/{providerId}`, sin acceso directo desde SDK (denegación por defecto); no se agrega información bancaria del tercero al catálogo general de proveedores. La ficha conserva sólo el identificador y el hash de la presentación. Se crea una membresía **pendiente de confirmación**, sin rol interno ni lectura del historial: la persona debe firmar la representación existente antes de obtener la vista propia.
+
+El botón «Continuar a la declaración y firma» abre Mi proveedor. Tras firmar la representación, Mis datos recupera la solicitud y el trabajo del enlace. La persona revisa el contenido y elige una vigencia antes de preparar la autorización de terceros. Una invitación general conserva alcance vacío: primero se necesita un trabajo asignado; nunca se presume autorización global. El servidor vuelve a validar que todos los trabajos elegidos pertenecen al prestador. La declaración `third-party-v2` incluye relación y actividad del tercero; el servicio real se conserva en los trabajos. Los dos conceptos se muestran en PDF, revisión y ficha de autorizaciones.
+
+Sólo una ficha con `type: persona` puede crear, aprobar o usar una autorización para operaciones nuevas. Empresas no tienen esta opción en alta/Mis datos ni en los selectores de nuevas operaciones financieras; los antecedentes continúan visibles. Una ficha histórica sin tipo explícito necesita clasificación administrativa antes de crear una autorización: no se reclasifica automáticamente.
+
+Las rutas y tokens de alta no cambian. Se conservan enlaces de uso único/múltiple, vencimientos y formatos históricos sin `expiresAt` o sin `collectionName` (áreas por defecto). No se regeneran enlaces ni se tocan borradores de correo/SENT.
+
+**Límite no resuelto por este cambio:** Gestión de pagos simple no consume autorizaciones de beneficiario tercero; `thirdPartyPayer` sigue siendo el circuito de adelantos/reintegros. La ficha compartida conserva su integración y sus verificaciones cuando se selecciona una autorización. Los campos financieros históricos sin referencia de autorización no se migran ni pasan a imponer autorización universal.
+
+No requiere cambios de IAM, Authentication, índices ni reglas. La variante del SDK de alta normal mantiene su esquema y permisos anteriores. Si se autoriza publicar, deben coordinarse frontend y las funciones `providerPortal`, `manageProviderPortal` y `manageProviderFinance`; el cliente anterior no envía los nuevos campos obligatorios. No se necesita modificar el motor de GB Sign. Esta sección describe código preparado, sin firmas, aprobaciones, migraciones ni despliegue de producción ejecutados por el cambio.
+
 Editar → revisar PDF → firmar con nombre cursivo o dibujo → aplicar. La fecha de firma es de servidor y el DNI queda declarado, no certificado. Los datos comunes entran en vigencia tras completar firma y artefactos. CUIT, identidad y banco conservan sus valores vigentes hasta revisión administrativa.
 
 La autorización de un tercero identifica prestador, emisor propuesto y beneficiario; se limita a trabajos seleccionados y tiene vencimiento. Facturación y cobro se aprueban por separado. Los arreglos posteriores entre prestador y beneficiario quedan declarados como su responsabilidad. La firma no acredita pago ni valida por sí sola el encuadre fiscal.

@@ -1,5 +1,6 @@
 const { HttpsError } = require("firebase-functions/v2/https");
 const M = require("./providerPortalModel");
+const { createThirdPartyIntake } = require("./providerIntake");
 const { fail, text, email, id, list, hash } = M;
 const internalRoles = [
   "admin",
@@ -37,6 +38,7 @@ function createProviderPortalHandler({
   readFile,
   clock = () => new Date(),
 }) {
+  const registerThirdPartyIntake = createThirdPartyIntake({ db, timestamp, clock });
   const config = async () => {
     if (
       (await db.doc("providerPortalConfig/current").get()).data()?.enabled !==
@@ -222,6 +224,10 @@ function createProviderPortalHandler({
       });
     }
     await config();
+    if (input.action === "registerThirdPartyIntake") {
+      identity(request, true);
+      return registerThirdPartyIntake(actor, input);
+    }
     if (input.action === "bootstrap") {
       // Candidates are prepared by administration; ambiguous/shared email is never auto-associated.
       const candidateRef = db.doc(
@@ -310,7 +316,7 @@ function createProviderPortalHandler({
     );
     if (input.action === "overview") {
       const provider = (await db.doc(`providers/${providerId}`).get()).data();
-      const [work, financial, declarations] = await Promise.all([
+      const [work, financial, declarations, intake] = await Promise.all([
         works(providerId),
         db
           .collection("providerFinancialRecords")
@@ -322,12 +328,16 @@ function createProviderPortalHandler({
           .where("providerId", "==", providerId)
           .limit(501)
           .get(),
+        provider.type === "persona" ? db.doc(`providerPortalIntakeRequests/${providerId}`).get() : Promise.resolve(null),
       ]);
       if (financial.size > 500 || declarations.size > 500)
         fail("El historial requiere paginación.");
-      // No URL, bank token, tax data of another party, internal notes or arbitrary record fields leave this boundary.
+      // Only this provider's scoped data leave the boundary, never arbitrary financial fields or file tokens.
       return {
         provider: M.publicProfile(provider),
+        thirdPartyIntake: intake?.data()?.providerId === providerId
+          ? { party: intake.data().party, workKeys: intake.data().workKeys, roles: intake.data().roles }
+          : null,
         works: work,
         financial: financial.docs.map((s) => {
           const r = s.data();
@@ -409,6 +419,7 @@ function createProviderPortalHandler({
             "Declaro que los cambios detallados son verídicos y solicito su uso administrativo desde su entrada en vigencia. CUIT, identidad y cuenta bancaria requieren revisión.",
         };
       if (kind === "third_party") {
+        if (provider.type !== "persona") fail("Esta alternativa requiere una ficha de persona física. Las empresas no pueden solicitar facturación o cobro mediante terceros.");
         const work = await works(providerId);
         content = M.thirdParty(
           input,
