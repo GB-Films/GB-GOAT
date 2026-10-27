@@ -230,7 +230,7 @@ export default function ProviderPortalAdmin() {
         </select>
         <div className="space-y-2 rounded-xl bg-slate-50 p-3">
           <label className="block text-sm">
-            Cuenta verificada que representará a este proveedor
+            Correo de la cuenta Google que representará a este proveedor
             <input
               type="email"
               className="mt-1 w-full rounded border p-2"
@@ -239,9 +239,9 @@ export default function ProviderPortalAdmin() {
             />
           </label>
           <p className="text-xs text-slate-500">
-            La persona debe haber iniciado sesión y verificado ese correo. Esta
-            asociación no cambia su correo de contacto ni concede permisos de
-            producción.
+            La persona debe haber ingresado con Google usando ese correo
+            verificado; no es necesario que termine en gmail.com. Esta asociación
+            conserva el correo de contacto y los permisos de producción.
           </p>
           <button
             disabled={busy || !providerId || !accessEmail}

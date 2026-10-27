@@ -13,13 +13,11 @@ function identity(request, recent = false) {
     throw new HttpsError("unauthenticated", "Iniciá sesión.");
   if (
     auth.token.email_verified !== true ||
-    !["google.com", "microsoft.com"].includes(
-      auth.token.firebase?.sign_in_provider,
-    )
+    auth.token.firebase?.sign_in_provider !== "google.com"
   )
     throw new HttpsError(
       "permission-denied",
-      "Verificá tu correo e ingresá con Google o Microsoft.",
+      "Ingresá con tu cuenta Google y verificá tu correo.",
     );
   if (recent && Date.now() / 1000 - Number(auth.token.auth_time || 0) > 600)
     throw new HttpsError(

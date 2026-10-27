@@ -1,5 +1,3 @@
-import { linkWithPopup } from "firebase/auth";
-import { auth, googleProvider, microsoftProvider } from "../lib/firebase";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import {
@@ -656,37 +654,9 @@ export default function ProviderPortal() {
               del proveedor.
             </p>
             <p className="text-xs text-slate-500">
-              Podés vincular otro método de ingreso a esta misma cuenta sin
-              crear otro proveedor.
+              Ingresás con Google. Cambiar el correo de contacto no cambia la
+              cuenta autorizada para acceder a este proveedor.
             </p>
-            {[
-              ["google.com", "Google", googleProvider],
-              ["microsoft.com", "Microsoft", microsoftProvider],
-            ].map(([id, label, provider]) =>
-              user?.providerData.some((p) => p.providerId === id) ? (
-                <span className="mr-3 text-sm" key={String(id)}>
-                  {String(label)} vinculado
-                </span>
-              ) : (
-                <button
-                  key={String(id)}
-                  disabled={busy}
-                  className="mr-3 text-sm underline"
-                  onClick={() =>
-                    run(async () => {
-                      if (!auth.currentUser) return;
-                      await linkWithPopup(
-                        auth.currentUser,
-                        provider as typeof googleProvider,
-                      );
-                      await load();
-                    })
-                  }
-                >
-                  Vincular {String(label)}
-                </button>
-              ),
-            )}
           </section>
           <form
             className={box + " space-y-4"}

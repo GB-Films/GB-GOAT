@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: GB-Films/GB-Sign
-          ref: 56810f223a100cb255b5fd4eff8acd694eb134db
+          ref: 8efb093c11a4060043fc199ff062b5d24e37801b
           path: sign
       - uses: actions/setup-node@v4
         with:

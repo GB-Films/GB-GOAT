@@ -7,7 +7,7 @@ import {
   setPersistence,
   signInWithCustomToken,
 } from "firebase/auth";
-import { auth, googleProvider, microsoftProvider } from "./firebase";
+import { auth, googleProvider } from "./firebase";
 
 export async function portalRequest(
   input: Record<string, unknown>,
@@ -25,11 +25,7 @@ export async function portalRequest(
     if (!user) throw Error("Iniciá sesión.");
     const session = await user.getIdTokenResult();
     if (Date.now() / 1000 - Number(session.claims.auth_time || 0) > 540) {
-      const method =
-        session.signInProvider === "microsoft.com"
-          ? microsoftProvider
-          : googleProvider;
-      await reauthenticateWithPopup(user, method);
+      await reauthenticateWithPopup(user, googleProvider);
     }
   }
   return (

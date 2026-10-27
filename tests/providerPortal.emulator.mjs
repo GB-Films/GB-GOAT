@@ -106,7 +106,10 @@ async function signActual(declaration) {
           email: "own@example.test",
           email_verified: true,
           name: "Persona prueba",
-          firebase: { sign_in_provider: "microsoft.com" },
+          firebase: { sign_in_provider: "custom" },
+          goatPortal: true,
+          goatUid: "own",
+          identityProvider: "google.com",
         },
       },
       data: {

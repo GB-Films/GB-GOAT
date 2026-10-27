@@ -2,22 +2,28 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const M = require("./providerPortalModel");
 const { identity } = require("./providerPortal");
-test("verified Google/Microsoft identity is required; names and suffixes grant no access", () => {
+test("only verified Google identities are accepted, including existing non-Gmail accounts", () => {
   const base = {
     auth: {
       uid: "u",
       token: {
         email: "person@company.test",
         email_verified: true,
-        firebase: { sign_in_provider: "microsoft.com" },
+        firebase: { sign_in_provider: "google.com" },
         auth_time: Date.now() / 1000,
       },
     },
   };
   assert.equal(identity(base, true).email, "person@company.test");
+  assert.equal(
+    identity({ auth: { ...base.auth, token: { ...base.auth.token, email: " Person@Hotmail.com " } } }).email,
+    "person@hotmail.com",
+  );
   for (const token of [
     { email_verified: false },
     { firebase: { sign_in_provider: "password" } },
+    { firebase: { sign_in_provider: "microsoft.com" } },
+    { firebase: { sign_in_provider: "custom" }, identityProvider: "google.com" },
     { auth_time: 1 },
   ])
     assert.throws(() =>
