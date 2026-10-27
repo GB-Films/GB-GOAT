@@ -30,9 +30,27 @@ test('paid total is green, partial payment stays distinct and no amount can be e
   assert.match(partial, /text-emerald-600[^>]*>Pagado \$300/);
 });
 
-test('cash picker distinguishes pending money from balance and hides general cash for non-admin viewers', () => {
-  const html = renderToStaticMarkup(createElement(CashBoxPicker, { rows: [{ email: 'p@example.com', responsible: { displayName: 'Persona' }, balance: 0, received: 0, movements: [{ type: 'entrega', status: 'pending', amount: 100 }] }], value: 'p@example.com', onChange() {}, showGeneral: false, generalOut: 200 }));
-  assert.match(html, /Pendiente de recibir \$100/);
-  assert.match(html, /aria-pressed="true"/);
+test('the compact cash header identifies its owner, shows the balance once and hides General for non-admin viewers', () => {
+  const html = renderToStaticMarkup(createElement(CashBoxPicker, { rows: [{ email: 'p@example.com', responsible: { displayName: 'Persona' }, balance: 0 }], value: 'p@example.com', onChange() {}, showGeneral: false, generalOut: 200 }));
+  assert.match(html, /Persona/);
+  assert.match(html, /p@example.com/);
+  assert.match(html, /Saldo/);
+  assert.equal(html.match(/\$0/g)?.length, 1);
   assert.doesNotMatch(html, /Caja General/);
+  assert.doesNotMatch(html, /Filtrar cajas|Todas las cajas/);
+});
+
+test('administrators can filter all, General or a person while keeping balances separate', () => {
+  const rows = [{ email: 'p@example.com', responsible: { displayName: 'Persona' }, balance: 100 }];
+  const all = renderToStaticMarkup(createElement(CashBoxPicker, { rows, value: 'all', onChange() {}, showGeneral: true, generalOut: 200 }));
+  assert.match(all, /Filtrar cajas/);
+  assert.match(all, /Todas las cajas/);
+  assert.match(all, /Caja General/);
+  assert.match(all, /p@example.com/);
+  assert.match(all, /\$100/);
+  assert.doesNotMatch(all, /\$300/);
+  assert.match(all, /aria-pressed="true"/);
+  const general = renderToStaticMarkup(createElement(CashBoxPicker, { rows, value: 'general', onChange() {}, showGeneral: true, generalOut: 200 }));
+  assert.match(general, /Salida neta/);
+  assert.match(general, /\$200/);
 });

@@ -53,7 +53,10 @@ import { ControlTotalSync } from './project-detail/ControlTotalSync';
 import { ProjectDataBoundary } from './project-detail/ProjectDataBoundary';
 import { projectLoadStatus, type ProjectLoadState } from '../lib/projectLoadState';
 import { CashBoxPicker } from './project-detail/CashBoxPicker';
+import { CashLedger } from './project-detail/CashLedger';
+import { CashMovementDialog } from './project-detail/CashMovementDialog';
 import { cashLedgerPeople } from '../lib/cashLedgerPeople';
+import { resolveCashBoxSelection } from '../lib/cashLedgerView';
 import { ProjectCommercialSummary } from './project-detail/ProjectCommercialSummary';
 import { ProjectSummaryMetrics } from './project-detail/ProjectSummaryMetrics';
 import { ProjectKeyContacts } from './project-detail/ProjectKeyContacts';
@@ -197,18 +200,6 @@ const roleLabels: Record<Collaborator['role'], string> = {
   jefe_produccion: 'Jefe de Produccion',
   jefe_area: 'Jefe de Área',
 };
-
-const formatPersonIdentity = (name?: string, email?: string) => {
-  const normalizedEmail = normalizeEmail(email);
-  const normalizedName = String(name || '').trim();
-  if (!normalizedName) return normalizedEmail || 'Persona sin identificar';
-  if (!normalizedEmail || normalizedName.toLowerCase() === normalizedEmail) return normalizedName;
-  return `${normalizedName} · ${normalizedEmail}`;
-};
-
-const formatCashResponsibleOption = (responsible: Collaborator) => (
-  `${formatPersonIdentity(responsible.displayName, responsible.email)} · ${roleLabels[responsible.role]}`
-);
 
 const PROJECT_ADMIN_ROLE_OPTIONS: Collaborator['role'][] = ['admin', 'jefe_produccion', 'jefe_area'];
 const PRODUCTION_LEAD_ROLE_OPTIONS: Collaborator['role'][] = ['jefe_produccion', 'jefe_area'];
@@ -776,7 +767,7 @@ export default function ProjectDetail() {
   const [cashReturnRecipientChoice, setCashReturnRecipientChoice] = useState('');
   const [isCreatingCashDelivery, setIsCreatingCashDelivery] = useState(false);
   const [isCreatingCashReturn, setIsCreatingCashReturn] = useState(false);
-  const [cashDeliveryNotice, setCashDeliveryNotice] = useState<{ message: string } | null>(null);
+  const [cashMovementDialog, setCashMovementDialog] = useState<'entrega' | 'transferencia' | 'devolucion' | null>(null);
   const [confirmingCashDeliveryId, setConfirmingCashDeliveryId] = useState('');
   const [confirmingCashReturnId, setConfirmingCashReturnId] = useState('');
   const [cancellingCashReturnId, setCancellingCashReturnId] = useState('');
@@ -785,7 +776,7 @@ export default function ProjectDetail() {
   const [selectedUserToAdd, setSelectedUserToAdd] = useState<any | null>(null);
   const [showAddCollaborator, setShowAddCollaborator] = useState(false);
   const [addingCollaborator, setAddingCollaborator] = useState(false);
-  const [selectedCashBox, setSelectedCashBox] = useState('general');
+  const [selectedCashBox, setSelectedCashBox] = useState('');
   const [newCollaboratorRole, setNewCollaboratorRole] = useState<Collaborator['role']>('jefe_produccion');
   const [newCollaboratorCategories, setNewCollaboratorCategories] = useState<string[]>([]);
   const [userPermissions, setUserPermissions] = useState<Collaborator | null>(null);
@@ -4236,11 +4227,6 @@ export default function ProjectDetail() {
       .filter((responsible) => (
         isProjectAdmin
         || normalizeEmail(responsible.email) === currentUserEmail
-        || (
-          isProductionLead
-          && responsible.role === 'jefe_area'
-          && safeArray(responsible.allowedCategories).some((area) => safeArray(userPermissions?.allowedCategories).includes(area))
-        )
       ))
       .map((responsible) => {
         const email = normalizeEmail(responsible.email);
@@ -4255,42 +4241,16 @@ export default function ProjectDetail() {
             const bd = b.createdAt?.seconds ? b.createdAt.seconds : new Date(b.date || 0).getTime() / 1000;
             return bd - ad;
           });
-        const received = movements
-          .filter((movement) => (
-            normalizeEmail(movement.toUserEmail) === email
-            && movement.type !== 'devolucion'
-            && !(movement.type === 'entrega' && movement.status === 'pending')
-          ))
-          .reduce((acc, movement) => acc + (Number(movement.amount) || 0), 0);
-        const used = movements
-          .filter((movement) => normalizeEmail(movement.fromUserEmail) === email
-            && (movement.type === 'pago' || movement.type === 'reintegro'))
-          .reduce((acc, movement) => acc + (Number(movement.amount) || 0), 0);
-        const transferred = movements
-          .filter((movement) => normalizeEmail(movement.fromUserEmail) === email && movement.type === 'transferencia')
-          .reduce((acc, movement) => acc + (Number(movement.amount) || 0), 0);
-        const returned = movements
-          .filter((movement) => normalizeEmail(movement.fromUserEmail) === email
-            && movement.type === 'devolucion' && movement.status === 'confirmed')
-          .reduce((acc, movement) => acc + (Number(movement.amount) || 0), 0);
-
         return {
           responsible,
           email,
           movements,
-          received,
-          used,
-          transferred,
-          returned,
           balance: cashBalanceByEmail.get(email) || 0,
         };
       })
-      .filter(row => row.movements.length > 0 || row.balance !== 0)
-  ), [cashBalanceByEmail, cashMovements, cashResponsibles, currentUserEmail, isProductionLead, isProjectAdmin, userPermissions]);
-  const activeCashBox = isProjectAdmin && selectedCashBox === 'general' ? 'general'
-    : visibleCashRows.some(row => row.email === selectedCashBox) ? selectedCashBox
-      : isProjectAdmin ? 'general' : visibleCashRows[0]?.email || '';
-  const currentCashRow = visibleCashRows.find((row) => row.email === currentUserEmail);
+      .filter(row => row.movements.length > 0 || row.balance !== 0 || row.email === currentUserEmail)
+  ), [cashBalanceByEmail, cashMovements, cashResponsibles, currentUserEmail, isProjectAdmin]);
+  const activeCashBox = resolveCashBoxSelection(selectedCashBox, isProjectAdmin, currentUserEmail, visibleCashRows.map(row => row.email));
 
   useEffect(() => {
     if (!cashRecipientEmail && cashResponsibles.length > 0) {
@@ -5133,13 +5093,13 @@ export default function ProjectDetail() {
     };
 
     setIsCreatingCashDelivery(true);
-    setCashDeliveryNotice(null);
     try {
       const docRef = await addDoc(collection(db, 'projects', id, 'cashMovements'), payload);
       setCashMovements((current) => [{ id: docRef.id, ...payload, createdAt: new Date(), updatedAt: new Date() } as CashMovement, ...current]);
       form.reset();
       const message = `Entrega de $${amount.toLocaleString()} registrada. Queda pendiente de confirmación por ${recipient.displayName || recipient.email}.`;
-      setCashDeliveryNotice({ message });
+      setSelectedCashBox(normalizeEmail(recipient.email));
+      setCashMovementDialog(null);
       showExpenseConfirmation(message, 'warning');
     } catch (error) {
       console.error('Error creating cash delivery:', error);
@@ -5233,6 +5193,8 @@ export default function ProjectDetail() {
       form.reset();
       showExpenseConfirmation(`Devolución de $${amount.toLocaleString()} pendiente de confirmación por ${recipient.displayName || recipient.email}.`, 'warning');
       setCashReturnRecipientChoice('');
+      setSelectedCashBox(currentUserEmail);
+      setCashMovementDialog(null);
     } catch (error) {
       console.error('Error creating cash return:', error);
       alert('No se pudo registrar la devolución. Intentá nuevamente.');
@@ -5384,7 +5346,9 @@ export default function ProjectDetail() {
       });
       cashSubdeliveryRequestId.current = null;
       form.reset();
-      showExpenseConfirmation('Subentrega registrada desde tu caja asignada. Caja General no fue modificada.');
+      setSelectedCashBox(currentUserEmail);
+      setCashMovementDialog(null);
+      showExpenseConfirmation('Transferencia registrada desde tu caja asignada.');
     } catch (error: any) {
       alert(error.message || 'No se pudo confirmar la subentrega. Reintentá sin cambiar los datos para evitar duplicados.');
     } finally { setIsCreatingCashSubdelivery(false); }
@@ -7386,450 +7350,67 @@ export default function ProjectDetail() {
         )}
 
         {activeTab === 'cajas' && (
-          <div className="flex flex-col gap-3 pb-20">
-            <header className="order-1 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-              <div>
-                <h2 className="text-base font-bold text-slate-900">Cajas</h2>
-              </div>
+          <div className="space-y-3 pb-12">
+            <header className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+              <h2 className="text-base font-bold text-slate-900">Cajas</h2>
+              {(canDeliverGeneralCash || isProjectAdmin || cashBalanceByEmail.has(currentUserEmail)) && <button type="button"
+                onClick={() => setCashMovementDialog(canDeliverGeneralCash ? 'entrega' : isProjectAdmin ? 'transferencia' : 'devolucion')}
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700">
+                <Plus className="h-4 w-4" />Registrar movimiento
+              </button>}
             </header>
 
+            {activeCashBox !== 'all' && ((pendingCashDeliveries.length > 0 && activeCashBox !== currentUserEmail) || (isProjectAdmin && pendingCashReturns.length > 0 && activeCashBox !== 'general')) && <div className="flex flex-wrap gap-2">
+              {pendingCashDeliveries.length > 0 && activeCashBox !== currentUserEmail && <button type="button" onClick={() => setSelectedCashBox(currentUserEmail)}
+                className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900">Recibir caja ({pendingCashDeliveries.length})</button>}
+              {isProjectAdmin && pendingCashReturns.length > 0 && activeCashBox !== 'general' && <button type="button" onClick={() => setSelectedCashBox('general')}
+                className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900">Recibir devoluciones ({pendingCashReturns.length})</button>}
+            </div>}
 
-            {pendingCashDeliveries.length > 0 && (
-              <section className="order-2 overflow-hidden rounded-xl border-2 border-amber-300 bg-amber-50 shadow-lg shadow-amber-100">
-                <div className="flex items-center gap-3 border-b border-amber-200 px-5 py-4">
-                  <Clock3 className="h-5 w-5 text-amber-700" />
-                  <div>
-                    <h3 className="text-sm font-black text-amber-950">Entregas pendientes de confirmar</h3>
-                    <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-amber-700">Confirmá únicamente cuando el dinero esté efectivamente en tu poder</p>
-                  </div>
-                </div>
-                <div className="divide-y divide-amber-200">
-                  {pendingCashDeliveries.map((movement) => (
-                    <div key={`pending-${movement.id}`} className="flex flex-col gap-4 px-5 py-4 md:flex-row md:items-center md:justify-between">
-                      <div>
-                        <div className="text-2xl font-black font-mono text-amber-950">${Number(movement.amount || 0).toLocaleString()}</div>
-                        <div className="mt-1 text-xs font-bold text-amber-900">
-                          Entregado por {formatPersonIdentity(movement.createdByName, movement.createdByEmail)}
-                        </div>
-                        <div className="mt-1 text-[10px] font-bold uppercase tracking-widest text-amber-700">Fecha: {formatDate(movement.date || movement.createdAt)}{movement.notes ? ` · ${movement.notes}` : ''}</div>
-                      </div>
-                      <button
-                        type="button"
-                        disabled={confirmingCashDeliveryId === movement.id}
-                        onClick={() => confirmCashDelivery(movement)}
-                        className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-amber-950 px-6 py-3 text-xs font-black uppercase tracking-widest text-white shadow-md transition-colors hover:bg-black disabled:bg-amber-300"
-                      >
-                        <CheckCircle2 className="h-5 w-5" />
-                        {confirmingCashDeliveryId === movement.id ? 'Confirmando...' : 'Confirmar que recibí el dinero'}
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            )}
+            <section aria-label="Detalle de caja" className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+              <CashBoxPicker rows={visibleCashRows} value={activeCashBox} onChange={setSelectedCashBox}
+                showGeneral={isProjectAdmin} generalOut={generalCashSummary.totalOut} />
+              <CashLedger account={activeCashBox}
+                movements={isProjectAdmin && activeCashBox === 'all' ? cashMovements : activeCashBox === 'general' ? generalCashMovements : visibleCashRows.find(row => row.email === activeCashBox)?.movements || []}
+                people={visibleCashRows.map(row => ({ email: row.email, displayName: row.responsible.displayName }))}
+                budgetItems={budgetItems} areaExpenses={areaExpenses}
+                renderActions={movement => {
+                  const target = resolveCashMovementTarget(movement, budgetItems, areaExpenses);
+                  const recipient = normalizeEmail(movement.toUserEmail) === currentUserEmail;
+                  const ownReturn = movement.type === 'devolucion' && normalizeEmail(movement.fromUserEmail) === currentUserEmail;
+                  const actionClass = 'rounded-md border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50';
+                  return <>
+                    {movement.status === 'pending' && recipient && (movement.type === 'entrega' || (movement.type === 'devolucion' && isProjectAdmin)) && <button type="button"
+                      disabled={Boolean(confirmingCashDeliveryId || confirmingCashReturnId)}
+                      onClick={() => movement.type === 'entrega' ? confirmCashDelivery(movement) : confirmCashReturn(movement)}
+                      className="rounded-md bg-amber-950 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">
+                      {confirmingCashDeliveryId === movement.id || confirmingCashReturnId === movement.id ? 'Confirmando…' : 'Confirmar recepción'}
+                    </button>}
+                    {ownReturn && movement.status === 'pending' && <button type="button" disabled={Boolean(cancellingCashReturnId)}
+                      onClick={() => cancelCashReturn(movement)} className={actionClass}>
+                      {cancellingCashReturnId === movement.id ? 'Cancelando…' : 'Cancelar devolución'}
+                    </button>}
+                    {target.status === 'found' && <button type="button" onClick={() => openCashMovementExpense(movement)} className={actionClass}>Ver gasto</button>}
+                    {target.status === 'missing' && <span className="text-xs text-rose-600">Gasto eliminado</span>}
+                    {movement.type === 'entrega' && (canDeliverGeneralCash || (!isProjectAdmin && normalizeEmail(movement.createdByEmail) === currentUserEmail)) && movement.status !== 'confirmed' &&
+                      <button type="button" onClick={() => editCashDelivery(movement)} className={actionClass}>Editar</button>}
+                    {movement.type === 'entrega' && canDeliverGeneralCash && <button type="button" onClick={() => deleteCashDelivery(movement)}
+                      className="rounded-md border border-rose-100 px-2.5 py-1.5 text-xs text-rose-600 hover:bg-rose-50">Borrar</button>}
+                  </>;
+                }} />
+            </section>
 
-            {pendingCashReturns.length > 0 && (
-              <section className="order-2 rounded-xl border-2 border-amber-300 bg-amber-50 p-5">
-                <h3 className="text-sm font-black text-amber-950">Devoluciones pendientes de tu recepción</h3>
-                <p className="mt-1 text-xs text-amber-800">Confirmá sólo después de recibir el efectivo. Hasta entonces, el saldo de la persona permanece igual.</p>
-                {pendingCashReturns.map((movement) => (
-                  <div key={movement.id} className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-amber-200 pt-3">
-                    <div className="text-xs font-bold text-amber-950">${Number(movement.amount).toLocaleString()} de {movement.fromUserName || movement.fromUserEmail} · {formatDate(movement.date)}</div>
-                    <button type="button" disabled={Boolean(confirmingCashReturnId)} onClick={() => confirmCashReturn(movement)}
-                      className="rounded-lg bg-amber-950 px-4 py-2 text-xs font-black text-white disabled:opacity-50">
-                      {confirmingCashReturnId === movement.id ? 'Confirmando...' : 'Confirmar que recibí el dinero'}
-                    </button>
-                  </div>
-                ))}
-              </section>
-            )}
+            {cashMovementDialog && <CashMovementDialog kind={cashMovementDialog} onKindChange={setCashMovementDialog}
+              onClose={() => setCashMovementDialog(null)} canDeliver={canDeliverGeneralCash} canTransfer={isProjectAdmin}
+              canReturn={cashBalanceByEmail.has(currentUserEmail)}
+              recipients={cashMovementDialog === 'entrega' ? cashResponsibles : cashMovementDialog === 'transferencia' ? productionTransferTargets : cashReturnRecipients}
+              recipientEmail={cashMovementDialog === 'entrega' ? cashRecipientEmail : cashMovementDialog === 'transferencia' ? cashTransferTargetEmail : cashReturnRecipientEmail}
+              onRecipientChange={cashMovementDialog === 'entrega' ? setCashRecipientEmail : cashMovementDialog === 'transferencia' ? setCashTransferTargetEmail : setCashReturnRecipientChoice}
+              availableBalance={availableReturnBalance} ownName={currentUserName || currentUserEmail}
+              defaultDate={toProjectDateInputValue(new Date())}
+              busy={isCreatingCashDelivery || isCreatingCashSubdelivery || isCreatingCashReturn}
+              onSubmit={cashMovementDialog === 'entrega' ? createCashDelivery : cashMovementDialog === 'transferencia' ? createCashTransfer : createCashReturn} />}
 
-            <CashBoxPicker rows={visibleCashRows} value={activeCashBox} onChange={setSelectedCashBox}
-              showGeneral={isProjectAdmin} generalOut={generalCashSummary.totalOut} />
-
-            {isProjectAdmin && activeCashBox === 'general' && (
-              <section className="order-4 overflow-hidden rounded-xl border border-slate-800 bg-slate-950 text-white shadow-sm">
-                <div className="flex flex-col gap-3 border-b border-white/10 px-5 py-4 md:flex-row md:items-center md:justify-between">
-                  <div>
-                    <h3 className="text-sm font-black">Caja General</h3>
-                    <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-slate-400">Sin saldo inicial ni límite · salidas netas de devoluciones confirmadas</p>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-2xl font-black font-mono text-white">${generalCashSummary.totalOut.toLocaleString()}</div>
-                    <div className="text-[9px] font-black uppercase tracking-widest text-slate-500">Salida neta registrada</div>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 border-b border-white/10 sm:grid-cols-5">
-                  {[
-                    { label: 'Entregas confirmadas', value: generalCashSummary.confirmedDeliveries, tone: 'text-blue-300' },
-                    { label: 'Pagos directos', value: generalCashSummary.directPayments, tone: 'text-emerald-300' },
-                    { label: 'Devoluciones recibidas', value: generalCashSummary.confirmedReturns, tone: 'text-violet-300' },
-                    { label: 'Entregas pendientes', value: generalCashSummary.pendingDeliveries, tone: 'text-amber-300' },
-                    { label: 'Devoluciones pendientes', value: generalCashSummary.pendingReturns, tone: 'text-amber-300' },
-                  ].map((summaryItem) => (
-                    <div key={summaryItem.label} className="px-3 py-3">
-                      <div className="text-[9px] font-black uppercase tracking-widest text-slate-500">{summaryItem.label}</div>
-                      <div className={cn('mt-1 text-sm font-black font-mono', summaryItem.tone)}>${summaryItem.value.toLocaleString()}</div>
-                    </div>
-                  ))}
-                </div>
-                <div className="max-h-80 divide-y divide-white/10 overflow-y-auto">
-                  {generalCashMovements.map((movement) => {
-                    const isPending = (movement.type === 'entrega' || movement.type === 'devolucion') && movement.status === 'pending';
-                    const isCancelledReturn = movement.type === 'devolucion' && movement.status === 'cancelled';
-                    const movementLabel = movement.type === 'entrega' ? 'Entrega de caja' : movement.type === 'devolucion' ? 'Devolución a Caja General' : movement.type === 'reintegro' ? 'Reintegro a tercero' : 'Pago directo';
-                    const expenseTarget = resolveCashMovementTarget(movement, budgetItems, areaExpenses);
-                    const destination = movement.type === 'entrega'
-                      ? `A ${formatPersonIdentity(movement.toUserName, movement.toUserEmail)}`
-                      : movement.type === 'devolucion'
-                        ? `De ${formatPersonIdentity(movement.fromUserName, movement.fromUserEmail)} · recibe ${formatPersonIdentity(movement.toUserName, movement.toUserEmail)}`
-                      : movement.type === 'reintegro'
-                        ? `A ${movement.thirdPartyPayerName || 'persona acreedora'} · ${movement.description || movement.area || 'Gasto del proyecto'}`
-                        : movement.description || movement.area || 'Gasto del proyecto';
-                    return (
-                      <div key={`general-${movement.id}`} className={cn('flex items-center justify-between gap-4 px-5 py-3', isPending && 'bg-amber-500/10')}>
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-xs font-black text-white">{movementLabel}</span>
-                            {isPending && <span className="rounded-full bg-amber-300/15 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-amber-300">Pendiente</span>}
-                            {isCancelledReturn && <span className="rounded-full bg-slate-400/15 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-slate-400">Cancelada</span>}
-                            {(movement.type === 'entrega' || movement.type === 'devolucion') && movement.status === 'confirmed' && <span className="rounded-full bg-emerald-300/15 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-emerald-300">Confirmada</span>}
-                          </div>
-                          <div className="mt-1 truncate text-[10px] text-slate-400">{destination} · {formatDate(movement.date || movement.createdAt)}</div>
-                          {(movement.notes || movement.area) && <div className="mt-1 truncate text-[9px] text-slate-500">{movement.notes || movement.area}</div>}
-                          {expenseTarget.status === 'found' && (
-                            <button
-                              type="button"
-                              onClick={() => openCashMovementExpense(movement)}
-                              className="mt-2 inline-flex items-center gap-1 rounded border border-white/15 bg-white/5 px-2 py-1 text-[8px] font-black uppercase tracking-widest text-sky-300 hover:border-sky-300 hover:bg-sky-300/10"
-                            >
-                              <LinkIcon className="h-3 w-3" />
-                              Abrir gasto
-                            </button>
-                          )}
-                          {expenseTarget.status === 'missing' && (
-                            <span className="mt-2 inline-flex rounded bg-rose-400/10 px-2 py-1 text-[8px] font-black uppercase tracking-widest text-rose-300">
-                              Gasto eliminado
-                            </span>
-                          )}
-                            {(movement.type === 'pago' || movement.type === 'reintegro') && expenseTarget.status === 'unlinked' && (
-                            <span className="mt-2 inline-flex rounded bg-white/5 px-2 py-1 text-[8px] font-black uppercase tracking-widest text-slate-500">
-                              Pago anterior sin enlace
-                            </span>
-                          )}
-                        </div>
-                          <div className={cn('shrink-0 text-sm font-black font-mono', isCancelledReturn ? 'text-slate-500' : isPending ? 'text-amber-300' : movement.type === 'devolucion' ? 'text-emerald-300' : 'text-rose-300')}>
-                            {isCancelledReturn ? 'Cancel. ' : isPending ? 'Pend. ' : movement.type === 'devolucion' ? '+' : '-'}${Number(movement.amount || 0).toLocaleString()}
-                        </div>
-                      </div>
-                    );
-                  })}
-                  {generalCashMovements.length === 0 && (
-                      <div className="px-5 py-10 text-center text-[10px] font-black uppercase tracking-widest text-slate-600">Todavía no hay movimientos registrados</div>
-                  )}
-                </div>
-              </section>
-            )}
-
-            <details className="order-5 rounded-xl border border-slate-200 bg-white p-3">
-              <summary className="cursor-pointer px-1 py-2 text-sm font-bold text-slate-900">Registrar movimiento · entrega, transferencia o devolución</summary>
-              <div className="mt-3 grid grid-cols-1 gap-4 lg:grid-cols-2">
-              {canDeliverGeneralCash && (
-                <form onSubmit={createCashDelivery} className="bg-white border border-slate-200 rounded-xl shadow-sm p-5 space-y-4">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-900 text-[10px] font-black text-white">1</span>
-                      <h3 className="text-sm font-black text-slate-900">Entregar efectivo desde Caja General</h3>
-                    </div>
-                    <p className="mt-2 text-xs leading-5 text-slate-500">La entrega quedará pendiente y recién se sumará a la caja de la persona cuando confirme que recibió el dinero.</p>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div>
-                      <label htmlFor="cash-delivery-recipient" className="mb-2 block text-[10px] font-black text-slate-700">Persona que recibe</label>
-                      <select
-                        id="cash-delivery-recipient"
-                        name="toUserEmail"
-                        value={cashRecipientEmail}
-                        onChange={(event) => setCashRecipientEmail(event.target.value)}
-                        disabled={cashResponsibles.length === 0}
-                        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-bold focus:border-black focus:outline-none disabled:text-slate-300"
-                      >
-                        {cashResponsibles.length === 0 && <option value="">No hay personas disponibles</option>}
-                        {cashResponsibles.map((responsible) => (
-                          <option key={responsible.email} value={responsible.email}>
-                            {formatCashResponsibleOption(responsible)}
-                          </option>
-                        ))}
-                      </select>
-                      {cashRecipientEmail && (
-                        <div className="mt-2 flex items-center gap-1.5 truncate text-[10px] font-bold text-slate-500" title={cashRecipientEmail}>
-                          <Mail className="h-3 w-3 shrink-0" />
-                          <span className="truncate">{cashRecipientEmail}</span>
-                        </div>
-                      )}
-                    </div>
-                    <div>
-                      <label htmlFor="cash-delivery-amount" className="mb-2 block text-[10px] font-black text-slate-700">Monto a entregar</label>
-                      <input id="cash-delivery-amount" name="amount" type="number" min="0" step="0.01" required placeholder="$ 0" className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-bold focus:border-black focus:outline-none" />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                    <div>
-                      <label htmlFor="cash-delivery-date" className="mb-2 block text-[10px] font-black text-slate-700">Fecha de entrega</label>
-                      <input id="cash-delivery-date" name="date" type="date" defaultValue={toProjectDateInputValue(new Date())} required className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-bold focus:border-black focus:outline-none" />
-                    </div>
-                    <div>
-                      <label htmlFor="cash-delivery-notes" className="mb-2 block text-[10px] font-black text-slate-700">Nota (opcional)</label>
-                      <input id="cash-delivery-notes" name="notes" placeholder="Ej.: adelanto de rodaje" className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs focus:border-black focus:outline-none" />
-                    </div>
-                  </div>
-                  <button disabled={isCreatingCashDelivery || cashResponsibles.length === 0} type="submit" className="w-full rounded-lg bg-black px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-white transition-all hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300">
-                    {isCreatingCashDelivery ? 'Registrando entrega...' : 'Registrar entrega pendiente'}
-                  </button>
-                  {cashDeliveryNotice && (
-                    <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-amber-900">
-                      <Clock3 className="mt-0.5 h-4 w-4 shrink-0" />
-                      <div className="min-w-0">
-                        <div className="text-[9px] font-black uppercase tracking-widest">Entrega pendiente creada</div>
-                        <div className="mt-1 text-xs font-bold">{cashDeliveryNotice.message}</div>
-                      </div>
-                      <button type="button" onClick={() => setCashDeliveryNotice(null)} className="ml-auto text-amber-700 hover:text-black" aria-label="Cerrar aviso">
-                        <X className="h-4 w-4" />
-                      </button>
-                    </div>
-                  )}
-                </form>
-              )}
-
-              {isProjectAdmin && (
-                <form onSubmit={createCashTransfer} className="bg-white border border-slate-200 rounded-xl shadow-sm p-5 space-y-4">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-900 text-[10px] font-black text-white">2</span>
-                      <h3 className="text-sm font-black text-slate-900">Subentrega desde mi caja asignada</h3>
-                    </div>
-                    <p className="mt-2 text-xs leading-5 text-slate-500">El monto saldrá de tu caja del proyecto y se acreditará en la caja de la persona elegida. No utiliza Caja General.</p>
-                    <p className="mt-2 text-xs font-bold text-slate-700">Origen: {currentUserName || currentUserEmail} · Disponible: ${availableReturnBalance.toLocaleString('es-AR')}</p>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div>
-                      <label htmlFor="cash-transfer-recipient" className="mb-2 block text-[10px] font-black text-slate-700">Persona que recibe</label>
-                      <select
-                        id="cash-transfer-recipient"
-                        name="toUserEmail"
-                        value={cashTransferTargetEmail}
-                        onChange={(event) => setCashTransferTargetEmail(event.target.value)}
-                        disabled={productionTransferTargets.length === 0}
-                        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-bold focus:border-black focus:outline-none disabled:text-slate-300"
-                      >
-                        {productionTransferTargets.length === 0 && <option value="">No hay destinatarios disponibles</option>}
-                        {productionTransferTargets.map((responsible) => (
-                          <option key={responsible.email} value={responsible.email}>
-                            {formatCashResponsibleOption(responsible)}
-                          </option>
-                        ))}
-                      </select>
-                      {cashTransferTargetEmail && (
-                        <div className="mt-2 flex items-center gap-1.5 truncate text-[10px] font-bold text-slate-500" title={cashTransferTargetEmail}>
-                          <Mail className="h-3 w-3 shrink-0" />
-                          <span className="truncate">{cashTransferTargetEmail}</span>
-                        </div>
-                      )}
-                    </div>
-                    <div>
-                      <label htmlFor="cash-transfer-amount" className="mb-2 block text-[10px] font-black text-slate-700">Monto a transferir</label>
-                      <input id="cash-transfer-amount" name="amount" type="number" min="0.01" max={availableReturnBalance} step="0.01" required placeholder="$ 0" className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-bold focus:border-black focus:outline-none" />
-                    </div>
-                  </div>
-                  <div>
-                    <label htmlFor="cash-transfer-notes" className="mb-2 block text-[10px] font-black text-slate-700">Nota (opcional)</label>
-                    <input id="cash-transfer-notes" name="notes" placeholder="Ej.: fondos para Arte" className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs focus:border-black focus:outline-none" />
-                  </div>
-                  <button type="submit" disabled={isCreatingCashSubdelivery || availableReturnBalance <= 0 || productionTransferTargets.length === 0} className="w-full px-4 py-3 bg-black text-white rounded text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 transition-all disabled:bg-slate-300 disabled:cursor-not-allowed">
-                    {isCreatingCashSubdelivery ? 'Registrando...' : 'Registrar subentrega'}
-                  </button>
-                </form>
-              )}
-              {cashBalanceByEmail.has(currentUserEmail) && (
-                <form onSubmit={createCashReturn} className="space-y-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-                  <div>
-                    <h3 className="text-sm font-black text-slate-900">Devolver efectivo a Caja General</h3>
-                    <p className="mt-2 text-xs leading-5 text-slate-500">Podés devolver todo o parte de tu saldo. El administrador que reciba el dinero debe confirmarlo; hasta entonces tu saldo no cambia.</p>
-                  </div>
-                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                    <div>
-                      <label htmlFor="cash-return-recipient" className="mb-2 block text-[10px] font-black text-slate-700">Administrador que recibe</label>
-                      <select id="cash-return-recipient" name="toUserEmail" value={cashReturnRecipientEmail}
-                        onChange={(event) => setCashReturnRecipientChoice(event.target.value)}
-                        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-bold" required>
-                        <option value="" disabled>{cashReturnRecipients.length === 0 ? 'No hay otro administrador disponible' : 'Seleccioná el administrador que recibe'}</option>
-                        {cashReturnRecipients.map((recipient) => <option key={recipient.email} value={recipient.email}>{formatCashResponsibleOption(recipient)}</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <label htmlFor="cash-return-amount" className="mb-2 block text-[10px] font-black text-slate-700">Monto a devolver · disponible ${availableReturnBalance.toLocaleString()}</label>
-                      <input id="cash-return-amount" name="amount" type="number" min="0.01" max={availableReturnBalance} step="0.01" required placeholder="$ 0"
-                        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-bold" />
-                    </div>
-                    <div>
-                      <label htmlFor="cash-return-date" className="mb-2 block text-[10px] font-black text-slate-700">Fecha de devolución</label>
-                      <input id="cash-return-date" name="date" type="date" defaultValue={toProjectDateInputValue(new Date())} required
-                        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-bold" />
-                    </div>
-                    <div>
-                      <label htmlFor="cash-return-notes" className="mb-2 block text-[10px] font-black text-slate-700">Nota (opcional)</label>
-                      <input id="cash-return-notes" name="notes" placeholder="Ej.: saldo no utilizado del rodaje"
-                        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs" />
-                    </div>
-                  </div>
-                  <button type="submit" disabled={isCreatingCashReturn || availableReturnBalance <= 0 || cashReturnRecipients.length === 0}
-                    className="w-full rounded-lg bg-slate-900 px-4 py-3 text-xs font-black uppercase text-white disabled:bg-slate-300">
-                    {isCreatingCashReturn ? 'Registrando devolución...' : 'Registrar devolución pendiente'}
-                  </button>
-                </form>
-              )}
-              </div>
-            </details>
-
-            {activeCashBox !== 'general' && <section className="order-4">
-              <div className="mb-3">
-                <h3 className="text-sm font-black text-slate-900">{isProjectAdmin ? 'Cajas por responsable' : 'Detalle de mi caja'}</h3>
-                <p className="mt-1 text-xs text-slate-500">{isProjectAdmin ? 'Saldo y movimientos de cada persona identificada por nombre y email.' : 'Todos los ingresos y egresos que componen tu saldo.'}</p>
-              </div>
-              <div className="grid grid-cols-1 gap-4">
-              {visibleCashRows.filter(row => row.email === activeCashBox).map((row) => (
-                <div key={row.email} className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-                  <div className="px-5 py-4 bg-slate-50 border-b border-slate-200 flex items-start justify-between gap-4">
-                    <div className="min-w-0">
-                      <div className="text-sm font-black text-slate-900 truncate">{row.responsible.displayName || row.email}</div>
-                      <div className="mt-1 flex items-center gap-1.5 truncate text-[11px] font-bold text-slate-600" title={row.email}>
-                        <Mail className="h-3.5 w-3.5 shrink-0 text-slate-400" />
-                        <span className="truncate">{row.email}</span>
-                      </div>
-                      <div className="mt-2 text-[9px] font-bold uppercase tracking-widest text-slate-400">{row.responsible.historicalOnly ? 'Responsable histórico · sin acceso asignado por esta caja' : `${roleLabels[row.responsible.role]} · ${safeArray(row.responsible.allowedCategories).join(', ') || 'Sin áreas'}`}</div>
-                    </div>
-                    <div className="text-right">
-                      <div className={cn("text-xl font-black font-mono", row.balance >= 0 ? "text-emerald-600" : "text-red-600")}>${row.balance.toLocaleString()}</div>
-                      <div className="text-[9px] uppercase tracking-widest text-slate-400 font-bold">Saldo</div>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 divide-x divide-slate-100 border-b border-slate-100 sm:grid-cols-4">
-                    <div className="p-4">
-                      <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Recibido</div>
-                      <div className="text-sm font-black text-slate-900 mt-1">${row.received.toLocaleString()}</div>
-                    </div>
-                    <div className="p-4">
-                      <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Pagado</div>
-                      <div className="text-sm font-black text-emerald-600 mt-1">${row.used.toLocaleString()}</div>
-                    </div>
-                    <div className="p-4">
-                      <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Transferido</div>
-                      <div className="text-sm font-black text-slate-900 mt-1">${row.transferred.toLocaleString()}</div>
-                    </div>
-                    <div className="p-4">
-                      <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Devuelto</div>
-                      <div className="text-sm font-black text-slate-900 mt-1">${row.returned.toLocaleString()}</div>
-                    </div>
-                  </div>
-                  <div className="max-h-64 overflow-y-auto divide-y divide-slate-100">
-                    {row.movements.map((movement) => {
-                      const incoming = normalizeEmail(movement.toUserEmail) === row.email;
-                      const isPendingDelivery = (movement.type === 'entrega' || movement.type === 'devolucion') && movement.status === 'pending';
-                      const isCancelledReturn = movement.type === 'devolucion' && movement.status === 'cancelled';
-                      const signedAmount = incoming ? Number(movement.amount) || 0 : -(Number(movement.amount) || 0);
-                      const expenseTarget = resolveCashMovementTarget(movement, budgetItems, areaExpenses);
-                      return (
-                        <div key={movement.id} className={cn("px-5 py-3 flex items-center justify-between gap-4", isPendingDelivery && "bg-amber-50/70")}>
-                          <div className="min-w-0">
-                            <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-slate-900">
-                              <span className="truncate">
-                                {movement.type === 'entrega'
-                                  ? (isPendingDelivery ? 'Entrega pendiente de recepción' : 'Entrega recibida')
-                                  : movement.type === 'devolucion'
-                                    ? (isCancelledReturn ? 'Devolución cancelada' : isPendingDelivery ? 'Devolución pendiente de recepción' : 'Devolución confirmada por administrador')
-                                  : movement.type === 'transferencia'
-                                    ? (incoming ? 'Transferencia recibida' : 'Transferencia enviada')
-                                    : movement.type === 'reintegro'
-                                      ? `Reintegro a ${movement.thirdPartyPayerName || 'tercero'}`
-                                      : 'Pago en efectivo'}
-                              </span>
-                              {isPendingDelivery && <span className="rounded-full bg-amber-200 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-amber-900">Pendiente</span>}
-                              {isCancelledReturn && <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-slate-600">Cancelada</span>}
-                              {(movement.type === 'entrega' || movement.type === 'devolucion') && movement.status === 'confirmed' && <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-emerald-700">Confirmada</span>}
-                            </div>
-                            <div className="text-[10px] text-slate-400 truncate">
-                              {movement.description || movement.notes || movement.area || 'Movimiento de caja'} · {formatDate(movement.date || movement.createdAt)}
-                            </div>
-                            {expenseTarget.status === 'found' && (
-                              <button
-                                type="button"
-                                onClick={() => openCashMovementExpense(movement)}
-                                className="mt-2 inline-flex items-center gap-1 rounded border border-sky-100 bg-sky-50 px-2 py-1 text-[8px] font-black uppercase tracking-widest text-sky-700 hover:border-sky-300"
-                              >
-                                <LinkIcon className="h-3 w-3" />
-                                Abrir gasto
-                              </button>
-                            )}
-                            {expenseTarget.status === 'missing' && (
-                              <span className="mt-2 inline-flex rounded bg-rose-50 px-2 py-1 text-[8px] font-black uppercase tracking-widest text-rose-600">
-                                Gasto eliminado
-                              </span>
-                            )}
-                            {(movement.type === 'pago' || movement.type === 'reintegro') && expenseTarget.status === 'unlinked' && (
-                              <span className="mt-2 inline-flex rounded bg-slate-100 px-2 py-1 text-[8px] font-black uppercase tracking-widest text-slate-400">
-                                Pago anterior sin enlace
-                              </span>
-                            )}
-                          </div>
-                          <div className="shrink-0 text-right">
-                            <div className={cn("text-xs font-black font-mono", isCancelledReturn ? 'text-slate-400' : isPendingDelivery ? "text-amber-700" : signedAmount >= 0 ? "text-emerald-600" : "text-rose-600")}>
-                              {isCancelledReturn ? 'Cancel. ' : isPendingDelivery ? '' : signedAmount >= 0 ? '+' : '-'}${Math.abs(signedAmount).toLocaleString()}
-                            </div>
-                            {movement.type === 'devolucion' && movement.status === 'pending' && normalizeEmail(movement.fromUserEmail) === currentUserEmail && (
-                              <button type="button" disabled={Boolean(cancellingCashReturnId)} onClick={() => cancelCashReturn(movement)}
-                                className="mt-2 rounded border border-rose-200 px-2 py-1 text-[8px] font-black uppercase text-rose-700 disabled:opacity-50">
-                                {cancellingCashReturnId === movement.id ? 'Cancelando...' : 'Cancelar devolución'}
-                              </button>
-                            )}
-                            {(canDeliverGeneralCash || (!isProjectAdmin && normalizeEmail(movement.createdByEmail) === currentUserEmail)) && movement.type === 'entrega' && (
-                              <div className="mt-2 flex justify-end gap-1">
-                                {movement.status !== 'confirmed' && (
-                                  <button
-                                    type="button"
-                                    onClick={() => editCashDelivery(movement)}
-                                    className="rounded border border-slate-200 px-2 py-1 text-[8px] font-black uppercase tracking-widest text-slate-500 hover:border-black hover:text-black"
-                                  >
-                                    Editar
-                                  </button>
-                                )}
-                                <button
-                                  type="button"
-                                  onClick={() => deleteCashDelivery(movement)}
-                                  className="rounded border border-rose-100 px-2 py-1 text-[8px] font-black uppercase tracking-widest text-rose-600 hover:bg-rose-600 hover:text-white"
-                                >
-                                  Borrar
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                    {row.movements.length === 0 && (
-                      <div className="px-5 py-8 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
-                        Sin movimientos de caja
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
-              {visibleCashRows.length === 0 && (
-                <div className="xl:col-span-2 bg-white border border-dashed border-slate-200 rounded-xl p-8 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
-                  No hay responsables con caja para mostrar
-                </div>
-              )}
-              </div>
-            </section>}
           </div>
         )}
 

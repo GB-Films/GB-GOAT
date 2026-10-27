@@ -1,25 +1,37 @@
 import { cn } from '../../lib/utils';
 
 export function CashBoxPicker({ rows, value, onChange, showGeneral, generalOut }: {
-  rows: Array<{ email: string; responsible: { displayName?: string }; balance: number; received: number; movements: any[] }>;
+  rows: Array<{ email: string; responsible: { displayName?: string }; balance: number }>;
   value: string; onChange: (value: string) => void; showGeneral: boolean; generalOut: number;
 }) {
   const options = [
-    ...(showGeneral ? [{ id: 'general', name: 'Caja General', amount: generalOut, detail: 'Salida neta · no es saldo disponible', pending: 0 }] : []),
-    ...rows.map(row => ({ id: row.email, name: row.responsible.displayName || row.email, amount: row.balance,
-      detail: `Recibido $${row.received.toLocaleString('es-AR')} · saldo disponible`,
-      pending: row.movements.filter(m => m.type === 'entrega' && m.status === 'pending').reduce((sum, m) => sum + Number(m.amount || 0), 0),
-    })),
+    ...(showGeneral ? [{ id: 'all', name: 'Todas', amount: null, email: '' }] : []),
+    ...(showGeneral ? [{ id: 'general', name: 'Caja General', amount: generalOut, email: '' }] : []),
+    ...rows.map(row => ({ id: row.email, name: row.responsible.displayName || row.email, amount: row.balance, email: row.email })),
   ];
-  return <section aria-label="Elegir caja" className="order-3 space-y-2">
-    <h3 className="text-sm font-bold">Cajas con movimientos</h3>
-    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{options.map(option => <button type="button" key={option.id}
-      onClick={() => onChange(option.id)} aria-pressed={value === option.id}
-      className={cn('min-w-0 rounded-xl border p-3 text-left', value === option.id ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500' : 'border-slate-200 bg-white')}>
-      <span className="block truncate text-xs font-bold" title={option.name}>{option.name}</span>
-      <span className={cn('mt-1 block font-mono text-lg font-black', option.id === 'general' ? 'text-slate-900' : option.amount >= 0 ? 'text-emerald-600' : 'text-red-600')}>${option.amount.toLocaleString('es-AR')}</span>
-      <span className="block text-[10px] text-slate-500">{option.detail}</span>
-      {option.pending > 0 && <span className="mt-1 block text-[10px] font-bold text-amber-700">Pendiente de recibir ${option.pending.toLocaleString('es-AR')}</span>}
-    </button>)}</div>
-  </section>;
+  const selected = options.find(option => option.id === value);
+  return <>
+    {showGeneral && <nav aria-label="Filtrar cajas" className="flex flex-wrap gap-2 border-b border-slate-100 px-4 py-3 sm:px-5">
+      {options.map(option => <button key={option.id} type="button" onClick={() => onChange(option.id)}
+        aria-pressed={value === option.id} title={option.email || option.name} aria-label={option.email ? `${option.name} · ${option.email}` : option.name}
+        className={cn('rounded-lg border px-3 py-2 text-left text-sm transition-colors focus-visible:outline-blue-500', value === option.id
+          ? 'border-blue-500 bg-blue-50 font-semibold text-blue-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50')}>
+        <span className="block">{option.name}</span>
+        {value === 'all' && option.email && <>
+          <span className="mt-0.5 block text-xs font-normal text-slate-500">{option.email}</span>
+          <span className={cn('mt-1 block font-mono font-semibold', option.amount! >= 0 ? 'text-emerald-700' : 'text-red-700')}>${option.amount?.toLocaleString('es-AR')}</span>
+        </>}
+      </button>)}
+    </nav>}
+    <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 px-4 py-4 sm:px-5">
+    <div className="min-w-0">
+      <h3 className="text-sm font-bold text-slate-900">{value === 'all' && showGeneral ? 'Todas las cajas' : selected?.name || 'Mi caja'}</h3>
+      {selected?.email && <p className="mt-1 break-all text-xs text-slate-500">{selected.email}</p>}
+    </div>
+    {selected && selected.amount !== null && <div className="shrink-0 text-right">
+      <div className="text-xs text-slate-500">{value === 'general' ? 'Salida neta' : 'Saldo'}</div>
+      <div className={cn('font-mono text-2xl font-bold tabular-nums', value === 'general' ? 'text-slate-900' : selected.amount >= 0 ? 'text-emerald-700' : 'text-red-700')}>${selected.amount.toLocaleString('es-AR')}</div>
+    </div>}
+    </div>
+  </>;
 }
