@@ -12,6 +12,7 @@ const cli =
         "firebase-tools/lib/bin/firebase.js",
       ));
 const cases = [
+  ["providerIntake", "demo-goat-provider-intake", "firestore"],
   ["projectCommercialRules", "demo-gb-goat-commercial", "firestore"],
   ["projectAdministrationRules", "demo-gb-goat-administration", "firestore"],
   [

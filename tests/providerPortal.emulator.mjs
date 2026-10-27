@@ -378,19 +378,15 @@ try {
       .providerId,
     "supplier",
   );
-  // Contact edits never become new access credentials on a later bulk preparation.
-  const contact = await own({
+  // The single personal email is not editable through ordinary profile changes.
+  await assert.rejects(own({
     action: "prepareProfile",
     providerId: "supplier",
     attemptId: "contact-1",
     changes: { email: "different-contact@example.test" },
-  });
-  await signActual(contact);
-  await own({
-    action: "completeDeclaration",
-    providerId: "supplier",
-    declarationId: contact.id,
-  });
+  }), /Dato no editable/);
+  // A reviewed correction of a legacy record cannot transfer its frozen access.
+  await db.doc("providers/supplier").update({ email: "different-contact@example.test" });
   await adminCall({ action: "prepareAccess", apply: true });
   const hijack = await portal(
     request("different-contact", "different-contact@example.test", {

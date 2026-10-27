@@ -50,7 +50,7 @@ const CRITICAL = [
   "bankAccount_alias",
   "bankAccount_holder",
 ];
-const COMMON = ["address", "phone", "email", "birthDate", "dietaryRestriction"];
+const COMMON = ["address", "phone", "birthDate", "dietaryRestriction"];
 function profileChanges(before, input) {
   if (!input || typeof input !== "object" || Array.isArray(input))
     fail("Faltan los cambios.");
@@ -62,9 +62,7 @@ function profileChanges(before, input) {
       raw.length > 300
     )
       fail("Dato no editable.");
-    const value = key === "email" ? email(raw) : text(raw);
-    if (key === "email" && value && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value))
-      fail("Email inválido.");
+    const value = text(raw);
     if (key === "cuit" && !/^\d{11}$/.test(value.replace(/\D/g, "")))
       fail("El CUIT debe tener 11 dígitos.");
     if (key === "bankAccount_cbu" && value && !/^\d{22}$/.test(value))
@@ -147,7 +145,7 @@ function accessCandidates(providers) {
 }
 function publicProfile(p) {
   return Object.fromEntries(
-    [...CRITICAL, ...COMMON, "type"].map((k) => [k, p[k] ?? ""]),
+    [...CRITICAL, ...COMMON, "email", "type"].map((k) => [k, p[k] ?? ""]),
   );
 }
 function expenseInvoices(item) {

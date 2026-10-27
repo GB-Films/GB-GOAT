@@ -22,7 +22,7 @@ const labels: Record<string, string> = {
   cuit: "CUIT",
   address: "Domicilio",
   phone: "Teléfono",
-  email: "Correo de contacto",
+  email: "Correo personal de tu cuenta Google",
   bankAccount_cbu: "CBU/CVU",
   bankAccount_alias: "Alias",
   bankAccount_holder: "Titular de la cuenta",
@@ -650,12 +650,13 @@ export default function ProviderPortal() {
           <section className={box + " mb-4 space-y-2"}>
             <h2 className="font-bold">Mi cuenta de acceso</h2>
             <p className="text-sm">
-              {user?.email}. Esta cuenta es independiente del correo de contacto
-              del proveedor.
+              {user?.email}. Usá tu cuenta personal de Google para ingresar y
+              firmar documentos.
             </p>
             <p className="text-xs text-slate-500">
-              Ingresás con Google. Cambiar el correo de contacto no cambia la
-              cuenta autorizada para acceder a este proveedor.
+              Si el correo registrado es anterior o no coincide, solicitá su
+              revisión a administración. El cambio de cuenta requiere verificar
+              nuevamente a quién pertenece.
             </p>
           </section>
           <form
@@ -679,6 +680,7 @@ export default function ProviderPortal() {
                     <input
                       className="mt-1 block w-full rounded border p-2"
                       value={draft[key] ?? view.provider[key] ?? ""}
+                      readOnly={key === "email"}
                       onChange={(e) =>
                         setDraft({ ...draft, [key]: e.target.value })
                       }
@@ -687,7 +689,7 @@ export default function ProviderPortal() {
                 ))}
             </div>
             <p className="text-sm text-slate-500">
-              El correo de contacto no cambia tu cuenta de acceso. CUIT,
+              El correo personal requiere una revisión para cambiar de cuenta. CUIT,
               identidad y cuenta bancaria conservan sus valores vigentes hasta
               la aprobación administrativa.
             </p>

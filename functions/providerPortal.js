@@ -391,7 +391,8 @@ function createProviderPortalHandler({
         content = {
           capacity: input.capacity,
           terms:
-            "Identifico esta ficha como correspondiente al proveedor por cuya cuenta actúo, en el carácter declarado. Esta confirmación de representación no ratifica la exactitud de los datos administrativos anteriores; podré solicitar sus correcciones en Mis datos mediante una declaración específica.",
+            "Declaro que la cuenta Google con la que firmo me pertenece y es de uso personal; la utilizaré para ingresar a GOAT y firmar documentos. Identifico esta ficha como correspondiente al proveedor por cuya cuenta actúo, en el carácter declarado. Esta confirmación de representación no ratifica la exactitud de los datos administrativos anteriores; podré solicitar sus correcciones en Mis datos mediante una declaración específica.",
+          personalAccountDeclarationVersion: "personal-google-v1",
           profile: {
             name: text(
               provider.businessName ||

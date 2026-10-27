@@ -241,7 +241,7 @@ export default function ProviderPortalAdmin() {
           <p className="text-xs text-slate-500">
             La persona debe haber ingresado con Google usando ese correo
             verificado; no es necesario que termine en gmail.com. Esta asociación
-            conserva el correo de contacto y los permisos de producción.
+            conserva el correo personal registrado y los permisos de producción.
           </p>
           <button
             disabled={busy || !providerId || !accessEmail}

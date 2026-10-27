@@ -3,7 +3,6 @@ import { User, onAuthStateChanged, signOut } from 'firebase/auth';
 import { doc, getDoc, runTransaction, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
 import { normalizeEmail } from '../lib/identity';
-import { portalRequest } from '../lib/providerPortal';
 
 interface AuthContextType {
   user: User | null;
@@ -94,7 +93,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         if (normalizedEmail !== APP_OWNER_EMAIL) {
           if (!inviteToken) {
-            await portalRequest({action:'bootstrap'});
+            // Authentication also serves provider intake. Portal authorization is
+            // checked by the portal itself; signing in grants no internal role.
             setProfile({uid:firebaseUser.uid,email:firebaseUser.email,displayName:firebaseUser.displayName,photoURL:firebaseUser.photoURL,role:'portal'});
             setLoading(false);return;
           }

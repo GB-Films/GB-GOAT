@@ -1138,7 +1138,7 @@ function ProviderManualModal({ saving, onClose, onSubmit }: { saving?: boolean; 
           )}
 
           <div className="grid grid-cols-2 gap-4">
-            <Field label="Correo de contacto" required={!provisional}><input name="email" type="email" required={!provisional} className={inputClass} /><p className="mt-1 text-xs text-slate-500">Para el portal, confirmá qué correo usa la persona para entrar a Google. Si es distinto, asignalo en Revisiones de proveedores.</p></Field>
+            <Field label="Correo personal de la cuenta Google" required={!provisional}><input name="email" type="email" required={!provisional} className={inputClass} /><p className="mt-1 text-xs text-slate-500">Pedí el único correo personal con el que la persona ingresa a Google. Para verificar su titularidad y aceptación, enviá el link de alta.</p></Field>
             <Field label="Teléfono" required={!provisional}><input name="phone" required={!provisional} className={inputClass} /></Field>
           </div>
           <Field label="Domicilio" required={!provisional}><input name="address" required={!provisional} className={inputClass} /></Field>
@@ -1423,7 +1423,7 @@ function ProviderEditModal({ saving, provider, onClose, onSubmit }: { saving?: b
           </div>
           <input type="hidden" name="dni_cuit" defaultValue={provider.dni_cuit || ''} />
           <div className="grid grid-cols-2 gap-4">
-            <Field label="Correo de contacto"><input name="email" type="email" defaultValue={provider.email} className={inputClass} /><p className="mt-1 text-xs text-slate-500">El acceso con Google se administra en Revisiones de proveedores. Cambiar este correo no transfiere ese acceso.</p></Field>
+            <Field label="Correo personal de la cuenta Google"><input name="email" type="email" defaultValue={provider.email} readOnly={Boolean(provider.personalGoogleAccount)} className={inputClass} /><p className="mt-1 text-xs text-slate-500">Las cuentas verificadas en el alta conservan su correo. Para corregir una ficha anterior, verificá la cuenta con la persona y revisá su asociación en Revisiones de proveedores.</p></Field>
             <Field label="Teléfono"><input name="phone" defaultValue={provider.phone} className={inputClass} /></Field>
           </div>
           <div className="grid grid-cols-2 gap-4">

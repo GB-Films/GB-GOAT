@@ -61,6 +61,7 @@ test("profile declaration freezes old/new values and separates critical fields f
     { role: "admin" },
     { uid: "else" },
     { portalAccessEmail: "else@a.test" },
+    { email: "else@a.test" },
     { bankAccount_cbu: "bad" },
     {},
   ])
