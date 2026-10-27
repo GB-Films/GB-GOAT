@@ -30,9 +30,11 @@ test('paid total is green, partial payment stays distinct and no amount can be e
   assert.match(partial, /text-emerald-600[^>]*>Pagado \$300/);
 });
 
-test('cash picker distinguishes pending money from balance and hides general cash for non-admin viewers', () => {
-  const html = renderToStaticMarkup(createElement(CashBoxPicker, { rows: [{ email: 'p@example.com', responsible: { displayName: 'Persona' }, balance: 0, received: 0, movements: [{ type: 'entrega', status: 'pending', amount: 100 }] }], value: 'p@example.com', onChange() {}, showGeneral: false, generalOut: 200 }));
-  assert.match(html, /Pendiente de recibir \$100/);
-  assert.match(html, /aria-pressed="true"/);
+test('the compact cash header identifies its owner, shows the balance once and hides General for non-admin viewers', () => {
+  const html = renderToStaticMarkup(createElement(CashBoxPicker, { rows: [{ email: 'p@example.com', responsible: { displayName: 'Persona' }, balance: 0 }], value: 'p@example.com', onChange() {}, showGeneral: false, generalOut: 200 }));
+  assert.match(html, /Persona/);
+  assert.match(html, /p@example.com/);
+  assert.match(html, /Saldo/);
+  assert.equal(html.match(/\$0/g)?.length, 1);
   assert.doesNotMatch(html, /Caja General/);
 });

@@ -1,0 +1,12 @@
+@media (max-width: 767px) {
+  .cash-ledger table, .cash-ledger tbody, .cash-ledger tr, .cash-ledger td { display: block; }
+  .cash-ledger thead { display: none; }
+  .cash-ledger tr { padding: 0.75rem 1rem; }
+  .cash-ledger td { display: grid; grid-template-columns: 7.5rem minmax(0, 1fr); gap: 0.25rem 0.75rem; padding: 0.25rem 0; max-width: none; text-align: left; white-space: normal; }
+  .cash-ledger td::before { content: attr(data-label); color: #64748b; font: 400 0.75rem/1.5rem sans-serif; }
+  .cash-ledger td > span + span { grid-column: 2; }
+  .cash-ledger td[data-label="Acciones"] { display: block; padding-top: 0.5rem; }
+  .cash-ledger td[data-label="Acciones"]::before { display: none; }
+  .cash-ledger td[data-label="Acciones"] > div { justify-content: flex-start; }
+  .cash-ledger td[data-label="Acciones"]:has(> div:empty) { display: none; }
+}
