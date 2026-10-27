@@ -3,8 +3,10 @@ rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
     function isSignedIn() {
-      return request.auth != null;
+      return request.auth != null && request.auth.token.email_verified == true;
     }
+
+    match /providerPortalUploads/{path=**} { allow read, write: if false; }
 
     function userEmail() {
       return request.auth.token.email;

@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { GoogleAuthProvider, onAuthStateChanged, signInWithPopup, User } from 'firebase/auth';
 import { collection, doc, getDoc, runTransaction, serverTimestamp } from 'firebase/firestore';
 import { useParams } from 'react-router-dom';
 import { CheckCircle2, Loader2, UserRound, Building2, AlertTriangle, CalendarDays } from 'lucide-react';
-import { db } from '../lib/firebase';
+import { auth, db } from '../lib/firebase';
 import {
   COMPANY_PROVIDER_CATEGORIES,
   PRODUCTION_AREA_CATEGORIES,
@@ -343,7 +344,30 @@ export default function ProviderInvite() {
   const [form, setForm] = useState(emptyForm);
   const [fieldErrors, setFieldErrors] = useState<FormErrors>({});
   const [showFieldErrors, setShowFieldErrors] = useState(false);
+  const [googleUser, setGoogleUser] = useState<User | null>(auth.currentUser);
+  const [personalAccountAccepted, setPersonalAccountAccepted] = useState(false);
+  const [signingIn, setSigningIn] = useState(false);
   const submitErrorRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => onAuthStateChanged(auth, (user) => {
+    setGoogleUser(user);
+    setPersonalAccountAccepted(false);
+    setForm((current) => ({ ...current, email: user?.email?.trim().toLowerCase() || '' }));
+  }), []);
+
+  const chooseGoogleAccount = async () => {
+    setSigningIn(true);
+    setError('');
+    try {
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: 'select_account' });
+      await signInWithPopup(auth, provider);
+    } catch {
+      setError('No se completó el inicio de sesión con Google. Volvé a intentarlo.');
+    } finally {
+      setSigningIn(false);
+    }
+  };
 
   const dniNormalized = useMemo(() => normalizeDigits(form.dni), [form.dni]);
   const cuitNormalized = useMemo(() => normalizeDigits(form.cuit), [form.cuit]);
@@ -459,7 +483,7 @@ export default function ProviderInvite() {
     if (values.type === 'empresa' && !values.businessName.trim()) nextErrors.businessName = requiredMessage;
 
     if (!normalizedCuit) nextErrors.cuit = requiredMessage;
-    else if (normalizedCuit.length < 10) nextErrors.cuit = 'Ingresá un CUIT/CUIL válido.';
+    else if (normalizedCuit.length !== 11) nextErrors.cuit = 'El CUIT/CUIL debe tener 11 números.';
     else if (duplicateState.cuit) nextErrors.cuit = 'Ya existe un proveedor registrado con este CUIT/CUIL.';
 
     if (!values.email.trim()) nextErrors.email = requiredMessage;
@@ -488,7 +512,7 @@ export default function ProviderInvite() {
   };
 
   const selectType = (type: ProviderType) => {
-    setForm({ ...emptyForm, type });
+    setForm({ ...emptyForm, type, email: googleUser?.email?.trim().toLowerCase() || '' });
     setDuplicates({});
     setFieldErrors({});
     setShowFieldErrors(false);
@@ -501,6 +525,10 @@ export default function ProviderInvite() {
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (!googleUser || !personalAccountAccepted) {
+      setError('Iniciá sesión con tu cuenta personal de Google y confirmá que te pertenece.');
+      return;
+    }
     const validationErrors = validateForm();
     if (Object.keys(validationErrors).length > 0) {
       setShowFieldErrors(true);
@@ -518,6 +546,13 @@ export default function ProviderInvite() {
     setError('');
 
     try {
+      const account = auth.currentUser;
+      if (!account || account.uid !== googleUser.uid) throw new Error('La cuenta cambió. Volvé a confirmar el alta.');
+      const identity = await account.getIdTokenResult(true);
+      if (identity.signInProvider !== 'google.com' || identity.claims.email_verified !== true
+        || String(identity.claims.email || '').toLowerCase() !== form.email) {
+        throw new Error('Iniciá sesión con una cuenta Google con correo verificado.');
+      }
       await runTransaction(db, async (transaction) => {
         const inviteRef = doc(db, 'providerInvites', token);
         const inviteSnap = await transaction.get(inviteRef);
@@ -545,6 +580,13 @@ export default function ProviderInvite() {
           cuit: form.cuit.trim(),
           cuitNormalized,
           email: form.email.trim(),
+          personalGoogleAccount: {
+            version: 'personal-google-v1',
+            uid: account.uid,
+            email: form.email.trim(),
+            personalUse: true,
+            acceptedAt: serverTimestamp(),
+          },
           phone: form.phone.trim(),
           address: form.address.trim(),
           category: form.category,
@@ -716,6 +758,15 @@ export default function ProviderInvite() {
         </header>
 
         <div className="bg-white border border-slate-200 rounded-2xl p-6 md:p-8 shadow-sm">
+          <section className="mb-8 space-y-3 rounded-xl border border-slate-200 p-4">
+            <h2 className="font-bold">Tu cuenta personal de Google</h2>
+            <p className="text-sm text-slate-600">Usá una cuenta que te pertenezca y sea de uso personal. Este único correo quedará registrado para tus datos, tu acceso a GOAT y la firma de documentos. Si representás a una empresa, usá tu cuenta personal como representante.</p>
+            <p className="text-sm text-slate-600">Puede ser Gmail u otro correo asociado a una cuenta Google. Si todavía no tenés una, podés <a className="underline" href="https://accounts.google.com/signup" target="_blank" rel="noreferrer">crear una cuenta Google</a> usando tu correo actual.</p>
+            {googleUser && <p className="text-sm font-semibold">{googleUser.email}</p>}
+            <button type="button" disabled={signingIn || submitLoading} onClick={() => void chooseGoogleAccount()} className="rounded-lg border px-4 py-2 text-sm font-bold disabled:opacity-50">{signingIn ? 'Conectando…' : googleUser ? 'Elegir otra cuenta Google' : 'Continuar con Google'}</button>
+            <label className="flex gap-2 text-sm"><input type="checkbox" checked={personalAccountAccepted} disabled={!googleUser || submitLoading} onChange={(e) => setPersonalAccountAccepted(e.target.checked)} />Declaro que esta cuenta Google me pertenece, es de uso personal y la utilizaré para ingresar y firmar documentos en GOAT.</label>
+            {error && !form.type && <p role="alert" className="text-sm text-red-600">{error}</p>}
+          </section>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-8">
             <button
               type="button"
@@ -774,8 +825,8 @@ export default function ProviderInvite() {
               )}
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Field label="Email" required error={fieldErrors.email}>
-                  <input aria-label="Email" autoComplete="email" type="email" value={form.email} onChange={(e) => updateField('email', e.target.value)} required aria-invalid={Boolean(fieldErrors.email)} className={withFieldError(fieldErrors.email)} />
+                <Field label="Correo personal de tu cuenta Google" required error={fieldErrors.email}>
+                  <input aria-label="Correo personal de tu cuenta Google" type="email" value={form.email} readOnly required aria-invalid={Boolean(fieldErrors.email)} className={withFieldError(fieldErrors.email)} />
                 </Field>
                 <Field label="Teléfono" required error={fieldErrors.phone}>
                   <input aria-label="Teléfono" autoComplete="tel" value={form.phone} onChange={(e) => updateField('phone', e.target.value)} required aria-invalid={Boolean(fieldErrors.phone)} className={withFieldError(fieldErrors.phone)} />

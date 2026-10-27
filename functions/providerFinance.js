@@ -1,3 +1,4 @@
+const {authorizedParty}=require('./providerAuthorization');
 const { createHash } = require('node:crypto');
 const { HttpsError } = require('firebase-functions/v2/https');
 const { FieldValue } = require('firebase-admin/firestore');
@@ -27,6 +28,7 @@ function normalizeRecord(input) {
   if (input.currency && !['ARS', 'USD'].includes(input.currency)) fail('Moneda inválida.');
   if (list(input.allocations).length > 30) fail('Elegí hasta 30 gastos.');
   const result = {
+    ...(input.thirdPartyAuthorizationId?{thirdPartyAuthorizationId:id(input.thirdPartyAuthorizationId)}:{}),
     providerId: id(input.providerId), kind: input.kind, date: text(input.date, 10),
     notes: text(input.notes, 2000), currency: input.currency === 'USD' ? 'USD' : 'ARS',
     issuerName: text(input.issuerName), issuerCuit: text(input.issuerCuit).replace(/\D/g, ''),
@@ -71,7 +73,7 @@ function normalizeRecord(input) {
   return result;
 }
 
-function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile }) {
+function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, clock=()=>new Date() }) {
   return async request => {
     if (!request.auth?.uid || !request.auth.token?.email) throw new HttpsError('unauthenticated', 'Iniciá sesión.');
     const user = await db.doc(`users/${request.auth.uid}`).get();
@@ -159,6 +161,8 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile }) {
       }
       const provider = await tx.get(db.doc(`providers/${record.providerId}`));
       if (!provider.exists) fail('No existe el proveedor.');
+      const authority=record.thirdPartyAuthorizationId?(await tx.get(db.doc(`providerPortalDeclarations/${record.thirdPartyAuthorizationId}`))).data():null;
+      const authorization=record.thirdPartyAuthorizationId?authorizedParty(record,authority,clock()):null;
       const fiscalRef = record.fiscalKey ? db.doc(`providerFiscalKeys/${record.fiscalKey}`) : null;
       const fiscal = fiscalRef ? await tx.get(fiscalRef) : null;
       if (fiscal?.exists) {
@@ -188,7 +192,7 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile }) {
         if (allocation.amountCents > cents(expense.total)) fail('La aplicación supera el costo del gasto.');
         if (record.kind === 'payment' && allocation.amountCents + paid(expense) > cents(expense.total)) fail('El pago supera el saldo actual de un gasto.');
         if (record.kind === 'invoice' && allocation.amountCents + list(expense.sharedInvoices).reduce((sum, item) => sum + item.amountCents, 0) > cents(expense.total)) fail('Este gasto ya tiene facturas compartidas por ese importe.');
-        if (record.kind === 'invoice' && (expense.invoice?.url || list(expense.invoices).some(invoice => invoice.url))) fail('Este gasto tiene una factura anterior. Revisá y retirala antes de reemplazarla por una compartida.');
+        if (record.kind === 'invoice' && (expense.invoice?.url || expense.invoice?.path || list(expense.invoices).some(invoice => invoice.url || invoice.path))) fail('Este gasto tiene una factura anterior. Revisá y retirala antes de reemplazarla por una compartida.');
         if (allocation.invoiceId) {
           const invoice = invoiceMap.get(allocation.invoiceId);
           const original = invoice?.allocations.find(row => key(row) === key(allocation));
@@ -203,7 +207,7 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile }) {
         const updates = { updatedAt: now };
         if (record.kind === 'payment') {
           const payment = {
-            id: `shared-${recordId}`, sharedRecordId: recordId, amount: allocation.amountCents / 100,
+            id: `shared-${recordId}`, sharedRecordId: recordId, ...(authorization?{thirdPartyAuthorizationId:record.thirdPartyAuthorizationId}:{}), amount: allocation.amountCents / 100,
             date: record.date, detail: `${record.notes || 'Pago compartido'} · Destinatario: ${record.payeeName}`,
             method: 'otro', type: 'partial', createdBy: actor.uid, createdByEmail: actor.email,
           };
@@ -234,7 +238,7 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile }) {
           fromUserEmail: actor.email, fromUserName: actor.email, createdBy: actor.uid, createdByEmail: actor.email, createdAt: now,
         });
       }
-      tx.create(recordRef, { ...record, allocations, file, fingerprint, status: 'active', settlements: {}, createdBy: actor, createdAt: now, updatedAt: now });
+      tx.create(recordRef, { ...record, ...(authorization?{thirdPartyAuthorization:authorization}:{}), allocations, file, fingerprint, status: 'active', settlements: {}, createdBy: actor, createdAt: now, updatedAt: now });
       tx.set(db.doc(`providerFinanceProviderIndex/${record.providerId}`), { updatedAt: now });
       indices.forEach(snapshot => tx.set(snapshot.ref, {
         ...projectIndex({ ...(snapshot.data()?.records || {}), [recordId]: allocations.filter(row => row.projectId === snapshot.id).map(row => ({ area: row.area, collectionName: row.collectionName })) }), updatedAt: now,

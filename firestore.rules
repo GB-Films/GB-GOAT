@@ -1,4 +1,7 @@
 rules_version = '2';
+// Provider intake: personalGoogleAccount is an immutable personal-use declaration
+// (version, uid, email, personalUse, acceptedAt=request.time), bound to a verified
+// Google token and the provider's single email. It does not certify civil identity.
 
 // Cash subdeliveries: trusted server-only projects fields generalCashDeliveryBlockedEmails
 // (normalized email list) and cashSubdeliveryRevision (integer). cashMovements with
@@ -16,8 +19,15 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    function isSignedIn() {
-      return request.auth != null;
+    function isAuthenticated() { return request.auth != null; }
+    function isSignedIn() { return request.auth != null && request.auth.token.email_verified; }
+    // Broad catalogs are for existing internal users. Project ACLs remain independent.
+    function isInternalUser() {
+      return isSignedIn() && (
+        request.auth.token.email == 'info@granbertafilms.com'
+        || (exists(/databases/$(database)/documents/users/$(request.auth.uid))
+          && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role','colaborador') in ['admin','ayudante_admin','jefe_produccion','colaborador'])
+      );
     }
 
     function userEmail() {
@@ -1154,17 +1164,45 @@ service cloud.firestore {
         && invoiceUploadInviteIsPending(request.resource.data.publicInvoiceUpload.token, projectId, collectionName, expenseId);
     }
 
-    function publicProviderCreateIsValid() {
-      return request.resource.data.source == 'provider_invite'
+    function intakeText(data, key, max) {
+      return data.get(key, '') is string && data.get(key, '').size() <= max;
+    }
+
+    function publicProviderCreateIsValid(providerId) {
+      return isPersonalGoogleProvider(request.resource.data)
+        && request.resource.data.source == 'provider_invite'
         && inviteIsPending(request.resource.data.inviteToken)
+        && intakeInviteRecordsProvider(providerId, request.resource.data.inviteToken)
+        && request.resource.data.keys().hasOnly(['type', 'cuit', 'cuitNormalized', 'email', 'personalGoogleAccount', 'phone', 'address', 'category', 'categoryOther', 'bankAccount_cbu', 'bankAccount_alias', 'source', 'inviteToken', 'createdAt', 'updatedAt', 'name', 'lastName', 'fullName', 'dni', 'dniNormalized', 'birthDate', 'dietaryRestriction', 'businessName'])
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && intakeText(request.resource.data, 'name', 160)
+        && intakeText(request.resource.data, 'lastName', 160)
+        && intakeText(request.resource.data, 'fullName', 321)
+        && intakeText(request.resource.data, 'businessName', 160)
+        && intakeText(request.resource.data, 'cuit', 30)
+        && intakeText(request.resource.data, 'dni', 20)
+        && intakeText(request.resource.data, 'birthDate', 10)
+        && intakeText(request.resource.data, 'dietaryRestriction', 300)
+        && intakeText(request.resource.data, 'categoryOther', 300)
         && request.resource.data.type in ['persona', 'empresa']
         && request.resource.data.cuitNormalized is string
+        && request.resource.data.cuitNormalized.matches('^[0-9]{11}$')
+        && getAfter(/databases/$(database)/documents/providerIdentifiers/$('cuit_' + request.resource.data.cuitNormalized)).data.providerId == providerId
+        && (request.resource.data.type != 'persona'
+          || (request.resource.data.dniNormalized.matches('^[0-9]{7,9}$')
+            && getAfter(/databases/$(database)/documents/providerIdentifiers/$('dni_' + request.resource.data.dniNormalized)).data.providerId == providerId))
         && request.resource.data.category is string
+        && request.resource.data.category.size() <= 100
         && request.resource.data.email is string
+        && request.resource.data.email.size() <= 300
         && request.resource.data.phone is string
+        && request.resource.data.phone.size() <= 60
         && request.resource.data.address is string
+        && request.resource.data.address.size() <= 300
         && request.resource.data.bankAccount_cbu is string
         && request.resource.data.bankAccount_alias is string
+        && request.resource.data.bankAccount_alias.size() <= 100
         && (
           request.resource.data.bankAccount_cbu.matches('^[0-9]{22}$')
           || (
@@ -1172,6 +1210,36 @@ service cloud.firestore {
             && request.resource.data.bankAccount_alias.size() > 0
           )
         );
+    }
+
+    function intakeInviteRecordsProvider(providerId, token) {
+      let invite = getAfter(/databases/$(database)/documents/providerInvites/$(token)).data;
+      return (invite.get('mode', 'single_use') == 'multi_use' && invite.lastProviderId == providerId && invite.lastUsedAt == request.time)
+        || (invite.used == true && invite.providerId == providerId && invite.usedAt == request.time);
+    }
+
+    function isVerifiedGoogleIntake() {
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.firebase.sign_in_provider == 'google.com';
+    }
+
+    function isPersonalGoogleProvider(data) {
+      return isVerifiedGoogleIntake()
+        && data.email == request.auth.token.email.lower()
+        && data.personalGoogleAccount.keys().hasOnly(['version', 'uid', 'email', 'personalUse', 'acceptedAt'])
+        && data.personalGoogleAccount.version == 'personal-google-v1'
+        && data.personalGoogleAccount.uid == request.auth.uid
+        && data.personalGoogleAccount.email == data.email
+        && data.personalGoogleAccount.personalUse == true
+        && data.personalGoogleAccount.acceptedAt == request.time;
+    }
+
+    function isCurrentIntakeProvider(providerId, token) {
+      let provider = getAfter(/databases/$(database)/documents/providers/$(providerId)).data;
+      return !exists(/databases/$(database)/documents/providers/$(providerId))
+        && isPersonalGoogleProvider(provider)
+        && provider.inviteToken == token;
     }
 
     function canCreateLinkedProviderInvite() {
@@ -1224,7 +1292,10 @@ service cloud.firestore {
     }
 
     function canPublicAssignProviderFromInvite(projectId, collectionName, itemId) {
-      return !hasReceivedPayment()
+      return request.resource.data.keys().hasAny(['providerInviteAssignment'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasAny(['providerInviteAssignment'])
+        && isVerifiedGoogleIntake()
+        && !hasReceivedPayment()
         && (!resource.data.keys().hasAny(['providerId']) || resource.data.providerId == '')
         && (!resource.data.keys().hasAny(['providerName']) || resource.data.providerName == '')
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['providerId', 'providerName', 'providerInviteAssignment', 'updatedAt'])
@@ -1232,6 +1303,7 @@ service cloud.firestore {
         && request.resource.data.providerName is string
         && request.resource.data.providerInviteAssignment.token is string
         && request.resource.data.providerInviteAssignment.providerId == request.resource.data.providerId
+        && isCurrentIntakeProvider(request.resource.data.providerId, request.resource.data.providerInviteAssignment.token)
         && providerInviteTargetsItem(projectId, collectionName, itemId, request.resource.data.providerInviteAssignment.token);
     }
 
@@ -1240,7 +1312,7 @@ service cloud.firestore {
     // proveedor (ya tiene proveedor, tiene pagos o fue eliminado). No expone
     // filas ya resueltas ni habilita listados anónimos.
     function publicProviderInviteTargetIsOpen() {
-      return request.auth == null
+      return (request.auth == null || isVerifiedGoogleIntake())
         && (
           resource == null
           || (
@@ -1280,11 +1352,14 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow get, list: if isSignedIn();
+      allow get: if isInternalUser() || (isAuthenticated() && request.auth.uid == userId);
+      allow list: if isInternalUser();
       allow create: if isSignedIn() && (
         isAppOwner()
         || (
           request.auth.uid == userId
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.email == userEmail()
           && request.resource.data.role == 'colaborador'
           && request.resource.data.inviteToken is string
           && userInviteMatchesSignedInEmail(request.resource.data.inviteToken)
@@ -1302,7 +1377,7 @@ service cloud.firestore {
         || (
           isSignedIn()
           && request.auth.uid == userId
-          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role'])
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName','photoURL','pinnedProjectIds'])
         );
       allow delete: if isAppOwner();
     }
@@ -1572,7 +1647,7 @@ service cloud.firestore {
             || (!(request.resource.data.area in getAfter(/databases/$(database)/documents/projects/$(projectId)).data.get('activeAreas', []))
               && budgetMembershipAdvancesRevision(projectId)))
           && preservesAdminFinancialHistory(projectId, 'budgetItems', itemId))
-          || (request.auth == null && canPublicAssignProviderFromInvite(projectId, 'budgetItems', itemId))
+          || canPublicAssignProviderFromInvite(projectId, 'budgetItems', itemId)
           || (request.auth == null && canPublicUploadInvoice(projectId, 'budgetItems', itemId)));
       }
 
@@ -1592,12 +1667,12 @@ service cloud.firestore {
             || validUnpaidAmountCorrection(projectId, 'areaExpenses', expenseId)
             || validPaidProviderCorrection(projectId, expenseId))
           && preservesAdminFinancialHistory(projectId, 'areaExpenses', expenseId))
+          || canPublicAssignProviderFromInvite(projectId, 'areaExpenses', expenseId)
           || ((!isProjectAdmin(projectId) && (
             canWriteAreaExpense(projectId, resource.data.area, resource.data.subcategory)
             && canWriteAreaExpense(projectId, request.resource.data.area, request.resource.data.subcategory)
           ) && preservesExpensePaymentAudit() && preservesPaidExpenseIdentity()
             && preservesExpenseReceipts() && preservesExistingExpenseInvoice()))
-          || (request.auth == null && canPublicAssignProviderFromInvite(projectId, 'areaExpenses', expenseId))
           || (request.auth == null && canPublicUploadInvoice(projectId, 'areaExpenses', expenseId)));
         allow delete: if hasNoSharedSupplierRecords() && (canDeleteAreaExpenseWithPayment(projectId) || canDeleteClearedExpense(projectId, 'areaExpenses', expenseId));
       }
@@ -1673,15 +1748,27 @@ service cloud.firestore {
       }
     }
 
+    // Portal data is served by callables that verify a current representation.
+    // Neither account owners nor global admins can forge signatures/reviews through the SDK.
+    match /providerPortalUsers/{uid}/{document=**} { allow read, write: if false; }
+    match /providerPortalDeclarations/{id} { allow read, write: if false; }
+    match /providerPortalCandidates/{id} { allow read, write: if false; }
+    match /providerPortalConfig/{id} { allow read, write: if false; }
+    match /providerPortalProjectLinks/{id} { allow read, write: if false; }
+    match /providerPortalFileGrants/{id} { allow read, write: if false; }
+    match /providerPortalAudit/{id} { allow read, write: if false; }
+
     match /clients/{clientId} {
-      allow read: if isSignedIn();
+      allow read: if isInternalUser();
       allow write: if isAppAdmin();
     }
 
     match /providers/{providerId} {
-      allow read: if isSignedIn();
-      allow create: if canCreateGlobalProvider() || publicProviderCreateIsValid();
-      allow update: if canEditGlobalProvider();
+      allow read: if isInternalUser();
+      allow create: if (canCreateGlobalProvider() && !request.resource.data.keys().hasAny(['personalGoogleAccount'])) || publicProviderCreateIsValid(providerId);
+      allow update: if canEditGlobalProvider()
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['personalGoogleAccount'])
+        && (!resource.data.keys().hasAny(['personalGoogleAccount']) || request.resource.data.email == resource.data.email);
       allow delete: if isAppAdmin()
         && !exists(/databases/$(database)/documents/providerFinanceProviderIndex/$(providerId));
     }
@@ -1711,6 +1798,7 @@ service cloud.firestore {
           && request.resource.data.status == 'used'
           && request.resource.data.providerId is string
           && request.resource.data.providerType in ['persona', 'empresa']
+          && isCurrentIntakeProvider(request.resource.data.providerId, token)
         )
         || (
           resource.data.used == false
@@ -1719,9 +1807,10 @@ service cloud.firestore {
           && providerInviteNotExpired(token)
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['usageCount', 'lastUsedAt', 'lastProviderId', 'lastProviderType', 'updatedAt'])
           && request.resource.data.usageCount is number
-          && request.resource.data.usageCount >= resource.data.usageCount
+          && request.resource.data.usageCount == resource.data.usageCount + 1
           && request.resource.data.lastProviderId is string
           && request.resource.data.lastProviderType in ['persona', 'empresa']
+          && isCurrentIntakeProvider(request.resource.data.lastProviderId, token)
         );
       allow delete: if isAppAdmin();
     }
@@ -1736,6 +1825,9 @@ service cloud.firestore {
           && request.resource.data.providerId is string
           && request.resource.data.identifierType in ['dni', 'cuit']
           && request.resource.data.value is string
+          && isCurrentIntakeProvider(request.resource.data.providerId, request.resource.data.inviteToken)
+          && identifierId == request.resource.data.identifierType + '_' + request.resource.data.value
+          && getAfter(/databases/$(database)/documents/providers/$(request.resource.data.providerId)).data[request.resource.data.identifierType + 'Normalized'] == request.resource.data.value
         );
       allow update, delete: if canEditGlobalProvider();
     }

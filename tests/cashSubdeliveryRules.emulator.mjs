@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
 import { doc, getDoc, setDoc, updateDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 const env = await initializeTestEnvironment({ projectId: process.env.GCLOUD_PROJECT, firestore: { rules: readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8') } });
-const db = uid => env.authenticatedContext(uid, { email: `${uid}@example.test` }).firestore();
+const db = uid => env.authenticatedContext(uid, { email_verified: true, email: `${uid}@example.test` }).firestore();
 const admin = db('admin'), other = db('other'), recipient = db('recipient');
 const lead = db('lead');
 const base = 'projects/rules-cash';
@@ -21,7 +21,7 @@ try {
   await assertSucceeds(setDoc(doc(other, `${base}/cashMovements/general`), delivery));
   await assertSucceeds(setDoc(doc(admin, 'projects/other-cash-project/cashMovements/allowed-general'), { ...delivery, createdBy: 'admin', createdByEmail: 'admin@example.test' }));
   await assertFails(setDoc(doc(lead, `${base}/cashMovements/old-direct-transfer`), { ...delivery, type: 'transferencia', cashAccount: 'personal', fromUserEmail: 'lead@example.test', toUserEmail: 'recipient@example.test', createdBy: 'lead', createdByEmail: 'lead@example.test' }));
-  const upperCaseAdmin = env.authenticatedContext('admin', { email: 'ADMIN@example.test' }).firestore();
+  const upperCaseAdmin = env.authenticatedContext('admin', { email_verified: true, email: 'ADMIN@example.test' }).firestore();
   await assertFails(setDoc(doc(upperCaseAdmin, `${base}/cashMovements/uppercase-bypass`), { ...delivery, createdBy: 'admin', createdByEmail: 'ADMIN@example.test' }));
   await assertFails(setDoc(doc(admin, `${base}/cashMovements/forbidden-general`), { ...delivery, createdBy: 'admin', createdByEmail: 'admin@example.test' }));
   await assertFails(setDoc(doc(admin, `${base}/cashMovements/forged-personal`), { ...delivery, cashAccount: 'personal', createdBy: 'admin', createdByEmail: 'admin@example.test' }));

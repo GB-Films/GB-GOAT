@@ -1,3 +1,4 @@
+import { handlePortalInvoiceLink } from '../../lib/portalInvoiceLink';
 import { useState } from 'react';
 import { FileText, Link, Paperclip, Trash2 } from 'lucide-react';
 import { getExpenseInvoices, getInvoiceDocumentKey, type ExpenseInvoiceDocument } from '../../lib/invoices';
@@ -26,7 +27,7 @@ export function ExpenseDocumentsPanel(props: MobileExpenseDocumentsProps) {
   const renderDocument = (document: any, key: string, fallback: string, onRemove?: () => void, busy?: boolean) => (
     <div key={key} className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white p-3">
       <FileText className="h-5 w-5 shrink-0 text-slate-400" />
-      <a href={document.url} target="_blank" rel="noreferrer" className="min-w-0 flex-1 break-words text-xs font-bold text-blue-700 underline underline-offset-2">
+      <a href={document.url || '#'} onClick={e=>handlePortalInvoiceLink(e,document)} target="_blank" rel="noreferrer" className="min-w-0 flex-1 break-words text-xs font-bold text-blue-700 underline underline-offset-2">
         {document.originalFileName || document.fileName || fallback}
       </a>
       {onRemove && <button type="button" disabled={busy} onClick={onRemove}

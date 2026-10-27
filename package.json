@@ -16,7 +16,9 @@
     "test:area-access": "firebase emulators:exec --only firestore --project demo-goat-area-access \"node tests/areaExpenseAccessRules.emulator.mjs\"",
     "test:admin-rules": "firebase emulators:exec --only firestore --project demo-gb-goat-administration \"node tests/projectAdministrationRules.emulator.mjs\"",
     "test:admin-docs": "firebase emulators:exec --only firestore,storage --project demo-gb-goat-admin-documents \"node tests/administrativeDocumentsRules.emulator.mjs\"",
-    "test:storage": "firebase emulators:exec --only firestore,storage --project demo-gb-goat-storage-receipts \"node tests/storagePaymentReceipts.emulator.mjs\""
+    "test:storage": "firebase emulators:exec --only firestore,storage --project demo-gb-goat-storage-receipts \"node tests/storagePaymentReceipts.emulator.mjs\"",
+    "test:portal": "firebase emulators:exec --config firebase.portal-test.json --only firestore,storage --project demo-goat-provider-portal \"node tests/providerPortal.emulator.mjs\"",
+    "test:portal-rules": "node tests/runPortalRules.mjs"
   },
   "dependencies": {
     "@hello-pangea/dnd": "^18.0.1",

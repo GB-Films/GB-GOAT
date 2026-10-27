@@ -9,8 +9,8 @@ const inputClass = 'w-full rounded border border-slate-200 px-3 py-2 text-sm foc
 const money = (value: number) => (value / 100).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const today = () => { const date = new Date(); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`; };
 
-export function ProviderPaymentForm({ provider, lines, invoices, busy, uncertain, onClose, onSave }: {
-  provider: any; lines: PayableProviderLine[]; invoices: any[]; busy: boolean; uncertain: boolean;
+export function ProviderPaymentForm({ authorizations=[], provider, lines, invoices, busy, uncertain, onClose, onSave }: {
+  authorizations?:any[]; provider: any; lines: PayableProviderLine[]; invoices: any[]; busy: boolean; uncertain: boolean;
   onClose: () => void; onSave: (payload: Record<string, unknown> | null, file: File | null) => Promise<void>;
 }) {
   const projects = useMemo(() => paymentProjectChoices(lines), [lines]);
@@ -21,6 +21,7 @@ export function ProviderPaymentForm({ provider, lines, invoices, busy, uncertain
   const [date, setDate] = useState(today);
   const [method, setMethod] = useState('transfer');
   const [cashProject, setCashProject] = useState('');
+  const [authorizationId,setAuthorizationId]=useState('');
   const [file, setFile] = useState<File | null>(null);
   const [error, setError] = useState('');
   const [preparing, setPreparing] = useState(false);
@@ -39,8 +40,10 @@ export function ProviderPaymentForm({ provider, lines, invoices, busy, uncertain
       if (file && method === 'transfer') validateProviderFile(file);
       const beneficiaries = allocations.map(row => invoices.find(invoice => invoice.id === row.invoiceId)?.payeeName).filter(Boolean);
       const payeeName = beneficiaries.length === allocations.length && new Set(beneficiaries).size === 1 ? beneficiaries[0] : providerDisplayName(provider);
-      await onSave({ date, method, currency: 'ARS', exchangeRate: 1, net: Number(amount), total: Number(amount),
-        withheld: 0, fee: 0, payeeName,
+      const authority=authorizations.find(a=>a.id===authorizationId);
+      if(authorizationId&&(!authority||allocations.some(a=>!authority.content.workKeys.includes(`${a.projectId}/${a.collectionName}/${a.itemId}`))))throw Error('La autorización no incluye todos los trabajos seleccionados.');
+      await onSave({ ...(authority?{thirdPartyAuthorizationId:authority.id}:{}), date, method, currency: 'ARS', exchangeRate: 1, net: Number(amount), total: Number(amount),
+        withheld: 0, fee: 0, payeeName:authority?.content.party.name||payeeName,
         account: method === 'cash' ? 'CTA003 | GB Pesos Efectivo' : 'Comprobante bancario',
         cashProjectId: method === 'cash' ? cashProjectId : '', allocations,
         notes: `Pago aplicado al saldo del proveedor en pesos. ${method === 'cash' ? 'Efectivo de Caja General.' : 'Comprobante adjunto; el importe aplicado corresponde al costo de GOAT, sin presumir el débito bancario ni el IVA.'}`,
@@ -56,6 +59,7 @@ export function ProviderPaymentForm({ provider, lines, invoices, busy, uncertain
     <div className="flex justify-between items-center"><h4 className="text-sm font-bold">Registrar pago</h4><button type="button" disabled={disabled} onClick={onClose} aria-label="Cerrar carga"><X size={18}/></button></div>
     {error && <p role="alert" className="rounded bg-rose-50 p-3 text-sm text-rose-800">{error}</p>}
     <fieldset disabled={disabled} className="space-y-4 disabled:opacity-60">
+      {authorizations.length>0&&<label className="block text-xs">Beneficiario del pago<select className={inputClass} value={authorizationId} onChange={e=>setAuthorizationId(e.target.value)}><option value="">El proveedor / beneficiario habitual</option>{authorizations.map(a=><option key={a.id} value={a.id}>{a.content.party.name} · Autorización firmada</option>)}</select></label>}
       {!projects.length ? <p className="rounded bg-emerald-50 p-3 text-sm text-emerald-800">Este proveedor no tiene saldos pendientes.</p> : <>
         <div className="space-y-2">
           <div className="flex items-center justify-between text-xs"><span className="font-bold">Proyectos a pagar</span><button type="button" className="text-blue-700 hover:underline" onClick={() => chooseProjects(selectedIds.length === projects.length ? [] : projects.map(project => project.id))}>{selectedIds.length === projects.length ? 'Limpiar' : 'Seleccionar todos'}</button></div>

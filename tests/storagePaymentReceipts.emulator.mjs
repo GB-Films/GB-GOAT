@@ -11,11 +11,11 @@ const testEnv = await initializeTestEnvironment({
   storage: { rules: readFileSync(new URL('../storage.rules', import.meta.url), 'utf8') },
 });
 
-const admin = testEnv.authenticatedContext('global-admin', { email: 'admin@example.test' });
-const owner = testEnv.authenticatedContext('project-owner', { email: 'owner@example.test' });
-const projectAdmin = testEnv.authenticatedContext('project-admin', { email: 'project-admin@example.test' });
-const editor = testEnv.authenticatedContext('area-editor', { email: 'editor@example.test' });
-const outsider = testEnv.authenticatedContext('outsider', { email: 'outsider@example.test' });
+const admin = testEnv.authenticatedContext('global-admin', { email_verified: true, email: 'admin@example.test' });
+const owner = testEnv.authenticatedContext('project-owner', { email_verified: true, email: 'owner@example.test' });
+const projectAdmin = testEnv.authenticatedContext('project-admin', { email_verified: true, email: 'project-admin@example.test' });
+const editor = testEnv.authenticatedContext('area-editor', { email_verified: true, email: 'editor@example.test' });
+const outsider = testEnv.authenticatedContext('outsider', { email_verified: true, email: 'outsider@example.test' });
 
 const metadata = (scope, overrides = {}) => ({
   projectId,

@@ -57,6 +57,7 @@ import { cashLedgerPeople } from '../lib/cashLedgerPeople';
 import { ProjectCommercialSummary } from './project-detail/ProjectCommercialSummary';
 import { ProjectSummaryMetrics } from './project-detail/ProjectSummaryMetrics';
 import { ProjectKeyContacts } from './project-detail/ProjectKeyContacts';
+import { ProjectSigning } from './project-detail/ProjectSigning';
 import { ProjectAdministration } from './project-detail/ProjectAdministration';
 import { readAuthorizedProject, readProjectCommercial } from '../lib/projectCommercial';
 import { splitProjectCommercial } from '../lib/projectCommercialFields';
@@ -8777,6 +8778,7 @@ export default function ProjectDetail() {
 
         {activeTab === 'documentos' && (
           <div className="space-y-4 pb-20">
+            {id && <ProjectSigning projectId={id} />}
             <header className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
               <div>
                 <h2 className="text-base font-bold text-slate-900">Documentos</h2>

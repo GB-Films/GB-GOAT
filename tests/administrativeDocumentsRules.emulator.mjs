@@ -7,8 +7,8 @@ const env = await initializeTestEnvironment({
   firestore: { rules: readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8') },
   storage: { rules: readFileSync(new URL('../storage.rules', import.meta.url), 'utf8') },
 });
-const admin = env.authenticatedContext('admin', { email: 'admin@example.test' });
-const teammate = env.authenticatedContext('teammate', { email: 'teammate@example.test' });
+const admin = env.authenticatedContext('admin', { email_verified: true, email: 'admin@example.test' });
+const teammate = env.authenticatedContext('teammate', { email_verified: true, email: 'teammate@example.test' });
 const projectPath = 'projectAdministration/project-1/documents/contract-1';
 const clientPath = 'clientAdministration/client-1/documents/guide-1';
 const documentData = (scopeId, folder, documentId, kind) => ({

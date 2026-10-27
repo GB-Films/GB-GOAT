@@ -9,9 +9,9 @@ const env = await initializeTestEnvironment({
 });
 const leadUid = 'area-lead', leadEmail = 'lead@example.test';
 const ownerUid = 'legacy-owner', ownerEmail = 'owner@example.test';
-const leadDb = env.authenticatedContext(leadUid, { email: leadEmail }).firestore();
-const ownerDb = env.authenticatedContext(ownerUid, { email: ownerEmail }).firestore();
-const outsiderDb = env.authenticatedContext('outsider', { email: 'outsider@example.test' }).firestore();
+const leadDb = env.authenticatedContext(leadUid, { email_verified: true, email: leadEmail }).firestore();
+const ownerDb = env.authenticatedContext(ownerUid, { email_verified: true, email: ownerEmail }).firestore();
+const outsiderDb = env.authenticatedContext('outsider', { email_verified: true, email: 'outsider@example.test' }).firestore();
 const date = Timestamp.fromDate(new Date('2026-10-01T12:00:00Z'));
 const projectPath = id => `projects/${id}`;
 const expensePath = (projectId, id) => `${projectPath(projectId)}/areaExpenses/${id}`;

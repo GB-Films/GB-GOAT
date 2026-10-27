@@ -4,7 +4,7 @@ import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebas
 import { collection, deleteDoc, doc, getDoc, getDocs, serverTimestamp, setDoc, updateDoc, writeBatch } from 'firebase/firestore';
 
 const env = await initializeTestEnvironment({ projectId: 'demo-gb-goat-commercial', firestore: { rules: readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8') } });
-const database = uid => env.authenticatedContext(uid, { email: `${uid}@example.test` }).firestore();
+const database = uid => env.authenticatedContext(uid, { email_verified: true, email: `${uid}@example.test` }).firestore();
 const admin = database('admin'), owner = database('owner'), manager = database('manager');
 const lead = database('lead'), outsider = database('outsider'), anonymous = env.unauthenticatedContext().firestore();
 const path = 'projectCommercial/private-project';
