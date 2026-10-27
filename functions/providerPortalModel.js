@@ -77,10 +77,10 @@ function profileChanges(before, input) {
   if (!Object.keys(result).length) fail("No hay cambios.");
   return result;
 }
-function thirdParty(input, workKeys) {
-  const roles = [...new Set(list(input.roles))].sort();
-  if (!roles.length || roles.some((r) => !["invoice", "payment"].includes(r)))
-    fail("Elegí quién factura y/o cobra.");
+function thirdPartyIdentity(input, payment = true) {
+  for (const [key, max] of Object.entries({ name: 160, cuit: 30, email: 300, relationship: 300, activity: 500, holder: 160, cbu: 22, alias: 100 })) {
+    if (input[key] != null && (typeof input[key] !== "string" || input[key].length > max)) fail("Revisá los datos del tercero.");
+  }
   const party = {
     name: text(input.name, 160),
     cuit: text(input.cuit, 30).replace(/\D/g, ""),
@@ -88,14 +88,26 @@ function thirdParty(input, workKeys) {
     holder: text(input.holder, 160),
     cbu: text(input.cbu, 22),
     alias: text(input.alias, 100),
+    relationship: text(input.relationship, 300),
+    activity: text(input.activity, 500),
   };
   if (!party.name || !/^\d{11}$/.test(party.cuit))
     fail("Identificá al tercero y su CUIT.");
   if (
-    roles.includes("payment") &&
+    payment &&
     (!party.holder || (!/^\d{22}$/.test(party.cbu) && !party.alias))
   )
     fail("Indicá titular y CBU/CVU o alias.");
+  if (!party.relationship || !party.activity)
+    fail("Indicá la relación con el prestador y la actividad del tercero.");
+  if (party.cbu && !/^\d{22}$/.test(party.cbu)) fail("CBU/CVU inválida.");
+  return party;
+}
+function thirdParty(input, workKeys) {
+  const roles = [...new Set(list(input.roles))].sort();
+  if (!roles.length || roles.some((r) => !["invoice", "payment"].includes(r)))
+    fail("Elegí quién factura y/o cobra.");
+  const party = thirdPartyIdentity(input, roles.includes("payment"));
   const scope = [...new Set(list(input.workKeys))].sort();
   if (
     !scope.length ||
@@ -117,7 +129,7 @@ function thirdParty(input, workKeys) {
     roles,
     workKeys: scope,
     expiresOn,
-    termsVersion: "third-party-v1",
+    termsVersion: "third-party-v2",
     terms:
       "Declaro haber realizado los servicios identificados. Designo al tercero indicado para recibir los pagos de los trabajos seleccionados cuando corresponda. Los acuerdos y la distribución posterior de los fondos entre esa persona y yo son de nuestra responsabilidad. El emisor fiscal propuesto queda sujeto a validación contable. Esta autorización no acredita un pago realizado.",
   };
@@ -217,6 +229,7 @@ module.exports = {
   COMMON,
   profileChanges,
   thirdParty,
+  thirdPartyIdentity,
   accessCandidates,
   publicProfile,
   expenseInvoices,

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import {
   downloadPortalFile,
@@ -48,11 +49,12 @@ const money = (value: number, currency = "ARS") =>
 const box = "rounded-2xl border border-slate-200 bg-white p-4";
 export default function ProviderPortal() {
   const { user } = useAuth();
+  const [searchParams] = useSearchParams();
   const [hasLoaded, setHasLoaded] = useState(false);
   const loadRevision = useRef(0),
     attempts = useRef(new Map<string, string>());
   const [members, setMembers] = useState<any[]>([]),
-    [providerId, setProviderId] = useState(""),
+    [providerId, setProviderId] = useState(() => searchParams.get("provider") || ""),
     [view, setView] = useState<any>(null),
     [docs, setDocs] = useState<any[]>([]),
     [tab, setTab] = useState(tabs[0]),
@@ -66,6 +68,8 @@ export default function ProviderPortal() {
     name: "",
     cuit: "",
     email: "",
+    relationship: "",
+    activity: "",
     holder: "",
     cbu: "",
     alias: "",
@@ -74,6 +78,15 @@ export default function ProviderPortal() {
     expiresOn: "",
   });
   const selected = members.find((m) => m.providerId === providerId);
+  const intakePrefilled = useRef("");
+  useEffect(() => {
+    const key = `${user?.uid}/${providerId}`;
+    if (!view?.thirdPartyIntake || intakePrefilled.current === key) return;
+    intakePrefilled.current = key;
+    if (view.declarations.some((d: any) => d.kind === "third_party")) return;
+    setParty({ ...view.thirdPartyIntake.party, roles: view.thirdPartyIntake.roles, workKeys: view.thirdPartyIntake.workKeys, expiresOn: "" });
+    setTab("Mis datos");
+  }, [view, providerId, user?.uid]);
   useEffect(() => {
     if (selected?.type === "empresa") setCapacity("authorized_representative");
   }, [selected?.type]);
@@ -171,6 +184,7 @@ export default function ProviderPortal() {
               disabled={busy}
               value={providerId}
               onChange={(e) => {
+                intakePrefilled.current = "";
                 loadRevision.current++;
                 setView(null);
                 setSigning(null);
@@ -181,6 +195,8 @@ export default function ProviderPortal() {
                   name: "",
                   cuit: "",
                   email: "",
+                  relationship: "",
+                  activity: "",
                   holder: "",
                   cbu: "",
                   alias: "",
@@ -594,6 +610,8 @@ export default function ProviderPortal() {
                     {d.content.party.name} · CUIT {d.content.party.cuit} · Hasta{" "}
                     {d.content.expiresOn}
                   </p>
+                  {d.content.party.relationship && <p className="text-sm">Relación con el prestador: {d.content.party.relationship}</p>}
+                  {d.content.party.activity && <p className="text-sm">Actividad declarada del tercero: {d.content.party.activity}</p>}
                   {["active", "pending_review"].includes(d.status) && (
                     <button
                       disabled={busy}
@@ -700,7 +718,7 @@ export default function ProviderPortal() {
               Revisar cambios y firmar
             </button>
           </form>
-          <form
+          {view.provider.type === "persona" && <form
             className={box + " space-y-3"}
             onSubmit={(e) => {
               e.preventDefault();
@@ -708,6 +726,7 @@ export default function ProviderPortal() {
             }}
           >
             <h2 className="font-bold">Quién factura y cobra por mí</h2>
+            {view.thirdPartyIntake && !view.declarations.some((d: any) => d.kind === "third_party") && <p className="rounded-lg bg-blue-50 p-3 text-sm text-blue-900">Recuperamos tu solicitud del alta. Revisá los datos, elegí la vigencia y confirmá los trabajos antes de firmar. Todavía requiere revisión administrativa.{!view.works.length && " Cuando administración te asigne un trabajo, vas a poder completar esta autorización."}</p>}
             <p className="text-sm text-slate-600">
               Si interviene otra persona, identificála y elegí los trabajos. La
               autorización de cobro y el encuadre de facturación se revisan por
@@ -718,6 +737,8 @@ export default function ProviderPortal() {
                 name: "Nombre o razón social del tercero",
                 cuit: "CUIT del tercero",
                 email: "Correo del tercero",
+                relationship: "Relación con el prestador",
+                activity: "Actividad que realiza el tercero",
                 holder: "Titular de la cuenta",
                 cbu: "CBU/CVU",
                 alias: "Alias",
@@ -726,7 +747,7 @@ export default function ProviderPortal() {
                 <label key={key} className="text-sm">
                   {label}
                   <input
-                    required={["name", "cuit", "expiresOn"].includes(key)}
+                    required={["name", "cuit", "relationship", "activity", "expiresOn"].includes(key)}
                     type={key === "expiresOn" ? "date" : "text"}
                     className="mt-1 block w-full rounded border p-2"
                     value={party[key]}
@@ -787,7 +808,7 @@ export default function ProviderPortal() {
             >
               Revisar autorización y firmar
             </button>
-          </form>
+          </form>}
         </>
       )}
       {signing && (

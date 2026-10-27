@@ -67,6 +67,7 @@ try {
     { personalGoogleAccount: { version: 'personal-google-v1', uid: 'person', email: 'personal@other.test', personalUse: true, acceptedAt: new Date(0) } },
     { personalGoogleAccount: null }, { role: 'admin' }, { createdAt: new Date(0) },
     { name: 'x'.repeat(10000) }, { phone: 123 }, { address: null },
+    { thirdPartyIntake: { party: { name: 'Tercero' } } },
   ].entries()) {
     const token = `data-${index}`;
     await seed(token);

@@ -90,6 +90,9 @@ async function declarationPdf(d) {
   if (d.kind === "third_party") {
     line(`Tercero: ${c.party.name}`);
     line(`CUIT del tercero: ${c.party.cuit}`);
+    if (c.party.relationship) line(`Relación con el prestador: ${c.party.relationship}`);
+    if (c.party.activity) line(`Actividad declarada del tercero: ${c.party.activity}`);
+    line("El servicio del prestador se identifica en los trabajos alcanzados. La actividad del tercero no lo sustituye.");
     line(
       `Funciones solicitadas: ${c.roles.map((r) => (r === "invoice" ? "Emisor fiscal propuesto (sujeto a validación)" : "Beneficiario designado para cobro")).join("; ")}`,
     );

@@ -80,6 +80,7 @@ function createProviderPortalAdminHandler({
     }
     if (input.action === "authorizations") {
       const providerId = id(input.providerId);
+      const provider = (await db.doc(`providers/${providerId}`).get()).data();
       const rows = await db
         .collection("providerPortalDeclarations")
         .where("providerId", "==", providerId)
@@ -93,7 +94,7 @@ function createProviderPortalAdminHandler({
           .map((d) => ({
             ...d,
             valid:
-              d.status === "active" && d.content.expiresOn >= dateKey(clock()),
+              provider?.type === "persona" && d.status === "active" && d.content.expiresOn >= dateKey(clock()),
           })),
       };
     }
@@ -337,6 +338,8 @@ function createProviderPortalAdminHandler({
             },
           });
         } else if (d.kind === "third_party") {
+          if (p?.type !== "persona" && input.decision === "approved")
+            fail("Esta alternativa requiere una ficha de persona física. Las empresas no pueden activar nuevas autorizaciones de terceros.");
           if (d.content.expiresOn < dateKey(clock()))
             fail("Autorización vencida.");
           const roles = list(input.roles);

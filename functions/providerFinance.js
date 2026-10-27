@@ -161,6 +161,7 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, clo
       }
       const provider = await tx.get(db.doc(`providers/${record.providerId}`));
       if (!provider.exists) fail('No existe el proveedor.');
+      if (record.thirdPartyAuthorizationId && provider.data().type !== 'persona') fail('Sólo personas físicas pueden usar autorizaciones de terceros para operaciones nuevas.');
       const authority=record.thirdPartyAuthorizationId?(await tx.get(db.doc(`providerPortalDeclarations/${record.thirdPartyAuthorizationId}`))).data():null;
       const authorization=record.thirdPartyAuthorizationId?authorizedParty(record,authority,clock()):null;
       const fiscalRef = record.fiscalKey ? db.doc(`providerFiscalKeys/${record.fiscalKey}`) : null;
