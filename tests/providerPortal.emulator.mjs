@@ -708,6 +708,10 @@ try {
   await db.doc("providerPortalDeclarations/company-pending-history").set({ kind: "third_party", providerId: "company-no-third", status: "pending_review", proof: { complete: true }, content: { roles: ["payment"], expiresOn: "2026-12-31" } });
   await assert.rejects(adminCall({ action: "review", declarationId: "company-pending-history", roles: ["payment"], decision: "approved", reason: "No permitida" }), /empresas/);
   assert.equal((await db.doc("providerPortalDeclarations/company-pending-history").get()).data().status, "pending_review");
+  await db.doc("providerPortalDeclarations/company-active-history").set({ kind: "third_party", providerId: "company-no-third", status: "active", proof: { complete: true }, effectiveRoles: ["payment"], content: { roles: ["payment"], expiresOn: "2026-12-31" } });
+  const companyHistory = (await adminCall({ action: "authorizations", providerId: "company-no-third" })).authorizations.find(d => d.id === "company-active-history");
+  assert.equal(companyHistory.valid, false);
+  assert.equal(companyHistory.status, "active", "history is preserved without enabling new operations");
   assert.equal((await db.collection("providers").get()).size, beforeIntake + 6);
   console.log("PASS: person intake without own CUIT/bank → representation → real GB Sign third-party declaration → role review; company, forgery, duplicate and work isolation guards.");
   console.log(
