@@ -4,7 +4,7 @@ import { Plus } from 'lucide-react';
 import { CashBoxPicker } from '../../src/pages/project-detail/CashBoxPicker';
 import { CashLedger } from '../../src/pages/project-detail/CashLedger';
 import { CashMovementDialog, type CashMovementKind } from '../../src/pages/project-detail/CashMovementDialog';
-import { calculateCashBalances, calculateGeneralCashSummary, isGeneralCashMovement } from '../../src/lib/cashBoxes';
+import { calculateCashBalances, calculateGeneralCashSummary } from '../../src/lib/cashBoxes';
 import type { CashMovement } from '../../src/pages/project-detail/types';
 import '../../src/index.css';
 
@@ -19,28 +19,31 @@ const movements: CashMovement[] = [
 ];
 
 function Example() {
-  const [account, setAccount] = useState(people[0].email);
+  const [account, setAccount] = useState('all');
+  const [admin, setAdmin] = useState(true);
   const [kind, setKind] = useState<CashMovementKind | null>(null);
   const [recipient, setRecipient] = useState(people[1].email);
   const [notice, setNotice] = useState('');
   const balances = calculateCashBalances(movements);
   const general = calculateGeneralCashSummary(movements);
   const rows = people.map(responsible => ({ email: responsible.email, responsible, balance: balances.get(responsible.email) || 0 }));
-  const visible = account === 'general' ? general.movements : movements.filter(m => (m.toUserEmail === account && m.type !== 'devolucion') || (m.fromUserEmail === account && !((m.type === 'pago' || m.type === 'reintegro') && m.cashAccount === 'general')));
+  const visible = account === 'all' && admin ? movements : account === 'general' ? general.movements : movements.filter(m => (m.toUserEmail === account && m.type !== 'devolucion') || (m.fromUserEmail === account && !((m.type === 'pago' || m.type === 'reintegro') && m.cashAccount === 'general')));
   return <main className="mx-auto max-w-[1440px] space-y-4 p-4 sm:p-8">
     <div className="text-xs text-slate-500">Vista de ejemplo · datos ficticios · no registra operaciones</div>
+    <label className="flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={admin}
+      onChange={event => { setAdmin(event.target.checked); setAccount(event.target.checked ? 'all' : people[0].email); setKind(null); }} />Ver como administrador</label>
     <h1 className="text-2xl font-bold">Proyecto de ejemplo</h1>
     <header className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
       <h2 className="text-base font-bold">Cajas</h2>
-      <button onClick={() => setKind('entrega')} className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"><Plus className="h-4 w-4" />Registrar movimiento</button>
+      <button onClick={() => setKind(admin ? 'entrega' : 'devolucion')} className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"><Plus className="h-4 w-4" />Registrar movimiento</button>
     </header>
     <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-      <CashBoxPicker rows={rows} value={account} onChange={setAccount} showGeneral generalOut={general.totalOut} />
-      <CashLedger movements={visible} account={account} budgetItems={[]} areaExpenses={[{ id: 'catering', providerName: 'Catering del Sur', description: 'Almuerzos del equipo' }]}
+      <CashBoxPicker rows={admin ? rows : rows.filter(row => row.email === people[0].email)} value={account} onChange={setAccount} showGeneral={admin} generalOut={general.totalOut} />
+      <CashLedger movements={visible} account={account} people={people} budgetItems={[]} areaExpenses={[{ id: 'catering', providerName: 'Catering del Sur', description: 'Almuerzos del equipo' }]}
         renderActions={m => m.status === 'pending' ? <button onClick={() => setNotice('Esta es una muestra: no se confirmó ninguna recepción real.')} className="rounded-md bg-amber-950 px-3 py-2 text-xs font-semibold text-white">Confirmar recepción</button> : null} />
     </section>
     {notice && <p role="status" className="rounded-lg bg-blue-50 p-3 text-sm text-blue-800">{notice}</p>}
-    {kind && <CashMovementDialog kind={kind} onKindChange={setKind} onClose={() => setKind(null)} canDeliver canTransfer canReturn
+    {kind && <CashMovementDialog kind={kind} onKindChange={setKind} onClose={() => setKind(null)} canDeliver={admin} canTransfer={admin} canReturn
       recipients={people} recipientEmail={recipient} onRecipientChange={setRecipient} availableBalance={balances.get(people[0].email) || 0}
       ownName={people[0].displayName} defaultDate="2026-10-27" busy={false}
       onSubmit={event => { event.preventDefault(); setKind(null); setNotice('Vista de ejemplo: no se registró ningún movimiento.'); }} />}

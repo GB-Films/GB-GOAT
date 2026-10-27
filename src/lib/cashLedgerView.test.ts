@@ -1,11 +1,32 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cashLedgerEntry, cashMovementDate, sortCashMovements } from './cashLedgerView';
+import { cashLedgerEntry, cashMovementCashbox, cashMovementDate, resolveCashBoxSelection, sortCashMovements } from './cashLedgerView';
 import { calculateCashBalances } from './cashBoxes';
 import type { CashMovement } from '../pages/project-detail/types';
 
 const movement = (data: Partial<CashMovement>): CashMovement => ({ id: 'm', type: 'entrega', amount: 100, date: '2026-10-27', ...data });
 const entry = (data: CashMovement, account = 'ana@example.com') => cashLedgerEntry(data, account, [], []);
+
+test('only administrators select the all or General view; other viewers stay on their own cashbox', () => {
+  const emails = ['ana@example.com', 'luz@example.com'];
+  assert.equal(resolveCashBoxSelection('', true, 'ana@example.com', emails), 'all');
+  for (const requested of ['all', 'general', 'luz@example.com']) {
+    assert.equal(resolveCashBoxSelection(requested, true, 'ana@example.com', emails), requested);
+    assert.equal(resolveCashBoxSelection(requested, false, 'ANA@example.com', emails), 'ana@example.com');
+  }
+  assert.equal(resolveCashBoxSelection('all', false, 'absent@example.com', emails), '');
+});
+
+test('the all view describes each source and destination without expanding one transfer into duplicate records', () => {
+  const people = [{ email: 'ana@example.com', displayName: 'Ana' }, { email: 'luz@example.com', displayName: 'Luz' }];
+  const transfer = movement({ type: 'transferencia', fromUserEmail: people[0].email, toUserEmail: people[1].email });
+  assert.equal(cashMovementCashbox(transfer, people).name, 'Ana → Luz');
+  assert.equal(cashMovementCashbox(transfer, people).email, 'ana@example.com → luz@example.com');
+  assert.equal(entry(transfer, 'all').label, 'Transferencia');
+  assert.equal(cashMovementCashbox(movement({ toUserEmail: people[0].email }), people).name, 'Caja General → Ana');
+  assert.equal(cashMovementCashbox(movement({ type: 'devolucion', fromUserEmail: people[0].email }), people).name, 'Ana → Caja General');
+  assert.equal(cashMovementCashbox(movement({ type: 'pago', cashAccount: 'general', fromUserEmail: people[0].email }), people).name, 'Caja General');
+});
 
 test('a delivery is income for its recipient and an outflow for General; pending reception stays separate from balance', () => {
   const delivery = movement({ toUserEmail: 'ANA@example.com', toUserName: 'Ana', status: 'pending' });

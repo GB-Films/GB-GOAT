@@ -56,6 +56,7 @@ import { CashBoxPicker } from './project-detail/CashBoxPicker';
 import { CashLedger } from './project-detail/CashLedger';
 import { CashMovementDialog } from './project-detail/CashMovementDialog';
 import { cashLedgerPeople } from '../lib/cashLedgerPeople';
+import { resolveCashBoxSelection } from '../lib/cashLedgerView';
 import { ProjectCommercialSummary } from './project-detail/ProjectCommercialSummary';
 import { ProjectSummaryMetrics } from './project-detail/ProjectSummaryMetrics';
 import { ProjectKeyContacts } from './project-detail/ProjectKeyContacts';
@@ -4226,11 +4227,6 @@ export default function ProjectDetail() {
       .filter((responsible) => (
         isProjectAdmin
         || normalizeEmail(responsible.email) === currentUserEmail
-        || (
-          isProductionLead
-          && responsible.role === 'jefe_area'
-          && safeArray(responsible.allowedCategories).some((area) => safeArray(userPermissions?.allowedCategories).includes(area))
-        )
       ))
       .map((responsible) => {
         const email = normalizeEmail(responsible.email);
@@ -4253,11 +4249,8 @@ export default function ProjectDetail() {
         };
       })
       .filter(row => row.movements.length > 0 || row.balance !== 0 || row.email === currentUserEmail)
-  ), [cashBalanceByEmail, cashMovements, cashResponsibles, currentUserEmail, isProductionLead, isProjectAdmin, userPermissions]);
-  const activeCashBox = isProjectAdmin && selectedCashBox === 'general' ? 'general'
-    : visibleCashRows.some(row => row.email === selectedCashBox) ? selectedCashBox
-      : visibleCashRows.some(row => row.email === currentUserEmail) ? currentUserEmail
-        : isProjectAdmin ? 'general' : visibleCashRows[0]?.email || '';
+  ), [cashBalanceByEmail, cashMovements, cashResponsibles, currentUserEmail, isProjectAdmin]);
+  const activeCashBox = resolveCashBoxSelection(selectedCashBox, isProjectAdmin, currentUserEmail, visibleCashRows.map(row => row.email));
 
   useEffect(() => {
     if (!cashRecipientEmail && cashResponsibles.length > 0) {
@@ -7367,7 +7360,7 @@ export default function ProjectDetail() {
               </button>}
             </header>
 
-            {((pendingCashDeliveries.length > 0 && activeCashBox !== currentUserEmail) || (isProjectAdmin && pendingCashReturns.length > 0 && activeCashBox !== 'general')) && <div className="flex flex-wrap gap-2">
+            {activeCashBox !== 'all' && ((pendingCashDeliveries.length > 0 && activeCashBox !== currentUserEmail) || (isProjectAdmin && pendingCashReturns.length > 0 && activeCashBox !== 'general')) && <div className="flex flex-wrap gap-2">
               {pendingCashDeliveries.length > 0 && activeCashBox !== currentUserEmail && <button type="button" onClick={() => setSelectedCashBox(currentUserEmail)}
                 className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900">Recibir caja ({pendingCashDeliveries.length})</button>}
               {isProjectAdmin && pendingCashReturns.length > 0 && activeCashBox !== 'general' && <button type="button" onClick={() => setSelectedCashBox('general')}
@@ -7378,7 +7371,8 @@ export default function ProjectDetail() {
               <CashBoxPicker rows={visibleCashRows} value={activeCashBox} onChange={setSelectedCashBox}
                 showGeneral={isProjectAdmin} generalOut={generalCashSummary.totalOut} />
               <CashLedger account={activeCashBox}
-                movements={activeCashBox === 'general' ? generalCashMovements : visibleCashRows.find(row => row.email === activeCashBox)?.movements || []}
+                movements={isProjectAdmin && activeCashBox === 'all' ? cashMovements : activeCashBox === 'general' ? generalCashMovements : visibleCashRows.find(row => row.email === activeCashBox)?.movements || []}
+                people={visibleCashRows.map(row => ({ email: row.email, displayName: row.responsible.displayName }))}
                 budgetItems={budgetItems} areaExpenses={areaExpenses}
                 renderActions={movement => {
                   const target = resolveCashMovementTarget(movement, budgetItems, areaExpenses);
