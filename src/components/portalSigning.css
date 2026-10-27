@@ -1,0 +1,59 @@
+.portal-sign-backdrop { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 16px; background: #020617ba; }
+.portal-sign-dialog { display: flex; flex-direction: column; width: min(1600px, 100%); height: calc(100dvh - 32px); min-height: 0; overflow: hidden; border-radius: 18px; background: white; box-shadow: 0 20px 60px #02061755; color: #0f172a; font-size: 14px; }
+.portal-sign-dialog button, .portal-sign-dialog select, .portal-sign-dialog input { font: inherit; }
+.portal-sign-dialog button, .portal-sign-dialog select { min-height: 36px; border: 1px solid #cbd5e1; border-radius: 8px; background: white; padding: 6px 10px; cursor: pointer; }
+.portal-sign-dialog :focus-visible { outline: 3px solid #2563eb; outline-offset: 2px; }
+.portal-sign-dialog button:disabled, .portal-sign-dialog select:disabled { opacity: .45; cursor: default; }
+.portal-sign-header { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; gap: 16px; padding: 14px 20px; border-bottom: 1px solid #e2e8f0; }
+.portal-sign-header p { margin: 0 0 2px; font-size: 12px; color: #64748b; }
+.portal-sign-header h2 { margin: 0; font-size: 18px; font-weight: 700; overflow-wrap: anywhere; }
+.portal-sign-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; flex: 1; min-height: 0; }
+.portal-sign-document { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 14px 16px 8px; background: #f1f5f9; }
+.portal-sign-dialog h3 { margin: 0 0 10px; font-size: 15px; font-weight: 700; }
+.portal-sign-details { overflow: auto; min-width: 0; padding: 16px; border-left: 1px solid #e2e8f0; overscroll-behavior: contain; }
+.portal-sign-details fieldset { display: grid; min-width: 0; gap: 14px; border: 0; margin: 0; padding: 0; }
+.portal-sign-details fieldset:disabled canvas { pointer-events: none; }
+.portal-sign-card { min-width: 0; padding: 14px; border: 1px solid #e2e8f0; border-radius: 12px; }
+.portal-sign-email { display: block; margin: 4px 0 14px; overflow-wrap: anywhere; }
+.portal-sign-label { display: grid; gap: 6px; margin: 12px 0; font-weight: 500; }
+.portal-sign-label input { width: 100%; min-width: 0; min-height: 44px; border: 1px solid #cbd5e1; border-radius: 8px; padding: 9px 10px; font-size: 16px; background: white; }
+.portal-sign-check { display: flex; align-items: flex-start; gap: 10px; margin: 12px 0; line-height: 1.5; cursor: pointer; }
+.portal-sign-check input { flex-shrink: 0; width: 18px; height: 18px; margin-top: 2px; accent-color: #0f172a; }
+.portal-sign-muted { margin: 8px 0; color: #64748b; font-size: 12px; line-height: 1.5; }
+.portal-sign-modes { display: flex; gap: 6px; }
+.portal-sign-modes button { flex: 1; padding: 8px; font-size: 12px; }
+.portal-sign-modes button[aria-pressed=true] { background: #0f172a; border-color: #0f172a; color: white; }
+.portal-sign-name-preview { display: grid; place-items: center; min-height: 100px; padding: 12px; overflow-wrap: anywhere; font: italic 30px cursive; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; }
+.portal-sign-field-status { padding: 10px; margin: 12px 0 0; background: #fffbeb; border-radius: 8px; color: #92400e; font-size: 12px; line-height: 1.5; }
+.portal-sign-field-status.is-ready { color: #166534; background: #f0fdf4; }
+.portal-sign-dialog .portal-sign-submit { width: 100%; min-height: 46px; color: white; background: #0f172a; border-color: #0f172a; font-weight: 600; margin-top: 8px; }
+.portal-sign-error { padding: 12px; margin: 8px 0; color: #b91c1c; background: #fef2f2; border-radius: 8px; }
+.portal-sign-load-error { padding: 24px; }
+.portal-pdf { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
+.portal-pdf-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; flex-shrink: 0; margin-bottom: 10px; font-size: 12px; }
+.portal-pdf-control-group { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.portal-pdf-toolbar a { padding: 8px 4px; text-decoration: underline; white-space: nowrap; }
+.portal-pdf-toolbar select { min-width: 0; max-width: 170px; }
+.portal-pdf-viewport { flex: 1; min-height: 0; overflow: auto; position: relative; padding: 16px; border-radius: 8px; background: #cbd5e1; overscroll-behavior: contain; }
+.portal-pdf-sheet { position: relative; margin: 0 auto; background: white; box-shadow: 0 2px 10px #33415533; flex-shrink: 0; }
+.portal-pdf-sheet canvas { display: block; max-width: none; }
+.portal-pdf-loading { position: absolute; inset: 24px 0 auto; text-align: center; color: #334155; }
+.portal-pdf-hint { flex-shrink: 0; margin: 8px 0 0; color: #475569; font-size: 12px; line-height: 1.4; }
+.portal-sign-dialog .portal-sign-field { position: absolute; display: grid; place-items: center; min-height: 0; padding: 2px; border: 2px dashed #2563eb; border-radius: 4px; background: #dbeafecc; color: #1e40af; font-size: clamp(9px, 1vw, 12px); line-height: 1.2; text-align: center; overflow: hidden; }
+.portal-sign-dialog .portal-sign-field.is-selected { border: 2px solid #15803d; background: #f0fdf4cc; color: #166534; }
+.portal-sign-visual { display: grid; place-items: center; width: 90%; height: 85%; overflow: hidden; pointer-events: none; font: italic clamp(12px, 2vw, 26px) cursive; }
+.portal-sign-visual img { width: 100%; height: 100%; min-height: 0; object-fit: contain; }
+@media (max-width: 900px) {
+  .portal-sign-backdrop { padding: 0; }
+  .portal-sign-dialog { height: 100dvh; width: 100%; border-radius: 0; }
+  .portal-sign-header { padding: 12px 14px; }
+  .portal-sign-header h2 { font-size: 16px; }
+  .portal-sign-layout { display: block; overflow: auto; }
+  .portal-sign-document { height: max(560px, 78dvh); padding: 12px; }
+  .portal-sign-details { overflow: visible; padding: 12px; border-left: 0; }
+  .portal-sign-card { padding: 16px; }
+  .portal-sign-dialog button, .portal-sign-dialog select { min-height: 42px; }
+  .portal-sign-modes button { font-size: 14px; }
+  .portal-sign-dialog .portal-sign-field { font-size: 10px; }
+  .portal-sign-visual { font-size: 22px; }
+}

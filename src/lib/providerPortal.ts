@@ -8,6 +8,7 @@ import {
   signInWithCustomToken,
 } from "firebase/auth";
 import { auth, googleProvider } from "./firebase";
+import { personalSignatureFields } from "./portalSigning";
 
 export async function portalRequest(
   input: Record<string, unknown>,
@@ -69,10 +70,15 @@ export async function signPortalDocument(
     typedName: string;
     signatureType?: "typed" | "drawn";
     signatureImage?: string;
+    fieldId?: string;
   },
 ) {
   const actor = auth.currentUser;
   if (!actor) throw Error("Iniciá sesión.");
+  const fields = personalSignatureFields(doc.signatureFields, actor.email || "");
+  const field = fields.find(f => f.id === input.fieldId);
+  if (!doc.signed && !field)
+    throw Error("Seleccioná un recuadro de firma asignado a tu cuenta.");
   const { config } = await portalRequest({ action: "signingSession" });
   const app =
     getApps().find((a) => a.name === "provider-portal-sign") ||
@@ -88,11 +94,6 @@ export async function signPortalDocument(
   ).data as { customToken: string };
   // A second app retains the GOAT session. The short-lived exchange never appears in a URL or storage.
   await signInWithCustomToken(remoteAuth, session.customToken);
-  const field = doc.signatureFields?.find(
-    (f: any) => f.signerEmail.toLowerCase() === actor.email?.toLowerCase(),
-  );
-  if (!field)
-    throw Error("El documento no tiene un campo asignado a tu cuenta.");
   try {
     if (doc.signed)
       return (
