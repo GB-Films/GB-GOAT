@@ -2,6 +2,30 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist";
 import type { PortalSignatureField } from "../lib/portalSigning";
 
+const scrollAnimations = new WeakMap<HTMLElement, () => void>();
+function scrollToField(element: HTMLElement, top: number, left: number) {
+  scrollAnimations.get(element)?.();
+  top = Math.max(0, Math.min(top, element.scrollHeight - element.clientHeight));
+  left = Math.max(0, Math.min(left, element.scrollWidth - element.clientWidth));
+  const startTop = element.scrollTop, startLeft = element.scrollLeft;
+  const distance = Math.hypot(top - startTop, left - startLeft);
+  if (distance < 2 || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+    element.scrollTo({ top, left, behavior: 'instant' }); return;
+  }
+  const duration = Math.min(450, 240 + distance * .025), started = performance.now();
+  let frame = 0;
+  const cancel = () => { cancelAnimationFrame(frame); if (scrollAnimations.get(element) === cancel) scrollAnimations.delete(element); for (const event of ['wheel', 'touchstart', 'pointerdown']) element.removeEventListener(event, cancel); };
+  scrollAnimations.set(element, cancel);
+  for (const event of ['wheel', 'touchstart', 'pointerdown']) element.addEventListener(event, cancel, { passive: true });
+  const tick = (now: number) => {
+    const progress = Math.min(1, (now - started) / duration);
+    const eased = progress < .5 ? 4 * progress ** 3 : 1 - (-2 * progress + 2) ** 3 / 2;
+    element.scrollTo({ top: startTop + (top - startTop) * eased, left: startLeft + (left - startLeft) * eased, behavior: 'instant' });
+    if (progress < 1) frame = requestAnimationFrame(tick); else cancel();
+  };
+  frame = requestAnimationFrame(tick);
+}
+
 type Props = {
   url: string;
   fields: PortalSignatureField[];
@@ -43,6 +67,7 @@ function DocumentPage({ pdf, pageNumber, root, size, fit, zoom, fields, selected
 
   useEffect(() => {
     let cancelled = false;
+    const scrollViewport = viewport.current, scrollLayout = scrollViewport?.closest<HTMLElement>('.portal-sign-layout');
     void pdf.getPage(pageNumber).then(loaded => { if (!cancelled) setPage(loaded); }).catch(() => {
       if (!cancelled) onError("No pudimos cargar una página. Volvé a cargar el documento antes de firmar.");
     });
@@ -122,6 +147,7 @@ export function PortalDocumentViewer({ url, fields, selectedFieldId, signatureIm
   const [renderedPages, setRenderedPages] = useState<Set<number>>(() => new Set());
   const viewport = useRef<HTMLDivElement>(null);
   const handledFocus = useRef(0);
+  const navigatedFocus = useRef(0);
   const ready = !!pdf && !error && renderedPages.has(pageNumber);
   const onRendered = useCallback((page: number, rendered: boolean) => {
     setRenderedPages(previous => {
@@ -159,7 +185,7 @@ export function PortalDocumentViewer({ url, fields, selectedFieldId, signatureIm
         if (!cancelled) setError("No pudimos mostrar el PDF. Volvé a cargar el documento para revisarlo antes de firmar.");
       }
     })();
-    return () => { cancelled = true; void task?.destroy(); };
+    return () => { cancelled = true; if (scrollViewport) scrollAnimations.get(scrollViewport)?.(); if (scrollLayout) scrollAnimations.get(scrollLayout)?.(); void task?.destroy(); };
   }, [url, onPageCount, initialFit]);
 
   function trackPage() {
@@ -181,16 +207,21 @@ export function PortalDocumentViewer({ url, fields, selectedFieldId, signatureIm
     if (!element || !sheet) return;
     const field = fieldId ? Array.from(sheet.querySelectorAll<HTMLElement>("[data-signature-field-id]")).find((f: HTMLElement) => f.dataset.signatureFieldId === fieldId) as HTMLElement | undefined : undefined;
     const rect = (field || sheet).getBoundingClientRect(), root = element.getBoundingClientRect();
-    element.scrollTo({ top: element.scrollTop + rect.top - root.top - (field ? (element.clientHeight - rect.height) / 2 : 16), left: field ? element.scrollLeft + rect.left - root.left - (element.clientWidth - rect.width) / 2 : 0 });
+    const top = element.scrollTop + rect.top - root.top - (field ? (element.clientHeight - rect.height) / 2 : 16);
+    const left = field ? element.scrollLeft + rect.left - root.left - (element.clientWidth - rect.width) / 2 : 0;
+    if (fieldId) scrollToField(element, top, left); else { scrollAnimations.get(element)?.(); element.scrollTo({ top, left }); }
     setPageNumber(page);
   }
   useEffect(() => {
     if (!focusFieldRequest || focusFieldRequest.revision === handledFocus.current || !pdf || !size.width) return;
     const field = fields.find(value => value.id === focusFieldRequest.id);
     if (!field) return;
-    goToPage(field.page, field.id);
-    const layout = viewport.current?.closest<HTMLElement>('.portal-sign-layout');
-    if (layout && layout.scrollHeight > layout.clientHeight && layout.scrollTop > 0) layout.scrollTo({ top: 0, behavior: 'smooth' });
+    if (navigatedFocus.current !== focusFieldRequest.revision) {
+      navigatedFocus.current = focusFieldRequest.revision;
+      goToPage(field.page, field.id);
+      const layout = viewport.current?.closest<HTMLElement>('.portal-sign-layout');
+      if (layout && layout.scrollHeight > layout.clientHeight && layout.scrollTop > 0) scrollToField(layout, 0, layout.scrollLeft);
+    }
     if (renderedPages.has(field.page)) {
       const button = (Array.from(viewport.current?.querySelectorAll<HTMLButtonElement>('[data-signature-field-id]') || []) as HTMLButtonElement[]).find(value => value.dataset.signatureFieldId === field.id);
       button?.focus({ preventScroll: true });
