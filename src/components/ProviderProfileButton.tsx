@@ -1,8 +1,10 @@
 import { lazy, Suspense, useState, type ReactNode } from 'react';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
+import { useParams } from 'react-router-dom';
 const ProviderProfileDialog = lazy(() => import('./ProviderProfileDialog'));
 export function ProviderProfileButton({ providerId, children }: { providerId: string; children: ReactNode }) {
+  const { id: projectId } = useParams();
   const [provider, setProvider] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -13,6 +15,6 @@ export function ProviderProfileButton({ providerId, children }: { providerId: st
       catch { setError('No se pudo abrir el proveedor.'); } finally { setLoading(false); }
     }}>{loading ? 'Cargando…' : children}</button>
     {error && <span role="alert" className="text-xs text-rose-700">{error}</span>}
-    {provider && <Suspense fallback={<span className="text-xs">Cargando ficha…</span>}><ProviderProfileDialog provider={provider} onClose={() => setProvider(null)}/></Suspense>}
+    {provider && <Suspense fallback={<span className="text-xs">Cargando ficha…</span>}><ProviderProfileDialog provider={provider} initialProjectId={projectId} onClose={() => setProvider(null)}/></Suspense>}
   </>;
 }

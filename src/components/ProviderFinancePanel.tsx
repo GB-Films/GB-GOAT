@@ -2,7 +2,8 @@ import { ProviderThirdParties } from './ProviderThirdParties';
 import { portalAdminRequest } from '../lib/providerPortal';
 import { useEffect, useMemo, useRef, useState, type ReactNode, type FormEvent } from 'react';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
-import { Plus, X, Paperclip, Ban } from 'lucide-react';
+import { Plus, X } from 'lucide-react';
+import { ProviderFinancialRecordList } from './ProviderFinancialRecordList';
 import { db } from '../lib/firebase';
 import { ProviderPaymentForm } from './ProviderPaymentForm';
 import { providerDisplayName, inferLegacyIdentifiers } from '../lib/providerConstants';
@@ -102,11 +103,11 @@ export function ProviderFinancePanel({ provider, lines, onChanged }: { provider:
       setError(error.message || 'No se pudo registrar el pago.');
     } finally { setBusy(false); }
   };
-  return <section className="rounded-xl border border-slate-200 bg-white p-4 space-y-4">
-      <ProviderThirdParties providerId={provider.id} authorizations={authorizations} />
+  return <section className="space-y-4">
+      {authorizations.length > 0 && <details className="rounded-xl border border-slate-200 p-3"><summary className="cursor-pointer text-xs font-medium text-slate-600">Quién factura y cobra por este proveedor</summary><div className="mt-3"><ProviderThirdParties providerId={provider.id} authorizations={authorizations} /></div></details>}
     <div className="flex flex-wrap items-center justify-between gap-3">
-      <div><h3 className="font-bold text-sm">Facturas, pagos y comprobantes</h3><p className="text-xs text-slate-500">Una carga, con aplicaciones a uno o varios proyectos. No agrega costos ni registra movimientos en CT.</p></div>
-      <div className="flex flex-wrap gap-2">{(['invoice', 'payment', 'other'] as Kind[]).map(value => <button key={value} type="button" disabled={busy || uncertain} onClick={() => start(value)} className="flex items-center gap-1 rounded border px-3 py-2 text-xs font-bold hover:bg-slate-50 disabled:opacity-40"><Plus size={14}/>{value === 'invoice' ? 'Factura' : value === 'payment' ? 'Pago' : 'Comprobante'}</button>)}</div>
+      <h3 className="text-sm font-medium text-slate-500">{providerDisplayName(provider)}</h3>
+      <div className="flex flex-wrap gap-2">{(['invoice', 'payment', 'other'] as Kind[]).map(value => <button key={value} type="button" disabled={busy || uncertain} onClick={() => start(value)} className={`flex items-center gap-1 rounded-lg border px-3 py-2 text-xs font-semibold disabled:opacity-40 ${value === 'invoice' ? 'border-blue-600 bg-blue-600 text-white hover:bg-blue-700' : 'border-slate-200 text-slate-700 hover:bg-slate-50'}`}><Plus size={14}/>{value === 'invoice' ? 'Factura' : value === 'payment' ? 'Pago' : 'Comprobante'}</button>)}</div>
     </div>
     {error && <p role="alert" className="rounded bg-rose-50 p-3 text-sm text-rose-800">{error}</p>}
     {kind === 'payment' && <div key={formVersion}><ProviderPaymentForm authorizations={provider.type==='persona'?authorizations.filter(a=>a.valid&&a.effectiveRoles.includes('payment')&&a.effectiveRoles.includes('invoice')):[]} provider={provider} lines={expenses} invoices={records} busy={busy} uncertain={uncertain} onClose={() => setKind(null)} onSave={savePayment}/></div>}
@@ -150,12 +151,7 @@ export function ProviderFinancePanel({ provider, lines, onChanged }: { provider:
       {uncertain && <p className="text-sm text-amber-800">No se confirmó la respuesta. Reintentá para recuperar la misma operación sin duplicarla.</p>}
       <button type="submit" disabled={busy} className="rounded bg-slate-900 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">{busy ? 'Guardando…' : uncertain ? 'Verificar / reintentar' : 'Guardar y aplicar'}</button>
     </form>}
-    <div className="divide-y divide-slate-100">{records.map(record => <div key={record.id} className={`py-3 text-sm ${record.status === 'cancelled' ? 'opacity-50' : ''}`}>
-      <div className="flex flex-wrap justify-between gap-2"><strong>{record.kind === 'invoice' ? record.number : record.kind === 'payment' ? 'Pago' : 'Comprobante'} · {record.date} {record.status === 'cancelled' && '· Anulado'}</strong><div className="flex gap-3">{record.file && <button type="button" className="inline-flex items-center gap-1 text-blue-700" onClick={() => openProviderFile(record.id).catch(() => setError('No se pudo descargar el documento.'))}><Paperclip size={14}/>Descargar</button>}{record.status === 'active' && <button type="button" disabled={busy} className="inline-flex items-center gap-1 text-rose-700" onClick={() => cancel(record)}><Ban size={14}/>Anular</button>}</div></div>
-      <p className="text-xs text-slate-500">{record.issuerName && `Emisor: ${record.issuerName} · `}{record.payeeName && `Destinatario: ${record.payeeName} · `}{record.currency} {money(record.totalCents)}{record.kind !== 'other' && ` · Neto aplicado ARS ${money(record.netArsCents)}`}</p>
-      {record.notes && <p className="mt-1 text-xs">{record.notes}</p>}
-      <div className="mt-2 flex flex-wrap gap-2">{record.allocations.map((row: any) => <a key={expenseAllocationKey(row)} href={`#/proyectos/${row.projectId}`} className="rounded bg-slate-50 px-2 py-1 text-xs hover:underline">{row.projectName} · ${money(row.amountCents)}</a>)}</div>
-    </div>)}{!records.length && <p className="text-xs text-slate-400">Todavía no hay documentos centralizados. Los adjuntos anteriores se conservan en el detalle de cada proyecto.</p>}</div>
+    <ProviderFinancialRecordList records={records} busy={busy || uncertain} onOpen={openProviderFile} onCancel={cancel} />
   </section>;
 }
 function Field({ label, children }: { label: string; children: ReactNode }) { return <label className="block space-y-1"><span className="block text-xs text-slate-500">{label}</span>{children}</label>; }

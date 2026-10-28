@@ -2,6 +2,7 @@ import { collection, query, getDocs, or, where } from 'firebase/firestore';
 import { db } from './firebase';
 import { getPaymentTotal } from './projectFinance';
 import { getProviderExpenseDocuments, uniqueProviderDocuments } from './providerDocuments';
+import { financialDocumentsForExpense } from './providerFinancialRecords';
 export async function loadProviderDetail(provider: any, profile: any) {
 
   const projectsRef = collection(db, 'projects');
@@ -14,7 +15,11 @@ export async function loadProviderDetail(provider: any, profile: any) {
           where('collaboratorEmails', 'array-contains', String(profile.email || '').trim().toLowerCase())
         )
       );
-  const projectSnapshot = await getDocs(projectsQuery);
+  const [projectSnapshot, sharedRecordsSnapshot] = await Promise.all([
+    getDocs(projectsQuery),
+    profile.role === 'admin' ? getDocs(query(collection(db, 'providerFinancialRecords'), where('providerId', '==', provider.id))) : Promise.resolve(null),
+  ]);
+  const sharedRecords = sharedRecordsSnapshot?.docs.map(row => ({ ...row.data(), id: row.id })) || [];
   const projects = projectSnapshot.docs.map((item) => ({ id: item.id, ...item.data() as any }));
   const lines: any[] = [];
 
@@ -79,6 +84,7 @@ export async function loadProviderDetail(provider: any, profile: any) {
     areaSnap.docs.forEach((item) => pushLine({ id: item.id, ...item.data() }, 'Gestion por Areas'));
   }));
 
+  for (const line of lines) line.sharedDocuments = financialDocumentsForExpense(sharedRecords, line);
   const projectMap = new Map<string, any>();
   lines.forEach((line) => {
     if (!projectMap.has(line.projectId)) {

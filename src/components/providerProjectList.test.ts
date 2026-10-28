@@ -20,7 +20,7 @@ const lines = [
 test('una sola lista agrupa gastos, pagos y documentos bajo su proyecto sin repetir enlaces', () => {
   const before = JSON.stringify({ projects, lines });
   const html = renderToStaticMarkup(createElement(ProviderProjectList, { projects, lines }));
-  assert.equal((html.match(/class="group\/project"/g) || []).length, 2);
+  assert.equal((html.match(/class="group\/project\b/g) || []).length, 2);
   assert.doesNotMatch(html, /<details[^>]*\bopen\b/);
   const first = html.slice(html.indexOf('<details'), html.indexOf('Proyecto Dos'));
   assert.match(first, /Servicio Uno/);
@@ -39,6 +39,23 @@ test('un proyecto con un gasto muestra sus totales una sola vez', () => {
   assert.equal((html.match(/>Trabajado /g) || []).length, 1);
   assert.match(html, /Reintegro de traslado/);
   assert.match(html, /Sin comprobantes/);
+  assert.doesNotMatch(html, />Importe<|>Pagado<|>Saldo</);
+});
+
+test('la ficha abre sólo el proyecto de origen y mantiene la misma grilla en proyectos con uno o varios gastos', () => {
+  const html = renderToStaticMarkup(createElement(ProviderProjectList, { projects, lines, initialProjectId: 'two' }));
+  assert.equal((html.match(/<details[^>]*open=""/g) || []).length, 1);
+  assert.match(html, /<details[^>]*open=""[^>]*>[\s\S]*Proyecto Dos/);
+  const grids = [...html.matchAll(/<colgroup>(.*?)<\/colgroup>/g)].map(match => match[1]);
+  assert.equal(grids.length, 2);
+  assert.equal(grids[0], grids[1]);
+});
+
+test('el comprobante compartido se ofrece en cada proyecto y no genera enlaces públicos nuevos', () => {
+  const sharedDocuments = [{ id: 'one-invoice', kind: 'invoice' as const, name: 'C 0001-98' }];
+  const html = renderToStaticMarkup(createElement(ProviderProjectList, { projects, lines: lines.map(line => ({ ...line, sharedDocuments })), onOpenSharedDocument: async () => {} }));
+  assert.equal((html.match(/aria-label="Abrir C 0001-98"/g) || []).length, 3);
+  assert.doesNotMatch(html, /href="[^\"]*one-invoice|providerFinance\//);
 });
 
 test('sin proyectos conserva el estado vacío', () => {
