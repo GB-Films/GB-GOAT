@@ -111,10 +111,11 @@ function DocumentPage({ pdf, pageNumber, root, size, fit, zoom, fields, selected
 }
 
 export function PortalDocumentViewer({ url, fields, selectedFieldId, signatureImage, signatureName, onSelectField, onPageCount, onReady, onRetry, editor }: Props) {
+  const initialFit = editor ? "page" : "width";
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [pageNumber, setPageNumber] = useState(1);
   const [size, setSize] = useState({ width: 0, height: 0 });
-  const [fit, setFit] = useState<"page" | "width">("page");
+  const [fit, setFit] = useState<"page" | "width">(initialFit);
   const [zoom, setZoom] = useState(1);
   const [error, setError] = useState("");
   const [renderedPages, setRenderedPages] = useState<Set<number>>(() => new Set());
@@ -141,7 +142,7 @@ export function PortalDocumentViewer({ url, fields, selectedFieldId, signatureIm
   useEffect(() => {
     let cancelled = false;
     let task: ReturnType<typeof import("pdfjs-dist")["getDocument"]> | undefined;
-    setPdf(null); setError(""); setRenderedPages(new Set()); onPageCount(0); setPageNumber(1);
+    setPdf(null); setError(""); setRenderedPages(new Set()); onPageCount(0); setPageNumber(1); setFit(initialFit); setZoom(1);
     viewport.current?.scrollTo({ top: 0, left: 0 });
     if (url) void (async () => {
       try {
@@ -157,7 +158,7 @@ export function PortalDocumentViewer({ url, fields, selectedFieldId, signatureIm
       }
     })();
     return () => { cancelled = true; void task?.destroy(); };
-  }, [url, onPageCount]);
+  }, [url, onPageCount, initialFit]);
 
   function trackPage() {
     const element = viewport.current;
