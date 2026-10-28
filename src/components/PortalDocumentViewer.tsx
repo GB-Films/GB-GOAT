@@ -67,7 +67,6 @@ function DocumentPage({ pdf, pageNumber, root, size, fit, zoom, fields, selected
 
   useEffect(() => {
     let cancelled = false;
-    const scrollViewport = viewport.current, scrollLayout = scrollViewport?.closest<HTMLElement>('.portal-sign-layout');
     void pdf.getPage(pageNumber).then(loaded => { if (!cancelled) setPage(loaded); }).catch(() => {
       if (!cancelled) onError("No pudimos cargar una página. Volvé a cargar el documento antes de firmar.");
     });
@@ -170,6 +169,7 @@ export function PortalDocumentViewer({ url, fields, selectedFieldId, signatureIm
   useEffect(() => {
     let cancelled = false;
     let task: ReturnType<typeof import("pdfjs-dist")["getDocument"]> | undefined;
+    const scrollViewport = viewport.current, scrollLayout = scrollViewport?.closest<HTMLElement>('.portal-sign-layout');
     setPdf(null); setError(""); setRenderedPages(new Set()); onPageCount(0); setPageNumber(1); setFit(initialFit); setZoom(1);
     viewport.current?.scrollTo({ top: 0, left: 0 });
     if (url) void (async () => {
