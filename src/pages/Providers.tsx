@@ -1,5 +1,6 @@
 import { ProviderDetailModal } from '../components/ProviderDetailModal';
 import { loadProviderDetail } from '../lib/providerDetail';
+import { ProviderDataExportDialog } from '../components/ProviderDataExportDialog';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   collection,
@@ -34,7 +35,7 @@ import {
   providerSearchText,
   inferLegacyIdentifiers,
 } from '../lib/providerConstants';
-import { hasGlobalRole, PROVIDER_CREATE_ROLES, PROVIDER_UPDATE_ROLES } from '../lib/roles';
+import { hasGlobalRole, PROVIDER_ACCESS_ROLES, PROVIDER_CREATE_ROLES, PROVIDER_UPDATE_ROLES } from '../lib/roles';
 
 const inputClass = 'w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all';
 const labelClass = 'block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest';
@@ -107,6 +108,7 @@ const buildProviderIdentifiers = (provider: any) => {
 export default function Providers() {
   const [providers, setProviders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showDataExport, setShowDataExport] = useState(false);
   const [showNewModal, setShowNewModal] = useState(false);
   const [editingProvider, setEditingProvider] = useState<any | null>(null);
   const [providerDetail, setProviderDetail] = useState<any | null>(null);
@@ -526,6 +528,7 @@ export default function Providers() {
           status: provisional ? 'provisional' : 'active',
           name: formData.get('name'),
           lastName: formData.get('lastName'),
+          nickname: String(formData.get('nickname') || '').trim(),
           fullName: `${formData.get('name') || ''} ${formData.get('lastName') || ''}`.trim(),
           dni: formData.get('dni'),
           dniNormalized: normalizeDigits(formData.get('dni')),
@@ -608,6 +611,7 @@ export default function Providers() {
       name,
       businessName: providerType === 'empresa' ? name : editingProvider?.businessName || '',
       lastName: providerType === 'empresa' ? '' : lastName,
+      ...(providerType === 'persona' ? { nickname: String(formData.get('nickname') || '').trim() } : {}),
       fullName: providerType === 'persona' ? `${name} ${lastName}`.trim() : name,
       dni: providerType === 'persona' ? dni : '',
       dniNormalized: providerType === 'persona' ? normalizeDigits(dni) : '',
@@ -725,6 +729,7 @@ export default function Providers() {
         eyebrow="GB GOAT / Recursos"
         title="Base de contactos"
         actions={<>
+          {hasGlobalRole(profile?.role, PROVIDER_ACCESS_ROLES) && <button type="button" disabled={loading} onClick={() => setShowDataExport(true)} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-40"><Download className="h-4 w-4"/>Exportar datos</button>}
           {canImportProviders && (
             <>
               <button onClick={downloadTemplate} className="px-4 py-2 bg-white border border-slate-200 text-[10px] font-bold uppercase tracking-widest rounded hover:bg-slate-50 transition-colors flex items-center gap-2">
@@ -755,6 +760,8 @@ export default function Providers() {
           )}
         </>}
       />
+
+      {showDataExport && hasGlobalRole(profile?.role, PROVIDER_ACCESS_ROLES) && <ProviderDataExportDialog providers={providers} onClose={() => setShowDataExport(false)} onExport={async (selected, format) => { const { downloadProviderData } = await import('../lib/providerDataWorkbook'); await downloadProviderData(selected, format); }} />}
 
       {false && generatedInviteLink && (
         <div className="bg-white rounded-xl border border-emerald-200 p-5 shadow-sm flex flex-col lg:flex-row gap-4 lg:items-center justify-between">
@@ -1125,6 +1132,7 @@ function ProviderManualModal({ saving, onClose, onSubmit }: { saving?: boolean; 
             <div className="grid grid-cols-2 gap-4">
               <Field label="Nombre" required><input name="name" required className={inputClass} /></Field>
               <Field label="Apellido" required><input name="lastName" required className={inputClass} /></Field>
+              <div className="col-span-2"><Field label="Apodo / nombre habitual"><input name="nickname" placeholder="Opcional" maxLength={100} className={inputClass}/></Field></div>
               <Field label="DNI" required={!provisional}><input name="dni" required={!provisional} className={inputClass} /></Field>
               <Field label="CUIT / CUIL" required={!provisional}><input name="cuit" required={!provisional} className={inputClass} /></Field>
               <Field label="Fecha Nacimiento"><DateInputField name="birthDate" /></Field>
@@ -1418,6 +1426,7 @@ function ProviderEditModal({ saving, provider, onClose, onSubmit }: { saving?: b
           <div className="grid grid-cols-2 gap-4">
             <Field label="Nombre / Razón Social" required><input name="name" defaultValue={provider.name || provider.businessName} required className={inputClass} /></Field>
             <Field label="Apellido"><input name="lastName" defaultValue={provider.lastName} className={inputClass} /></Field>
+            {provider.type !== 'empresa' && <div className="col-span-2"><Field label="Apodo / nombre habitual"><input name="nickname" defaultValue={provider.nickname || provider.apodo || provider.alias || provider.preferredName || ''} maxLength={100} className={inputClass}/></Field></div>}
             <Field label="DNI"><input name="dni" defaultValue={provider.dni || inferred.dniNormalized} className={inputClass} /></Field>
             <Field label="CUIT"><input name="cuit" defaultValue={provider.cuit || inferred.cuitNormalized} className={inputClass} /></Field>
           </div>
