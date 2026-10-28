@@ -1,4 +1,4 @@
-import { RefreshCw, FileSignature, FileText, Download, LoaderCircle, ExternalLink } from 'lucide-react';
+import { RefreshCw, FileSignature, FileText, Download, LoaderCircle, ExternalLink, CircleCheck, Clock3, FilePenLine, CircleX } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { matchesSmartSearch } from '../../lib/smartSearch';
 import { documentCategory, signingDocumentMatchesProvider, type CatalogDocument } from '../../lib/projectDocumentCatalog';
@@ -38,18 +38,32 @@ export function ProjectSigningPanel({ state, documents, manualDocuments = [], se
     {notice && <p role="status" className="px-4 pt-3 text-xs text-emerald-700">{notice}</p>}
     <div className="divide-y divide-slate-100">{rows.map(row => {
       const document = row.signing;
-      const pending = document && !(document.status === 'completed' && document.artifactsReady);
-      return <article key={row.id} className="flex flex-wrap items-start justify-between gap-4 px-4 py-4">
-        <div className="min-w-0 flex-1">
-          <h4 className="break-words text-sm font-semibold text-slate-900">{document?.title || row.manual!.description || row.manual!.fileName}</h4>
-          <p className="mt-1 text-xs text-slate-500">{document?.providerBindings?.length ? document.providerBindings.map(binding => binding.name).join(' · ') : row.manual?.providerName || (document?.signatures || []).map(signer => signer.email).join(' · ')}</p>
-          <span className={cn('mt-2 inline-block rounded-full px-2.5 py-1 text-xs font-medium', !document ? 'bg-slate-100 text-slate-600' : pending ? 'bg-amber-50 text-amber-800' : 'bg-emerald-50 text-emerald-700')}>
-            {!document ? 'Archivo cargado' : !pending ? 'Firmado' : document.status === 'partially_signed' ? 'Firma parcial' : 'Pendiente de firma'}
+      const complete = document?.status === 'completed' && document.artifactsReady;
+      const inactive = document && ['revoked', 'rejected', 'cancelled', 'replaced'].includes(document.declarationStatus || document.status || '');
+      const status = !document ? 'No preparado para firmar' : inactive ? declarations[document.declarationStatus || ''] || 'Contrato sin vigencia'
+        : complete ? 'Firmado' : document.status === 'partially_signed' ? 'Firma parcial' : document.status === 'completed' ? 'Firmado · PDF pendiente' : 'Pendiente de firma';
+      const tooltip = [status, document?.declarationStatus && !inactive ? declarations[document.declarationStatus] || document.declarationStatus : ''].filter(Boolean).join(' · ');
+      const StatusIcon = !document ? FilePenLine : inactive ? CircleX : complete ? CircleCheck : Clock3;
+      const title = document?.title || row.manual!.description || row.manual!.fileName;
+      const associatedProvider = providers.find(provider => provider.id === row.manual?.providerId);
+      const emails = [...new Set((document
+        ? [...(document.providerBindings || []).map(binding => binding.email), ...(document.signatures || []).map(signer => signer.email)]
+        : [associatedProvider?.portalAccessEmail || associatedProvider?.email || '']).map(value => String(value || '').trim().toLowerCase()).filter(Boolean))];
+      return <article key={row.id} className="grid items-center gap-2 px-4 py-2.5 lg:grid-cols-[minmax(180px,1fr)_minmax(180px,.8fr)_320px] lg:gap-4">
+        <div className="flex min-w-0 items-center gap-2">
+          <span role="img" aria-label={tooltip} title={tooltip} tabIndex={0}
+            className={cn('shrink-0 cursor-help rounded focus-visible:outline-blue-500', !document ? 'text-blue-600' : inactive ? 'text-red-600' : complete ? 'text-emerald-600' : 'text-amber-500')}>
+            <StatusIcon className="h-5 w-5" aria-hidden="true" />
           </span>
-          {document?.declarationStatus && <p className="mt-1 text-xs text-slate-500">{declarations[document.declarationStatus] || document.declarationStatus}</p>}
-          {document && <p className="mt-2 text-xs text-slate-500">{(document.signatures || []).map(signer => `${signer.email} · ${signer.status === 'signed' ? 'Firmó' : 'Pendiente'}`).join(' / ')}</p>}
+          <h4 title={title} className="min-w-0 truncate text-sm font-semibold text-slate-900">{title}</h4>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">{emails.map(email => {
+          const signed = document?.signatures?.some(signer => signer.email.trim().toLowerCase() === email && signer.status === 'signed');
+          const label = !document ? 'Sin solicitud de firma' : signed ? 'Firmó' : inactive ? 'Solicitud sin vigencia' : 'Pendiente de firma';
+          return <span key={email} title={label} aria-label={`${email}: ${label}`} tabIndex={0}
+            className={cn('max-w-full cursor-help truncate rounded-full px-2.5 py-1 text-xs focus-visible:outline-blue-500', !document ? 'bg-blue-50 text-blue-700' : signed ? 'bg-emerald-50 text-emerald-700' : inactive ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-800')}>{email}</span>;
+        })}{emails.length === 0 && row.manual?.providerName && <span className="truncate text-xs text-slate-500" title={row.manual.providerName}>{row.manual.providerName}</span>}</div>
+        <div className="flex flex-wrap items-center gap-1.5 lg:justify-end">
           {!document && row.manual?.url && <a href={row.manual.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50">Abrir archivo<ExternalLink className="h-3.5 w-3.5" /></a>}
           {!document && row.manual?.sourceDocumentId && onPrepare && <button type="button" onClick={() => onPrepare(row.manual!)}
             disabled={Boolean(state === null) || Boolean(row.manual.contentType && row.manual.contentType !== 'application/pdf')}
