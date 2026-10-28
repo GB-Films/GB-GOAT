@@ -19,6 +19,7 @@ export async function portalRequest(
       "uploadEvidence",
       "prepareProfile",
       "prepareThirdParty",
+      "saveThirdPartyDetails",
       "registerThirdPartyIntake",
       "revokeThirdParty",
       "uploadInvoice",

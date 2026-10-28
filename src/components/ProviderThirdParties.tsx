@@ -37,7 +37,7 @@ export function ProviderThirdParties({
                 : a.status === "pending_review"
                   ? "Pendiente de revisión"
                   : "Sin vigencia"}{" "}
-            · Hasta {a.content.expiresOn}
+            · {a.content.validity === 'until_revoked' ? 'Hasta revocación · sólo trabajos seleccionados' : `Hasta ${a.content.expiresOn}`}
           </p>
           <button
             className="mt-1 text-xs underline"

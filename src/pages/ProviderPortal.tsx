@@ -9,6 +9,7 @@ import {
 import PortalSignDialog from "../components/PortalSignDialog";
 import { ThirdPartyAuthorizationForm } from "../components/ThirdPartyAuthorizationForm";
 import { CompanyRepresentationForm } from "../components/CompanyRepresentationForm";
+import { thirdPartyFormDefaults } from '../lib/thirdPartyDefaults';
 
 const tabs = [
   "Trabajos",
@@ -65,29 +66,15 @@ export default function ProviderPortal() {
     [signing, setSigning] = useState<any>(null),
     [draft, setDraft] = useState<Record<string, string>>({}),
     [uploadWork, setUploadWork] = useState("");
-  const [party, setParty] = useState<any>({
-    name: "",
-    cuit: "",
-    email: "",
-    relationship: "",
-    activity: "",
-    holder: "",
-    cbu: "",
-    alias: "",
-    roles: ["invoice", "payment"],
-    account: "", responsibilityConfirmed: false,
-    workKeys: [],
-    expiresOn: "",
-  });
+  const [party, setParty] = useState<any>(() => thirdPartyFormDefaults(null));
   const selected = members.find((m) => m.providerId === providerId);
   const intakePrefilled = useRef("");
   useEffect(() => {
     const key = `${user?.uid}/${providerId}`;
-    if (!view?.thirdPartyIntake || intakePrefilled.current === key) return;
+    if (!view || intakePrefilled.current === key) return;
     intakePrefilled.current = key;
-    if (view.declarations.some((d: any) => d.kind === "third_party")) return;
-    setParty(current => ({ ...current, ...view.thirdPartyIntake.party, roles: ["invoice", "payment"], workKeys: view.thirdPartyIntake.workKeys, expiresOn: "" }));
-    setTab("Mis datos");
+    setParty(thirdPartyFormDefaults(view));
+    if (view.thirdPartyIntake && !view.declarations.some((d: any) => d.kind === 'third_party')) setTab('Mis datos');
   }, [view, providerId, user?.uid]);
   const load = useCallback(async () => {
     const revision = ++loadRevision.current;
@@ -190,20 +177,7 @@ export default function ProviderPortal() {
                 setUploadWork("");
                 setProviderId(e.target.value);
                 setDraft({});
-                setParty({
-                  name: "",
-                  cuit: "",
-                  email: "",
-                  relationship: "",
-                  activity: "",
-                  holder: "",
-                  cbu: "",
-                  alias: "",
-                  roles: ["invoice", "payment"],
-    account: "", responsibilityConfirmed: false,
-                  workKeys: [],
-                  expiresOn: "",
-                });
+                setParty(thirdPartyFormDefaults(null));
               }}
             >
               {members.map((m) => (
@@ -584,8 +558,7 @@ export default function ProviderPortal() {
               {d.kind === "third_party" && (
                 <>
                   <p className="text-sm">
-                    {d.content.party.name} · CUIT {d.content.party.cuit} · Hasta{" "}
-                    {d.content.expiresOn}
+                    {d.content.party.name} · CUIT {d.content.party.cuit} · {d.content.validity === 'until_revoked' ? 'Hasta revocación · sólo estos trabajos' : `Hasta ${d.content.expiresOn}`}
                   </p>
                   {d.content.party.relationship && <p className="text-sm">Relación con el prestador: {d.content.party.relationship}</p>}
                   {d.content.party.activity && <p className="text-sm">Actividad declarada del tercero: {d.content.party.activity}</p>}
@@ -698,7 +671,8 @@ export default function ProviderPortal() {
             </button>
           </form>
           {view.provider.type === 'persona' && <ThirdPartyAuthorizationForm provider={view.provider} works={view.works} party={party} onChange={setParty} busy={busy}
-            recovered={!!view.thirdPartyIntake && !view.declarations.some((d: any) => d.kind === 'third_party')}
+            recovered={!!view.thirdPartyDefaults || !!view.thirdPartyIntake}
+            onSave={async input => { await portalRequest({ action: 'saveThirdPartyDetails', providerId, ...input }); await load(); }}
             onPrepare={input => prepare('prepareThirdParty', input)} />}
 
         </>

@@ -30,13 +30,17 @@ test('sólo la cuenta propietaria o administración obtienen bytes; se verifican
   f.files.set([...f.files.keys()][0], Buffer.from('%PDF-modificado'));
   await assert.rejects(f.service.read('company', uploaded.id, actor), /hash/);
 });
-test('el manifiesto de la empresa exige sus cuatro categorías y documentos de esta misma cuenta', async () => {
+test('el manifiesto admite un respaldo de representación y uno o dos DNI de esta misma cuenta', async () => {
   const f = fixture(); const ids = [];
-  for (const kind of COMPANY_EVIDENCE) ids.push((await f.service.upload('company', actor, { kind, attemptId: kind, file }, 'empresa')).id);
-  assert.equal((await f.service.manifest('company', actor, ids, COMPANY_EVIDENCE)).length, 4);
+  for (const kind of Object.keys(COMPANY_EVIDENCE)) ids.push((await f.service.upload('company', actor, { kind, attemptId: kind, file }, 'empresa')).id);
+  assert.equal((await f.service.manifest('company', actor, ids, COMPANY_EVIDENCE)).length, 2);
   await assert.rejects(f.service.manifest('company', actor, ids.slice(1), COMPANY_EVIDENCE));
   await assert.rejects(f.service.manifest('company', { uid: 'other' }, ids, COMPANY_EVIDENCE));
-  await assert.rejects(f.service.manifest('company', actor, [ids[0], ids[0], ids[2], ids[3]], COMPANY_EVIDENCE));
+  await assert.rejects(f.service.manifest('company', actor, [ids[0], ids[0]], COMPANY_EVIDENCE));
+  const second = (await f.service.upload('company', actor, { kind: 'identity_document', attemptId: 'second', file }, 'empresa')).id;
+  assert.equal((await f.service.manifest('company', actor, [...ids, second], COMPANY_EVIDENCE)).length, 3);
+  const third = (await f.service.upload('company', actor, { kind: 'identity_document', attemptId: 'third', file }, 'empresa')).id;
+  await assert.rejects(f.service.manifest('company', actor, [...ids, second, third], COMPANY_EVIDENCE));
 });
 test('rechaza archivos demasiado grandes o cuyo contenido no coincide con el formato', () => {
   assert.throws(() => evidenceBytes({ ...file, base64: Buffer.from('<html>documento falso</html>').toString('base64') }));

@@ -106,7 +106,7 @@ async function declarationPdf(d) {
       if (c.party.cbu) line(`CBU/CVU: ${c.party.cbu}`);
       if (c.party.alias) line(`Alias: ${c.party.alias}`);
     }
-    line(`Vigencia hasta: ${c.expiresOn}`);
+    line(c.validity === 'until_revoked' ? 'Sin fecha de vencimiento. Sólo los trabajos seleccionados, hasta revocar la autorización.' : `Vigencia hasta: ${c.expiresOn}`);
     if (c.ownAccount) {
       gap(); line('Cuenta propia del prestador: se conserva por separado y no es el destino de estos pagos.', true);
       if (c.ownAccount.cbu) line('CBU/CVU propio: ' + c.ownAccount.cbu);

@@ -10,9 +10,8 @@ test('la solicitud del tercero muestra emisor, CUIT y cuenta, sin requerir docum
     party: { name: '', cuit: '', account: '', expiresOn: '', workKeys: [] }, onChange: () => {}, onPrepare: async () => {}, busy: false,
   }));
   assert.equal((html.match(/type="text"/g) || []).length, 3);
-  assert(!/type="file"|constancia|Relación con|Actividad|Motivo|Correo del tercero/.test(html));
-  assert(html.includes('CUIT del titular de la factura'));
+  assert(!/type="file"|type="date"|Vigente hasta|constancia|Relación con|Actividad|Motivo|Correo del tercero/.test(html));
   assert(html.includes('cuenta.propia'));
-  assert(html.includes('cuenta corresponde al titular de la factura'));
+  assert(html.includes('cuenta debe corresponder al titular de la factura'));
   assert(html.includes('bajo mi responsabilidad'));
 });

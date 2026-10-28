@@ -145,7 +145,7 @@ export default function ProviderPortalAdmin() {
             <p>Representante: {d.content.representative?.name || d.content.profile?.name} · DNI {d.content.representative?.dni || 'No informado en esta versión'}</p>
             <p>Cargo o carácter: {d.content.representative?.role || 'No informado'}</p><p>Cuenta de representación: {d.actor.email}</p>
             <label className="block">Alcance de las facultades revisadas<textarea className="mt-1 block w-full rounded border p-2" maxLength={500} value={approvedScope[d.id] || ''} onChange={event => setApprovedScope({ ...approvedScope, [d.id]: event.target.value })} /></label>
-            {d.content.version !== 'company-representation-v2' && <p className="text-amber-800">Antecedente anterior sin el paquete actual de documentación. Pedí una nueva presentación antes de habilitar la representación.</p>}
+            {!['company-representation-v2', 'company-representation-v3'].includes(d.content.version) && <p className="text-amber-800">Antecedente anterior sin el paquete actual de documentación. Pedí una nueva presentación antes de habilitar la representación.</p>}
           </div> : (
             <>
               <p>
@@ -155,11 +155,11 @@ export default function ProviderPortalAdmin() {
               </p>
               {d.content.party.holderCuit && <p className="text-sm">CUIT del titular de la cuenta: {d.content.party.holderCuit}</p>}
               {d.content.reason && <p className="text-sm">Motivo: {d.content.reason}</p>}
-              {d.content.termsVersion !== 'third-party-v3' && <p className="text-sm text-amber-800">Autorización anterior: para operaciones nuevas se requiere identificar al emisor, su CUIT y la cuenta del titular de la factura.</p>}
+              {!['third-party-v3', 'third-party-v4'].includes(d.content.termsVersion) && <p className="text-sm text-amber-800">Autorización anterior: para operaciones nuevas se requiere identificar al emisor, su CUIT y la cuenta del titular de la factura.</p>}
               {d.content.party.relationship && <p className="text-sm">Relación con el prestador: {d.content.party.relationship}</p>}
               {d.content.party.activity && <p className="text-sm">Actividad declarada del tercero: {d.content.party.activity}</p>}
               <p className="text-xs text-slate-500">El servicio real del prestador figura en los trabajos alcanzados. Revisá por separado el encuadre fiscal y la cuenta del beneficiario.</p>
-              <p className="text-sm">Hasta {d.content.expiresOn}</p>
+              <p className="text-sm">{d.content.validity === 'until_revoked' ? 'Sin vencimiento · sólo trabajos seleccionados, hasta revocación' : `Hasta ${d.content.expiresOn}`}</p>
               <ul className="text-sm">
                 {d.content.workKeys.map((k: string) => (
                   <li key={k}>{k}</li>
@@ -169,7 +169,7 @@ export default function ProviderPortalAdmin() {
           )}
           {!!d.content.evidence?.length && <div className="flex flex-wrap gap-2">{d.content.evidence.map((file: any) => <button key={file.id} type="button" disabled={busy} className="rounded border px-3 py-2 text-xs text-blue-700" onClick={() => run(async () => { downloadPortalFile(await portalAdminRequest({ action: 'evidenceFile', providerId: d.providerId, evidenceId: file.id })); })}>Ver respaldo: {file.fileName}</button>)}</div>}
           {d.kind !== 'profile' && <fieldset className="space-y-2 rounded-lg border p-3"><legend className="px-1 text-sm font-semibold">Comprobaciones de administración</legend>{Object.entries(d.kind === 'representation' ? {
-            companyVerified: 'Revisé la constitución o registro y coincide la razón social y el CUIT.', identityVerified: 'Revisé el DNI y la identidad de quien firma, y confirmé el correo que usará para representar a esta empresa.', authorityVerified: 'Revisé la designación o poder y las facultades vigentes del representante.', scopeVerified: 'El alcance documentado permite las gestiones y firmas que se van a habilitar.',
+            companyVerified: 'Revisé la documentación y coincide la empresa y su CUIT.', identityVerified: 'Revisé el DNI y la identidad de quien firma, y confirmé el correo que usará para representar a esta empresa.', authorityVerified: 'La documentación acredita las facultades vigentes del representante.', scopeVerified: 'El alcance documentado permite las gestiones y firmas que se van a habilitar.',
           } : { fiscalFrameVerified: 'Validé el encuadre fiscal y que el emisor corresponde a estos trabajos.', declaredPayeeChecked: 'Revisé el CUIT y la cuenta que el prestador declaró para el titular de la factura; el pago se registrará a ese destinatario.' }).map(([key, label]) => <label key={key} className="flex items-start gap-2 text-sm"><input type="checkbox" checked={!!checks[d.id]?.[key]} onChange={event => setChecks(current => ({ ...current, [d.id]: { ...current[d.id], [key]: event.target.checked } }))} /><span>{label}</span></label>)}</fieldset>}
           <label className="block text-sm">
             Motivo / respaldo de la revisión

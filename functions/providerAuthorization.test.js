@@ -77,3 +77,13 @@ test("authorization remains valid through its last day in Buenos Aires", () => {
     ),
   );
 });
+test('nuevas autorizaciones sin vencimiento siguen limitadas a trabajos y revocación; las anteriores conservan su fecha', () => {
+  const content = { ...declaration.content, termsVersion: 'third-party-v4', validity: 'until_revoked' };
+  delete content.expiresOn;
+  const indefinite = { ...declaration, content };
+  assert.equal(authorizedParty(record, indefinite, new Date('2035-01-01')).validity, 'until_revoked');
+  assert.throws(() => authorizedParty(record, { ...indefinite, status: 'revoked' }));
+  assert.throws(() => authorizedParty({ ...record, allocations: [{ projectId: 'new', collectionName: 'areaExpenses', itemId: 'e', invoiceId: 'invoice' }] }, indefinite));
+  assert.throws(() => authorizedParty(record, { ...indefinite, content: { ...content, validity: undefined } }));
+  assert.throws(() => authorizedParty(record, declaration, new Date('2027-01-02')));
+});

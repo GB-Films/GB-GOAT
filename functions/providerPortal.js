@@ -4,7 +4,7 @@ const { createThirdPartyIntake } = require("./providerIntake");
 const { activatePersonalMembership, attachVerifiedIntakeMembership } = require('./providerPortalAccess');
 const { COMPANY_EVIDENCE } = require('./providerEvidence');
 const { companyRepresentation } = require('./providerRepresentation');
-const { thirdPartyDeclaration } = require('./providerThirdPartyDeclaration');
+const { thirdPartyDeclaration, thirdPartyDetails } = require('./providerThirdPartyDeclaration');
 const { fail, text, email, id, list, hash } = M;
 const internalRoles = [
   "admin",
@@ -43,6 +43,17 @@ function createProviderPortalHandler({
   clock = () => new Date(),
 }) {
   const registerThirdPartyIntake = createThirdPartyIntake({ db, timestamp, clock });
+  const preferencesRef = (providerId, actor) => db.doc(`providerPortalPreferences/${hash({ providerId, uid: actor.uid })}`);
+  async function saveThirdPartyDetails(providerId, actor, input) {
+    const party = thirdPartyDetails(input);
+    await db.runTransaction(async tx => {
+      const p = (await tx.get(db.doc(`providers/${providerId}`))).data();
+      const m = (await tx.get(db.doc(`providerPortalUsers/${actor.uid}/memberships/${providerId}`))).data();
+      if (p?.type !== 'persona' || m?.status !== 'active' || m.email !== actor.email) fail('No podés guardar datos para esta ficha.');
+      tx.set(preferencesRef(providerId, actor), { providerId, uid: actor.uid, email: actor.email, party, updatedAt: timestamp() });
+    });
+    return { party };
+  }
   const config = async () => {
     if (
       (await db.doc("providerPortalConfig/current").get()).data()?.enabled !==
@@ -327,6 +338,7 @@ function createProviderPortalHandler({
       return sign.evidence.upload(providerId, actor, input, provider?.type);
     }
     if (input.action === 'evidenceFile') return sign.evidence.read(providerId, id(input.evidenceId), actor);
+    if (input.action === 'saveThirdPartyDetails') { identity(request, true); return saveThirdPartyDetails(providerId, actor, input); }
     if (input.action === 'companyState') {
       const provider = (await db.doc(`providers/${providerId}`).get()).data();
       if (provider?.type !== 'empresa') fail('Esta ficha no es una empresa.');
@@ -337,7 +349,7 @@ function createProviderPortalHandler({
     }
     if (input.action === "overview") {
       const provider = (await db.doc(`providers/${providerId}`).get()).data();
-      const [work, financial, declarations, intake] = await Promise.all([
+      const [work, financial, declarations, intake, preferences] = await Promise.all([
         works(providerId),
         db
           .collection("providerFinancialRecords")
@@ -350,12 +362,17 @@ function createProviderPortalHandler({
           .limit(501)
           .get(),
         provider.type === "persona" ? db.doc(`providerPortalIntakeRequests/${providerId}`).get() : Promise.resolve(null),
+        provider.type === 'persona' ? preferencesRef(providerId, actor).get() : Promise.resolve(null),
       ]);
       if (financial.size > 500 || declarations.size > 500)
         fail("El historial requiere paginación.");
       // Only this provider's scoped data leave the boundary, never arbitrary financial fields or file tokens.
       return {
         provider: M.publicProfile(provider),
+        thirdPartyDefaults: preferences?.data()?.uid === actor.uid && preferences.data().email === actor.email
+          ? preferences.data().party
+          : declarations.docs.map(doc => doc.data()).filter(d => d.kind === 'third_party' && d.actor.uid === actor.uid && d.actor.email === actor.email)
+            .sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0))[0]?.content.party || null,
         thirdPartyIntake: intake?.data()?.providerId === providerId
           ? { party: intake.data().party, workKeys: intake.data().workKeys, roles: intake.data().roles }
           : null,
@@ -445,8 +462,6 @@ function createProviderPortalHandler({
         content.projectIds = [
           ...new Set(content.workDetails.map((w) => w.key.split("/")[0])),
         ];
-        if (content.expiresOn < M.dateKey(clock()))
-          fail("La autorización ya está vencida.");
       }
       content.provider = {
         name: text(
@@ -495,6 +510,7 @@ function createProviderPortalHandler({
             tx.update(ref, { signing, status: "pending_signature" });
         });
       }
+      if (kind === 'third_party') await saveThirdPartyDetails(providerId, actor, content.party);
       return { id: declarationId, ...(await ref.get()).data() };
     }
     if (input.action === "completeDeclaration") {

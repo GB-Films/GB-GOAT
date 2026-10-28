@@ -1,7 +1,7 @@
 const { HttpsError } = require("firebase-functions/v2/https");
 const { checkCompanyReview } = require('./providerRepresentation');
-const { COMPANY_EVIDENCE } = require('./providerEvidence');
-const { checkThirdPartyReview } = require('./providerThirdPartyDeclaration');
+const { COMPANY_EVIDENCE, LEGACY_COMPANY_EVIDENCE } = require('./providerEvidence');
+const { checkThirdPartyReview, thirdPartyIsCurrent, THIRD_PARTY_VERSIONS } = require('./providerThirdPartyDeclaration');
 const {
   expenseInvoices,
   dateKey,
@@ -109,7 +109,7 @@ function createProviderPortalAdminHandler({
           .map((d) => ({
             ...d,
             valid:
-              provider?.type === "persona" && d.status === "active" && d.content.termsVersion === 'third-party-v3' && d.content.expiresOn >= dateKey(clock()),
+              provider?.type === "persona" && d.status === "active" && thirdPartyIsCurrent(d.content, clock()),
           })),
       };
     }
@@ -276,7 +276,7 @@ function createProviderPortalAdminHandler({
       const preview = (await ref.get()).data();
       let verifiedManifest = null;
       if (input.decision === 'approved' && preview?.kind === 'representation' && preview.content.evidence?.length) {
-        verifiedManifest = await sign.evidence.manifest(preview.providerId, preview.actor, preview.content.evidence.map(e => e.id), COMPANY_EVIDENCE);
+        verifiedManifest = await sign.evidence.manifest(preview.providerId, preview.actor, preview.content.evidence.map(e => e.id), preview.content.version === 'company-representation-v2' ? LEGACY_COMPANY_EVIDENCE : COMPANY_EVIDENCE);
       }
       return db.runTransaction(async (tx) => {
         const d = (await tx.get(ref)).data();
@@ -373,9 +373,9 @@ function createProviderPortalAdminHandler({
           checkCompanyReview(d, p, membership, input);
           if (input.decision === 'approved') {
             if (!verifiedManifest || hash(verifiedManifest) !== hash(d.content.evidence)) fail('Los respaldos no coinciden con la declaración firmada.');
-            tx.update(membershipRef, { status: 'active', representation: 'authorized_representative', declarationId: ref.id, companyReviewVersion: 'company-representation-v2', confirmedAt: timestamp() });
+            tx.update(membershipRef, { status: 'active', representation: 'authorized_representative', declarationId: ref.id, companyReviewVersion: d.content.version, confirmedAt: timestamp() });
             tx.set(db.doc(`providerPortalCompanyApprovals/${d.providerId}`), { providerId: d.providerId, uid: d.actor.uid, email: d.actor.email, declarationId: ref.id, company: d.content.provider,
-              scope: text(input.approvedScope, 500), contentHash: d.contentHash, reviewedBy: actor, reviewedAt: timestamp() });
+              scope: text(input.approvedScope, 500), version: d.content.version, contentHash: d.contentHash, reviewedBy: actor, reviewedAt: timestamp() });
             tx.update(providerRef, { portalAccessEmail: d.actor.email, updatedAt: timestamp() });
           }
           tx.update(ref, { status: input.decision === 'approved' ? 'applied' : 'rejected', review: { actor, decision: input.decision, reason,
@@ -383,7 +383,7 @@ function createProviderPortalAdminHandler({
         } else if (d.kind === "third_party") {
           if (p?.type !== "persona" && input.decision === "approved")
             fail("Esta alternativa requiere una ficha de persona física. Las empresas no pueden activar nuevas autorizaciones de terceros.");
-          if (d.content.expiresOn < dateKey(clock()))
+          if (!thirdPartyIsCurrent(d.content, clock()) && input.decision === 'approved')
             fail("Autorización vencida.");
           const roles = list(input.roles);
           checkThirdPartyReview(d, roles, input);
@@ -392,7 +392,7 @@ function createProviderPortalAdminHandler({
             roles.some((r) => !d.content.roles.includes(r) || d.decisions?.[r])
           )
             fail("Elegí funciones pendientes.");
-          const payoutRefs = input.decision === 'approved' && d.content.termsVersion === 'third-party-v3'
+          const payoutRefs = input.decision === 'approved' && THIRD_PARTY_VERSIONS.includes(d.content.termsVersion)
             ? d.content.workKeys.map(key => db.doc(`projects/${key}`)) : [];
           const payoutRows = await Promise.all(payoutRefs.map(ref => tx.get(ref)));
           if (payoutRows.some(row => !row.exists || row.data().providerId !== d.providerId)) fail('Un trabajo cambió de proveedor; prepará una nueva autorización.');

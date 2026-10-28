@@ -1,6 +1,7 @@
-const { fail, dateKey } = require("./providerPortalModel");
+const { fail } = require("./providerPortalModel");
+const { THIRD_PARTY_VERSIONS, thirdPartyIsCurrent } = require('./providerThirdPartyDeclaration');
 function authorizedParty(record, declaration, now = new Date()) {
-  if (declaration?.content?.termsVersion !== 'third-party-v3') fail('Actualizá la autorización con el emisor, CUIT y cuenta del titular de la factura antes de registrar operaciones nuevas.');
+  if (!THIRD_PARTY_VERSIONS.includes(declaration?.content?.termsVersion)) fail('Actualizá la autorización con el emisor, CUIT y cuenta del titular de la factura antes de registrar operaciones nuevas.');
   const role =
     record.kind === "invoice"
       ? "invoice"
@@ -15,7 +16,7 @@ function authorizedParty(record, declaration, now = new Date()) {
     declaration.status !== "active" ||
     !declaration.proof?.complete ||
     !declaration.effectiveRoles?.includes(role) ||
-    declaration.content.expiresOn < dateKey(now)
+    !thirdPartyIsCurrent(declaration.content, now)
   )
     fail("La autorización del tercero no está vigente para esta operación.");
   if (
@@ -44,7 +45,7 @@ function authorizedParty(record, declaration, now = new Date()) {
     party: declaration.content.party,
     contentHash: declaration.contentHash,
     signedPdfSha256: declaration.proof.signedPdfSha256,
-    expiresOn: declaration.content.expiresOn,
+    ...(declaration.content.expiresOn ? { expiresOn: declaration.content.expiresOn } : { validity: 'until_revoked' }),
   };
 }
 module.exports = { authorizedParty };

@@ -6,11 +6,14 @@ const { COMPANY_EVIDENCE } = require('./providerEvidence');
 const company = { type: 'empresa', businessName: 'Empresa de Ejemplo SRL', cuit: '30111111112' };
 const actor = { uid: 'person', email: 'administracion@example.test' };
 const representative = { name: 'Persona Ejemplo', dni: '12.345.678', role: 'Apoderado' };
-const evidence = COMPANY_EVIDENCE.map((kind, index) => ({ id: `evidence-${index}`, kind, sha256: 'a'.repeat(64), fileName: `${kind}.pdf` }));
+const evidence = Object.keys(COMPANY_EVIDENCE).map((kind, index) => ({ id: `evidence-${index}`, kind, sha256: 'a'.repeat(64), fileName: `${kind}.pdf` }));
 const companyInput = { representative, accountConfirmed: true, identityConfirmed: true, authorityConfirmed: true };
 test('empresa, cuenta y facultades declaradas quedan expresas; no sustituye una revisión', () => {
   const content = companyRepresentation(company, actor, companyInput, evidence);
   assert.equal(content.signerDni, '12345678');
+  assert.equal(content.evidence.length, 2, 'un respaldo societario y un PDF con ambas caras son suficientes para presentar');
+  assert.equal(companyRepresentation(company, actor, companyInput, [...evidence, { ...evidence[1], id: 'second-dni' }]).evidence.length, 3);
+  assert.throws(() => companyRepresentation(company, actor, companyInput, [...evidence, { ...evidence[1], id: 'second-dni' }, { ...evidence[1], id: 'third-dni' }]));
   for (const value of [company.businessName, company.cuit, actor.email, representative.name, 'facultades vigentes', 'pendiente de revisión']) assert.ok(content.terms.includes(value));
   for (const key of ['accountConfirmed', 'identityConfirmed', 'authorityConfirmed']) assert.throws(() => companyRepresentation(company, actor, { ...companyInput, [key]: false }, evidence));
   assert.throws(() => companyRepresentation(company, actor, { ...companyInput, representative: { ...representative, dni: 'ABC12345678' } }, evidence));
@@ -37,6 +40,8 @@ test('tercero sólo requiere nombre, CUIT y cuenta: no documentos, ni doble capt
   assert.equal(content.ownAccount.alias, person.bankAccount_alias);
   assert.equal(content.evidence, undefined);
   assert.equal(content.party.relationship, undefined);
+  assert.equal(content.expiresOn, undefined);
+  assert.equal(content.validity, 'until_revoked');
   assert.equal(JSON.stringify(person), before);
   for (const value of [thirdInput.name, thirdInput.cuit, thirdInput.alias, 'bajo mi responsabilidad', 'no constituye una verificación bancaria automática']) assert.ok(content.terms.includes(value));
   assert.throws(() => thirdPartyDeclaration(person, actor, { ...thirdInput, alias: '', cbu: '' }, thirdInput.workKeys));

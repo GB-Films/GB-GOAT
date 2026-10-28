@@ -222,13 +222,13 @@ try {
   assert.equal((await own({ action: 'bootstrap' })).memberships.find(m => m.providerId === 'company-representation').status, 'needs_confirmation');
   await assert.rejects(own({ action: 'overview', providerId: 'company-representation' }), /No representás/);
   const evidencePdf = await sign.file({ email: 'own@example.test' }, legacyPersonal.id, 'original');
-  const evidence = await Promise.all(['company_registration', 'representation_authority', 'dni_front', 'dni_back'].map(kind => own({
+  const evidence = await Promise.all(['representation_support', 'identity_document'].map(kind => own({
     action: 'uploadEvidence', providerId: 'company-representation', kind, attemptId: `company-${kind}`,
     file: { base64: evidencePdf.base64, contentType: 'application/pdf', fileName: `${kind}-test.pdf` },
   })));
   const companyInput = { representative: { name: 'Persona prueba', dni: '12345678', role: 'Representante con poder' },
     accountConfirmed: true, identityConfirmed: true, authorityConfirmed: true, evidenceIds: evidence.map(file => file.id) };
-  assert.equal((await own({ action: 'companyState', providerId: 'company-representation' })).evidence.length, 4);
+  assert.equal((await own({ action: 'companyState', providerId: 'company-representation' })).evidence.length, 2);
   for (const uid of ['own', 'admin']) {
     await assertFails(getDoc(doc(authContext(uid).firestore(), `providerPortalEvidence/${evidence[0].id}`)));
     await assertFails(getBytes(ref(authContext(uid).storage(), `providerPortalPrivateEvidence/company-representation/own/${evidence[0].id}/original`)));
@@ -236,7 +236,7 @@ try {
   await db.doc('providerPortalUsers/other/memberships/company-representation').set({ email: 'other@example.test', status: 'needs_confirmation' });
   await assert.rejects(other({ action: 'evidenceFile', providerId: 'company-representation', evidenceId: evidence[0].id }), /acceso/);
   await assert.rejects(own({ action: 'uploadEvidence', providerId: 'supplier', kind: 'dni_front', attemptId: 'not-company', file: { base64: evidencePdf.base64, contentType: 'application/pdf', fileName: 'test.pdf' } }), /no permitido/);
-  await assert.rejects(own({ action: 'prepareRepresentation', providerId: 'company-representation', attemptId: 'no-docs', capacity: 'authorized_representative', ...companyInput, evidenceIds: [] }), /respaldos/);
+  await assert.rejects(own({ action: 'prepareRepresentation', providerId: 'company-representation', attemptId: 'no-docs', capacity: 'authorized_representative', ...companyInput, evidenceIds: [] }), /representación/);
   const representation = await own({
     action: "prepareRepresentation",
     providerId: "company-representation",
@@ -455,6 +455,15 @@ try {
     }),
   );
   await db.doc('projects/project/areaExpenses/third-party-work').set({ providerId: 'supplier', description: 'Trabajo cobrado por tercero', area: 'Campo', total: 100, paymentHistory: [] });
+  const declarationsBeforeSaving = (await db.collection('providerPortalDeclarations').get()).size;
+  const savedParty = { name: 'Familiar', cuit: '20333333334', alias: 'family.alias' };
+  await own({ action: 'saveThirdPartyDetails', providerId: 'supplier', ...savedParty });
+  assert.equal((await own({ action: 'overview', providerId: 'supplier' })).thirdPartyDefaults.alias, 'family.alias');
+  assert.equal((await db.collection('providerPortalDeclarations').get()).size, declarationsBeforeSaving, 'guardar datos no crea una autorización');
+  assert.equal((await db.doc('providers/supplier').get()).data().bankAccount_alias, 'new.alias', 'el banco propio se conserva');
+  await assert.rejects(other({ action: 'saveThirdPartyDetails', providerId: 'supplier', ...savedParty }));
+  const privatePreference = `providerPortalPreferences/${hash({ providerId: 'supplier', uid: 'own' })}`;
+  for (const uid of ['own', 'admin']) await assertFails(getDoc(doc(authContext(uid).firestore(), privatePreference)));
   const third = await own({
     action: "prepareThirdParty",
     providerId: "supplier",
@@ -469,6 +478,8 @@ try {
     responsibilityConfirmed: true,
   });
   await signActual(third);
+  assert.equal(third.content.expiresOn, undefined);
+  assert.equal(third.content.validity, 'until_revoked');
   await own({
     action: "completeDeclaration",
     providerId: "supplier",
@@ -745,6 +756,7 @@ try {
   assert.equal(newReview.content.party.cuit, '20333333334');
   assert.equal(newReview.content.party.activity, undefined);
   assert.equal(newReview.content.evidence, undefined);
+  assert.equal(newReview.content.expiresOn, undefined);
   assert.equal(newReview.content.ownAccount.alias, 'own.new.alias');
   assert.equal(newReview.status, "pending_review");
   await adminCall({ action: "review", declarationId: newThird.id, roles: ["invoice"], decision: "approved", reason: "Revisión de prueba en emulador", checks: { fiscalFrameVerified: true } });

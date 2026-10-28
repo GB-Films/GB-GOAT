@@ -66,7 +66,7 @@ function createProjectContractBridge({ db, store, bucket, readLocalFile, timesta
           const approval = (await db.doc(`providerPortalCompanyApprovals/${providerId}`).get()).data();
           const membership = approval?.uid ? (await db.doc(`providerPortalUsers/${approval.uid}/memberships/${providerId}`).get()).data() : null;
           if (!approval || approval.email !== signerEmail || membership?.status !== 'active' || membership.email !== signerEmail
-            || membership.companyReviewVersion !== 'company-representation-v2' || membership.declarationId !== approval.declarationId
+            || !['company-representation-v2', 'company-representation-v3'].includes(membership.companyReviewVersion) || membership.companyReviewVersion !== (approval.version || 'company-representation-v2') || membership.declarationId !== approval.declarationId
             || approval.company?.cuit !== String(provider.cuit || provider.cuitNormalized || '').replace(/\D/g, '') || approval.company?.name !== text(provider.businessName || provider.name)) fail('La empresa necesita una representación revisada con documentación antes de solicitar esta firma.');
           companyAuthority = { declarationId: approval.declarationId, contentHash: approval.contentHash, scope: approval.scope, email: approval.email };
         }

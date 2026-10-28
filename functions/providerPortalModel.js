@@ -103,7 +103,7 @@ function thirdPartyIdentity(input, payment = true, requireContext = true) {
   if (party.cbu && !/^\d{22}$/.test(party.cbu)) fail("CBU/CVU inválida.");
   return party;
 }
-function thirdParty(input, workKeys, requireContext = true) {
+function thirdParty(input, workKeys, requireContext = true, requireEndDate = true) {
   const roles = [...new Set(list(input.roles))].sort();
   if (!roles.length || roles.some((r) => !["invoice", "payment"].includes(r)))
     fail("Elegí quién factura y/o cobra.");
@@ -118,17 +118,17 @@ function thirdParty(input, workKeys, requireContext = true) {
   if (input.cbu && !/^\d{22}$/.test(String(input.cbu)))
     fail("CBU/CVU inválida.");
   const expiresOn = text(input.expiresOn, 10);
-  if (
+  if (requireEndDate && (
     !/^\d{4}-\d{2}-\d{2}$/.test(expiresOn) ||
     Number.isNaN(Date.parse(expiresOn)) ||
     new Date(expiresOn).toISOString().slice(0, 10) !== expiresOn
-  )
+  ))
     fail("Indicá hasta cuándo autorizás.");
   return {
     party,
     roles,
     workKeys: scope,
-    expiresOn,
+    ...(requireEndDate ? { expiresOn } : { validity: 'until_revoked' }),
     termsVersion: "third-party-v2",
     terms:
       "Declaro haber realizado los servicios identificados. Designo al tercero indicado para recibir los pagos de los trabajos seleccionados cuando corresponda. Los acuerdos y la distribución posterior de los fondos entre esa persona y yo son de nuestra responsabilidad. El emisor fiscal propuesto queda sujeto a validación contable. Esta autorización no acredita un pago realizado.",
