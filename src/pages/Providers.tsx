@@ -20,11 +20,8 @@ import { db } from '../lib/firebase';
 import { handleFirestoreError } from '../lib/firestoreUtils';
 import { useAuth } from '../context/AuthContext';
 import { PageHeader } from '../components/PageHeader';
-import { validateSpreadsheetImport } from '../lib/files';
-import { Plus, Search, Truck, X, Upload, Download, Pencil, Trash2, Link2, Copy, CheckCircle2, FileText, Paperclip, CalendarDays } from 'lucide-react';
+import { Plus, Search, Truck, X, Download, Pencil, Trash2, Link2, Copy, CheckCircle2, FileText, Paperclip, CalendarDays } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import * as XLSX from 'xlsx';
-import Papa from 'papaparse';
 import {
   PRODUCTION_AREA_CATEGORIES,
   COMPANY_PROVIDER_CATEGORIES,
@@ -126,7 +123,6 @@ export default function Providers() {
   const [savingProvider, setSavingProvider] = useState(false);
   const { profile } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
-  const canImportProviders = profile?.role === 'admin';
   const canDeleteProviders = profile?.role === 'admin';
   const canEditProviders = hasGlobalRole(profile?.role, PROVIDER_UPDATE_ROLES);
   const canCreateProviders = hasGlobalRole(profile?.role, PROVIDER_CREATE_ROLES);
@@ -219,40 +215,6 @@ export default function Providers() {
     fetchProviderInvites();
   }, [profile, canCreateProviders]);
 
-  const downloadTemplate = () => {
-    const templateData = [
-      {
-        Tipo: 'persona',
-        Nombre: 'Juan',
-        Apellido: 'Pérez',
-        DNI: '12345678',
-        CUIT: '20-12345678-9',
-        Domicilio: 'Calle Falsa 123',
-        'Fecha Nacimiento': '1990-01-01',
-        Email: 'juan@email.com',
-        Telefono: '11 1234-5678',
-        'CBU o Cuenta': '0000000000000000000000',
-        Categoria: 'Cámara',
-        'Restriccion Alimentaria': 'Vegetariano',
-      },
-      {
-        Tipo: 'empresa',
-        'Razon Social': 'Rental Ejemplo SRL',
-        CUIT: '30-71234567-8',
-        Domicilio: 'Avenida Siempre Viva 742',
-        Email: 'admin@rental.com',
-        Telefono: '11 8765-4321',
-        'CBU o Cuenta': '1111111111111111111111',
-        Categoria: 'Rental de cámara',
-      },
-    ];
-
-    const worksheet = XLSX.utils.json_to_sheet(templateData);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Plantilla Proveedores');
-    XLSX.writeFile(workbook, 'plantilla_proveedores_gb_goat.xlsx');
-  };
-
   const createProviderWithUniqueIdentifiers = async (providerData: any) => {
     const providerRef = doc(collection(db, 'providers'));
     const identifiers = buildProviderIdentifiers({ id: providerRef.id, ...providerData });
@@ -296,98 +258,6 @@ export default function Providers() {
       }
     }
     return '';
-  };
-
-  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (!canImportProviders) return;
-    const file = event.target.files?.[0];
-    if (!file) return;
-    const fileError = validateSpreadsheetImport(file);
-    if (fileError) {
-      alert(fileError);
-      event.target.value = '';
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-      const data = e.target?.result;
-      let jsonData: any[] = [];
-
-      try {
-        if (file.name.endsWith('.csv')) {
-          const results = Papa.parse(data as string, { header: true, skipEmptyLines: true });
-          jsonData = results.data;
-        } else {
-          const workbook = XLSX.read(data, { type: 'binary' });
-          const sheetName = workbook.SheetNames[0];
-          const worksheet = workbook.Sheets[sheetName];
-          jsonData = XLSX.utils.sheet_to_json(worksheet);
-        }
-
-        if (jsonData.length === 0) {
-          alert('El archivo parece estar vacío.');
-          return;
-        }
-
-        const newProviders: any[] = [];
-        for (const row of jsonData) {
-          const type = String(row.Tipo || row.tipo || '').toLowerCase() === 'empresa' ? 'empresa' : 'persona';
-          const dni = String(row.DNI || row.dni || '');
-          const cuit = String(row.CUIT || row.Cuit || row.cuit || row['DNI o CUIT'] || '');
-          const category = row.Categoria || row.CATEGORÍA || row.Category || '';
-          const providerData = type === 'empresa'
-            ? {
-                type,
-                name: row['Razon Social'] || row['Razón Social'] || row.RazonSocial || row.Nombre || '',
-                businessName: row['Razon Social'] || row['Razón Social'] || row.RazonSocial || row.Nombre || '',
-                lastName: '',
-                cuit,
-                cuitNormalized: normalizeDigits(cuit),
-                email: row.Email || row.EMAIL || '',
-                phone: row.Telefono || row.Teléfono || row.TELEFONO || '',
-                address: row.Domicilio || row.DOMICILIO || '',
-                bankAccount_cbu: String(row['CBU o Cuenta'] || row.CBU || row.Cuenta || ''),
-                category,
-                createdBy: profile?.uid,
-                createdAt: serverTimestamp(),
-                updatedAt: serverTimestamp(),
-              }
-            : {
-                type,
-                name: row.Nombre || row.NOMBRE || '',
-                lastName: row.Apellido || row.APELLIDO || '',
-                dni,
-                dniNormalized: normalizeDigits(dni),
-                cuit,
-                cuitNormalized: normalizeDigits(cuit),
-                dni_cuit: String(row['DNI o CUIT'] || row.DNI || row.CUIT || ''),
-                email: row.Email || row.EMAIL || '',
-                phone: row.Telefono || row.Teléfono || row.TELEFONO || '',
-                address: row.Domicilio || row.DOMICILIO || '',
-                birthDate: row['Fecha Nacimiento'] || '',
-                bankAccount_cbu: String(row['CBU o Cuenta'] || row.CBU || row.Cuenta || ''),
-                category,
-                dietaryRestriction: row['Restriccion Alimentaria'] || row['Restricción Alimentaria'] || '',
-                createdBy: profile?.uid,
-                createdAt: serverTimestamp(),
-                updatedAt: serverTimestamp(),
-              };
-
-          const providerId = await createProviderWithUniqueIdentifiers(providerData);
-          newProviders.push({ id: providerId, ...providerData, createdAt: new Date() });
-        }
-
-        setProviders([...newProviders, ...providers]);
-        alert(`${newProviders.length} proveedores importados correctamente.`);
-      } catch (error) {
-        console.error('Error importing providers:', error);
-        alert('Hubo un error al procesar el archivo.');
-      }
-    };
-
-    if (file.name.endsWith('.csv')) reader.readAsText(file);
-    else reader.readAsBinaryString(file);
   };
 
   const handleGenerateProviderInvite = async (mode: 'single_use' | 'multi_use' = 'single_use') => {
@@ -730,17 +600,6 @@ export default function Providers() {
         title="Base de contactos"
         actions={<>
           {hasGlobalRole(profile?.role, PROVIDER_ACCESS_ROLES) && <button type="button" disabled={loading} onClick={() => setShowDataExport(true)} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-40"><Download className="h-4 w-4"/>Exportar datos</button>}
-          {canImportProviders && (
-            <>
-              <button onClick={downloadTemplate} className="px-4 py-2 bg-white border border-slate-200 text-[10px] font-bold uppercase tracking-widest rounded hover:bg-slate-50 transition-colors flex items-center gap-2">
-                <Download className="w-3 h-3" /> Plantilla
-              </button>
-              <label className="px-4 py-2 bg-white border border-slate-200 text-[10px] font-bold uppercase tracking-widest rounded hover:bg-slate-50 transition-colors flex items-center gap-2 cursor-pointer">
-                <Upload className="w-3 h-3" /> Importar
-                <input type="file" accept=".xlsx,.xls,.csv" onChange={handleFileUpload} className="hidden" />
-              </label>
-            </>
-          )}
           {canCreateProviders && (
             <>
               <button
