@@ -109,26 +109,28 @@ function createSignBridge(db) {
       .get();
     if (requests.size > 500) fail("Paginar documentos.");
     const result = [];
-    for (const s of requests.docs) {
+    for (let offset = 0; offset < requests.docs.length; offset += 8) {
+      const batch = await Promise.all(requests.docs.slice(offset, offset + 8).map(async s => {
       const r = s.data();
       const snap = await store()
         .doc(`projects/${id(r.projectId)}/documents/${id(r.docId)}`)
         .get();
-      if (!snap.exists) continue;
+      if (!snap.exists) return null;
       const d = snap.data();
-      if (!list(d.signerEmails).map(email).includes(actor.email)) continue;
-      let requiredDni = '';
+      if (!list(d.signerEmails).map(email).includes(actor.email)) return null;
+      let requiredDni = '', declarationKind = '';
       // Keep signed originals as history, but stop requesting the obsolete
       // representation signature from people who act on their own behalf.
       if (d.portalManaged && d.goatDeclarationId) {
         const declaration = (await db.doc(`providerPortalDeclarations/${id(d.goatDeclarationId)}`).get()).data();
         requiredDni = declaration?.content?.signerDni || '';
+        declarationKind = declaration?.kind || '';
         if (declaration?.kind === 'representation' && !declaration.proof?.complete) {
           const provider = (await db.doc(`providers/${id(declaration.providerId)}`).get()).data();
-          if (provider?.type === 'persona') continue;
+          if (provider?.type === 'persona') return null;
         }
       }
-      result.push({
+      return {
         id: s.id,
         documentId: r.docId,
         projectId: r.projectId,
@@ -146,7 +148,10 @@ function createSignBridge(db) {
         portalManaged: d.portalManaged === true,
         providerId: d.goatProviderId || null,
         requiredDni,
-      });
+        declarationKind,
+      };
+      }));
+      result.push(...batch.filter(Boolean));
     }
     return result;
   }
@@ -184,21 +189,26 @@ function createSignBridge(db) {
       );
       return result;
     },
-    async prepare(declaration) {
+    async prepare(declaration, includePreview = false) {
       const project = "goat_portal_declarations",
         documentId = declaration.id;
       const ref = store().doc(`projects/${project}/documents/${documentId}`);
-      const parentBefore = await store().doc(`projects/${project}`).get();
+      const [parentBefore, existing, pdf] = await Promise.all([store().doc(`projects/${project}`).get(), ref.get(), declarationPdf(declaration)]);
       if (
         parentBefore.exists &&
         (!parentBefore.data().portalManaged ||
           parentBefore.data().ownerUid !== "goat_portal_service")
       )
         fail("El proyecto de declaraciones no pertenece a esta integración.");
-      const existing = await ref.get();
-      const { bytes, field } = await declarationPdf(declaration);
+      const { bytes, field } = pdf;
       const sha256 = createHash("sha256").update(bytes).digest("hex");
       const storagePath = `projects/${project}/documents/${documentId}/original.pdf`;
+      const requestId = `${project}_${documentId}_${declaration.actor.email.replace(/[^a-z0-9]/g, "_")}`;
+      const preview = includePreview ? { signingDocument: { id: requestId, documentId, projectId: project,
+        title: declaration.kind === 'representation' ? 'Representación de empresa' : declaration.kind === 'profile' ? 'Actualización de mis datos' : 'Autorización de facturación y cobro',
+        signatureFields: [field], sha256, contentHash: declaration.contentHash, status: 'pending', signed: false, portalManaged: true,
+        providerId: declaration.providerId, declarationKind: declaration.kind, requiredDni: declaration.content.signerDni || '' },
+        originalFile: { base64: bytes.toString('base64'), contentType: 'application/pdf', fileName: 'declaracion.pdf', sha256 } } : {};
       if (existing.exists) {
         const prior = existing.data();
         if (
@@ -213,7 +223,11 @@ function createSignBridge(db) {
           fail(
             "La declaración existente no coincide con el original canónico.",
           );
+        if (includePreview) Object.assign(preview.signingDocument, { status: prior.status,
+          signed: list(prior.signatureStatus).some(value => email(value.email) === declaration.actor.email && value.status === 'signed'),
+          artifactsReady: Boolean(prior.serverArtifacts?.signedPdfPath) });
         return {
+          ...preview,
           projectId: project,
           docId: documentId,
           contentHash: declaration.contentHash,
@@ -234,7 +248,6 @@ function createSignBridge(db) {
         if (createHash("sha256").update(prior).digest("hex") !== sha256)
           fail("El original existente es distinto.");
       }
-      const requestId = `${project}_${documentId}_${declaration.actor.email.replace(/[^a-z0-9]/g, "_")}`;
       await store().runTransaction(async (tx) => {
         const current = await tx.get(ref);
         const parent = await tx.get(store().doc(`projects/${project}`));
@@ -305,6 +318,7 @@ function createSignBridge(db) {
         });
       });
       return {
+        ...preview,
         projectId: project,
         docId: documentId,
         contentHash: declaration.contentHash,

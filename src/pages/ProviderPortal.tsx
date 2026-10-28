@@ -10,6 +10,7 @@ import PortalSignDialog from "../components/PortalSignDialog";
 import { ThirdPartyAuthorizationForm } from "../components/ThirdPartyAuthorizationForm";
 import { CompanyRepresentationForm } from "../components/CompanyRepresentationForm";
 import { thirdPartyFormDefaults } from '../lib/thirdPartyDefaults';
+import { ProviderProfileForm } from '../components/ProviderProfileForm';
 
 const tabs = [
   "Trabajos",
@@ -29,7 +30,7 @@ const labels: Record<string, string> = {
   email: "Correo personal de tu cuenta Google",
   bankAccount_cbu: "Tu CBU/CVU propio",
   bankAccount_alias: "Tu alias propio",
-  bankAccount_holder: "Titular de tu cuenta propia",
+  bankAccount_holder: "Titular de la cuenta",
 };
 const status: Record<string, string> = {
   pending_signature: "Pendiente de firma",
@@ -56,6 +57,9 @@ export default function ProviderPortal() {
   const [hasLoaded, setHasLoaded] = useState(false);
   const loadRevision = useRef(0),
     attempts = useRef(new Map<string, string>());
+  const preparationRevision = useRef(0), documentRevision = useRef(0);
+  const [documentsLoading, setDocumentsLoading] = useState(false), [documentsLoaded, setDocumentsLoaded] = useState(false);
+  const [profileNotice, setProfileNotice] = useState('');
   const [members, setMembers] = useState<any[]>([]),
     [providerId, setProviderId] = useState(() => searchParams.get("provider") || ""),
     [view, setView] = useState<any>(null),
@@ -67,6 +71,7 @@ export default function ProviderPortal() {
     [draft, setDraft] = useState<Record<string, string>>({}),
     [uploadWork, setUploadWork] = useState("");
   const [party, setParty] = useState<any>(() => thirdPartyFormDefaults(null));
+  const selectedProviderRef = useRef(providerId);
   const selected = members.find((m) => m.providerId === providerId);
   const intakePrefilled = useRef("");
   useEffect(() => {
@@ -79,32 +84,43 @@ export default function ProviderPortal() {
   const load = useCallback(async () => {
     const revision = ++loadRevision.current;
     try {
-      const b = await portalRequest({ action: "bootstrap" });
-      if (revision !== loadRevision.current) return;
+      const b = await portalRequest({ action: "bootstrap", includeDocuments: false });
+      if (revision !== loadRevision.current) return false;
       setHasLoaded(true);
       setMembers(b.memberships);
-      setDocs(b.signing);
       const chosen =
-        b.memberships.find((m: any) => m.providerId === providerId) ||
+        b.memberships.find((m: any) => m.providerId === selectedProviderRef.current) ||
         b.memberships[0];
-      if (chosen?.providerId !== providerId)
-        setProviderId(chosen?.providerId || "");
+      if (chosen?.providerId !== selectedProviderRef.current) { selectedProviderRef.current = chosen?.providerId || ''; setProviderId(chosen?.providerId || ''); }
       if (chosen?.status === "active") {
         const result = await portalRequest({
           action: "overview",
           providerId: chosen.providerId,
         });
-        if (revision === loadRevision.current) setView(result);
+        if (revision === loadRevision.current) setView(result); else return false;
       } else setView(null);
+      return true;
     } catch (e: any) {
       if (revision === loadRevision.current) setError(e.message);
+      return false;
     }
-  }, [providerId]);
+  }, []);
+  const loadDocuments = useCallback(async () => {
+    const revision = ++documentRevision.current;
+    setDocumentsLoading(true);
+    try { const result = await portalRequest({ action: 'myDocuments' }); if (revision === documentRevision.current) { setDocs(result.documents); setDocumentsLoaded(true); } }
+    catch (error: any) { if (revision === documentRevision.current) setError(error.message); }
+    finally { if (revision === documentRevision.current) setDocumentsLoading(false); }
+  }, []);
   useEffect(() => {
+    loadRevision.current++; documentRevision.current++; preparationRevision.current++;
+    setHasLoaded(false); setMembers([]); setView(null); setDocs([]); setDocumentsLoaded(false); setDraft({}); setSigning(null); intakePrefilled.current = '';
+    if (!user?.uid) return;
     void load();
     const timer = window.setInterval(() => void load(), 30000);
-    return () => window.clearInterval(timer);
-  }, [load]);
+    return () => { window.clearInterval(timer); loadRevision.current++; };
+  }, [load, user?.uid]);
+  useEffect(() => { if (tab !== 'Documentos' || !user?.uid) return; void loadDocuments(); const timer = window.setInterval(() => void loadDocuments(), 30000); return () => { window.clearInterval(timer); documentRevision.current++; }; }, [tab, loadDocuments, user?.uid]);
   async function run(action: () => Promise<void>) {
     setBusy(true);
     setError("");
@@ -118,34 +134,38 @@ export default function ProviderPortal() {
   }
   async function finish() {
     if (signing?.portalManaged && signing.providerId)
-      await portalRequest({
+      { const result = await portalRequest({
         action: "completeDeclaration",
         providerId: signing.providerId,
         declarationId: signing.documentId,
       });
-    setDraft({});
-    await load();
+      if (signing.declarationKind === 'profile') { setTab('Mis datos'); setProfileNotice(result.status === 'pending_review' ? 'Cambios firmados y guardados. Los datos marcados están pendientes de revisión.' : 'Cambios guardados.'); } }
+    if (await load()) setDraft({});
   }
   async function prepare(action: string, input: any) {
+    const revision = ++preparationRevision.current;
     const key = JSON.stringify([providerId, action, input]);
     if (!attempts.current.has(key))
       attempts.current.set(key, crypto.randomUUID());
+    setSigning({ preparing: true, title: action === 'prepareProfile' ? 'Actualización de mis datos' : 'Preparando declaración' });
     await run(async () => {
+      try {
       const result = await portalRequest({
         action,
         providerId,
         attemptId: attempts.current.get(key),
         ...input,
       });
-      const b = await portalRequest({ action: "myDocuments" });
-      setDocs(b.documents);
-      const d = b.documents.find((d: any) => d.documentId === result.id);
+      let d = result.signingDocument;
+      if (!d) { const b = await portalRequest({ action: 'myDocuments' }); setDocs(b.documents); d = b.documents.find((d: any) => d.documentId === result.id); }
       if (!d)
         throw Error(
           "La declaración quedó preparada. Actualizá Documentos para firmarla.",
         );
-      setSigning(d);
+      if (revision !== preparationRevision.current) return;
+      setSigning({ ...d, originalFile: result.originalFile });
       setTab("Documentos");
+      } catch (error) { if (revision === preparationRevision.current) setSigning(null); throw error; }
     });
   }
   async function download(input: any) {
@@ -174,10 +194,14 @@ export default function ProviderPortal() {
                 loadRevision.current++;
                 setView(null);
                 setSigning(null);
+                preparationRevision.current++;
+                setProfileNotice('');
                 setUploadWork("");
                 setProviderId(e.target.value);
+                selectedProviderRef.current = e.target.value;
                 setDraft({});
                 setParty(thirdPartyFormDefaults(null));
+                void load();
               }}
             >
               {members.map((m) => (
@@ -249,7 +273,7 @@ export default function ProviderPortal() {
           ))}
           {!view?.works.length && (
             <p className={box}>
-              No hay trabajos para mostrar con esta representación.
+              {!hasLoaded || (selected?.status === 'active' && !view) ? 'Cargando tus datos…' : 'No hay trabajos para mostrar con esta representación.'}
             </p>
           )}
         </section>
@@ -431,6 +455,7 @@ export default function ProviderPortal() {
       )}
       {tab === "Documentos" && (
         <section className="space-y-3">
+          {documentsLoading && <p role="status" className={box}>Consultando documentos…</p>}
           {docs.map((d) => (
             <div className={box} key={d.id}>
               <div className="flex flex-wrap justify-between gap-2">
@@ -609,7 +634,7 @@ export default function ProviderPortal() {
               )}
             </div>
           ))}
-          {!docs.length && !view?.declarations.length && (
+          {documentsLoaded && !documentsLoading && !docs.length && !view?.declarations.length && (
             <p className={box}>No tenés documentos asignados.</p>
           )}
         </section>
@@ -629,47 +654,7 @@ export default function ProviderPortal() {
             </p>
           </section>
           {view.provider.type === 'empresa' && <div key={providerId}><CompanyRepresentationForm providerId={providerId} email={user?.email || ''} busy={busy} onPrepare={input => prepare('prepareRepresentation', input)} /></div>}
-          <form
-            className={box + " space-y-4"}
-            onSubmit={(e) => {
-              e.preventDefault();
-              void prepare("prepareProfile", { changes: draft });
-            }}
-          >
-            <h2 className="font-bold">Datos vigentes</h2>
-            <div className="grid gap-3 sm:grid-cols-2">
-              {Object.entries(labels)
-                .filter(([key]) =>
-                  view.provider.type === "empresa"
-                    ? !["name", "lastName", "dni"].includes(key)
-                    : key !== "businessName",
-                )
-                .map(([key, label]) => (
-                  <label key={key} className="text-sm">
-                    {label}
-                    <input
-                      className="mt-1 block w-full rounded border p-2"
-                      value={draft[key] ?? view.provider[key] ?? ""}
-                      readOnly={key === "email"}
-                      onChange={(e) =>
-                        setDraft({ ...draft, [key]: e.target.value })
-                      }
-                    />
-                  </label>
-                ))}
-            </div>
-            <p className="text-sm text-slate-500">
-              El correo personal requiere una revisión para cambiar de cuenta. CUIT,
-              identidad y cuenta bancaria conservan sus valores vigentes hasta
-              la aprobación administrativa.
-            </p>
-            <button
-              disabled={busy || !Object.keys(draft).length}
-              className="rounded bg-slate-900 px-4 py-2 text-white disabled:opacity-40"
-            >
-              Revisar cambios y firmar
-            </button>
-          </form>
+          <div key={providerId}><ProviderProfileForm provider={view.provider} declarations={view.declarations} labels={labels} draft={draft} onChange={setDraft} busy={busy} notice={profileNotice} onPrepare={input => prepare('prepareProfile', input)} /></div>
           {view.provider.type === 'persona' && <ThirdPartyAuthorizationForm provider={view.provider} works={view.works} party={party} onChange={setParty} busy={busy}
             recovered={!!view.thirdPartyDefaults || !!view.thirdPartyIntake}
             onSave={async input => { await portalRequest({ action: 'saveThirdPartyDetails', providerId, ...input }); await load(); }}
@@ -680,7 +665,7 @@ export default function ProviderPortal() {
       {signing && (
         <PortalSignDialog
           document={signing}
-          onClose={() => setSigning(null)}
+          onClose={() => { preparationRevision.current++; setSigning(null); }}
           onSigned={finish}
         />
       )}

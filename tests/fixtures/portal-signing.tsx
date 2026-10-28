@@ -24,7 +24,7 @@ const doc = { title: "Prueba local de firma — dos páginas", signatureFields: 
   { id: "other", signerEmail: "otra@example.com", page: 1, x: .1, y: .7, w: .35, h: .1 },
   { id: "first", signerEmail: email, page: 1, x: .5, y: .8, w: .35, h: .1 },
   { id: "second", signerEmail: email, page: 2, x: .15, y: .75, w: .35, h: .12 },
-].filter(f => !params.has("foreign") || f.id === "other") };
+].filter(f => !params.has("foreign") || f.id === "other").map(f => params.has('last') && f.signerEmail === email ? { ...f, page: params.has('long') ? 8 : 2 } : f) };
 (window as any).submissions = [];
 function Fixture() {
   const [closed, setClosed] = useState(false);

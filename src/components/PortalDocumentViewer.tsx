@@ -12,6 +12,7 @@ type Props = {
   onPageCount: (count: number) => void;
   onReady: (ready: boolean) => void;
   onRetry: () => void;
+  focusFieldRequest?: { id: string; revision: number };
   editor?: { disabled?: boolean; onPlace: (page: number, x: number, y: number) => void; onChange: (field: PortalSignatureField) => void };
 };
 
@@ -110,7 +111,7 @@ function DocumentPage({ pdf, pageNumber, root, size, fit, zoom, fields, selected
   </div>;
 }
 
-export function PortalDocumentViewer({ url, fields, selectedFieldId, signatureImage, signatureName, onSelectField, onPageCount, onReady, onRetry, editor }: Props) {
+export function PortalDocumentViewer({ url, fields, selectedFieldId, signatureImage, signatureName, onSelectField, onPageCount, onReady, onRetry, editor, focusFieldRequest }: Props) {
   const initialFit = editor ? "page" : "width";
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [pageNumber, setPageNumber] = useState(1);
@@ -120,6 +121,7 @@ export function PortalDocumentViewer({ url, fields, selectedFieldId, signatureIm
   const [error, setError] = useState("");
   const [renderedPages, setRenderedPages] = useState<Set<number>>(() => new Set());
   const viewport = useRef<HTMLDivElement>(null);
+  const handledFocus = useRef(0);
   const ready = !!pdf && !error && renderedPages.has(pageNumber);
   const onRendered = useCallback((page: number, rendered: boolean) => {
     setRenderedPages(previous => {
@@ -182,6 +184,19 @@ export function PortalDocumentViewer({ url, fields, selectedFieldId, signatureIm
     element.scrollTo({ top: element.scrollTop + rect.top - root.top - (field ? (element.clientHeight - rect.height) / 2 : 16), left: field ? element.scrollLeft + rect.left - root.left - (element.clientWidth - rect.width) / 2 : 0 });
     setPageNumber(page);
   }
+  useEffect(() => {
+    if (!focusFieldRequest || focusFieldRequest.revision === handledFocus.current || !pdf || !size.width) return;
+    const field = fields.find(value => value.id === focusFieldRequest.id);
+    if (!field) return;
+    goToPage(field.page, field.id);
+    const layout = viewport.current?.closest<HTMLElement>('.portal-sign-layout');
+    if (layout && layout.scrollHeight > layout.clientHeight && layout.scrollTop > 0) layout.scrollTo({ top: 0, behavior: 'smooth' });
+    if (renderedPages.has(field.page)) {
+      const button = (Array.from(viewport.current?.querySelectorAll<HTMLButtonElement>('[data-signature-field-id]') || []) as HTMLButtonElement[]).find(value => value.dataset.signatureFieldId === field.id);
+      button?.focus({ preventScroll: true });
+      handledFocus.current = focusFieldRequest.revision;
+    }
+  }, [focusFieldRequest, pdf, size.width, size.height, renderedPages, fields]);
 
   return <section className="portal-pdf" aria-label={editor ? 'Preparación del documento' : 'Documento a firmar'}>
     <div className="portal-pdf-toolbar" aria-label="Controles del documento">

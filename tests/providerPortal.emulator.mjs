@@ -204,6 +204,11 @@ try {
   assert.equal((await db.collection("providerPortalCandidates").get()).size, 0);
   await adminCall({ action: "prepareAccess", apply: true });
   const boot = await own({ action: "bootstrap" });
+  const listBeforeFastBoot = sign.list;
+  sign.list = async () => { throw Error('Account bootstrap must not consult Sign documents'); };
+  const fastBoot = await own({ action: 'bootstrap', includeDocuments: false });
+  sign.list = listBeforeFastBoot;
+  assert.equal(fastBoot.signing, undefined, 'consultar la cuenta no espera el inventario de documentos');
   assert.equal(boot.memberships.length, 1);
   assert.equal(boot.memberships[0].providerId, "supplier");
   assert.equal(boot.memberships[0].status, "active");
@@ -368,6 +373,7 @@ try {
   const before = await db.doc("providers/supplier").get();
   const change = await own({
     action: "prepareProfile",
+    ownAccountConfirmed: true,
     providerId: "supplier",
     attemptId: "profile-1",
     changes: {
@@ -376,6 +382,12 @@ try {
       bankAccount_alias: "new.alias",
     },
   });
+  assert.equal(change.signingDocument.documentId, change.id);
+  assert.equal(change.originalFile.sha256, change.signingDocument.sha256);
+  assert.equal(change.content.accountOwnership.confirmed, true);
+  assert.equal(change.content.changes.bankAccount_holder.after, 'supplier');
+  assert.equal(Buffer.from(change.originalFile.base64, 'base64').subarray(0, 5).toString(), '%PDF-');
+  assert.equal((await db.doc(`providerPortalDeclarations/${change.id}`).get()).data().signing.originalFile, undefined, 'la vista previa no se duplica en los registros');
   await signActual(change);
   assert.equal(
     (

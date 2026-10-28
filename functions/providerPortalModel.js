@@ -51,6 +51,20 @@ const CRITICAL = [
   "bankAccount_holder",
 ];
 const COMMON = ["address", "phone", "birthDate", "dietaryRestriction"];
+function ownAccountProfileChanges(provider, input, confirmed) {
+  const changes = { ...input };
+  const account = { cbu: changes.bankAccount_cbu ?? provider.bankAccount_cbu, alias: changes.bankAccount_alias ?? provider.bankAccount_alias };
+  const accountChanges = ['bankAccount_cbu', 'bankAccount_alias', 'bankAccount_holder', 'name', 'lastName', 'businessName'].some(key => Object.hasOwn(changes, key));
+  if (accountChanges && (account.cbu || account.alias)) {
+    if (confirmed !== true) fail('Confirmá que la cuenta provista pertenece al proveedor de esta ficha.');
+    const holder = provider.type === 'empresa' ? text(changes.businessName ?? provider.businessName ?? provider.name)
+      : text([changes.name ?? provider.name, changes.lastName ?? provider.lastName].filter(Boolean).join(' '));
+    if (!holder) fail('Completá el nombre del titular antes de confirmar la cuenta.');
+    if (changes.bankAccount_holder && changes.bankAccount_holder !== holder) fail('La cuenta propia debe corresponder al proveedor de esta ficha.');
+    changes.bankAccount_holder = holder;
+  }
+  return profileChanges(provider, changes);
+}
 function profileChanges(before, input) {
   if (!input || typeof input !== "object" || Array.isArray(input))
     fail("Faltan los cambios.");
@@ -218,6 +232,7 @@ function ownExpense(item, project, path) {
   };
 }
 module.exports = {
+  ownAccountProfileChanges,
   dateKey,
   fail,
   text,
