@@ -17,6 +17,7 @@ import { matchesSmartSearch } from '../lib/smartSearch';
 import { splitProjectCommercial } from '../lib/projectCommercialFields';
 import { readAuthorizedProject } from '../lib/projectCommercial';
 import { publishProgressiveProjects } from '../lib/progressiveProjects';
+import { matchesProjectScope, type ProjectScope } from '../lib/projects';
 
 const projectCatalogRef = doc(db, 'integrations', 'controlTotalProjectCatalog');
 
@@ -42,6 +43,7 @@ export default function Projects() {
   const [selectedCode, setSelectedCode] = useState('');
   const [creating, setCreating] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [projectScope, setProjectScope] = useState<ProjectScope>('current');
   const [localPinnedProjectIds, setLocalPinnedProjectIds] = useState<string[]>([]);
   const { profile, user } = useAuth();
   const isAppAdmin = profile?.role === 'admin';
@@ -53,6 +55,7 @@ export default function Projects() {
   }, [profile?.pinnedProjectIds]);
 
   const filteredProjects = projects
+    .filter(project => matchesProjectScope(project, projectScope))
     .filter((project) => {
       return matchesSmartSearch(searchTerm, project.name, project.projectCode, project.clientName, project.companyName, project.brandName, project.status, project.description);
     })
@@ -294,7 +297,12 @@ export default function Projects() {
         ) : null}
       />
 
-      <div className="flex gap-4">
+      <div className="flex flex-wrap gap-3">
+        <div role="group" aria-label="Proyectos actuales e históricos" className="flex gap-1 rounded-lg bg-slate-100 p-1">
+          {([['current', 'Actuales'], ['historical', 'Históricos'], ['all', 'Todos']] as const).map(([value, label]) => (
+            <button key={value} type="button" aria-pressed={projectScope === value} onClick={() => setProjectScope(value)} className={cn('rounded-md px-3 py-1 text-xs', projectScope === value ? 'bg-white font-semibold text-blue-700 shadow-sm' : 'text-slate-600')}>{label}</button>
+          ))}
+        </div>
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
           <input 
@@ -320,9 +328,9 @@ export default function Projects() {
         <div className="text-center py-20 bg-white rounded-xl border border-dashed border-slate-200">
            <Clapperboard className="w-12 h-12 text-slate-100 mx-auto mb-4" />
            <h3 className="text-sm font-bold uppercase tracking-widest text-slate-300">
-             {isAppAdmin ? 'Sin Producciones registradas' : 'Acceso pendiente'}
+             Sin proyectos en esta vista
            </h3>
-           {!isAppAdmin && (
+           {!isAppAdmin && projects.length === 0 && (
              <p className="text-xs text-slate-400 mt-3 max-w-md mx-auto">
                Tu cuenta ya está activa como colaborador, pero todavía no fuiste incorporado a ningún proyecto.
              </p>

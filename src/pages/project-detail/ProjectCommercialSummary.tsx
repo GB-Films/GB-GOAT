@@ -15,5 +15,6 @@ export function ProjectCommercialSummary({ project, isProjectAdmin }: { project:
     {project.serviceName && <span>Servicio: {project.serviceName}</span>}
     {(contracts || legacyContract) && <span>Contrato al importar: {contracts || legacyContract}</span>}
     {project.controlTotalUrl && <a href={project.controlTotalUrl} target="_blank" rel="noopener noreferrer" className="text-blue-700 underline">Ver en Control Total</a>}
+    {project.controlTotalSourceWarning && <p role="status" className="w-full rounded-lg border border-amber-100 bg-amber-50 p-2 text-amber-900">{project.controlTotalSourceWarning}</p>}
   </div>;
 }

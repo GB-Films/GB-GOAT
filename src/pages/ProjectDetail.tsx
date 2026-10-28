@@ -90,6 +90,7 @@ import {
   normalizeProjectRole,
 } from '../lib/projectAccess';
 import { calculateProjectResult, getPaymentTotal } from '../lib/projectFinance';
+import { isInternalBudgetEstimate, effectiveBudgetEstimates } from '../lib/internalBudgetEstimate';
 import { resolveResultIncidences } from '../lib/resultIncidences';
 import { filterProviderBalances } from '../lib/providerPaymentStatus';
 import { getSubcategoryBudgetCapacity } from '../lib/subcategoryBudget';
@@ -1489,7 +1490,7 @@ export default function ProjectDetail() {
           .map((expense: any) => expense.sourceBudgetItemId)
       );
       const budgetItemsToMigrate = budgetSnapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() } as BudgetItem)).filter((item) => (
-        item.area === areaName && !alreadyMigratedIds.has(item.id)
+        item.area === areaName && !alreadyMigratedIds.has(item.id) && !isInternalBudgetEstimate(item)
       ));
       if (budgetItemsToMigrate.length > 498) throw new Error('TOO_MANY_EXPENSES');
       const migratedExpenses: AreaExpense[] = [];
@@ -1736,7 +1737,7 @@ export default function ProjectDetail() {
   };
 
   const getAreaBudget = (area: string) => {
-    return budgetItems
+    return effectiveBudgetEstimates(budgetItems)
       .filter(item => item.area === area)
       .reduce((acc, item) => acc + (Number(item.total) || 0), 0);
   };
@@ -1988,7 +1989,7 @@ export default function ProjectDetail() {
       ? Math.max(0, Number(subcategoryBudgetDraft.budget) || 0)
       : 0;
     const currentBudgetKey = original ? areaSubcategoryKey(area, original) : '';
-    const categoryBudget = budgetItems
+    const categoryBudget = effectiveBudgetEstimates(budgetItems)
       .filter((item) => item.area === area)
       .reduce((total, item) => total + (Number(item.total) || 0), 0);
     const capacity = getSubcategoryBudgetCapacity(
@@ -2377,9 +2378,9 @@ export default function ProjectDetail() {
   );
 
   const canManageItemFiles = (item: any, collectionName: PaymentCollection) => (
-    collectionName === 'budgetItems'
+    !isInternalBudgetEstimate(item) && (collectionName === 'budgetItems'
       ? Boolean(isProjectAdmin && !activeAreas.includes(item?.area))
-      : canUploadAreaFiles(item?.area, item?.subcategory)
+      : canUploadAreaFiles(item?.area, item?.subcategory))
   );
 
   const updateItemCollectionState = (collectionName: PaymentCollection, itemId: string, updates: any) => {
@@ -2953,6 +2954,7 @@ export default function ProjectDetail() {
   };
 
   const openPaymentModal = (item: any, type: PaymentCollection) => {
+    if (isInternalBudgetEstimate(item)) return;
     setSelectedItemForPayment({ ...item, __paymentCollection: type });
     setPaymentType(type);
     setIsDeletingPayment(null);
@@ -3274,6 +3276,7 @@ export default function ProjectDetail() {
         const docRef = doc(collection(db, 'projects', id, 'budgetItems'));
         const payload = {
           projectId: id,
+          ...(isInternalBudgetEstimate(item) ? { economicNature: 'internal_estimate' } : {}),
           area: item.area || 'Producción',
           providerId: item.providerId || '',
           providerName: item.providerName || '',
@@ -3521,7 +3524,7 @@ export default function ProjectDetail() {
           formatDate(item.paymentDate),
         ].filter(Boolean).join(' ')).includes(searchTerm);
       };
-      const assigned = budgetItems
+      const assigned = effectiveBudgetEstimates(budgetItems)
         .filter((item) => item.area === area)
         .reduce((acc, item) => acc + (Number(item.total) || 0), 0);
       const allExpenses = areaExpenses
@@ -3620,7 +3623,7 @@ export default function ProjectDetail() {
   }), { assigned: 0, spent: 0, balance: 0, records: 0 });
   const subcategoryBudgetCapacity = subcategoryBudgetDraft
     ? getSubcategoryBudgetCapacity(
-        budgetItems
+        effectiveBudgetEstimates(budgetItems)
           .filter((item) => item.area === subcategoryBudgetDraft.area)
           .reduce((total, item) => total + (Number(item.total) || 0), 0),
         project?.areaExpenseSubcategoryBudgets || {},
@@ -3896,11 +3899,13 @@ export default function ProjectDetail() {
   };
   const canEditPaymentDateForItem = (item?: any | null, collectionName?: PaymentCollection) => {
     if (!item || !collectionName) return false;
+    if (isInternalBudgetEstimate(item)) return false;
     if (collectionName === 'budgetItems' && activeAreas.includes(item.area)) return false;
     return isProjectAdmin || canEditAreaSubcategory(item.area, item.subcategory);
   };
   const canManagePaymentForItem = (item?: any | null, collectionName?: PaymentCollection) => {
     if (!item || !collectionName) return false;
+    if (isInternalBudgetEstimate(item)) return false;
     if (collectionName === 'budgetItems') return isProjectAdmin && !activeAreas.includes(item.area);
     if (isProjectAdmin) return true;
     return collectionName === 'areaExpenses' && canEditAreaSubcategory(item.area, item.subcategory);
@@ -4032,7 +4037,7 @@ export default function ProjectDetail() {
           className={cn('ml-auto inline-flex h-8 items-center gap-1 rounded border px-2 text-[9px] font-black uppercase tracking-widest', getPaymentTotal(item) > 0 || item.paid ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-900 bg-slate-900 text-white disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400')}
         >
           <Wallet className="h-3 w-3" />
-          {item.paid || (Number(item.total) > 0 && getPaymentTotal(item) >= Number(item.total)) ? 'Pagado' : 'Pagos'}
+          {isInternalBudgetEstimate(item) ? 'Estimación' : item.paid || (Number(item.total) > 0 && getPaymentTotal(item) >= Number(item.total)) ? 'Pagado' : 'Pagos'}
         </button>
         {canDelete && (
           <button
@@ -4318,7 +4323,7 @@ export default function ProjectDetail() {
       const s = ensureSaldo(item.area || 'Sin area', item.providerId, item.providerName);
       s.budgeted += item.total || 0;
 
-      if (!activeAreas.includes(item.area)) {
+      if (!activeAreas.includes(item.area) && !isInternalBudgetEstimate(item)) {
         s.spent += item.total || 0;
         const itemPaid = getPaymentTotal(item);
         s.paid += itemPaid;
@@ -4819,7 +4824,7 @@ export default function ProjectDetail() {
     return targetAreas
       .map((area) => {
         const canReadWholeArea = isProjectAdmin || safeArray(userPermissions?.allowedCategories).includes(area);
-        const areaAssigned = budgetItems
+        const areaAssigned = effectiveBudgetEstimates(budgetItems)
           .filter((item) => canReadWholeArea && item.area === area)
           .reduce((acc, item) => acc + (Number(item.total) || 0), 0);
         const subcategoryAssigned = canReadWholeArea
@@ -5523,7 +5528,7 @@ export default function ProjectDetail() {
                             }}
                             className={cn(
                               "h-7 max-w-[160px] appearance-none rounded-full border px-2.5 pr-7 text-[9px] font-black uppercase tracking-wider outline-none transition-all cursor-pointer shadow-sm hover:shadow-md focus:ring-2 focus:ring-blue-100 sm:h-8 sm:max-w-[180px] sm:px-3 sm:pr-8 sm:text-[10px]",
-                              statusColors[project.status || 'Presupuesto'] || 'bg-emerald-100 text-emerald-700 border-emerald-200'
+                              statusColors[project.status || 'Presupuesto'] || 'bg-slate-100 text-slate-600 border-slate-200'
                             )}
                           >
                             {PROJECT_STATUSES.map(status => (

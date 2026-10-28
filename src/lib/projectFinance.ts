@@ -1,5 +1,6 @@
 import { resolveResultIncidences } from './resultIncidences';
 import { getCompanyPaid, getItemReimbursementBalance } from './reimbursements';
+import { isInternalBudgetEstimate, effectiveBudgetEstimates } from './internalBudgetEstimate';
 
 export type ProjectExpenseCollection = 'budgetItems' | 'areaExpenses';
 export type ProjectExpenseSource = 'budget' | 'area';
@@ -17,13 +18,13 @@ export const getPaymentTotal = (item: any) => {
   return history.reduce((total: number, payment: any) => total + (Number(payment?.amount) || 0), 0);
 };
 
-export const getItemProviderDebt = (item: any) => Math.max(0, getItemTotal(item) - getPaymentTotal(item));
+export const getItemProviderDebt = (item: any) => isInternalBudgetEstimate(item) ? 0 : Math.max(0, getItemTotal(item) - getPaymentTotal(item));
 
-export const getItemDebt = (item: any) => getItemProviderDebt(item) + getItemReimbursementBalance(item);
+export const getItemDebt = (item: any) => isInternalBudgetEstimate(item) ? 0 : getItemProviderDebt(item) + getItemReimbursementBalance(item);
 
 export const getStandaloneBudgetItems = <T extends { area?: string }>(project: any, budgetItems: T[]) => {
   const activeAreas = Array.isArray(project?.activeAreas) ? project.activeAreas : [];
-  return budgetItems.filter((item) => !activeAreas.includes(item.area));
+  return budgetItems.filter((item) => !activeAreas.includes(item.area) && !isInternalBudgetEstimate(item));
 };
 
 export const getProjectExpenseEntries = <T extends { area?: string }>(
@@ -31,7 +32,7 @@ export const getProjectExpenseEntries = <T extends { area?: string }>(
   budgetItems: T[],
   areaExpenses: T[],
 ): Array<ProjectExpenseEntry<T>> => [
-  ...areaExpenses.map((item) => ({ item, collectionName: 'areaExpenses' as const, source: 'area' as const })),
+  ...areaExpenses.filter(item => !isInternalBudgetEstimate(item)).map((item) => ({ item, collectionName: 'areaExpenses' as const, source: 'area' as const })),
   ...getStandaloneBudgetItems(project, budgetItems)
     .map((item) => ({ item, collectionName: 'budgetItems' as const, source: 'budget' as const })),
 ];
@@ -45,13 +46,15 @@ export const calculateProjectResult = (project: any, budgetItems: any[], areaExp
   ]));
   const categoryTotals = categories
     .map((area) => {
-      const assigned = budgetItems
+      const assigned = effectiveBudgetEstimates(budgetItems)
         .filter((item) => item?.area === area)
         .reduce((total, item) => total + getItemTotal(item), 0);
       const actual = areaExpenses
+        .filter(item => !isInternalBudgetEstimate(item))
         .filter((item) => item?.area === area)
         .reduce((total, item) => total + getItemTotal(item), 0);
-      return { area, total: actual > 0 ? actual : assigned };
+      const hasInternalGlobal = budgetItems.some(item => item?.area === area && isInternalBudgetEstimate(item));
+      return { area, total: hasInternalGlobal ? assigned : actual > 0 ? actual : assigned };
     })
     .filter((item) => item.total > 0);
 
@@ -84,9 +87,9 @@ export const calculateProjectResult = (project: any, budgetItems: any[], areaExp
   };
 };
 export const calculateProjectFinance = (project: any, budgetItems: any[], areaExpenses: any[]) => {
-  const committedBudget = budgetItems.reduce((total, item) => total + getItemTotal(item), 0);
+  const committedBudget = effectiveBudgetEstimates(budgetItems).reduce((total, item) => total + getItemTotal(item), 0);
   const pendingUsdBudget = project?.controlTotalContractCurrency === 'USD' && Number(project?.budgetTotal) === 0;
-  const budgetTotal = pendingUsdBudget ? 0 : Number(project?.budgetTotal) || committedBudget;
+  const budgetTotal = pendingUsdBudget || Number(project?.crmProjectImportVersion) > 0 ? Number(project?.budgetTotal) || 0 : Number(project?.budgetTotal) || committedBudget;
   const entries = getProjectExpenseEntries(project, budgetItems, areaExpenses);
   const spent = entries.reduce((total, entry) => total + getItemTotal(entry.item), 0);
   const paid = entries.reduce((total, entry) => total + getCompanyPaid(entry.item), 0);

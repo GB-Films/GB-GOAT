@@ -1,9 +1,11 @@
 import { getExpenseInvoices } from './invoices';
 import { moneyCents } from './sharedAllocations';
+import { isInternalBudgetEstimate } from './internalBudgetEstimate';
 
 export function documentProjectChoices(lines: any[], kind: 'invoice' | 'other', records: any[] = []) {
   const projects = new Map<string, { id: string; name: string; amountCents: number; lines: { projectId: string; collectionName: string; itemId: string; amount: number }[] }>();
   for (const line of lines) {
+    if (isInternalBudgetEstimate(line.item)) continue;
     if (!line.expenseId || !['budgetItems', 'areaExpenses'].includes(line.collectionName)) continue;
     const stored = (line.item?.sharedInvoices || []).reduce((sum: number, row: any) => sum + row.amountCents, 0);
     const live = records.filter(record => record.kind === 'invoice' && record.status === 'active').flatMap(record => record.allocations || [])

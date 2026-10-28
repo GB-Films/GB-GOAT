@@ -1,4 +1,5 @@
 const { createHash } = require("node:crypto");
+const { isInternalBudgetEstimate } = require('./internalBudgetEstimate');
 const { HttpsError } = require("firebase-functions/v2/https");
 const fail = (message) => {
   throw new HttpsError("failed-precondition", message);
@@ -202,6 +203,7 @@ function signingPath(path, projectId, documentId, artifact) {
   return path;
 }
 function ownExpense(item, project, path) {
+  if (isInternalBudgetEstimate(item)) return null;
   const [, projectId, collectionName, expenseId] = path.split("/");
   if (!["budgetItems", "areaExpenses"].includes(collectionName)) return null;
   if (
