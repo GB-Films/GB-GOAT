@@ -1,0 +1,52 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { companyRepresentation, checkCompanyReview } = require('./providerRepresentation');
+const { thirdPartyDeclaration, checkThirdPartyReview } = require('./providerThirdPartyDeclaration');
+const { COMPANY_EVIDENCE } = require('./providerEvidence');
+const company = { type: 'empresa', businessName: 'Empresa de Ejemplo SRL', cuit: '30111111112' };
+const actor = { uid: 'person', email: 'administracion@example.test' };
+const representative = { name: 'Persona Ejemplo', dni: '12.345.678', role: 'Apoderado' };
+const evidence = COMPANY_EVIDENCE.map((kind, index) => ({ id: `evidence-${index}`, kind, sha256: 'a'.repeat(64), fileName: `${kind}.pdf` }));
+const companyInput = { representative, accountConfirmed: true, identityConfirmed: true, authorityConfirmed: true };
+test('empresa, cuenta y facultades declaradas quedan expresas; no sustituye una revisión', () => {
+  const content = companyRepresentation(company, actor, companyInput, evidence);
+  assert.equal(content.signerDni, '12345678');
+  for (const value of [company.businessName, company.cuit, actor.email, representative.name, 'facultades vigentes', 'pendiente de revisión']) assert.ok(content.terms.includes(value));
+  for (const key of ['accountConfirmed', 'identityConfirmed', 'authorityConfirmed']) assert.throws(() => companyRepresentation(company, actor, { ...companyInput, [key]: false }, evidence));
+  assert.throws(() => companyRepresentation(company, actor, { ...companyInput, representative: { ...representative, dni: 'ABC12345678' } }, evidence));
+  assert.throws(() => companyRepresentation(company, actor, companyInput, evidence.slice(1)));
+});
+test('aprobar representación exige documento actual, identidad y facultades; no revive accesos revocados ni empresas modificadas', () => {
+  const declaration = { actor, content: companyRepresentation(company, actor, companyInput, evidence) };
+  const membership = { status: 'needs_confirmation', email: actor.email };
+  const review = { decision: 'approved', approvedScope: 'Gestión y contratos de servicios comprendidos en el poder adjunto', checks: { companyVerified: true, identityVerified: true, authorityVerified: true, scopeVerified: true } };
+  checkCompanyReview(declaration, company, membership, review);
+  for (const key of Object.keys(review.checks)) assert.throws(() => checkCompanyReview(declaration, company, membership, { ...review, checks: { ...review.checks, [key]: false } }));
+  assert.throws(() => checkCompanyReview(declaration, company, { ...membership, status: 'revoked' }, review));
+  assert.throws(() => checkCompanyReview(declaration, { ...company, cuit: '30111111113' }, membership, review));
+  assert.throws(() => checkCompanyReview(declaration, company, { ...membership, email: 'other@example.test' }, review));
+});
+const person = { type: 'persona', name: 'Prestador', lastName: 'Ejemplo', dni: '12345678', bankAccount_alias: 'cuenta.propia' };
+const thirdInput = { name: 'Emisor y beneficiario', cuit: '20333333334', alias: 'cuenta.emisor', responsibilityConfirmed: true, roles: ['invoice', 'payment'], workKeys: ['project/areaExpenses/work'], expiresOn: '2026-12-31' };
+test('tercero sólo requiere nombre, CUIT y cuenta: no documentos, ni doble captura del titular, ni cambio del banco propio', () => {
+  const before = JSON.stringify(person);
+  const content = thirdPartyDeclaration(person, actor, thirdInput, thirdInput.workKeys);
+  assert.equal(content.party.holder, thirdInput.name);
+  assert.equal(content.party.holderCuit, thirdInput.cuit);
+  assert.equal(content.party.alias, thirdInput.alias);
+  assert.equal(content.ownAccount.alias, person.bankAccount_alias);
+  assert.equal(content.evidence, undefined);
+  assert.equal(content.party.relationship, undefined);
+  assert.equal(JSON.stringify(person), before);
+  for (const value of [thirdInput.name, thirdInput.cuit, thirdInput.alias, 'bajo mi responsabilidad', 'no constituye una verificación bancaria automática']) assert.ok(content.terms.includes(value));
+  assert.throws(() => thirdPartyDeclaration(person, actor, { ...thirdInput, alias: '', cbu: '' }, thirdInput.workKeys));
+  assert.throws(() => thirdPartyDeclaration(person, actor, { ...thirdInput, holderCuit: '20333333335' }, thirdInput.workKeys));
+  assert.throws(() => thirdPartyDeclaration(person, actor, { ...thirdInput, responsibilityConfirmed: false }, thirdInput.workKeys));
+});
+test('revisión del tercero no exige constancias; sí conserva la validación fiscal y el destinatario declarado', () => {
+  const declaration = { content: thirdPartyDeclaration(person, actor, thirdInput, thirdInput.workKeys) };
+  const input = { decision: 'approved', checks: { fiscalFrameVerified: true, declaredPayeeChecked: true } };
+  checkThirdPartyReview(declaration, ['invoice', 'payment'], input);
+  assert.throws(() => checkThirdPartyReview(declaration, ['payment'], { ...input, checks: {} }));
+  assert.throws(() => checkThirdPartyReview({ content: { termsVersion: 'third-party-v2' } }, ['payment'], input));
+});

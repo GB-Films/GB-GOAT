@@ -33,7 +33,7 @@ function normalizeRecord(input) {
     notes: text(input.notes, 2000), currency: input.currency === 'USD' ? 'USD' : 'ARS',
     issuerName: text(input.issuerName), issuerCuit: text(input.issuerCuit).replace(/\D/g, ''),
     recipientCuit: text(input.recipientCuit).replace(/\D/g, ''), number: text(input.number, 60).toUpperCase(),
-    payeeName: text(input.payeeName), account: text(input.account), method: text(input.method, 30),
+    payeeName: text(input.payeeName), ...(input.payeeCuit ? { payeeCuit: text(input.payeeCuit, 30).replace(/\D/g, '') } : {}), account: text(input.account), method: text(input.method, 30),
     reference: text(input.reference, 160),
     cashProjectId: input.cashProjectId ? id(input.cashProjectId) : '',
     netCents: cents(input.net || 0), totalCents: cents(input.total || 0),
@@ -188,6 +188,7 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, clo
       const allocations = record.allocations.map((allocation, index) => {
         const expense = rows[index].data(), project = projectMap.get(allocation.projectId);
         if (!expense || !project || expense.providerId !== record.providerId) fail('El proveedor o el gasto cambió. Volvé a cargar la ficha.');
+        if (expense.thirdPartyPayoutRequired && ['invoice', 'payment'].includes(record.kind) && !authorization) fail('Este trabajo requiere la autorización revisada del tercero y su cuenta de cobro.');
         const active = list(project.activeAreas).includes(expense.area);
         if ((allocation.collectionName === 'areaExpenses') !== active) fail('El gasto ya no pertenece a la gestión activa del proyecto.');
         if (allocation.amountCents > cents(expense.total)) fail('La aplicación supera el costo del gasto.');
@@ -200,6 +201,7 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, clo
           const settled = Object.values(invoice?.settlements || {}).flat().filter(row => key(row) === key(allocation)).reduce((sum, row) => sum + row.amountCents, 0);
           if (record.kind !== 'payment' || invoice?.kind !== 'invoice' || invoice.providerId !== record.providerId
             || invoice.status !== 'active' || !original || settled + allocation.amountCents > original.amountCents) fail('La aplicación supera el saldo de la factura vinculada.');
+          if (authorization && invoice.issuerCuit !== authorization.party.cuit) fail('La factura vinculada no fue emitida por el titular de la cuenta autorizada.');
         }
         return { ...allocation, area: text(expense.area), projectName: text(project.name), projectCode: text(project.projectCode), description: text(expense.description) };
       });
@@ -220,7 +222,8 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, clo
           updates.paid = paid({ paymentHistory: updates.paymentHistory }) >= cents(expense.total);
         } else {
           const field = record.kind === 'invoice' ? 'sharedInvoices' : 'sharedReceipts';
-          updates[field] = [...list(expense[field]), { id: recordId, amountCents: allocation.amountCents, number: record.number, title: record.notes || record.number, issuerName: record.issuerName }];
+          updates[field] = [...list(expense[field]), { id: recordId, amountCents: allocation.amountCents, number: record.number, title: record.notes || record.number, issuerName: record.issuerName, issuerCuit: record.issuerCuit,
+            ...(authorization ? { thirdPartyAuthorizationId: record.thirdPartyAuthorizationId, payeeAccount: authorization.party.cbu || authorization.party.alias } : {}) }];
         }
         tx.update(refs[index], updates);
         tx.set(db.doc(`projects/${allocation.projectId}/activityLog/${recordId}-${allocation.itemId}`), {

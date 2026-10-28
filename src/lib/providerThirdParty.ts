@@ -20,7 +20,7 @@ export function providerFiscalErrors(values: { type: string; cuit: string; bankA
   if (!cuit && !exception) errors.cuit = "Falta completar este campo obligatorio.";
   else if (cuit && cuit.length !== 11) errors.cuit = "El CUIT/CUIL debe tener 11 números.";
   else if (duplicateCuit && cuit) errors.cuit = "Ya existe un proveedor registrado con este CUIT/CUIL.";
-  if (!values.bankAccount_cbu.trim() && !values.bankAccount_alias.trim() && !exception) errors.bankAccount = "Completá al menos un CBU o un Alias.";
+  if (!values.bankAccount_cbu.trim() && !values.bankAccount_alias.trim()) errors.bankAccount = "Completá al menos un CBU o un Alias.";
   else if (values.bankAccount_cbu && !/^\d{22}$/.test(values.bankAccount_cbu.replace(/\D/g, ""))) errors.bankAccount_cbu = "El CBU debe tener exactamente 22 números consecutivos.";
   if (useThirdParty && values.type !== "persona") errors.thirdParty = "Esta alternativa es sólo para personas físicas.";
   else if (exception && Object.keys(thirdPartyDraftErrors(draft)).length) errors.thirdParty = "Revisá los datos de quien va a facturar.";

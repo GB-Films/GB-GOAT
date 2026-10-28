@@ -1,5 +1,6 @@
 const { fail, dateKey } = require("./providerPortalModel");
 function authorizedParty(record, declaration, now = new Date()) {
+  if (declaration?.content?.termsVersion !== 'third-party-v3') fail('Actualizá la autorización con el emisor, CUIT y cuenta del titular de la factura antes de registrar operaciones nuevas.');
   const role =
     record.kind === "invoice"
       ? "invoice"
@@ -33,6 +34,10 @@ function authorizedParty(record, declaration, now = new Date()) {
     fail("El emisor no coincide con la autorización revisada.");
   if (role === "payment" && record.payeeName !== declaration.content.party.name)
     fail("El beneficiario no coincide con la autorización revisada.");
+  if (declaration.content.party.holderCuit !== declaration.content.party.cuit) fail('El emisor y el titular de la cuenta deben corresponder al mismo CUIT.');
+  if (role === 'payment' && (record.method !== 'transfer' || record.account !== (declaration.content.party.cbu || declaration.content.party.alias)
+    || record.payeeCuit !== declaration.content.party.cuit || !declaration.effectiveRoles.includes('invoice')
+    || record.allocations.some(a => !a.invoiceId))) fail('El pago debe vincular la factura del emisor aprobado y utilizar su cuenta y CUIT autorizados.');
   return {
     declarationId: record.thirdPartyAuthorizationId,
     role,

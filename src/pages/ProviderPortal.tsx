@@ -7,6 +7,8 @@ import {
   signPortalDocument,
 } from "../lib/providerPortal";
 import PortalSignDialog from "../components/PortalSignDialog";
+import { ThirdPartyAuthorizationForm } from "../components/ThirdPartyAuthorizationForm";
+import { CompanyRepresentationForm } from "../components/CompanyRepresentationForm";
 
 const tabs = [
   "Trabajos",
@@ -24,9 +26,9 @@ const labels: Record<string, string> = {
   address: "Domicilio",
   phone: "Teléfono",
   email: "Correo personal de tu cuenta Google",
-  bankAccount_cbu: "CBU/CVU",
-  bankAccount_alias: "Alias",
-  bankAccount_holder: "Titular de la cuenta",
+  bankAccount_cbu: "Tu CBU/CVU propio",
+  bankAccount_alias: "Tu alias propio",
+  bankAccount_holder: "Titular de tu cuenta propia",
 };
 const status: Record<string, string> = {
   pending_signature: "Pendiente de firma",
@@ -72,7 +74,8 @@ export default function ProviderPortal() {
     holder: "",
     cbu: "",
     alias: "",
-    roles: [],
+    roles: ["invoice", "payment"],
+    account: "", responsibilityConfirmed: false,
     workKeys: [],
     expiresOn: "",
   });
@@ -83,7 +86,7 @@ export default function ProviderPortal() {
     if (!view?.thirdPartyIntake || intakePrefilled.current === key) return;
     intakePrefilled.current = key;
     if (view.declarations.some((d: any) => d.kind === "third_party")) return;
-    setParty({ ...view.thirdPartyIntake.party, roles: view.thirdPartyIntake.roles, workKeys: view.thirdPartyIntake.workKeys, expiresOn: "" });
+    setParty(current => ({ ...current, ...view.thirdPartyIntake.party, roles: ["invoice", "payment"], workKeys: view.thirdPartyIntake.workKeys, expiresOn: "" }));
     setTab("Mis datos");
   }, [view, providerId, user?.uid]);
   const load = useCallback(async () => {
@@ -196,7 +199,8 @@ export default function ProviderPortal() {
                   holder: "",
                   cbu: "",
                   alias: "",
-                  roles: [],
+                  roles: ["invoice", "payment"],
+    account: "", responsibilityConfirmed: false,
                   workKeys: [],
                   expiresOn: "",
                 });
@@ -233,22 +237,7 @@ export default function ProviderPortal() {
           </button>
         </div>
       )}
-      {selected?.status === "needs_confirmation" && selected?.type === "empresa" && (
-        <section className={box}>
-          <h2 className="font-bold">Confirmá la representación de la empresa</h2>
-          <p className="my-2 text-sm">
-            Revisá la ficha y firmá la declaración para activar tu vista de
-            proveedor.
-          </p>
-          <button
-            disabled={busy}
-            className="ml-3 rounded bg-slate-900 p-2 text-white"
-            onClick={() => prepare("prepareRepresentation", { capacity: 'authorized_representative' })}
-          >
-            Revisar y firmar
-          </button>
-        </section>
-      )}
+      {selected?.status === 'needs_confirmation' && selected?.type === 'empresa' && <div key={`${providerId}/${docs.filter(d => d.providerId === providerId && d.signed).length}`}><CompanyRepresentationForm providerId={providerId} email={user?.email || ''} busy={busy} onPrepare={input => prepare('prepareRepresentation', input)} /></div>}
       {selected?.status === 'needs_confirmation' && selected?.type !== 'empresa' && (
         <p role="status" className={box}>Administración debe revisar la clasificación de esta ficha para activar el acceso. No necesitás firmar una declaración de representación.</p>
       )}
@@ -296,6 +285,7 @@ export default function ProviderPortal() {
           {view && (
             <div className={box}>
               <h2 className="font-bold">Cargar factura</h2>
+              {view.works.some((w: any) => w.thirdPartyPayoutRequired) && <p className="mt-2 text-sm text-slate-600">Las facturas de trabajos con un tercero autorizado se registran por administración contra el CUIT y la cuenta revisados, desde la ficha completa.</p>}
               <select
                 aria-label="Trabajo de la factura"
                 className="my-2 w-full rounded border p-2"
@@ -304,8 +294,8 @@ export default function ProviderPortal() {
               >
                 <option value="">Elegí un trabajo</option>
                 {view.works.map((w: any) => (
-                  <option key={w.key} value={w.key}>
-                    {w.projectName} · {w.description}
+                  <option key={w.key} value={w.key} disabled={w.thirdPartyPayoutRequired}>
+                    {w.thirdPartyPayoutRequired ? 'Factura de tercero: gestión administrativa · ' : ''}{w.projectName} · {w.description}
                   </option>
                 ))}
               </select>
@@ -599,6 +589,7 @@ export default function ProviderPortal() {
                   </p>
                   {d.content.party.relationship && <p className="text-sm">Relación con el prestador: {d.content.party.relationship}</p>}
                   {d.content.party.activity && <p className="text-sm">Actividad declarada del tercero: {d.content.party.activity}</p>}
+                  <p className="text-sm">Cuenta del titular de la factura: {d.content.party.cbu || d.content.party.alias}</p>
                   {["active", "pending_review"].includes(d.status) && (
                     <button
                       disabled={busy}
@@ -664,6 +655,7 @@ export default function ProviderPortal() {
               nuevamente a quién pertenece.
             </p>
           </section>
+          {view.provider.type === 'empresa' && <div key={providerId}><CompanyRepresentationForm providerId={providerId} email={user?.email || ''} busy={busy} onPrepare={input => prepare('prepareRepresentation', input)} /></div>}
           <form
             className={box + " space-y-4"}
             onSubmit={(e) => {
@@ -705,97 +697,10 @@ export default function ProviderPortal() {
               Revisar cambios y firmar
             </button>
           </form>
-          {view.provider.type === "persona" && <form
-            className={box + " space-y-3"}
-            onSubmit={(e) => {
-              e.preventDefault();
-              void prepare("prepareThirdParty", party);
-            }}
-          >
-            <h2 className="font-bold">Quién factura y cobra por mí</h2>
-            {view.thirdPartyIntake && !view.declarations.some((d: any) => d.kind === "third_party") && <p className="rounded-lg bg-blue-50 p-3 text-sm text-blue-900">Recuperamos tu solicitud del alta. Revisá los datos, elegí la vigencia y confirmá los trabajos antes de firmar. Todavía requiere revisión administrativa.{!view.works.length && " Cuando administración te asigne un trabajo, vas a poder completar esta autorización."}</p>}
-            <p className="text-sm text-slate-600">
-              Si interviene otra persona, identificála y elegí los trabajos. La
-              autorización de cobro y el encuadre de facturación se revisan por
-              separado.
-            </p>
-            <div className="grid gap-3 sm:grid-cols-2">
-              {Object.entries({
-                name: "Nombre o razón social del tercero",
-                cuit: "CUIT del tercero",
-                email: "Correo del tercero",
-                relationship: "Relación con el prestador",
-                activity: "Actividad que realiza el tercero",
-                holder: "Titular de la cuenta",
-                cbu: "CBU/CVU",
-                alias: "Alias",
-                expiresOn: "Vigente hasta",
-              }).map(([key, label]) => (
-                <label key={key} className="text-sm">
-                  {label}
-                  <input
-                    required={["name", "cuit", "relationship", "activity", "expiresOn"].includes(key)}
-                    type={key === "expiresOn" ? "date" : "text"}
-                    className="mt-1 block w-full rounded border p-2"
-                    value={party[key]}
-                    onChange={(e) =>
-                      setParty({ ...party, [key]: e.target.value })
-                    }
-                  />
-                </label>
-              ))}
-            </div>
-            <div className="flex gap-4">
-              {[
-                ["invoice", "Propongo que facture"],
-                ["payment", "Autorizo que cobre"],
-              ].map(([role, label]) => (
-                <label className="text-sm" key={role}>
-                  <input
-                    type="checkbox"
-                    checked={party.roles.includes(role)}
-                    onChange={(e) =>
-                      setParty({
-                        ...party,
-                        roles: e.target.checked
-                          ? [...party.roles, role]
-                          : party.roles.filter((r: string) => r !== role),
-                      })
-                    }
-                  />{" "}
-                  {label}
-                </label>
-              ))}
-            </div>
-            <fieldset className="space-y-2">
-              <legend className="mb-2 text-sm font-semibold">
-                Trabajos alcanzados
-              </legend>
-              {view.works.map((w: any) => (
-                <label className="block text-sm" key={w.key}>
-                  <input
-                    type="checkbox"
-                    checked={party.workKeys.includes(w.key)}
-                    onChange={(e) =>
-                      setParty({
-                        ...party,
-                        workKeys: e.target.checked
-                          ? [...party.workKeys, w.key]
-                          : party.workKeys.filter((k: string) => k !== w.key),
-                      })
-                    }
-                  />{" "}
-                  {w.projectName} · {w.description}
-                </label>
-              ))}
-            </fieldset>
-            <button
-              disabled={busy || !party.roles.length || !party.workKeys.length}
-              className="rounded bg-slate-900 px-4 py-2 text-white disabled:opacity-40"
-            >
-              Revisar autorización y firmar
-            </button>
-          </form>}
+          {view.provider.type === 'persona' && <ThirdPartyAuthorizationForm provider={view.provider} works={view.works} party={party} onChange={setParty} busy={busy}
+            recovered={!!view.thirdPartyIntake && !view.declarations.some((d: any) => d.kind === 'third_party')}
+            onPrepare={input => prepare('prepareThirdParty', input)} />}
+
         </>
       )}
       {signing && (

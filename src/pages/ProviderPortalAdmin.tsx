@@ -3,6 +3,8 @@ import { collection, getDocs } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { downloadPortalFile, portalAdminRequest } from "../lib/providerPortal";
 export default function ProviderPortalAdmin() {
+  const [checks, setChecks] = useState<Record<string, Record<string, boolean>>>({});
+  const [approvedScope, setApprovedScope] = useState<Record<string, string>>({});
   const [accessEmail, setAccessEmail] = useState("");
   const [reviews, setReviews] = useState<any[]>([]),
     [error, setError] = useState(""),
@@ -41,7 +43,7 @@ export default function ProviderPortalAdmin() {
         declarationId: d.id,
         decision,
         reason: reason[d.id] || "",
-        roles,
+        roles, checks: checks[d.id] || {}, approvedScope: approvedScope[d.id] || "",
       });
       await load();
     });
@@ -123,12 +125,13 @@ export default function ProviderPortalAdmin() {
           <h3 className="font-semibold">
             {d.kind === "profile"
               ? "Cambios de datos"
-              : "Autorización de tercero"}{" "}
+              : d.kind === "representation" ? "Representación de empresa" : "Autorización de tercero"}{" "}
             · {d.actor.email}
           </h3>
           <p className="text-xs text-slate-500">
             Proveedor {d.providerId} · Firma {d.proof.signedAt}
           </p>
+          <div className="flex flex-wrap gap-2">{(['signed', 'certificate'] as const).map(artifact => <button key={artifact} type="button" disabled={busy} className="rounded border px-3 py-2 text-xs text-blue-700" onClick={() => run(async () => { downloadPortalFile(await portalAdminRequest({ action: 'declarationFile', providerId: d.providerId, declarationId: d.id, artifact })); })}>{artifact === 'signed' ? 'Ver declaración firmada' : 'Ver certificado de firma'}</button>)}</div>
           {d.kind === "profile" ? (
             Object.entries(d.content.changes).map(([key, c]: any) => (
               <p className="text-sm" key={key}>
@@ -137,15 +140,24 @@ export default function ProviderPortalAdmin() {
                 {c.critical ? "Pendiente de aprobación" : "Aplicado al firmar"}
               </p>
             ))
-          ) : (
+          ) : d.kind === 'representation' ? <div className="space-y-2 text-sm">
+            <p><strong>{d.content.provider.name}</strong> · CUIT {d.content.provider.cuit}</p>
+            <p>Representante: {d.content.representative?.name || d.content.profile?.name} · DNI {d.content.representative?.dni || 'No informado en esta versión'}</p>
+            <p>Cargo o carácter: {d.content.representative?.role || 'No informado'}</p><p>Cuenta de representación: {d.actor.email}</p>
+            <label className="block">Alcance de las facultades revisadas<textarea className="mt-1 block w-full rounded border p-2" maxLength={500} value={approvedScope[d.id] || ''} onChange={event => setApprovedScope({ ...approvedScope, [d.id]: event.target.value })} /></label>
+            {d.content.version !== 'company-representation-v2' && <p className="text-amber-800">Antecedente anterior sin el paquete actual de documentación. Pedí una nueva presentación antes de habilitar la representación.</p>}
+          </div> : (
             <>
               <p>
                 {d.content.party.name} · CUIT {d.content.party.cuit} ·{" "}
                 {d.content.party.holder} ·{" "}
                 {d.content.party.cbu || d.content.party.alias}
               </p>
-              <p className="text-sm">Relación con el prestador: {d.content.party.relationship || "Sin informar en este antecedente"}</p>
-              <p className="text-sm">Actividad declarada del tercero: {d.content.party.activity || "Sin informar en este antecedente"}</p>
+              {d.content.party.holderCuit && <p className="text-sm">CUIT del titular de la cuenta: {d.content.party.holderCuit}</p>}
+              {d.content.reason && <p className="text-sm">Motivo: {d.content.reason}</p>}
+              {d.content.termsVersion !== 'third-party-v3' && <p className="text-sm text-amber-800">Autorización anterior: para operaciones nuevas se requiere identificar al emisor, su CUIT y la cuenta del titular de la factura.</p>}
+              {d.content.party.relationship && <p className="text-sm">Relación con el prestador: {d.content.party.relationship}</p>}
+              {d.content.party.activity && <p className="text-sm">Actividad declarada del tercero: {d.content.party.activity}</p>}
               <p className="text-xs text-slate-500">El servicio real del prestador figura en los trabajos alcanzados. Revisá por separado el encuadre fiscal y la cuenta del beneficiario.</p>
               <p className="text-sm">Hasta {d.content.expiresOn}</p>
               <ul className="text-sm">
@@ -155,6 +167,10 @@ export default function ProviderPortalAdmin() {
               </ul>
             </>
           )}
+          {!!d.content.evidence?.length && <div className="flex flex-wrap gap-2">{d.content.evidence.map((file: any) => <button key={file.id} type="button" disabled={busy} className="rounded border px-3 py-2 text-xs text-blue-700" onClick={() => run(async () => { downloadPortalFile(await portalAdminRequest({ action: 'evidenceFile', providerId: d.providerId, evidenceId: file.id })); })}>Ver respaldo: {file.fileName}</button>)}</div>}
+          {d.kind !== 'profile' && <fieldset className="space-y-2 rounded-lg border p-3"><legend className="px-1 text-sm font-semibold">Comprobaciones de administración</legend>{Object.entries(d.kind === 'representation' ? {
+            companyVerified: 'Revisé la constitución o registro y coincide la razón social y el CUIT.', identityVerified: 'Revisé el DNI y la identidad de quien firma, y confirmé el correo que usará para representar a esta empresa.', authorityVerified: 'Revisé la designación o poder y las facultades vigentes del representante.', scopeVerified: 'El alcance documentado permite las gestiones y firmas que se van a habilitar.',
+          } : { fiscalFrameVerified: 'Validé el encuadre fiscal y que el emisor corresponde a estos trabajos.', declaredPayeeChecked: 'Revisé el CUIT y la cuenta que el prestador declaró para el titular de la factura; el pago se registrará a ese destinatario.' }).map(([key, label]) => <label key={key} className="flex items-start gap-2 text-sm"><input type="checkbox" checked={!!checks[d.id]?.[key]} onChange={event => setChecks(current => ({ ...current, [d.id]: { ...current[d.id], [key]: event.target.checked } }))} /><span>{label}</span></label>)}</fieldset>}
           <label className="block text-sm">
             Motivo / respaldo de la revisión
             <textarea
@@ -165,7 +181,7 @@ export default function ProviderPortalAdmin() {
           </label>
           <div className="flex flex-wrap gap-2">
             {(d.kind === "profile"
-              ? ["profile"]
+              ? ["profile"] : d.kind === 'representation' ? ['representation']
               : d.content.roles.filter((r: string) => !d.decisions?.[r])
             ).map((role: string) => (
               <div key={role} className="flex gap-2">
@@ -176,13 +192,13 @@ export default function ProviderPortalAdmin() {
                     review(
                       d,
                       "approved",
-                      role === "profile" ? undefined : [role],
+                      ["profile", "representation"].includes(role) ? undefined : [role],
                     )
                   }
                 >
                   Aprobar{" "}
                   {role === "profile"
-                    ? "datos críticos"
+                    ? "datos críticos" : role === 'representation' ? 'representación de empresa'
                     : role === "invoice"
                       ? "encuadre de facturación"
                       : "beneficiario y cuenta"}
@@ -194,7 +210,7 @@ export default function ProviderPortalAdmin() {
                     review(
                       d,
                       "rejected",
-                      role === "profile" ? undefined : [role],
+                      ["profile", "representation"].includes(role) ? undefined : [role],
                     )
                   }
                 >

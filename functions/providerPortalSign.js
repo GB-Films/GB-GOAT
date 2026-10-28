@@ -2,6 +2,7 @@ const admin = require("firebase-admin");
 const { declarationPdf } = require("./providerDeclarationPdf");
 const { createHash } = require("node:crypto");
 const { createProjectContractBridge } = require('./providerProjectContracts');
+const { createEvidenceStore } = require('./providerEvidence');
 const {
   fail,
   hash,
@@ -116,10 +117,12 @@ function createSignBridge(db) {
       if (!snap.exists) continue;
       const d = snap.data();
       if (!list(d.signerEmails).map(email).includes(actor.email)) continue;
+      let requiredDni = '';
       // Keep signed originals as history, but stop requesting the obsolete
       // representation signature from people who act on their own behalf.
       if (d.portalManaged && d.goatDeclarationId) {
         const declaration = (await db.doc(`providerPortalDeclarations/${id(d.goatDeclarationId)}`).get()).data();
+        requiredDni = declaration?.content?.signerDni || '';
         if (declaration?.kind === 'representation' && !declaration.proof?.complete) {
           const provider = (await db.doc(`providers/${id(declaration.providerId)}`).get()).data();
           if (provider?.type === 'persona') continue;
@@ -142,11 +145,13 @@ function createSignBridge(db) {
         artifactsReady: Boolean(d.serverArtifacts?.signedPdfPath),
         portalManaged: d.portalManaged === true,
         providerId: d.goatProviderId || null,
+        requiredDni,
       });
     }
     return result;
   }
   return {
+    evidence: createEvidenceStore({ db, bucket: () => admin.storage().bucket(), timestamp: () => admin.firestore.FieldValue.serverTimestamp() }),
     ...createProjectContractBridge({ db, store, bucket, readLocalFile: file => fileBytes(file, admin.storage().bucket()), timestamp: () => admin.firestore.FieldValue.serverTimestamp() }),
     list: listDocuments,
     session: async (actor) => {
@@ -347,6 +352,7 @@ function createSignBridge(db) {
         originalSha256: d.sha256,
         signedPdfSha256: artifacts.signedPdfSha256,
         certificateSha256: artifacts.certificateSha256,
+        signerDni: String(sig.dni || '').replace(/\D/g, ''),
       };
     },
     async connectProject(goatProjectId, p, actor) {

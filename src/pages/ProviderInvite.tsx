@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { GoogleAuthProvider, onAuthStateChanged, signInWithPopup, User } from 'firebase/auth';
 import { collection, doc, getDoc, runTransaction, serverTimestamp } from 'firebase/firestore';
 import { useParams } from 'react-router-dom';
@@ -10,9 +10,7 @@ import {
   normalizeDigits,
 } from '../lib/providerConstants';
 import { getProviderInviteTargetIssue } from '../lib/providerInvites';
-import { portalRequest } from '../lib/providerPortal';
-import { initialThirdPartyCapture, thirdPartyCapture, providerFiscalErrors } from '../lib/providerThirdParty';
-import { ProviderThirdPartyDialog, ProviderThirdPartyEntry } from '../components/ProviderThirdPartyDialog';
+import { emptyThirdParty, providerFiscalErrors } from '../lib/providerThirdParty';
 
 type ProviderType = 'persona' | 'empresa';
 type DuplicateState = { dni?: boolean; cuit?: boolean };
@@ -350,10 +348,6 @@ export default function ProviderInvite() {
   const [googleUser, setGoogleUser] = useState<User | null>(auth.currentUser);
   const [personalAccountAccepted, setPersonalAccountAccepted] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
-  const [thirdPartyState, captureThirdParty] = useReducer(thirdPartyCapture, initialThirdPartyCapture);
-  const { enabled: thirdPartyMode, open: thirdPartyOpen, draft: thirdPartyDraft } = thirdPartyState;
-  const intakeAttempt = useRef(crypto.randomUUID());
-  const usesThirdParty = form.type === 'persona' && thirdPartyMode;
   const submitErrorRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => onAuthStateChanged(auth, (user) => {
@@ -488,7 +482,7 @@ export default function ProviderInvite() {
     }
     if (values.type === 'empresa' && !values.businessName.trim()) nextErrors.businessName = requiredMessage;
 
-    Object.assign(nextErrors, providerFiscalErrors(values, thirdPartyMode, thirdPartyDraft, duplicateState.cuit));
+    Object.assign(nextErrors, providerFiscalErrors(values, false, emptyThirdParty, duplicateState.cuit));
 
     if (!values.email.trim()) nextErrors.email = requiredMessage;
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(values.email.trim())) nextErrors.email = 'Ingresá un email válido.';
@@ -510,7 +504,7 @@ export default function ProviderInvite() {
   };
 
   const selectType = (type: ProviderType) => {
-    captureThirdParty({ type: 'changeType' });
+    setPersonalAccountAccepted(false);
     setForm({ ...emptyForm, type, email: googleUser?.email?.trim().toLowerCase() || '' });
     setDuplicates({});
     setFieldErrors({});
@@ -520,12 +514,12 @@ export default function ProviderInvite() {
 
   useEffect(() => {
     if (showFieldErrors) setFieldErrors(validateForm(form, duplicates));
-  }, [duplicates, showFieldErrors, thirdPartyMode, thirdPartyDraft]);
+  }, [duplicates, showFieldErrors]);
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!googleUser || !personalAccountAccepted) {
-      setError('Iniciá sesión con tu cuenta personal de Google y confirmá que te pertenece.');
+      setError('Iniciá sesión con tu cuenta Google y confirmá que tenés control personal de ella.');
       return;
     }
     const validationErrors = validateForm();
@@ -552,10 +546,7 @@ export default function ProviderInvite() {
         || String(identity.claims.email || '').toLowerCase() !== form.email) {
         throw new Error('Iniciá sesión con una cuenta Google con correo verificado.');
       }
-      if (usesThirdParty) {
-        const result = await portalRequest({ action: 'registerThirdPartyIntake', inviteToken: token, attemptId: intakeAttempt.current, form, party: thirdPartyDraft, personalAccountAccepted });
-        setRegisteredProviderId(result.providerId);
-      } else await runTransaction(db, async (transaction) => {
+      const newProviderId = await runTransaction(db, async (transaction) => {
         const inviteRef = doc(db, 'providerInvites', token);
         const inviteSnap = await transaction.get(inviteRef);
         if (!inviteSnap.exists()) throw new Error('INVITE_NOT_FOUND');
@@ -670,8 +661,9 @@ export default function ProviderInvite() {
             providerType: form.type,
           });
         }
+        return providerRef.id;
       });
-
+      setRegisteredProviderId(newProviderId);
       setSubmitted(true);
     } catch (err: any) {
       console.error('Error submitting provider invite:', err);
@@ -687,7 +679,6 @@ export default function ProviderInvite() {
       };
       const rawDetail = err?.code || err?.message || 'sin detalle';
       const submitError = PROVIDER_INVITE_MESSAGES[err?.message]
-        || (usesThirdParty && err?.code === 'functions/failed-precondition' ? err.message : '')
         || firebaseMessageByCode[err?.code]
         || `Ocurrió un error inesperado al enviar (${rawDetail}). Los datos siguen cargados: recargá la página o pedí un link nuevo.`;
       if (err?.message === 'DNI_EXISTS' || err?.message === 'CUIT_EXISTS') {
@@ -729,9 +720,9 @@ export default function ProviderInvite() {
           <div className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate-400 mb-3">Gran Berta Films</div>
           <h1 className="text-2xl font-bold text-slate-900 mb-3">Alta recibida correctamente</h1>
           <p className="text-sm text-slate-500 leading-relaxed">
-            {registeredProviderId ? 'Guardamos tus datos y la solicitud del tercero. Falta confirmar tu representación, firmar la autorización y completar la revisión administrativa.' : invite?.mode === 'multi_use' ? 'Tu información fue enviada correctamente.' : 'Tu información fue enviada. Este link ya no podrá volver a usarse.'}
+            {form.type === 'empresa' ? 'Guardamos los datos propios de la empresa. Desde Mi proveedor vas a identificar al representante, adjuntar los respaldos y revisar su declaración para la aprobación administrativa.' : 'Guardamos tus datos y tu cuenta propia. Tu alta no requiere firma. Si otra persona va a facturar y cobrar por tus trabajos, solicitá la autorización después desde Mi proveedor.'}
           </p>
-          {registeredProviderId && <a href={`#/mi-proveedor?provider=${encodeURIComponent(registeredProviderId)}`} className="mt-5 inline-block rounded-xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white">Continuar a la declaración y firma</a>}
+          {registeredProviderId && <a href={`#/mi-proveedor?provider=${encodeURIComponent(registeredProviderId)}`} className="mt-5 inline-block rounded-xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white">Ir a Mi proveedor</a>}
         </div>
       </div>
     );
@@ -763,12 +754,12 @@ export default function ProviderInvite() {
 
         <div className="bg-white border border-slate-200 rounded-2xl p-6 md:p-8 shadow-sm">
           <section className="mb-8 space-y-3 rounded-xl border border-slate-200 p-4">
-            <h2 className="font-bold">Tu cuenta personal de Google</h2>
-            <p className="text-sm text-slate-600">Usá una cuenta que te pertenezca y sea de uso personal. Este único correo quedará registrado para tus datos, tu acceso a GOAT y la firma de documentos. Si representás a una empresa, usá tu cuenta personal como representante.</p>
+            <h2 className="font-bold">{form.type === 'empresa' ? 'Cuenta Google de quien gestiona la empresa' : 'Tu cuenta Google'}</h2>
+            <p className="text-sm text-slate-600">{form.type === 'empresa' ? 'Podés usar tu correo personal o el que utilizás para administrar o trabajar en la empresa. Registrar este correo no acredita facultades de representación: después se revisarán el DNI y los documentos de quien solicite actuar y firmar por ella.' : 'Usá tu cuenta personal de Google. Este correo identifica tu acceso a tu ficha. El alta de una persona física no requiere firmar una declaración de representación; las autorizaciones para facturar y cobrar mediante otra persona se completan después desde Mi proveedor.'}</p>
             <p className="text-sm text-slate-600">Puede ser Gmail u otro correo asociado a una cuenta Google. Si todavía no tenés una, podés <a className="underline" href="https://accounts.google.com/signup" target="_blank" rel="noreferrer">crear una cuenta Google</a> usando tu correo actual.</p>
             {googleUser && <p className="text-sm font-semibold">{googleUser.email}</p>}
             <button type="button" disabled={signingIn || submitLoading} onClick={() => void chooseGoogleAccount()} className="rounded-lg border px-4 py-2 text-sm font-bold disabled:opacity-50">{signingIn ? 'Conectando…' : googleUser ? 'Elegir otra cuenta Google' : 'Continuar con Google'}</button>
-            <label className="flex gap-2 text-sm"><input type="checkbox" checked={personalAccountAccepted} disabled={!googleUser || submitLoading} onChange={(e) => setPersonalAccountAccepted(e.target.checked)} />Declaro que esta cuenta Google me pertenece, es de uso personal y la utilizaré para ingresar y firmar documentos en GOAT.</label>
+            <label className="flex gap-2 text-sm"><input type="checkbox" checked={personalAccountAccepted} disabled={!googleUser || submitLoading} onChange={(e) => setPersonalAccountAccepted(e.target.checked)} />{form.type === 'empresa' ? 'Confirmo que tengo control personal de esta cuenta Google y que la uso para gestionar a la empresa. Entiendo que las facultades para representarla deben documentarse y aprobarse por separado.' : 'Confirmo que esta cuenta Google me pertenece, es de uso personal y la utilizaré para ingresar a mi ficha en GOAT.'}</label>
             {error && !form.type && <p role="alert" className="text-sm text-red-600">{error}</p>}
           </section>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-8">
@@ -808,8 +799,8 @@ export default function ProviderInvite() {
                   <Field label="DNI" required error={dniError}>
                     <input aria-label="DNI" inputMode="numeric" value={form.dni} onChange={(e) => updateField('dni', e.target.value)} required aria-invalid={Boolean(dniError)} className={withFieldError(dniError)} />
                   </Field>
-                  <Field label={usesThirdParty ? "CUIT / CUIL propio (si lo tenés)" : "CUIT / CUIL"} required={!usesThirdParty} error={cuitError}>
-                    <input aria-label="CUIT / CUIL" inputMode="numeric" value={form.cuit} onChange={(e) => updateField('cuit', e.target.value)} required={!usesThirdParty} aria-invalid={Boolean(cuitError)} className={withFieldError(cuitError)} />
+                  <Field label="CUIT / CUIL" required error={cuitError}>
+                    <input aria-label="CUIT / CUIL" inputMode="numeric" value={form.cuit} onChange={(e) => updateField('cuit', e.target.value)} required aria-invalid={Boolean(cuitError)} className={withFieldError(cuitError)} />
                   </Field>
                   <Field label="Fecha de nacimiento">
                     <InlineDatePicker value={form.birthDate} onChange={(value) => updateField('birthDate', value)} />
@@ -832,7 +823,7 @@ export default function ProviderInvite() {
               )}
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Field label="Correo personal de tu cuenta Google" required error={fieldErrors.email}>
+                <Field label={form.type === 'empresa' ? 'Correo Google de quien gestiona la empresa' : 'Correo personal de tu cuenta Google'} required error={fieldErrors.email}>
                   <input aria-label="Correo personal de tu cuenta Google" aria-describedby={form.type === 'empresa' ? 'company-email-help' : undefined} type="email" value={form.email} readOnly required aria-invalid={Boolean(fieldErrors.email)} className={withFieldError(fieldErrors.email)} />
                   {form.type === 'empresa' && (
                     <p id="company-email-help" className="mt-2 text-xs text-slate-500">Podés usar tu correo personal o el que utilizás para tareas de administración o trabajo dentro de la empresa.</p>
@@ -862,8 +853,7 @@ export default function ProviderInvite() {
               </div>
 
               <div>
-                <div className={`${labelClass} ${fieldErrors.bankAccount ? 'text-red-600' : ''}`}>Datos bancarios propios{!usesThirdParty && <RequiredMark />}</div>
-                {usesThirdParty && <p className="mb-3 text-sm text-slate-500">Son opcionales para esta solicitud. Los datos del tercero se conservan por separado.</p>}
+                <div className={`${labelClass} ${fieldErrors.bankAccount ? 'text-red-600' : ''}`}>Datos bancarios propios<RequiredMark /></div>
                 <div className={`grid grid-cols-1 gap-4 rounded-xl md:grid-cols-2 ${fieldErrors.bankAccount ? 'border border-red-200 bg-red-50/50 p-3' : ''}`}>
                   <Field label="CBU" error={fieldErrors.bankAccount_cbu}>
                     <input
@@ -895,12 +885,11 @@ export default function ProviderInvite() {
                     {fieldErrors.bankAccount}
                   </p>
                 ) : (
-                  <p className="mt-2 text-xs text-slate-400">Completá al menos uno de los dos datos bancarios.</p>
+                  <p className="mt-2 text-xs text-slate-400">Completá tu CBU o alias propio. Si otra persona va a facturar y cobrar por tus trabajos, cargá después su autorización desde Mi proveedor. Esta cuenta propia se conserva por separado.</p>
                 )}
               </div>
 
               {checkingDuplicates && <p className="text-xs text-slate-400 font-bold uppercase tracking-widest">Revisando duplicados...</p>}
-              <ProviderThirdPartyEntry providerType={form.type} enabled={usesThirdParty} name={thirdPartyDraft.name} error={fieldErrors.thirdParty} disabled={submitLoading} onOpen={() => captureThirdParty({ type: 'open' })} onOwn={() => captureThirdParty({ type: 'own' })} />
               {error && (
                 <div
                   ref={submitErrorRef}
@@ -925,7 +914,6 @@ export default function ProviderInvite() {
           )}
         </div>
 
-        {form.type === 'persona' && thirdPartyOpen && <ProviderThirdPartyDialog draft={thirdPartyDraft} onChange={draft => captureThirdParty({ type: 'edit', draft })} onClose={() => captureThirdParty({ type: 'close' })} onSave={() => captureThirdParty({ type: 'save' })} />}
         <p className="text-center text-[11px] text-slate-400 mt-6">
           {invite?.mode === 'multi_use' ? 'Completá el alta con tus datos y tu cuenta personal de Google.' : 'Este link es personal y de un solo uso. No lo compartas con terceros.'}
         </p>

@@ -1,6 +1,6 @@
 const { fail, id, text, hash, thirdPartyIdentity } = require("./providerPortalModel");
 
-// Only this server path can register a person without their own fiscal/bank data.
+// Compatibility path for existing personal invitations; new registrations require an own bank account.
 // The public SDK intake keeps its existing, stricter schema and permissions.
 function createThirdPartyIntake({ db, timestamp, clock = () => new Date() }) {
   return async (actor, input) => {
@@ -35,6 +35,7 @@ function createThirdPartyIntake({ db, timestamp, clock = () => new Date() }) {
         if (!captured || captured.submissionHash !== fingerprint) fail("Administración debe revisar la solicitud guardada antes de continuar.");
         return { providerId, status: "registered", resumed: true };
       }
+      if (!form.bankAccount_cbu && !form.bankAccount_alias) fail("Completá tu CBU o alias propio. La autorización del tercero se gestiona después desde Mi proveedor.");
       const invite = (await tx.get(inviteRef)).data();
       if (!invite || invite.status !== "pending" || invite.used !== false) fail("Este enlace no está disponible. Pedí uno nuevo a administración.");
       if (invite.expiresAt != null && (!invite.expiresAt.toDate || invite.expiresAt.toDate() <= clock())) fail("El enlace de alta venció.");

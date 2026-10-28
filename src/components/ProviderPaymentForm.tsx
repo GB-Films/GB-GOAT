@@ -42,9 +42,11 @@ export function ProviderPaymentForm({ authorizations=[], provider, lines, invoic
       const payeeName = beneficiaries.length === allocations.length && new Set(beneficiaries).size === 1 ? beneficiaries[0] : providerDisplayName(provider);
       const authority=authorizations.find(a=>a.id===authorizationId);
       if(authorizationId&&(!authority||allocations.some(a=>!authority.content.workKeys.includes(`${a.projectId}/${a.collectionName}/${a.itemId}`))))throw Error('La autorización no incluye todos los trabajos seleccionados.');
+      if (authority && (method !== 'transfer' || !authority.effectiveRoles.includes('invoice') || allocations.some(a => !a.invoiceId))) throw Error('Para este tercero necesitás la factura registrada de su CUIT y una transferencia a su CBU/CVU o alias autorizado.');
       await onSave({ ...(authority?{thirdPartyAuthorizationId:authority.id}:{}), date, method, currency: 'ARS', exchangeRate: 1, net: Number(amount), total: Number(amount),
         withheld: 0, fee: 0, payeeName:authority?.content.party.name||payeeName,
-        account: method === 'cash' ? 'CTA003 | GB Pesos Efectivo' : 'Comprobante bancario',
+        payeeCuit: authority?.content.party.cuit || '',
+        account: authority ? (authority.content.party.cbu || authority.content.party.alias) : method === 'cash' ? 'CTA003 | GB Pesos Efectivo' : 'Comprobante bancario',
         cashProjectId: method === 'cash' ? cashProjectId : '', allocations,
         notes: `Pago aplicado al saldo del proveedor en pesos. ${method === 'cash' ? 'Efectivo de Caja General.' : 'Comprobante adjunto; el importe aplicado corresponde al costo de GOAT, sin presumir el débito bancario ni el IVA.'}`,
       }, method === 'transfer' ? file : null);
@@ -60,6 +62,7 @@ export function ProviderPaymentForm({ authorizations=[], provider, lines, invoic
     {error && <p role="alert" className="rounded bg-rose-50 p-3 text-sm text-rose-800">{error}</p>}
     <fieldset disabled={disabled} className="space-y-4 disabled:opacity-60">
       {authorizations.length>0&&<label className="block text-xs">Beneficiario del pago<select className={inputClass} value={authorizationId} onChange={e=>setAuthorizationId(e.target.value)}><option value="">El proveedor / beneficiario habitual</option>{authorizations.map(a=><option key={a.id} value={a.id}>{a.content.party.name} · Autorización firmada</option>)}</select></label>}
+      {authorizationId && <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm">{authorizations.filter(a => a.id === authorizationId).map(a => <p key={a.id}><strong>Destino aprobado: {a.content.party.name}</strong><br />CUIT {a.content.party.cuit} · Cuenta {a.content.party.cbu || a.content.party.alias}<br />La factura vinculada debe estar emitida por este mismo CUIT. La cuenta propia del prestador no es el destino de esta transferencia.</p>)}</div>}
       {!projects.length ? <p className="rounded bg-emerald-50 p-3 text-sm text-emerald-800">Este proveedor no tiene saldos pendientes.</p> : <>
         <div className="space-y-2">
           <div className="flex items-center justify-between text-xs"><span className="font-bold">Proyectos a pagar</span><button type="button" className="text-blue-700 hover:underline" onClick={() => chooseProjects(selectedIds.length === projects.length ? [] : projects.map(project => project.id))}>{selectedIds.length === projects.length ? 'Limpiar' : 'Seleccionar todos'}</button></div>

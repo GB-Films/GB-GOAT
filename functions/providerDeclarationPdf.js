@@ -8,6 +8,7 @@ const fieldNames = {
   name: "Nombre",
   lastName: "Apellido",
   businessName: "Razón social",
+  role: 'Cargo o carácter', company: 'Empresa representada', companyCuit: 'CUIT de la empresa',
   bankAccount_cbu: "CBU/CVU",
   bankAccount_alias: "Alias",
   bankAccount_holder: "Titular de cuenta",
@@ -55,7 +56,7 @@ async function declarationPdf(d) {
       ? "Declaración de representación"
       : d.kind === "profile"
         ? "Declaración de actualización de datos"
-        : "Autorización de facturación y/o cobro mediante tercero",
+        : "Autorización para que otra persona facture y cobre por mí",
     true,
   );
   gap();
@@ -65,7 +66,7 @@ async function declarationPdf(d) {
   );
   line(`Cuenta que declara: ${d.actor.email}`);
   line(
-    `Carácter declarado: ${c.capacity === "own" ? "Por cuenta propia" : "Representante autorizado"}`,
+    `Carácter declarado: ${d.kind === "representation" ? "Representante autorizado de la empresa" : "Prestador por cuenta propia"}`,
   );
   gap();
   if (d.kind === "representation")
@@ -88,26 +89,43 @@ async function declarationPdf(d) {
       gap();
     }
   if (d.kind === "third_party") {
-    line(`Tercero: ${c.party.name}`);
-    line(`CUIT del tercero: ${c.party.cuit}`);
+    line('Prestador del servicio: ' + c.provider.name, true);
+    if (c.signerDni) line('DNI del prestador que firma: ' + c.signerDni);
+    if (c.reason) line('Motivo declarado: ' + c.reason);
+    line(`Quién factura y cobra por el prestador: ${c.party.name}`, true);
+    line(`CUIT del titular de la factura: ${c.party.cuit}`);
     if (c.party.relationship) line(`Relación con el prestador: ${c.party.relationship}`);
     if (c.party.activity) line(`Actividad declarada del tercero: ${c.party.activity}`);
-    line("El servicio del prestador se identifica en los trabajos alcanzados. La actividad del tercero no lo sustituye.");
+    line("El prestador del servicio conserva sus trabajos; la persona designada emite la factura y recibe el pago autorizado.");
     line(
       `Funciones solicitadas: ${c.roles.map((r) => (r === "invoice" ? "Emisor fiscal propuesto (sujeto a validación)" : "Beneficiario designado para cobro")).join("; ")}`,
     );
     if (c.roles.includes("payment")) {
       line(`Titular: ${c.party.holder}`);
+      if (c.party.holderCuit) line('CUIT del titular de la cuenta: ' + c.party.holderCuit);
       if (c.party.cbu) line(`CBU/CVU: ${c.party.cbu}`);
       if (c.party.alias) line(`Alias: ${c.party.alias}`);
     }
     line(`Vigencia hasta: ${c.expiresOn}`);
+    if (c.ownAccount) {
+      gap(); line('Cuenta propia del prestador: se conserva por separado y no es el destino de estos pagos.', true);
+      if (c.ownAccount.cbu) line('CBU/CVU propio: ' + c.ownAccount.cbu);
+      if (c.ownAccount.alias) line('Alias propio: ' + c.ownAccount.alias);
+    }
     gap();
     line("Trabajos alcanzados", true);
     for (const w of c.workDetails || [])
       line(
         `${w.projectName} - ${w.description}. Importe de referencia del trabajo: ${w.currency} ${w.total}. Identificador: ${w.key}`,
       );
+  }
+  if (c.evidence?.length) {
+    gap(); line('Respaldos identificados en esta declaración', true);
+    const { EVIDENCE_LABELS } = require('./providerEvidence');
+    for (const evidence of c.evidence) {
+      line(`${EVIDENCE_LABELS[evidence.kind] || evidence.kind}: ${evidence.fileName}`);
+      line(`SHA256: ${evidence.sha256}`);
+    }
   }
   gap();
   line("Declaración y aceptación", true);

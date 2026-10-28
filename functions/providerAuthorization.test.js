@@ -6,8 +6,9 @@ const record = {
   providerId: "own",
   kind: "payment",
   payeeName: "Familiar",
+  method: 'transfer', account: '0000000000000000000001', payeeCuit: '20111111112',
   allocations: [
-    { projectId: "p", collectionName: "areaExpenses", itemId: "e" },
+    { projectId: "p", collectionName: "areaExpenses", itemId: "e", invoiceId: 'invoice' },
   ],
 };
 const declaration = {
@@ -15,18 +16,22 @@ const declaration = {
   providerId: "own",
   status: "active",
   proof: { complete: true },
-  effectiveRoles: ["payment"],
+  effectiveRoles: ["invoice", "payment"],
   content: {
+    termsVersion: 'third-party-v3',
     expiresOn: "2026-12-31",
-    party: { name: "Familiar", cuit: "20111111112" },
+    party: { name: "Familiar", cuit: "20111111112", holderCuit: '20111111112', cbu: '0000000000000000000001' },
     workKeys: ["p/areaExpenses/e"],
   },
 };
-test("approved payment authority does not authorize an invoice, another work, another provider or a changed payee", () => {
+test("reviewed issuer and account cannot be swapped for another CUIT, account, work, provider or payee", () => {
   const date = new Date("2026-10-26T19:00Z");
   assert.equal(authorizedParty(record, declaration, date).role, "payment");
   for (const r of [
-    { ...record, kind: "invoice", issuerCuit: "20111111112" },
+    { ...record, kind: "invoice", issuerCuit: "20111111113" },
+    { ...record, account: '0000000000000000000002' },
+    { ...record, payeeCuit: '20111111113' },
+    { ...record, method: 'cash' },
     { ...record, providerId: "other" },
     { ...record, payeeName: "Different" },
     {
@@ -40,6 +45,8 @@ test("approved payment authority does not authorize an invoice, another work, an
   for (const d of [
     { ...declaration, status: "revoked" },
     { ...declaration, effectiveRoles: [] },
+    { ...declaration, effectiveRoles: ['payment'] },
+    { ...declaration, content: { ...declaration.content, termsVersion: 'third-party-v2' } },
     {
       ...declaration,
       content: { ...declaration.content, expiresOn: "2026-01-01" },
