@@ -116,6 +116,15 @@ function createSignBridge(db) {
       if (!snap.exists) continue;
       const d = snap.data();
       if (!list(d.signerEmails).map(email).includes(actor.email)) continue;
+      // Keep signed originals as history, but stop requesting the obsolete
+      // representation signature from people who act on their own behalf.
+      if (d.portalManaged && d.goatDeclarationId) {
+        const declaration = (await db.doc(`providerPortalDeclarations/${id(d.goatDeclarationId)}`).get()).data();
+        if (declaration?.kind === 'representation' && !declaration.proof?.complete) {
+          const provider = (await db.doc(`providers/${id(declaration.providerId)}`).get()).data();
+          if (provider?.type === 'persona') continue;
+        }
+      }
       result.push({
         id: s.id,
         documentId: r.docId,

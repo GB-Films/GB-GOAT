@@ -62,7 +62,6 @@ export default function ProviderPortal() {
     [busy, setBusy] = useState(false),
     [signing, setSigning] = useState<any>(null),
     [draft, setDraft] = useState<Record<string, string>>({}),
-    [capacity, setCapacity] = useState("own"),
     [uploadWork, setUploadWork] = useState("");
   const [party, setParty] = useState<any>({
     name: "",
@@ -87,9 +86,6 @@ export default function ProviderPortal() {
     setParty({ ...view.thirdPartyIntake.party, roles: view.thirdPartyIntake.roles, workKeys: view.thirdPartyIntake.workKeys, expiresOn: "" });
     setTab("Mis datos");
   }, [view, providerId, user?.uid]);
-  useEffect(() => {
-    if (selected?.type === "empresa") setCapacity("authorized_representative");
-  }, [selected?.type]);
   const load = useCallback(async () => {
     const revision = ++loadRevision.current;
     try {
@@ -237,33 +233,24 @@ export default function ProviderPortal() {
           </button>
         </div>
       )}
-      {selected?.status === "needs_confirmation" && (
+      {selected?.status === "needs_confirmation" && selected?.type === "empresa" && (
         <section className={box}>
-          <h2 className="font-bold">Confirmá a quién representás</h2>
+          <h2 className="font-bold">Confirmá la representación de la empresa</h2>
           <p className="my-2 text-sm">
             Revisá la ficha y firmá la declaración para activar tu vista de
             proveedor.
           </p>
-          <select
-            className="rounded border p-2"
-            value={capacity}
-            onChange={(e) => setCapacity(e.target.value)}
-          >
-            <option value="own" disabled={selected?.type === "empresa"}>
-              Actúo por cuenta propia
-            </option>
-            <option value="authorized_representative">
-              Soy representante autorizado
-            </option>
-          </select>
           <button
             disabled={busy}
             className="ml-3 rounded bg-slate-900 p-2 text-white"
-            onClick={() => prepare("prepareRepresentation", { capacity })}
+            onClick={() => prepare("prepareRepresentation", { capacity: 'authorized_representative' })}
           >
             Revisar y firmar
           </button>
         </section>
+      )}
+      {selected?.status === 'needs_confirmation' && selected?.type !== 'empresa' && (
+        <p role="status" className={box}>Administración debe revisar la clasificación de esta ficha para activar el acceso. No necesitás firmar una declaración de representación.</p>
       )}
       <nav
         aria-label="Secciones del proveedor"

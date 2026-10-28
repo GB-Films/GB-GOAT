@@ -205,21 +205,31 @@ try {
   const boot = await own({ action: "bootstrap" });
   assert.equal(boot.memberships.length, 1);
   assert.equal(boot.memberships[0].providerId, "supplier");
-  assert.equal(boot.memberships[0].status, "needs_confirmation");
-  await assert.rejects(
-    own({ action: "overview", providerId: "supplier" }),
-    /No representás/,
-  );
+  assert.equal(boot.memberships[0].status, "active");
+  assert.equal((await own({ action: 'overview', providerId: 'supplier' })).works.length, 1);
+  assert.equal((await db.collection('providerPortalDeclarations').get()).size, 0);
+  await assert.rejects(own({ action: 'prepareRepresentation', providerId: 'supplier', attemptId: 'personal-no-signature', capacity: 'own' }), /no requiere firma/);
+  const legacyPersonal = { id: 'legacy-personal-confirmation', kind: 'representation', providerId: 'supplier', actor: { uid: 'own', email: 'own@example.test', name: 'Persona' },
+    content: { provider: { name: 'Persona', cuit: '20111111112' }, profile: { name: 'Persona' }, capacity: 'own', terms: 'Declaración anterior de prueba' }, contentHash: hash({ legacy: true }) };
+  await db.doc(`providerPortalDeclarations/${legacyPersonal.id}`).set({ ...legacyPersonal, status: 'pending_signature' });
+  await sign.prepare(legacyPersonal);
+  assert(!(await own({ action: 'myDocuments' })).documents.some(d => d.documentId === legacyPersonal.id), 'obsolete personal representation is not presented for signature');
+  assert.equal((await db.doc(`providerPortalDeclarations/${legacyPersonal.id}`).get()).data().status, 'pending_signature', 'preserve the historical original instead of cancelling or deleting it');
+
+  await db.doc('providers/company-representation').set({ type: 'empresa', businessName: 'Empresa de prueba', cuit: '30111111112' });
+  await db.doc('providerPortalUsers/own/memberships/company-representation').set({ providerId: 'company-representation', email: 'own@example.test', status: 'needs_confirmation' });
+  assert.equal((await own({ action: 'bootstrap' })).memberships.find(m => m.providerId === 'company-representation').status, 'needs_confirmation');
+  await assert.rejects(own({ action: 'overview', providerId: 'company-representation' }), /No representás/);
   const representation = await own({
     action: "prepareRepresentation",
-    providerId: "supplier",
+    providerId: "company-representation",
     attemptId: "represent-1",
-    capacity: "own",
+    capacity: "authorized_representative",
   });
   await assert.rejects(
     own({
       action: "completeDeclaration",
-      providerId: "supplier",
+      providerId: "company-representation",
       declarationId: representation.id,
     }),
     /Falta completar/,
@@ -233,9 +243,9 @@ try {
     });
   const recovered = await own({
     action: "prepareRepresentation",
-    providerId: "supplier",
+    providerId: "company-representation",
     attemptId: "represent-1",
-    capacity: "own",
+    capacity: "authorized_representative",
   });
   assert.equal(recovered.id, representation.id);
   assert.equal(recovered.status, "pending_signature");
@@ -247,7 +257,7 @@ try {
     (
       await own({
         action: "completeDeclaration",
-        providerId: "supplier",
+        providerId: "company-representation",
         declarationId: representation.id,
       })
     ).status,
@@ -676,13 +686,13 @@ try {
   await db.doc("projects/project/areaExpenses/legacy-intake-work").set({ providerId: "", providerName: "", area: "Campo", description: "Trabajo de enlace anterior", total: 200, paymentHistory: [] });
   const legacy = await register({ inviteToken: "intake-legacy-linked", attemptId: "legacy-linked", form: { ...intakeForm, dni: "56789012" } });
   assert.deepEqual((await db.doc(`providerPortalIntakeRequests/${legacy.providerId}`).get()).data().workKeys, ["project/areaExpenses/legacy-intake-work"]);
-  assert.equal((await db.doc(`providerPortalUsers/own/memberships/${added.providerId}`).get()).data().status, "needs_confirmation");
+  assert.equal((await db.doc(`providerPortalUsers/own/memberships/${added.providerId}`).get()).data().status, "active");
   await assertFails(getDoc(doc(external, `providers/${added.providerId}`)));
   await assertFails(getDoc(doc(external, "projects/project/areaExpenses/foreign")));
-  await assert.rejects(own({ action: "overview", providerId: added.providerId }), /No representás/);
-  const newRepresentation = await own({ action: "prepareRepresentation", providerId: added.providerId, attemptId: "new-representation", capacity: "own" });
-  await signActual(newRepresentation);
-  await own({ action: "completeDeclaration", providerId: added.providerId, declarationId: newRepresentation.id });
+  assert.equal((await own({ action: "overview", providerId: added.providerId })).thirdPartyIntake.party.relationship, 'Hermana');
+  const intakeBoot = await own({ action: 'bootstrap' });
+  assert.equal(intakeBoot.memberships.find(m => m.providerId === added.providerId).status, 'active');
+  await assert.rejects(own({ action: 'prepareRepresentation', providerId: added.providerId, attemptId: 'unnecessary-signature', capacity: 'own' }), /no requiere firma/);
   const afterRepresentation = await own({ action: "overview", providerId: added.providerId });
   assert.equal(afterRepresentation.thirdPartyIntake.party.relationship, "Hermana");
   const newThird = await own({ action: "prepareThirdParty", providerId: added.providerId, attemptId: "new-authorization", ...afterRepresentation.thirdPartyIntake.party, roles: ["invoice", "payment"], workKeys: afterRepresentation.thirdPartyIntake.workKeys, expiresOn: "2026-12-31" });
@@ -715,7 +725,7 @@ try {
   assert.equal((await db.collection("providers").get()).size, beforeIntake + 6);
   const { testProjectContracts } = await import('./projectContracts.flow.mjs');
   await testProjectContracts({ db, admin, manage, request, sign, signActual, signEnv, env, assertFails, getDoc, updateDoc, doc });
-  console.log("PASS: person intake without own CUIT/bank → representation → real GB Sign third-party declaration → role review; company, forgery, duplicate and work isolation guards.");
+  console.log("PASS: person intake without own CUIT/bank or representation signature → real GB Sign third-party declaration → role review; company, forgery, duplicate and work isolation guards.");
   console.log(
     "PASS: real GB Sign PDF/signature/artifacts → GOAT application; critical review, scoped third-party decisions, no duplicate payment; external isolation and producer access.",
   );

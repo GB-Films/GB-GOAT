@@ -1,6 +1,7 @@
 const { HttpsError } = require("firebase-functions/v2/https");
 const M = require("./providerPortalModel");
 const { createThirdPartyIntake } = require("./providerIntake");
+const { activatePersonalMembership } = require('./providerPortalAccess');
 const { fail, text, email, id, list, hash } = M;
 const internalRoles = [
   "admin",
@@ -273,7 +274,7 @@ function createProviderPortalHandler({
         .get();
       const entries = [];
       for (const row of memberships.docs) {
-        const m = row.data();
+        let m = row.data();
         if (
           !["active", "needs_confirmation"].includes(m.status) ||
           m.email !== actor.email
@@ -281,6 +282,10 @@ function createProviderPortalHandler({
           continue;
         const p = (await db.doc(`providers/${row.id}`).get()).data();
         if (!p) continue;
+        if (m.status === 'needs_confirmation' && p.type === 'persona') {
+          m = await activatePersonalMembership({ db, actor, providerId: row.id, timestamp });
+          if (!m || !['active', 'needs_confirmation'].includes(m.status) || m.email !== actor.email) continue;
+        }
         entries.push({
           providerId: row.id,
           status: m.status,
@@ -391,6 +396,7 @@ function createProviderPortalHandler({
             : "third_party";
       let content;
       if (kind === "representation") {
+        if (provider.type !== 'empresa') fail('El alta de una persona física no requiere firma de representación.');
         if (!["own", "authorized_representative"].includes(input.capacity))
           fail("Indicá en qué carácter actuás.");
         if (

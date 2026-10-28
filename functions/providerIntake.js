@@ -60,8 +60,9 @@ function createThirdPartyIntake({ db, timestamp, clock = () => new Date() }) {
       // Kept outside the broadly readable internal supplier catalog. Default rules deny SDK access.
       tx.create(intakeRef, { version: "third-party-intake-v1", providerId, party, workKeys, roles: ["invoice", "payment"], capturedByUid: actor.uid, capturedAt: now, submissionHash: fingerprint });
       for (const item of identifiers) tx.create(item.ref, { providerId, providerType: "persona", identifierType: item.kind, value: item.value, inviteToken: token, createdAt: now });
-      // Representation remains pending until the person signs the existing declaration.
-      tx.create(db.doc(`providerPortalUsers/${actor.uid}/memberships/${providerId}`), { providerId, email: actor.email, status: "needs_confirmation", source: "personal_google_intake", createdAt: now });
+      // Personal access does not require a representation signature. The separate
+      // third-party authorization still requires its own signature and review.
+      tx.create(db.doc(`providerPortalUsers/${actor.uid}/memberships/${providerId}`), { providerId, email: actor.email, status: "active", representation: "own", activationMethod: "verified_google_no_signature", source: "personal_google_intake", createdAt: now });
       if (targetRef) tx.update(targetRef, { providerId, providerName: `${form.name} ${form.lastName}`, providerInviteAssignment: { token, providerId, assignedAt: now }, updatedAt: now });
       tx.update(inviteRef, invite.mode === "multi_use" ? { usageCount: Number(invite.usageCount || 0) + 1, lastUsedAt: now, lastProviderId: providerId, lastProviderType: "persona", updatedAt: now } : { used: true, status: "used", usedAt: now, providerId, providerType: "persona" });
       return { providerId, status: "registered" };
