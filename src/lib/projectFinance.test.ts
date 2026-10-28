@@ -66,6 +66,8 @@ test('Resultado trata las incidencias como gastos excepto Margen', () => {
     resultIncidences: {
       imprevistos: 10,
       impuestos: 5,
+      financiacion: 0,
+      administracion: 0,
       margen: 20,
     },
   }, [

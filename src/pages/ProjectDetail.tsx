@@ -47,7 +47,7 @@ import { AreaBudgetSummary } from './project-detail/AreaBudgetSummary';
 import { MobileExpenseAmount } from './project-detail/MobileExpenseAmount';
 import { MobileExpenseDocuments } from './project-detail/MobileExpenseDocuments';
 import { ShootingDateInput } from './project-detail/ShootingDateInput';
-import { ProjectTeam } from './project-detail/ProjectTeam';
+import { ProjectProvidersView } from './project-detail/ProjectProvidersView';
 import { ProjectDialog } from './project-detail/ProjectDialog';
 import { ControlTotalSync } from './project-detail/ControlTotalSync';
 import { ProjectDataBoundary } from './project-detail/ProjectDataBoundary';
@@ -90,6 +90,8 @@ import {
   normalizeProjectRole,
 } from '../lib/projectAccess';
 import { calculateProjectResult, getPaymentTotal } from '../lib/projectFinance';
+import { resolveResultIncidences } from '../lib/resultIncidences';
+import { filterProviderBalances } from '../lib/providerPaymentStatus';
 import { getSubcategoryBudgetCapacity } from '../lib/subcategoryBudget';
 import { moveAreaSubcategory, reorderDisplayedCategories } from '../lib/areaStructureOrder';
 import { readAreaSelectionPreference, resolveAreaSelection, writeAreaSelectionPreference } from '../lib/areaSelectionPreference';
@@ -117,7 +119,6 @@ const tabs = [
   { id: 'documentos', label: 'Documentos', icon: FileText },
   { id: 'resultado', label: 'Resultado', icon: BarChart2 },
   { id: 'proveedores', label: 'Proveedores', icon: Truck },
-  { id: 'equipo', label: 'Equipo', icon: Users },
   { id: 'permisos', label: 'Permisos', icon: Settings },
 ];
 
@@ -746,7 +747,6 @@ export default function ProjectDetail() {
   const [areaExpenseSort, setAreaExpenseSort] = useState<AreaExpenseSortKey>('manual');
   const [areaExpenseSearch, setAreaExpenseSearch] = useState('');
   const [budgetSearch, setBudgetSearch] = useState('');
-  const [providerSearch, setProviderSearch] = useState('');
   const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
   const [cashMovements, setCashMovements] = useState<CashMovement[]>([]);
   const [cashRecipientEmail, setCashRecipientEmail] = useState('');
@@ -791,9 +791,7 @@ export default function ProjectDetail() {
   const [locationDraft, setLocationDraft] = useState('');
   const [isSavingLocation, setIsSavingLocation] = useState(false);
   const [showKeyPeopleData, setShowKeyPeopleData] = useState(false);
-  const [financeAreaFilter, setFinanceAreaFilter] = useState('all');
   const [financeStatusFilter, setFinanceStatusFilter] = useState<'all' | 'pendiente' | 'parcial' | 'pagado'>('all');
-  const [financeInvoiceFilter, setFinanceInvoiceFilter] = useState<'all' | 'with' | 'without'>('all');
   const [financeSearch, setFinanceSearch] = useState('');
   const [paymentScheduleAnchor, setPaymentScheduleAnchor] = useState(() => formatDateKey(new Date()));
   const [selectedPaymentBucketKey, setSelectedPaymentBucketKey] = useState<string | null>(null);
@@ -4051,14 +4049,6 @@ export default function ProjectDetail() {
   );
   const collaboratorEmails = collaborators.map((col) => normalizeEmail(col.email));
   const ownerEmail = normalizeEmail(project?.createdByEmail);
-  const projectTeamMembers = [
-    ...(ownerEmail ? [{ email: ownerEmail, displayName: availableUsers.find(candidate => normalizeEmail(candidate.email) === ownerEmail)?.displayName || ownerEmail,
-      role: 'admin' as const, allowedTabs: [...PROJECT_TAB_IDS], allowedCategories: categories, owner: true,
-      globalAdmin: availableUsers.some(candidate => normalizeEmail(candidate.email) === ownerEmail && candidate.role === 'admin') }] : []),
-    ...collaborators.filter(col => normalizeEmail(col.email) !== ownerEmail).map(col => ({ ...col,
-      globalAdmin: availableUsers.some(candidate => normalizeEmail(candidate.email) === normalizeEmail(col.email) && candidate.role === 'admin'),
-    })),
-  ];
   const visiblePermissionCollaborators = isProjectAdmin
     ? collaborators
     : collaborators.filter((col) => col.role === 'jefe_area' || col.role === 'jefe_produccion');
@@ -4279,6 +4269,7 @@ export default function ProjectDetail() {
     const saldosMap = new Map<string, { 
       id: string, 
       area: string,
+      provider: any | null,
       name: string, 
       cuit: string,
       cbu: string, 
@@ -4307,6 +4298,7 @@ export default function ProjectDetail() {
         saldosMap.set(key, {
           id: key,
           area,
+          provider: provider || null,
           name: providerName || (provider ? providerDisplayName(provider) : 'Sin proveedor'),
           cuit: normalizeDigits(provider?.cuit || provider?.cuitNormalized || ''),
           cbu: provider?.bankAccount_cbu || provider?.bankAccount || '',
@@ -4411,60 +4403,8 @@ export default function ProjectDetail() {
     return rows;
   }, [activeAreas, areaExpenses, budgetItems, categories, isProjectAdmin, userPermissions]);
 
-  const getFinanceStatus = (saldo: { debt: number; paid: number }) => {
-    if (saldo.debt <= 0.01 && saldo.paid > 0) return 'pagado';
-    if (saldo.paid > 0 && saldo.debt > 0.01) return 'parcial';
-    return 'pendiente';
-  };
-
-  const filteredProviderSaldosByArea = React.useMemo(() => {
-    const search = financeSearch.trim().toLowerCase();
-
-    return providerSaldosByArea
-      .map((group) => {
-        const rows = group.rows.filter((saldo) => {
-          const status = getFinanceStatus(saldo);
-          const hasInvoice = saldo.entries.some((entry) => entry.invoices.length > 0);
-          const matchesArea = financeAreaFilter === 'all' || saldo.area === financeAreaFilter;
-          const matchesStatus = financeStatusFilter === 'all' || status === financeStatusFilter;
-          const matchesInvoice = financeInvoiceFilter === 'all'
-            || (financeInvoiceFilter === 'with' && hasInvoice)
-            || (financeInvoiceFilter === 'without' && !hasInvoice);
-          const matchesSearch = !search
-            || saldo.name.toLowerCase().includes(search)
-            || saldo.entries.some((entry) => entry.description.toLowerCase().includes(search));
-
-          return matchesArea && matchesStatus && matchesInvoice && matchesSearch;
-        });
-
-        return { ...group, rows };
-      })
-      .filter((group) => group.rows.length > 0);
-  }, [financeAreaFilter, financeInvoiceFilter, financeSearch, financeStatusFilter, providerSaldosByArea]);
-
-  const filteredProviderSaldos = filteredProviderSaldosByArea.flatMap(group => group.rows);
-  const financeTotals = React.useMemo(() => {
-    const providerTotals = filteredProviderSaldos.reduce((acc, saldo) => ({
-      budgeted: acc.budgeted + saldo.budgeted,
-      spent: acc.spent + saldo.spent,
-      paid: acc.paid + saldo.paid,
-      debt: acc.debt + saldo.debt,
-      invoices: acc.invoices + saldo.entries.reduce((count, entry) => count + entry.invoices.length, 0),
-      receipts: acc.receipts + saldo.entries.reduce((count, entry) => (
-        count
-        + safeArray(entry.item?.paymentHistory).filter((payment: any) => payment.receipt?.url).length
-        + (Array.isArray(entry.otherReceipts) ? entry.otherReceipts.filter((receipt: any) => receipt?.url).length : 0)
-      ), 0),
-    }), { budgeted: 0, spent: 0, paid: 0, debt: 0, invoices: 0, receipts: 0 });
-    const visibleItems = new Set(filteredProviderSaldos.flatMap((saldo) => saldo.entries.map((entry) => `${entry.collectionName}-${entry.id}`)));
-    const visibleReimbursements = thirdPartyBalances.filter((row) => visibleItems.has(`${row.collectionName}-${row.item.id}`));
-    return {
-      ...providerTotals,
-      paid: providerTotals.paid - visibleReimbursements.reduce((sum, row) => sum + row.amount - row.reimbursed, 0),
-      debt: providerTotals.debt + visibleReimbursements.reduce((sum, row) => sum + row.debt, 0),
-    };
-  }, [filteredProviderSaldos, thirdPartyBalances]);
-
+  const filteredProviderSaldosByArea = React.useMemo(() => filterProviderBalances(providerSaldosByArea, financeSearch, financeStatusFilter),
+    [financeSearch, financeStatusFilter, providerSaldosByArea]);
 
   const paymentScheduleLines = React.useMemo<ProjectPaymentScheduleLine[]>(() => (
     [...providerSaldos.flatMap((saldo) => (
@@ -4656,83 +4596,6 @@ export default function ProjectDetail() {
     });
   }, [manualProjectDocuments, providerSaldosByArea]);
 
-  const projectAreaProviderRows = React.useMemo(() => {
-    const allowedCategories = canSeeFullPayroll ? categories : safeArray(userPermissions?.allowedCategories);
-    const canSeeArea = (area?: string) => canSeeFullPayroll || allowedCategories.includes(area || '');
-    const byProvider = new Map<string, { provider: any; areas: Set<string>; concepts: Set<string> }>();
-
-    budgetItems.forEach((item) => {
-      if (!item.providerId || !canSeeArea(item.area)) return;
-      const provider = providers.find(candidate => candidate.id === item.providerId);
-      if (!provider) return;
-
-      if (!byProvider.has(item.providerId)) {
-        byProvider.set(item.providerId, {
-          provider,
-          areas: new Set<string>(),
-          concepts: new Set<string>(),
-        });
-      }
-
-      const row = byProvider.get(item.providerId)!;
-      if (item.area) row.areas.add(item.area);
-      if (item.description) row.concepts.add(item.description);
-    });
-
-    areaExpenses.forEach((expense) => {
-      if (!expense.providerId || !canSeeArea(expense.area)) return;
-      const provider = providers.find(item => item.id === expense.providerId);
-      if (!provider) return;
-
-      if (!byProvider.has(expense.providerId)) {
-        byProvider.set(expense.providerId, {
-          provider,
-          areas: new Set<string>(),
-          concepts: new Set<string>(),
-        });
-      }
-
-      const row = byProvider.get(expense.providerId)!;
-      if (expense.area) row.areas.add(expense.area);
-      if (expense.description) row.concepts.add(expense.description);
-    });
-
-    return Array.from(byProvider.values())
-      .map(row => ({
-        provider: row.provider,
-        areas: Array.from(row.areas).sort(),
-        concepts: Array.from(row.concepts).sort(),
-        documents: projectDocuments.filter((document) => (
-          document.providerId === row.provider.id
-          || (!document.providerId && normalizeText(document.providerName) === normalizeText(providerDisplayName(row.provider)))
-        )),
-      }))
-      .sort((a, b) => providerDisplayName(a.provider).localeCompare(providerDisplayName(b.provider), 'es'));
-  }, [areaExpenses, budgetItems, canSeeFullPayroll, categories, projectDocuments, providers, userPermissions]);
-
-  const filteredProjectAreaProviderRows = React.useMemo(() => {
-    const term = normalizeText(providerSearch);
-    if (!term) return projectAreaProviderRows;
-
-    return projectAreaProviderRows.filter(({ provider, areas, concepts }) => {
-      const inferred = inferLegacyIdentifiers(provider);
-      return normalizeText([
-        providerDisplayName(provider),
-        provider.type,
-        provider.dni || inferred.dniNormalized,
-        provider.cuit || inferred.cuitNormalized,
-        provider.category,
-        provider.categoryOther,
-        provider.email,
-        provider.adminEmail,
-        provider.phone,
-        provider.address,
-        ...areas,
-        ...concepts,
-      ].filter(Boolean).join(' ')).includes(term);
-    });
-  }, [projectAreaProviderRows, providerSearch]);
-
   const allProjectAreaProviderRows = React.useMemo(() => {
     const byProvider = new Map<string, { provider: any; areas: Set<string>; concepts: Set<string> }>();
 
@@ -4868,11 +4731,7 @@ export default function ProjectDetail() {
     }
   };
 
-  const resultIncidences = React.useMemo(() => (
-    project?.resultIncidences && typeof project.resultIncidences === 'object'
-      ? project.resultIncidences
-      : {}
-  ), [project?.resultIncidences]);
+  const resultIncidences = React.useMemo(() => resolveResultIncidences(project?.resultIncidences), [project?.resultIncidences]);
 
   const projectResult = React.useMemo(
     () => calculateProjectResult(project, budgetItems, areaExpenses),
@@ -7384,104 +7243,10 @@ export default function ProjectDetail() {
         )}
 
         {activeTab === 'proveedores' && (
-          <div className="space-y-4 pb-20">
-            <header className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-              <div>
-                <h2 className="text-base font-bold text-slate-900">Proveedores de Áreas</h2>
-              </div>
-              <div className="flex w-full items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 sm:w-auto sm:min-w-[260px]">
-                <Search className="w-3.5 h-3.5 text-slate-400" />
-                <input
-                  value={providerSearch}
-                  onChange={(event) => setProviderSearch(event.target.value)}
-                  placeholder="Buscar proveedor..."
-                  className="w-full bg-transparent text-[10px] font-bold text-slate-700 placeholder:text-slate-300 focus:outline-none"
-                />
-              </div>
-            </header>
-
-            <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-x-auto">
-              <table className="w-full text-left">
-                <thead>
-                  <tr className="bg-slate-50 border-b border-slate-200">
-                    <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Tipo</th>
-                    <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Proveedor</th>
-                    <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">DNI</th>
-                    <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">CUIT</th>
-                    <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Categoria</th>
-                    <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Contacto</th>
-                    <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Areas</th>
-                    <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400 min-w-[220px]">Documentos</th>
-                    <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Domicilio</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {filteredProjectAreaProviderRows.map(({ provider, areas, documents }) => {
-                    const inferred = inferLegacyIdentifiers(provider);
-                    const category = provider.category === 'Otra'
-                      ? `Otra: ${provider.categoryOther || '-'}`
-                      : provider.category || 'Sin categoria';
-
-                    return (
-                      <tr key={provider.id} className="hover:bg-slate-50/50 transition-colors">
-                        <td className="px-5 py-4 text-xs font-bold uppercase tracking-widest text-slate-400">
-                          {provider.type === 'empresa' ? 'Empresa' : 'Persona'}
-                        </td>
-                        <td className="px-5 py-4">
-                          <div className="text-sm font-bold text-slate-900">{providerDisplayName(provider)}</div>
-                          <div className="text-[10px] text-slate-400 font-medium">{provider.source === 'provider_invite' ? 'Alta por link' : 'Carga interna'}</div>
-                        </td>
-                        <td className="px-5 py-4 text-xs text-slate-600 font-medium whitespace-nowrap">
-                          {formatIdentifier(provider.dni || inferred.dniNormalized) || '-'}
-                        </td>
-                        <td className="px-5 py-4 text-xs text-slate-600 font-medium whitespace-nowrap">
-                          {formatIdentifier(provider.cuit || inferred.cuitNormalized) || '-'}
-                        </td>
-                        <td className="px-5 py-4 text-xs text-slate-500">{category}</td>
-                        <td className="px-5 py-4 text-xs text-slate-500">
-                          <div>{provider.email || provider.adminEmail || '-'}</div>
-                          <div className="text-slate-400">{provider.phone || '-'}</div>
-                        </td>
-                        <td className="px-5 py-4 text-xs text-slate-500 max-w-[180px]">
-                          {areas.join(', ') || '-'}
-                        </td>
-                        <td className="px-5 py-4">
-                          {documents.length > 0 ? (
-                            <div className="flex flex-col items-start gap-1.5">
-                              {documents.map((document) => (
-                                <a
-                                  key={document.id}
-                                  href={document.url}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  title={`${document.type}: ${document.fileName}`}
-                                  className="inline-flex max-w-[260px] items-center gap-1.5 text-[10px] font-bold text-blue-600 hover:text-blue-800 hover:underline"
-                                >
-                                  {document.type === 'factura' ? <FileText className="h-3 w-3 shrink-0" /> : <Paperclip className="h-3 w-3 shrink-0" />}
-                                  <span className="truncate">{document.fileName}</span>
-                                  <LinkIcon className="h-2.5 w-2.5 shrink-0" />
-                                </a>
-                              ))}
-                            </div>
-                          ) : (
-                            <span className="text-[10px] font-bold uppercase tracking-widest text-slate-300">Sin documentos</span>
-                          )}
-                        </td>
-                        <td className="px-5 py-4 text-xs text-slate-500 max-w-[220px] truncate">{provider.address || '-'}</td>
-                      </tr>
-                    );
-                  })}
-                  {filteredProjectAreaProviderRows.length === 0 && (
-                    <tr>
-                      <td colSpan={9} className="px-6 py-12 text-center text-[10px] font-bold uppercase text-slate-300 tracking-widest italic">
-                        {providerSearch.trim() ? 'No hay proveedores que coincidan con la busqueda' : 'No hay proveedores cargados en Gestion por Areas'}
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
+          <div key={loadScope}><ProjectProvidersView groups={filteredProviderSaldosByArea} totalRows={providerSaldos.length}
+            search={financeSearch} onSearchChange={setFinanceSearch} status={financeStatusFilter} onStatusChange={setFinanceStatusFilter}
+            isProjectAdmin={isProjectAdmin} canManagePaymentForItem={canManagePaymentForItem} openPaymentModal={openPaymentModal}
+            formatDate={formatDate} paymentTiming={date => getPaymentLeadTimeLabel(date, getShootingEndDate(project))} /></div>
         )}
 
         {activeTab === 'resultado' && isProjectAdmin && (
@@ -7699,34 +7464,7 @@ export default function ProjectDetail() {
               <div>
               <h2 className="text-base font-bold text-slate-900">{isProjectAdmin ? 'Finanzas' : 'Finanzas · Mis áreas'}</h2>
               </div>
-              <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
-                {filteredProviderSaldos.length} proveedores con movimientos
-              </div>
             </header>
-
-            <div className="grid grid-cols-2 gap-1.5 md:grid-cols-5 sm:gap-3">
-              <div className="rounded-lg border border-slate-200 bg-white p-2 shadow-[0_8px_22px_rgba(15,23,42,0.08)] sm:rounded-xl sm:p-4">
-                <div className="mb-0.5 text-[8px] font-bold uppercase tracking-widest text-slate-400 sm:mb-1 sm:text-[10px]">Total Presupuestado</div>
-                <div className="truncate text-xs font-bold text-slate-900 sm:text-lg">${financeTotals.budgeted.toLocaleString()}</div>
-              </div>
-              <div className="rounded-lg border border-slate-200 bg-white p-2 shadow-[0_8px_22px_rgba(15,23,42,0.08)] sm:rounded-xl sm:p-4">
-                <div className="mb-0.5 text-[8px] font-bold uppercase tracking-widest text-slate-400 sm:mb-1 sm:text-[10px]">Total Gastado</div>
-                <div className="truncate text-xs font-bold text-slate-900 sm:text-lg">${financeTotals.spent.toLocaleString()}</div>
-              </div>
-              <div className="rounded-lg border border-slate-200 bg-white p-2 shadow-[0_8px_22px_rgba(15,23,42,0.08)] sm:rounded-xl sm:p-4">
-                <div className="mb-0.5 text-[8px] font-bold uppercase tracking-widest text-emerald-600 sm:mb-1 sm:text-[10px]">Pagado</div>
-                <div className="truncate text-xs font-bold text-emerald-600 sm:text-xl">${financeTotals.paid.toLocaleString()}</div>
-              </div>
-              <div className="rounded-lg border border-slate-900 bg-slate-900 p-2 text-white shadow-sm sm:rounded-xl sm:p-5">
-                <div className="mb-0.5 text-[8px] font-bold uppercase tracking-widest text-slate-400 sm:mb-1 sm:text-[10px]">Deuda</div>
-                <div className="truncate font-mono text-xs font-bold sm:text-xl">${financeTotals.debt.toLocaleString()}</div>
-              </div>
-              <div className="col-span-2 rounded-lg border border-slate-200 bg-white p-2 shadow-[0_8px_22px_rgba(15,23,42,0.08)] md:col-span-1 sm:rounded-xl sm:p-4">
-                <div className="mb-0.5 text-[8px] font-bold uppercase tracking-widest text-slate-400 sm:mb-1 sm:text-[10px]">Docs</div>
-                <div className="text-xs font-bold text-slate-900 sm:text-lg">{financeTotals.invoices}/{financeTotals.receipts}</div>
-                <div className="mt-1 text-[8px] font-bold uppercase tracking-widest text-slate-400 sm:mt-2 sm:text-[9px]">Facturas / comprobantes</div>
-              </div>
-            </div>
 
             {thirdPartyBalances.length > 0 && (
               <section className="rounded-xl border border-amber-200 bg-amber-50 p-4">
@@ -7990,335 +7728,6 @@ export default function ProjectDetail() {
               </div>
             </section>
 
-            <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 grid grid-cols-1 md:grid-cols-4 gap-3">
-              <div>
-                <label className="block text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Buscar</label>
-                <input
-                  value={financeSearch}
-                  onChange={(event) => setFinanceSearch(event.target.value)}
-                  placeholder="Proveedor o concepto"
-                  className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-100 rounded text-xs font-medium focus:outline-none focus:border-black"
-                />
-              </div>
-              <div>
-                <label className="block text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Area</label>
-                <select
-                  value={financeAreaFilter}
-                  onChange={(event) => setFinanceAreaFilter(event.target.value)}
-                  className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black"
-                >
-                  <option value="all">Todas</option>
-                  {providerSaldosByArea.map((group) => (
-                    <option key={group.area} value={group.area}>{group.area}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Estado de pago</label>
-                <select
-                  value={financeStatusFilter}
-                  onChange={(event) => setFinanceStatusFilter(event.target.value as any)}
-                  className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black"
-                >
-                  <option value="all">Todos</option>
-                  <option value="pendiente">Pendiente</option>
-                  <option value="parcial">Parcial</option>
-                  <option value="pagado">Pagado</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Factura</label>
-                <select
-                  value={financeInvoiceFilter}
-                  onChange={(event) => setFinanceInvoiceFilter(event.target.value as any)}
-                  className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black"
-                >
-                  <option value="all">Todas</option>
-                  <option value="with">Con factura</option>
-                  <option value="without">Sin factura</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="space-y-2 md:hidden">
-              {filteredProviderSaldosByArea.map((group) => (
-                <section key={`mobile-${group.area}`} className="rounded-lg border border-slate-200 bg-white shadow-sm">
-                  <div className="border-b border-slate-100 bg-slate-50 px-3 py-2 text-[9px] font-black uppercase tracking-widest text-slate-500">
-                    {group.area}
-                  </div>
-                  <div className="divide-y divide-slate-100">
-                    {group.rows.map((saldo) => (
-                      <div key={`mobile-${saldo.id}`} className="p-3">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <div className="truncate text-[11px] font-black uppercase text-slate-900">{saldo.name}</div>
-                            <div className="mt-0.5 text-[9px] font-mono font-bold text-slate-400">
-                              {isProjectAdmin ? saldo.cbu || 'Sin CBU' : 'Cuenta disponible para admins'}
-                            </div>
-                            {saldo.cuit && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  void navigator.clipboard?.writeText(saldo.cuit);
-                                  setCopiedPaymentLineId(`saldo-cuit-${saldo.id}`);
-                                  window.setTimeout(() => setCopiedPaymentLineId(null), 1800);
-                                }}
-                                className="mt-1 rounded border border-slate-100 bg-slate-50 px-1.5 py-1 text-[8px] font-black uppercase tracking-widest text-slate-500"
-                              >
-                                {copiedPaymentLineId === `saldo-cuit-${saldo.id}` ? 'CUIT copiado' : `CUIT ${formatIdentifier(saldo.cuit)}`}
-                              </button>
-                            )}
-                          </div>
-                          <div className="shrink-0 text-right">
-                            <div className="text-[8px] font-black uppercase tracking-widest text-slate-300">Debe</div>
-                            <div className={cn("font-mono text-xs font-black", saldo.debt > 0 ? "text-rose-600" : "text-emerald-600")}>
-                              ${saldo.debt.toLocaleString()}
-                            </div>
-                          </div>
-                        </div>
-                        <div className="mt-2 grid grid-cols-3 gap-1.5">
-                          <div className="rounded bg-slate-50 px-2 py-1">
-                            <div className="text-[7px] font-black uppercase tracking-widest text-slate-300">Gastado</div>
-                            <div className="truncate font-mono text-[10px] font-bold text-slate-700">${saldo.spent.toLocaleString()}</div>
-                          </div>
-                          <div className="rounded bg-emerald-50 px-2 py-1">
-                            <div className="text-[7px] font-black uppercase tracking-widest text-emerald-400">Pagado</div>
-                            <div className="truncate font-mono text-[10px] font-bold text-emerald-700">${saldo.paid.toLocaleString()}</div>
-                          </div>
-                          <div className="rounded bg-slate-50 px-2 py-1">
-                            <div className="text-[7px] font-black uppercase tracking-widest text-slate-300">Items</div>
-                            <div className="font-mono text-[10px] font-bold text-slate-700">{saldo.entries.length}</div>
-                          </div>
-                        </div>
-                        <div className="mt-2 space-y-1">
-                          {saldo.entries.slice(0, 4).map((entry) => {
-                            const entryDebt = entry.total - entry.paid;
-                            return (
-                              <div key={`mobile-${entry.collectionName}-${entry.id}`} className="flex items-center justify-between gap-2 rounded border border-slate-100 bg-slate-50 px-2 py-1.5">
-                                <div className="min-w-0">
-                                  <div className="truncate text-[10px] font-bold text-slate-700">{entry.description || 'Movimiento'}</div>
-                                  {entry.item?.paymentDate && (
-                                    <div className="text-[8px] font-black uppercase tracking-widest text-slate-400">Pago {formatDate(entry.item.paymentDate)}</div>
-                                  )}
-                                </div>
-                                <div className="flex shrink-0 items-center gap-1">
-                                  {entry.invoice?.url && (
-                                    <a href={entry.invoice.url} target="_blank" rel="noreferrer" className="rounded bg-emerald-50 px-1.5 py-1 text-[8px] font-black uppercase tracking-widest text-emerald-700">
-                                      Fact.
-                                    </a>
-                                  )}
-                                  {canManagePaymentForItem(entry.item, entry.collectionName) && (
-                                    <button
-                                      type="button"
-                                      onClick={() => openPaymentModal(entry.item, entry.collectionName)}
-                                      className="rounded border border-slate-900 bg-white px-1.5 py-1 text-[8px] font-black uppercase tracking-widest text-slate-900"
-                                    >
-                                      {entryDebt > 0 ? 'Pagar' : 'OK'}
-                                    </button>
-                                  )}
-                                </div>
-                              </div>
-                            );
-                          })}
-                          {saldo.entries.length > 4 && (
-                            <div className="px-2 py-1 text-[8px] font-black uppercase tracking-widest text-slate-300">
-                              +{saldo.entries.length - 4} movimientos mas
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              ))}
-              {providerSaldos.length === 0 && (
-                <div className="rounded-lg border border-dashed border-slate-200 bg-white p-6 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
-                  No hay movimientos financieros
-                </div>
-              )}
-              {providerSaldos.length > 0 && filteredProviderSaldos.length === 0 && (
-                <div className="rounded-lg border border-dashed border-slate-200 bg-white p-6 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
-                  No hay movimientos que coincidan con los filtros
-                </div>
-              )}
-            </div>
-
-            <div className="hidden bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden md:block">
-               <table className="w-full text-left">
-                 <thead>
-                   <tr className="bg-slate-50 border-b border-slate-200">
-                     <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Proveedor</th>
-                     <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Cuenta</th>
-                     <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Presupuesto</th>
-                     <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Gastado</th>
-                     <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Pagado</th>
-                     <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Deuda</th>
-                     <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Documentos / Pagos</th>
-                   </tr>
-                 </thead>
-                 <tbody className="divide-y divide-slate-100">
-                   {filteredProviderSaldosByArea.map((group) => (
-                     <React.Fragment key={group.area}>
-                       <tr className="bg-slate-100/70">
-                         <td colSpan={7} className="px-6 py-3 text-[9px] font-black uppercase tracking-[0.16em] text-slate-500">
-                           {group.area}
-                         </td>
-                       </tr>
-                       {group.rows.map((saldo) => (
-                         <tr key={saldo.id} className="hover:bg-slate-50/50 transition-colors group">
-                           <td className="px-6 py-4">
-                             <div className="text-xs font-bold text-slate-900 uppercase">{saldo.name}</div>
-                           </td>
-                           <td className="px-6 py-4">
-                             <div className="space-y-1">
-                               <div className="text-[10px] font-mono text-slate-500 bg-slate-50 px-2 py-1 rounded inline-block border border-slate-100">
-                                 {isProjectAdmin ? saldo.cbu : 'Disponible para admins'}
-                               </div>
-                               {saldo.cuit && (
-                                 <button
-                                   type="button"
-                                   onClick={() => {
-                                     void navigator.clipboard?.writeText(saldo.cuit);
-                                     setCopiedPaymentLineId(`saldo-cuit-${saldo.id}`);
-                                     window.setTimeout(() => setCopiedPaymentLineId(null), 1800);
-                                   }}
-                                   className="block rounded border border-slate-100 bg-white px-2 py-1 text-[9px] font-black uppercase tracking-widest text-slate-500 hover:border-black hover:text-black"
-                                 >
-                                   {copiedPaymentLineId === `saldo-cuit-${saldo.id}` ? 'CUIT copiado' : `CUIT ${formatIdentifier(saldo.cuit)}`}
-                                 </button>
-                               )}
-                             </div>
-                           </td>
-                           <td className="px-6 py-4 text-right text-xs font-medium text-slate-400">
-                             ${saldo.budgeted.toLocaleString()}
-                           </td>
-                           <td className="px-6 py-4 text-right text-xs font-medium text-slate-600">
-                             ${saldo.spent.toLocaleString()}
-                           </td>
-                           <td className="px-6 py-4 text-right text-xs font-medium text-emerald-600">
-                             ${saldo.paid.toLocaleString()}
-                           </td>
-                           <td className="px-6 py-4 text-right">
-                             <div className={cn(
-                               "text-sm font-bold font-mono",
-                               saldo.debt > 0 ? "text-rose-600" : "text-emerald-600"
-                             )}>
-                           ${saldo.debt.toLocaleString()}
-                         </div>
-                       </td>
-                       <td className="px-6 py-4">
-                         <div className="space-y-2">
-                           {saldo.entries.map((entry) => {
-                             const entryDebt = entry.total - entry.paid;
-                             const paymentReceipts = safeArray(entry.item?.paymentHistory).filter((payment: any) => payment.receipt?.url);
-                             const otherReceipts = Array.isArray(entry.otherReceipts) ? entry.otherReceipts.filter((receipt: any) => receipt?.url) : [];
-                             return (
-                               <div key={`${entry.collectionName}-${entry.id}`} className="flex flex-wrap items-center gap-2 text-[10px]">
-                                 <span className="max-w-[170px] truncate text-slate-500" title={entry.description}>
-                                   {entry.description || 'Movimiento'}
-                                 </span>
-                                 {entry.item?.paymentDate && (
-                                   <span className="px-2 py-1 rounded bg-slate-50 border border-slate-100 text-slate-500 font-bold uppercase tracking-widest">
-                                     Pago {formatDate(entry.item.paymentDate)} · {getPaymentLeadTimeLabel(entry.item.paymentDate, getShootingEndDate(project))}
-                                   </span>
-                                 )}
-                                 <span className={cn(
-                                   "px-2 py-1 rounded border font-bold uppercase tracking-widest",
-                                   entryDebt > 0 ? "bg-rose-50 border-rose-100 text-rose-700" : "bg-emerald-50 border-emerald-100 text-emerald-700"
-                                 )}>
-                                   {entryDebt > 0 ? `$${entryDebt.toLocaleString()} debe` : 'Pagado'}
-                                 </span>
-                                 {entry.invoice?.url && (
-                                   <a
-                                     href={entry.invoice.url}
-                                     target="_blank"
-                                     rel="noreferrer"
-                                     className="inline-flex items-center gap-1 px-2 py-1 rounded bg-emerald-50 text-emerald-700 border border-emerald-100 font-bold uppercase tracking-widest hover:bg-emerald-600 hover:text-white"
-                                     title={entry.invoice.fileName || 'Ver factura'}
-                                   >
-                                     <FileText className="w-3 h-3" />
-                                     Factura
-                                   </a>
-                                 )}
-                                 {paymentReceipts.map((payment: any, index: number) => (
-                                   <a
-                                     key={payment.id || index}
-                                     href={payment.receipt.url}
-                                     target="_blank"
-                                     rel="noreferrer"
-                                     className="inline-flex items-center gap-1 px-2 py-1 rounded bg-blue-50 text-blue-700 border border-blue-100 font-bold uppercase tracking-widest hover:bg-blue-600 hover:text-white"
-                                     title={payment.receipt.originalFileName || 'Ver comprobante'}
-                                   >
-                                     <Paperclip className="w-3 h-3" />
-                                     Comp.
-                                   </a>
-                                 ))}
-                                 {otherReceipts.map((receipt: any, index: number) => (
-                                   <a
-                                     key={receipt.id || receipt.path || index}
-                                     href={receipt.url}
-                                     target="_blank"
-                                     rel="noreferrer"
-                                     className="inline-flex items-center gap-1 px-2 py-1 rounded bg-sky-50 text-sky-700 border border-sky-100 font-bold uppercase tracking-widest hover:bg-sky-600 hover:text-white"
-                                     title={receipt.originalFileName || 'Ver comprobante'}
-                                   >
-                                     <Paperclip className="w-3 h-3" />
-                                     Otro comp.
-                                   </a>
-                                 ))}
-                                 {canManagePaymentForItem(entry.item, entry.collectionName) && (
-                                   <button
-                                     type="button"
-                                     onClick={() => openPaymentModal(entry.item, entry.collectionName)}
-                                     className={cn(
-                                       "px-2 py-1 rounded border font-bold uppercase tracking-widest transition-all",
-                                       entryDebt > 0
-                                         ? "bg-white border-slate-200 text-slate-600 hover:border-black hover:text-black"
-                                         : "bg-emerald-50 border-emerald-100 text-emerald-700"
-                                     )}
-                                   >
-                                     {entryDebt > 0 ? 'Registrar pago' : 'Pagado'}
-                                   </button>
-                                 )}
-                               </div>
-                             );
-                           })}
-                         </div>
-                       </td>
-                     </tr>
-                   ))}
-                     </React.Fragment>
-                   ))}
-                   {providerSaldos.length === 0 && (
-                     <tr>
-                       <td colSpan={7} className="px-6 py-12 text-center text-[10px] font-bold uppercase text-slate-300 tracking-widest italic">
-                         No hay movimientos financieros con proveedores registrados
-                       </td>
-                     </tr>
-                   )}
-                   {providerSaldos.length > 0 && filteredProviderSaldos.length === 0 && (
-                     <tr>
-                       <td colSpan={7} className="px-6 py-12 text-center text-[10px] font-bold uppercase text-slate-300 tracking-widest italic">
-                         No hay movimientos que coincidan con los filtros
-                       </td>
-                     </tr>
-                   )}
-                 </tbody>
-               </table>
-            </div>
-
-            <div className="p-6 bg-blue-50 border border-blue-100 rounded-xl flex items-start gap-3">
-              <div className="w-10 h-10 rounded-full bg-white flex items-center justify-center text-blue-600 shadow-sm">
-                <Info className="w-5 h-5" />
-              </div>
-              <div>
-                <h4 className="text-xs font-bold text-blue-900 uppercase tracking-widest mb-1">Sobre el cálculo de deudas</h4>
-                <p className="text-xs text-blue-700 leading-relaxed max-w-2xl">
-                  El "Saldo Deudor" se calcula restando lo marcado como <b>Pagado</b> del total <b>Gastado</b>. 
-                  Los administradores pueden registrar pagos desde esta pantalla o desde la carga por areas.
-                </p>
-              </div>
-            </div>
           </div>
         )}
 
@@ -8332,11 +7741,6 @@ export default function ProjectDetail() {
             onUpload={canUploadProjectDocuments ? () => setShowDocumentUploadModal(true) : undefined}
             signingSection={id && canManageProjectSignatures ? <ProjectSigning projectId={id} search={documentSearch} providers={providers} manualDocuments={projectDocuments}
               canPrepare={isProjectAdmin || profile?.role === 'ayudante_admin' || normalizeEmail(user?.email) === 'info@granbertafilms.com'} /> : undefined} />
-        )}
-
-        {activeTab === 'equipo' && (
-          <ProjectTeam members={projectTeamMembers} canAdd={canManageProjectAccess} canManage={canAssignProjectAreas}
-            onAdd={() => setShowAddCollaborator(true)} onManage={() => setActiveTab('permisos')} />
         )}
 
         {activeTab === 'permisos' && canAssignProjectAreas && (
@@ -8528,7 +7932,7 @@ export default function ProjectDetail() {
         )}
 
 
-        {(activeTab !== 'resumen' && activeTab !== 'presupuesto' && activeTab !== 'equipo' && activeTab !== 'areas' && activeTab !== 'saldos' && activeTab !== 'administracion' && activeTab !== 'documentos' && activeTab !== 'resultado' && activeTab !== 'proveedores' && activeTab !== 'permisos') && (
+        {(activeTab !== 'resumen' && activeTab !== 'presupuesto' && activeTab !== 'areas' && activeTab !== 'saldos' && activeTab !== 'administracion' && activeTab !== 'documentos' && activeTab !== 'resultado' && activeTab !== 'proveedores' && activeTab !== 'permisos') && (
            <div className="py-32 text-center border border-dashed border-slate-200 rounded-2xl bg-white">
               <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest animate-pulse">Integrando módulo {activeTab}...</span>
            </div>

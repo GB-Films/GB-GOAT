@@ -1,3 +1,4 @@
+import { resolveResultIncidences } from './resultIncidences';
 import { getCompanyPaid, getItemReimbursementBalance } from './reimbursements';
 
 export type ProjectExpenseCollection = 'budgetItems' | 'areaExpenses';
@@ -56,9 +57,7 @@ export const calculateProjectResult = (project: any, budgetItems: any[], areaExp
 
   const saleValue = Number(project?.budgetTotal) || 0;
   const directCostTotal = categoryTotals.reduce((total, item) => total + item.total, 0);
-  const resultIncidences = project?.resultIncidences && typeof project.resultIncidences === 'object'
-    ? project.resultIncidences
-    : {};
+  const resultIncidences = resolveResultIncidences(project?.resultIncidences);
   const expenseIncidencePercent = Object.entries(resultIncidences)
     .filter(([incidenceId]) => incidenceId !== 'margen')
     .reduce((total, [, value]) => total + (Number(value) || 0), 0);

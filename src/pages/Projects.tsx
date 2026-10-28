@@ -1,3 +1,4 @@
+import { DEFAULT_RESULT_INCIDENCES } from '../lib/resultIncidences';
 import React, { useState, useEffect } from 'react';
 import { collection, query, getDocs, getDoc, setDoc, addDoc, serverTimestamp, where, or, doc, updateDoc, runTransaction, onSnapshot } from 'firebase/firestore';
 import { db } from '../lib/firebase';
@@ -228,6 +229,7 @@ export default function Projects() {
       companyName: source?.company || formData.get('companyName') || '',
       serviceName: source?.service || '',
       budgetTotal,
+      resultIncidences: { ...DEFAULT_RESULT_INCIDENCES },
       ...(source ? {
         projectCode: source.projectCode,
         controlTotalProjectId: source.sourceProjectId,
