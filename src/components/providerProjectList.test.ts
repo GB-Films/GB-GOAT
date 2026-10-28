@@ -20,10 +20,9 @@ const lines = [
 test('una sola lista agrupa gastos, pagos y documentos bajo su proyecto sin repetir enlaces', () => {
   const before = JSON.stringify({ projects, lines });
   const html = renderToStaticMarkup(createElement(ProviderProjectList, { projects, lines }));
-  assert.equal((html.match(/<details /g) || []).length, 2);
-  assert.equal((html.match(/<summary /g) || []).length, 2);
+  assert.equal((html.match(/class="group\/project"/g) || []).length, 2);
   assert.doesNotMatch(html, /<details[^>]*\bopen\b/);
-  const first = html.slice(html.indexOf('<details'), html.indexOf('</details>'));
+  const first = html.slice(html.indexOf('<details'), html.indexOf('Proyecto Dos'));
   assert.match(first, /Servicio Uno/);
   assert.match(first, /Servicio Dos/);
   assert.doesNotMatch(first, /Reintegro de traslado/);
@@ -38,9 +37,9 @@ test('una sola lista agrupa gastos, pagos y documentos bajo su proyecto sin repe
 
 test('un proyecto con un gasto muestra sus totales una sola vez', () => {
   const html = renderToStaticMarkup(createElement(ProviderProjectList, { projects: [projects[1]], lines: [lines[2]] }));
-  assert.equal((html.match(/>Trabajado</g) || []).length, 1);
+  assert.equal((html.match(/>Trabajado /g) || []).length, 1);
   assert.match(html, /Reintegro de traslado/);
-  assert.match(html, /Sin factura/);
+  assert.match(html, /Sin comprobantes/);
 });
 
 test('sin proyectos conserva el estado vacío', () => {

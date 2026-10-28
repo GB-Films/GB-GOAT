@@ -1,12 +1,12 @@
-import { useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import React from 'react';
 import { FileText, Paperclip } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { formatIdentifier } from '../../lib/providerConstants';
 import { invoicePaymentAppearance, type ProviderPaymentStatus } from '../../lib/providerPaymentStatus';
-import { ProjectProviderDetails } from './ProjectProviderDetails';
 import type { PaymentCollection } from './types';
 import type { ExpenseInvoiceDocument } from '../../lib/invoices';
+const ProviderProfileDialog = lazy(() => import('../../components/ProviderProfileDialog'));
 
 export type ProviderBalanceEntry = {
   id: string; collectionName: PaymentCollection; item: any; description: string; total: number; paid: number;
@@ -17,7 +17,7 @@ export type ProjectProviderBalance = {
   budgeted: number; spent: number; paid: number; debt: number; entries: ProviderBalanceEntry[];
 };
 function ProviderName({ saldo, onOpen }: { saldo: ProjectProviderBalance; onOpen: (provider: any) => void }) {
-  return saldo.provider ? <button type="button" onClick={() => onOpen(saldo.provider)} title="Ver datos completos del proveedor"
+  return saldo.provider ? <button type="button" onClick={() => onOpen(saldo.provider)} title="Ver ficha y comprobantes"
     className="text-left text-xs font-bold uppercase text-slate-900 underline decoration-slate-300 underline-offset-4 hover:text-blue-600">{saldo.name}</button>
     : <span className="text-xs font-bold uppercase text-slate-900">{saldo.name}</span>;
 }
@@ -39,11 +39,12 @@ function EntryActions({ entry, canManage, onPayment }: { entry: ProviderBalanceE
   </div>;
 }
 
-export function ProjectProvidersView({ groups, totalRows, search, onSearchChange, status, onStatusChange, isProjectAdmin, canManagePaymentForItem, openPaymentModal, formatDate, paymentTiming }: {
+export function ProjectProvidersView({ groups, totalRows, search, onSearchChange, status, onStatusChange, isProjectAdmin, canManagePaymentForItem, openPaymentModal, formatDate, paymentTiming, onOpenProvider }: {
   groups: Array<{ area: string; rows: ProjectProviderBalance[] }>; totalRows: number;
   search: string; onSearchChange: (value: string) => void; status: ProviderPaymentStatus | 'all'; onStatusChange: (value: ProviderPaymentStatus | 'all') => void;
   isProjectAdmin: boolean; canManagePaymentForItem: (item: any, collection: PaymentCollection) => boolean;
   openPaymentModal: (item: any, collection: PaymentCollection) => void; formatDate: (date: any) => string; paymentTiming: (date: any) => string;
+  onOpenProvider?: (provider: any) => void;
 }) {
   const [selectedProvider, setSelectedProvider] = useState<any | null>(null);
   const [copiedPaymentLineId, setCopiedPaymentLineId] = useState<string | null>(null);
@@ -75,7 +76,7 @@ export function ProjectProvidersView({ groups, totalRows, search, onSearchChange
                       <div key={`mobile-${saldo.id}`} className="p-3">
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
-                            <ProviderName saldo={saldo} onOpen={setSelectedProvider} />
+                            <ProviderName saldo={saldo} onOpen={onOpenProvider || setSelectedProvider} />
                             <div className="mt-0.5 text-[9px] font-mono font-bold text-slate-400">
                               {isProjectAdmin ? saldo.cbu || 'Sin CBU' : 'Cuenta disponible para admins'}
                             </div>
@@ -172,7 +173,7 @@ export function ProjectProvidersView({ groups, totalRows, search, onSearchChange
                        {group.rows.map((saldo) => (
                          <tr key={saldo.id} className="hover:bg-slate-50/50 transition-colors group">
                            <td className="px-6 py-4">
-                             <ProviderName saldo={saldo} onOpen={setSelectedProvider} />
+                             <ProviderName saldo={saldo} onOpen={onOpenProvider || setSelectedProvider} />
                            </td>
                            <td className="px-6 py-4">
                              <div className="space-y-1">
@@ -253,6 +254,6 @@ export function ProjectProvidersView({ groups, totalRows, search, onSearchChange
                </table>
             </div>
 
-    {selectedProvider && <ProjectProviderDetails provider={selectedProvider} canSeeBankDetails={isProjectAdmin} onClose={() => setSelectedProvider(null)} />}
+    {selectedProvider && <Suspense fallback={<p role="status" className="text-sm text-slate-500">Cargando ficha y comprobantes…</p>}><ProviderProfileDialog provider={selectedProvider} onClose={() => setSelectedProvider(null)} /></Suspense>}
   </div>;
 }

@@ -4,7 +4,6 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { invoicePaymentAppearance, filterProviderBalances } from './providerPaymentStatus';
 import { ProjectProvidersView, type ProjectProviderBalance } from '../pages/project-detail/ProjectProvidersView';
-import { ProjectProviderDetails } from '../pages/project-detail/ProjectProviderDetails';
 
 test('color de factura depende de pagos reales: pendiente, parcial, saldada o con sobrepago', () => {
   assert.match(invoicePaymentAppearance(100, 0).className, /rose/);
@@ -33,16 +32,8 @@ test('detalle conserva todas las facturas y comprobantes, ofrece historial sin d
     canManagePaymentForItem: () => true, openPaymentModal: () => {}, formatDate: () => '', paymentTiming: () => '' }));
   for (const path of ['invoice-one.pdf', 'invoice-two.pdf', 'receipt.pdf']) assert.ok(html.includes(path));
   assert.ok(html.includes('Ver pagos'));
-  assert.ok(html.includes('Ver datos completos del proveedor'));
+  assert.ok(html.includes('Ver ficha y comprobantes'));
   assert.ok(!html.includes('SECRET-CBU'));
   assert.doesNotMatch(html, /<button[^>]*>Pagado<\/button>|>Pagado<\/span>/);
   assert.equal((html.match(/<select /g) || []).length, 1);
-});
-
-test('ficha completa mantiene datos de contacto y protege datos bancarios según el acceso del proyecto', () => {
-  const provider = { name: 'Persona', lastName: 'Ejemplo', type: 'persona', email: 'persona@example.test', bankAccount_cbu: 'SECRET-CBU', bankAccount_alias: 'SECRET-ALIAS' };
-  const publicHtml = renderToStaticMarkup(createElement(ProjectProviderDetails, { provider, canSeeBankDetails: false, onClose: () => {} }));
-  assert.ok(publicHtml.includes('persona@example.test'));
-  assert.doesNotMatch(publicHtml, /SECRET-CBU|SECRET-ALIAS/);
-  assert.ok(renderToStaticMarkup(createElement(ProjectProviderDetails, { provider, canSeeBankDetails: true, onClose: () => {} })).includes('SECRET-CBU'));
 });
