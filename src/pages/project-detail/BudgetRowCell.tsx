@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { Copy, Link2, Plus } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { useParams } from 'react-router-dom';
 import {
   formatIdentifier,
   inferLegacyIdentifiers,
@@ -26,6 +27,7 @@ interface BudgetRowCellProps {
 }
 
 export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment, disabledPayment, disabled, canCopyProviderInfo, onCreateProviderInvite, creatingProviderInvite }: BudgetRowCellProps) {
+  const { id: projectId } = useParams();
   const [isEditingProvider, setIsEditingProvider] = useState(false);
   const [showProviderInfo, setShowProviderInfo] = useState(false);
   const [showProviderDetail, setShowProviderDetail] = useState(false);
@@ -240,7 +242,7 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
             <button type="button" onClick={() => { setShowProviderInfo(false); setShowProviderDetail(true); }} className="mt-2 w-full rounded bg-slate-900 px-3 py-2 text-xs font-bold text-white">Ver ficha y comprobantes</button>
           </div>
         )}
-        {showProviderDetail && provider && <Suspense fallback={<div className="fixed inset-0 z-[500] grid place-items-center bg-white/80 text-sm">Cargando proveedor…</div>}><ProviderProfileDialog provider={provider} onClose={() => setShowProviderDetail(false)} /></Suspense>}
+        {showProviderDetail && provider && <Suspense fallback={<div className="fixed inset-0 z-[500] grid place-items-center bg-white/80 text-sm">Cargando proveedor…</div>}><ProviderProfileDialog provider={provider} initialProjectId={projectId} onClose={() => setShowProviderDetail(false)} /></Suspense>}
         {((item.sharedInvoices?.length || 0) + (item.sharedReceipts?.length || 0) + (item.sharedPaymentIds?.length || 0)) > 0 && <button type="button" disabled={!provider} onClick={() => setShowProviderDetail(true)} className="mt-1 text-[9px] text-indigo-600 hover:underline" title="Ver aplicaciones sin duplicar el documento">
           {item.sharedInvoices?.length ? `${item.sharedInvoices.length} factura(s) vinculada(s)` : 'Comprobantes / pago vinculado'}
         </button>}

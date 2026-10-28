@@ -6,8 +6,9 @@ import { ProviderFinanceWindow } from './ProviderFinanceWindow';
 import { ProjectDialog } from '../pages/project-detail/ProjectDialog';
 const formatDate = (value: any) => typeof value === 'string' ? value.split('-').reverse().join('/') : value?.seconds ? new Date(value.seconds * 1000).toLocaleDateString('es-AR') : '-';
 
-export function ProviderDetailView({ detail, loading, onClose, financePanel, companyPanel, canSeeBankDetails = true }: {
+export function ProviderDetailView({ detail, loading, onClose, financePanel, companyPanel, canSeeBankDetails = true, initialProjectId, onOpenSharedDocument }: {
   detail: any; loading: boolean; onClose: () => void; financePanel?: ReactNode; companyPanel?: ReactNode; canSeeBankDetails?: boolean;
+  initialProjectId?: string; onOpenSharedDocument?: (id: string) => Promise<unknown>;
 }) {
   const [copiedProviderField, setCopiedProviderField] = useState('');
   const [showFullData, setShowFullData] = useState(false);
@@ -96,7 +97,7 @@ export function ProviderDetailView({ detail, loading, onClose, financePanel, com
                 )}
               </section>
         {companyPanel && <details className="rounded-xl border border-slate-200 p-3"><summary className="cursor-pointer text-xs font-semibold text-slate-600">Representación y respaldos de la empresa · acceso restringido</summary><div className="mt-3">{companyPanel}</div></details>}
-        <div key={provider.id}><ProviderProjectList projects={detail.projects || []} lines={detail.lines || []} /></div>
+        <div key={provider.id}><ProviderProjectList projects={detail.projects || []} lines={detail.lines || []} initialProjectId={initialProjectId} onOpenSharedDocument={onOpenSharedDocument} /></div>
       </>}
     </div>
     {financePanel && <ProviderFinanceWindow open={showFinance} onClose={() => setShowFinance(false)}>{financePanel}</ProviderFinanceWindow>}
