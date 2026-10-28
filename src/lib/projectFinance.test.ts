@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createRequire } from 'node:module';
+import { BANI_PROVIDER_ID, isInternalBudgetEstimate } from './internalBudgetEstimate';
+import { documentProjectChoices } from './providerDocumentSelection';
+const internalBackend = createRequire(import.meta.url)('../../functions/internalBudgetEstimate.js');
 import {
   calculateProjectFinance,
   calculateProjectResult,
@@ -34,6 +38,34 @@ test('la deuda nunca es negativa aunque exista un sobrepago histórico', () => {
   const item = { total: 100, paymentHistory: [{ amount: 80 }, { amount: 40 }] };
   assert.equal(getPaymentTotal(item), 120);
   assert.equal(getItemDebt(item), 0);
+});
+
+test('BANI internal estimate is a forecast, never external debt, paid, overdue or a document target', () => {
+  const item = { id: 'estimate', providerId: BANI_PROVIDER_ID, economicNature: 'internal_estimate', area: 'Post Producción', total: 1500000 };
+  assert.equal(isInternalBudgetEstimate(item), true); assert.equal(internalBackend.isInternalBudgetEstimate(item), true);
+  const project = { budgetTotal: 5500000, crmProjectImportVersion: 2, activeAreas: [] };
+  const finance = calculateProjectFinance(project, [item], []);
+  assert.equal(finance.committedBudget, 1500000); assert.equal(finance.spent, 0); assert.equal(finance.paid, 0);
+  assert.equal(finance.debt, 0); assert.equal(finance.unpaidLines, 0); assert.deepEqual(finance.entries, []);
+  assert.equal(getItemDebt(item), 0);
+  assert.deepEqual(documentProjectChoices([{ projectId: 'g', projectName: 'G', expenseId: item.id, collectionName: 'budgetItems', total: item.total, item }], 'invoice'), []);
+  const noGPrice = calculateProjectFinance({ ...project, budgetTotal: 0, controlTotalContractAmount: null }, [item], []);
+  assert.equal(noGPrice.budgetTotal, 0, 'B assignment does not become the unknown G sale value');
+  assert.equal(calculateProjectResult(project, [item], []).directCostTotal, 1500000, 'forecast remains in the estimated result');
+});
+
+test('the confirmed global B price stays in the estimate without adding or replacing it with its breakdown', () => {
+  const estimate = { providerId: BANI_PROVIDER_ID, economicNature: 'internal_estimate', area: 'Post Producción', total: 1500000 };
+  const details = [{ providerId: 'another', area: 'Post Producción', total: 400000 }];
+  const project = { budgetTotal: 5500000 };
+  assert.equal(calculateProjectResult(project, [estimate, ...details], []).directCostTotal, 1500000);
+  assert.equal(calculateProjectResult(project, [estimate], details).directCostTotal, 1500000);
+  assert.equal(calculateProjectFinance(project, [estimate, ...details], []).committedBudget, 1500000);
+  assert.equal(calculateProjectFinance(project, [estimate, ...details], []).spent, 400000);
+  assert.equal(calculateProjectResult(project, [{ ...estimate, total: 0 }, ...details], []).directCostTotal, 0, 'confirmed zero B remains zero, never replaced by another cost');
+  const oldBani = { ...estimate, economicNature: undefined };
+  assert.equal(isInternalBudgetEstimate(oldBani), false); assert.equal(getItemDebt(oldBani), 1500000);
+  assert.equal(isInternalBudgetEstimate({ ...estimate, providerId: 'other' }), false, 'never reclassify another supplier');
 });
 
 test('un contrato USD importado conserva presupuesto GOAT cero hasta su carga manual', () => {

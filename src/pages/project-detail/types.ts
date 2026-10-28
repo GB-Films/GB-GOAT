@@ -34,6 +34,8 @@ export interface Payment {
 }
 
 export interface BudgetItem {
+  economicNature?: 'internal_estimate';
+  crmBaniPost?: Record<string, unknown>;
   sharedInvoices?: Array<{ id: string; amountCents: number; number: string; issuerName: string }>;
   sharedReceipts?: Array<{ id: string; amountCents: number; title: string }>;
   sharedPaymentIds?: string[];

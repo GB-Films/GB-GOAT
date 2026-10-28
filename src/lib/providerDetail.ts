@@ -3,6 +3,7 @@ import { db } from './firebase';
 import { getPaymentTotal } from './projectFinance';
 import { getProviderExpenseDocuments, uniqueProviderDocuments } from './providerDocuments';
 import { financialDocumentsForExpense } from './providerFinancialRecords';
+import { isInternalBudgetEstimate } from './internalBudgetEstimate';
 export async function loadProviderDetail(provider: any, profile: any) {
 
   const projectsRef = collection(db, 'projects');
@@ -32,6 +33,7 @@ export async function loadProviderDetail(provider: any, profile: any) {
     const activeAreas = Array.isArray(project.activeAreas) ? project.activeAreas : [];
 
     const pushLine = (item: any, source: 'Presupuesto Principal' | 'Gestion por Areas') => {
+      if (isInternalBudgetEstimate(item)) return;
       if ((source === 'Presupuesto Principal') === activeAreas.includes(item.area)) return;
       (Array.isArray(item.paymentHistory) ? item.paymentHistory : []).forEach((payment: any, index: number) => {
         if (payment.method !== 'tercero' || payment.thirdPartyPayerId !== provider.id) return;

@@ -1,4 +1,5 @@
 const {authorizedParty}=require('./providerAuthorization');
+const { isInternalBudgetEstimate } = require('./internalBudgetEstimate');
 const { createHash } = require('node:crypto');
 const { HttpsError } = require('firebase-functions/v2/https');
 const { FieldValue } = require('firebase-admin/firestore');
@@ -208,6 +209,7 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, clo
       const allocations = record.allocations.map((allocation, index) => {
         const expense = rows[index].data(), project = projectMap.get(allocation.projectId);
         if (!expense || !project || expense.providerId !== record.providerId) fail('El proveedor o el gasto cambió. Volvé a cargar la ficha.');
+        if (isInternalBudgetEstimate(expense)) fail('Esta fila es una estimación interna de presupuesto; no admite facturas ni pagos a proveedor.');
         if (expense.thirdPartyPayoutRequired && ['invoice', 'payment'].includes(record.kind) && !authorization) fail('Este trabajo requiere la autorización revisada del tercero y su cuenta de cobro.');
         const active = list(project.activeAreas).includes(expense.area);
         if ((allocation.collectionName === 'areaExpenses') !== active) fail('El gasto ya no pertenece a la gestión activa del proyecto.');

@@ -12,7 +12,7 @@ import { useAuth } from '../context/AuthContext';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import { normalizeEmail } from '../lib/identity';
 import { calculateProjectFinance, getItemTotal, getPaymentTotal, getStandaloneBudgetItems } from '../lib/projectFinance';
-import { PROJECT_STATUSES } from '../lib/projects';
+import { PROJECT_WORKFLOW_STATUSES as PROJECT_STATUSES, isArchivedProject } from '../lib/projects';
 import { PageHeader } from '../components/PageHeader';
 import { administrationAction, administrationActionLabel, localDateKey, normalizeProjectAdministration, type ProjectAdministrationRecord } from '../lib/projectAdministration';
 
@@ -99,6 +99,7 @@ const getDaysUntil = (value: any) => {
 };
 
 const getOperationalFlags = (project: ProjectFinance) => {
+  if (isArchivedProject(project)) return [];
   const flags: string[] = [];
   if (!project.shootingDate && project.status !== 'Aprobado') flags.push('Sin fecha de rodaje');
   if (project.overBudget > 0) flags.push('Presupuesto excedido');
@@ -212,7 +213,7 @@ export default function Dashboard() {
         await loadDashboardData({
           loadProjects: async () => {
             const pSnap = await getDocs(pq);
-            return sortDashboardProjects(await Promise.all(pSnap.docs.map(async projectDoc => ({
+            return sortDashboardProjects(await Promise.all(pSnap.docs.filter(projectDoc => !isArchivedProject(projectDoc.data())).map(async projectDoc => ({
               ...await readAuthorizedProject(db, { ...projectDoc.data(), id: projectDoc.id }, { uid, email, isAppAdmin: role === 'admin' }),
               id: projectDoc.id,
             }))));
@@ -276,9 +277,10 @@ export default function Dashboard() {
   const financeFailed = projects.some((project) => project.financeStatus === 'error');
 
   const dashboardStats = useMemo(() => {
-    const active = projects.filter((project) => project.status !== 'Aprobado').length;
+    const active = projects.filter((project) => project.status !== 'Aprobado' && !isArchivedProject(project)).length;
     const inShoot = projects.filter((project) => project.status === 'Rodaje').length;
     const nextShoots = projects.filter((project) => {
+      if (isArchivedProject(project)) return false;
       const days = getDaysUntil(project.shootingDate);
       return days !== null && days >= 0 && days <= 14;
     }).length;
@@ -289,6 +291,7 @@ export default function Dashboard() {
 
   const upcomingShoots = useMemo(() => (
     projects
+      .filter(project => !isArchivedProject(project))
       .map((project) => ({ project, days: getDaysUntil(project.shootingDate) }))
       .filter((item): item is { project: ProjectFinance; days: number } => item.days !== null && item.days >= 0)
       .sort((a, b) => a.days - b.days)

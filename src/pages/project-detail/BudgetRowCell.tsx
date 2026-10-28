@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { Copy, Link2, Plus } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { isInternalBudgetEstimate } from '../../lib/internalBudgetEstimate';
 import { useParams } from 'react-router-dom';
 import {
   formatIdentifier,
@@ -368,6 +369,7 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
   }
 
   if (type === 'paid') {
+    if (isInternalBudgetEstimate(item)) return <span className="text-[10px] text-slate-500" title="Asignación interna presupuestada; no es una deuda ni un pago.">Estimación</span>;
     const totalPaid = (item.paymentHistory || []).reduce((acc: number, p: any) => acc + p.amount, 0);
     const isPartial = totalPaid > 0 && totalPaid < item.total;
     const isFull = totalPaid >= item.total;
