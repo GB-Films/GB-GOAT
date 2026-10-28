@@ -833,7 +833,10 @@ export default function ProviderInvite() {
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Field label="Correo personal de tu cuenta Google" required error={fieldErrors.email}>
-                  <input aria-label="Correo personal de tu cuenta Google" type="email" value={form.email} readOnly required aria-invalid={Boolean(fieldErrors.email)} className={withFieldError(fieldErrors.email)} />
+                  <input aria-label="Correo personal de tu cuenta Google" aria-describedby={form.type === 'empresa' ? 'company-email-help' : undefined} type="email" value={form.email} readOnly required aria-invalid={Boolean(fieldErrors.email)} className={withFieldError(fieldErrors.email)} />
+                  {form.type === 'empresa' && (
+                    <p id="company-email-help" className="mt-2 text-xs text-slate-500">Podés usar tu correo personal o el que utilizás para tareas de administración o trabajo dentro de la empresa.</p>
+                  )}
                 </Field>
                 <Field label="Teléfono" required error={fieldErrors.phone}>
                   <input aria-label="Teléfono" autoComplete="tel" value={form.phone} onChange={(e) => updateField('phone', e.target.value)} required aria-invalid={Boolean(fieldErrors.phone)} className={withFieldError(fieldErrors.phone)} />
