@@ -17,6 +17,8 @@ const deps = {
   sign,
   findAccount: (email) =>
     require("firebase-admin/auth").getAuth().getUserByEmail(email),
+  findAccountByUid: uid => require('firebase-admin/auth').getAuth().getUser(uid),
+  verifyGoogleToken: token => require('firebase-admin/auth').getAuth().verifyIdToken(token, true),
   timestamp: () => FieldValue.serverTimestamp(),
   readFile: createPortalFileReader({ db, readLocalFile: sign.readLocalFile }),
 };

@@ -1,6 +1,7 @@
 const { HttpsError } = require("firebase-functions/v2/https");
 const M = require("./providerPortalModel");
 const { confirmationContent, assertConfirmationUnchanged, confirmationState } = require('./providerProfileConfirmation');
+const { createAccountChoiceService } = require('./providerAccountChoice');
 const { createThirdPartyIntake } = require("./providerIntake");
 const { activatePersonalMembership, attachVerifiedIntakeMembership } = require('./providerPortalAccess');
 const { COMPANY_EVIDENCE } = require('./providerEvidence');
@@ -42,7 +43,9 @@ function createProviderPortalHandler({
   sign,
   readFile,
   clock = () => new Date(),
+  verifyGoogleToken,
 }) {
+  const accountChoices = createAccountChoiceService({ db, timestamp, clock, verifyGoogleToken });
   const registerThirdPartyIntake = createThirdPartyIntake({ db, timestamp, clock });
   const preferencesRef = (providerId, actor) => db.doc(`providerPortalPreferences/${hash({ providerId, uid: actor.uid })}`);
   async function saveThirdPartyDetails(providerId, actor, input) {
@@ -156,7 +159,7 @@ function createProviderPortalHandler({
       if (current.status !== "pending_signature") return current;
       if (
         !membership ||
-        !["active", "needs_confirmation"].includes(membership.status)
+        !["active", "needs_confirmation"].includes(membership.status) || membership.email !== actor.email
       )
         throw new HttpsError("permission-denied", "Representación revocada.");
       const updates = {};
@@ -166,6 +169,8 @@ function createProviderPortalHandler({
       }
       if (decl.kind === "profile") {
         if (decl.content.confirmation) assertConfirmationUnchanged(provider, decl.content.confirmation);
+        if (decl.content.accountChoice && email(provider.portalAccessEmail || provider.email) !== decl.content.accountChoice.previousAccessEmail)
+          fail('Cambió la cuenta de acceso mientras firmabas. Prepará una nueva confirmación.');
         for (const [key, change] of Object.entries(decl.content.changes)) {
           if (String(provider[key] ?? "") !== change.before)
             fail(
@@ -178,7 +183,7 @@ function createProviderPortalHandler({
             ...updates,
             portalRevision: Number(provider.portalRevision || 0) + 1,
           });
-        status = Object.values(decl.content.changes).some((c) => c.critical)
+        status = Object.values(decl.content.changes).some((c) => c.critical) || decl.content.accountChoice?.changesIdentity
           ? "pending_review"
           : "applied";
       }
@@ -339,6 +344,7 @@ function createProviderPortalHandler({
       const provider = (await db.doc(`providers/${providerId}`).get()).data();
       return sign.evidence.upload(providerId, actor, input, provider?.type);
     }
+    if (input.action === 'verifyAccount') return accountChoices.verify(providerId, actor, input);
     if (input.action === 'evidenceFile') return sign.evidence.read(providerId, id(input.evidenceId), actor);
     if (input.action === 'saveThirdPartyDetails') { identity(request, true); return saveThirdPartyDetails(providerId, actor, input); }
     if (input.action === 'companyState') {
@@ -450,7 +456,10 @@ function createProviderPortalHandler({
             "Declaro que los cambios detallados son verídicos y solicito su uso administrativo desde su entrada en vigencia. CUIT, identidad y cuenta bancaria requieren revisión.",
         };
         if (input.confirmProfile === true) {
-          content.confirmation = confirmationContent(provider, actor, content.changes, input);
+          content.accountChoice = await accountChoices.resolve(providerId, actor, provider, input);
+          if (String(provider.email || '') !== content.accountChoice.selected.email)
+            content.changes.email = { before: String(provider.email || ''), after: content.accountChoice.selected.email, critical: true };
+          content.confirmation = confirmationContent(provider, actor, content.changes, input, content.accountChoice);
           content.terms = content.confirmation.terms;
           if (provider.type !== 'empresa') content.signerDni = content.confirmation.profile.dni.replace(/\D/g, '');
         }
@@ -544,7 +553,7 @@ function createProviderPortalHandler({
       if ((await ref.get()).data()?.providerId !== providerId)
         throw new HttpsError("permission-denied", "Proveedor incorrecto.");
       const result = await syncDeclaration(ref, actor);
-      return { status: result.status };
+      return { status: result.status, confirmation: !!result.content?.confirmation };
     }
     if (input.action === "revokeThirdParty") {
       identity(request, true);

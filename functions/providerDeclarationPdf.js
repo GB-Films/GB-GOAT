@@ -67,16 +67,20 @@ async function declarationPdf(d) {
       if (key !== 'type' && !(c.confirmation.profile.type === 'empresa' ? ['name', 'lastName', 'dni', 'birthDate'].includes(key) : key === 'businessName'))
         line(`${fieldNames[key] || key}: ${value || 'No informado'}`);
     line(`Cuenta Google utilizada para esta confirmación: ${c.confirmation.accessEmail}`);
+    if (c.accountChoice) {
+      line(`Correo Google elegido para la ficha: ${c.accountChoice.selected.email}`);
+      if (c.accountChoice.changesIdentity) line('La nueva cuenta fue verificada con Google. Hasta su aprobación se mantiene el acceso actual.');
+    }
     gap();
   }
-  line(`Proveedor: ${c.provider?.name || d.providerId}`);
-  line(
-    `${d.kind === "representation" ? "CUIT informado en la ficha (dato de referencia)" : "CUIT"}: ${c.provider?.cuit || "No informado"}`,
-  );
-  line(`Cuenta que declara: ${d.actor.email}`);
-  line(
-    `Carácter declarado: ${d.kind === "representation" ? "Representante autorizado de la empresa" : c.confirmation?.profile.type === 'empresa' ? 'Gestión de datos de empresa; representación declarada por separado' : "Prestador por cuenta propia"}`,
-  );
+  if (!c.confirmation) {
+    line(`Proveedor: ${c.provider?.name || d.providerId}`);
+    line(
+      `${d.kind === "representation" ? "CUIT informado en la ficha (dato de referencia)" : "CUIT"}: ${c.provider?.cuit || "No informado"}`,
+    );
+    line(`Cuenta que declara: ${d.actor.email}`);
+    line(`Carácter declarado: ${d.kind === "representation" ? "Representante autorizado de la empresa" : "Prestador por cuenta propia"}`);
+  }
   gap();
   if (d.kind === "representation")
     for (const [key, value] of Object.entries(c.profile).sort(([a], [b]) =>

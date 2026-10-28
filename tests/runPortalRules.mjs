@@ -29,7 +29,7 @@ const cases = [
     "firestore,storage",
   ],
   ["cashSubdeliveryRules", "demo-goat-cash-subdeliveries", "firestore"],
-  ["providerPortal", "demo-goat-provider-portal", "firestore,storage"],
+  ["providerPortal", "demo-goat-provider-portal", "firestore,storage,auth"],
 ];
 // Storage's Firestore lookups must use the same project as its emulator process.
 for (const [name, project, services] of cases) {

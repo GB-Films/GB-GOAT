@@ -132,10 +132,15 @@ export default function ProviderPortalAdmin() {
             Proveedor {d.providerId} · Firma {d.proof.signedAt}
           </p>
           <div className="flex flex-wrap gap-2">{(['signed', 'certificate'] as const).map(artifact => <button key={artifact} type="button" disabled={busy} className="rounded border px-3 py-2 text-xs text-blue-700" onClick={() => run(async () => { downloadPortalFile(await portalAdminRequest({ action: 'declarationFile', providerId: d.providerId, declarationId: d.id, artifact })); })}>{artifact === 'signed' ? 'Ver declaración firmada' : 'Ver certificado de firma'}</button>)}</div>
+          {d.kind === 'profile' && d.content.accountChoice && <div className="rounded-xl border border-blue-100 bg-blue-50 p-3 text-sm">
+            <p>Firmó con Google: <strong>{d.actor.email}</strong></p>
+            <p>Correo elegido y verificado: <strong>{d.content.accountChoice.selected.email}</strong></p>
+            {d.content.accountChoice.changesIdentity && <p className="mt-1 text-xs text-slate-600">Al aprobar, el acceso de esta ficha pasa a la cuenta elegida. Los permisos internos no se transfieren.{d.content.confirmation?.profile.type === 'empresa' ? ' La nueva cuenta debe confirmar su representación de la empresa.' : ''}</p>}
+          </div>}
           {d.kind === "profile" ? (
             Object.entries(d.content.changes).map(([key, c]: any) => (
               <p className="text-sm" key={key}>
-                <strong>{key}:</strong> {c.before || "Sin dato"} →{" "}
+                <strong>{key === 'email' ? 'Correo de la ficha' : key}:</strong> {c.before || "Sin dato"} →{" "}
                 {c.after || "Sin dato"} ·{" "}
                 {c.critical ? "Pendiente de aprobación" : "Aplicado al firmar"}
               </p>

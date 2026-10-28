@@ -67,6 +67,7 @@ const deps = {
   timestamp: () => admin.firestore.FieldValue.serverTimestamp(),
   readFile: createPortalFileReader({ db, readLocalFile: sign.readLocalFile }),
   clock: () => new Date("2026-10-26T19:00:00Z"),
+  findAccountByUid: async uid => ({ uid, email: `${uid}@example.test`, emailVerified: true, providerData: [{ providerId: 'google.com' }] }),
 };
 const portal = createProviderPortalHandler(deps),
   manage = createProviderPortalAdminHandler(deps);
@@ -826,6 +827,8 @@ try {
   await assert.rejects(own({ action: 'completeDeclaration', providerId: 'legacy-confirmation', declarationId: stale.id }), /cambiaron/);
   assert.equal((await confirmationOverview()).profileConfirmation.status, 'required');
   console.log('PASS: legacy confirmation uses a real GB Sign PDF and signature, preserves unchanged profiles, rejects stale data and foreign accounts, tracks pending review and exempts new signup.');
+  const { testProviderAccountChoice } = await import('./providerAccountChoice.flow.mjs');
+  await testProviderAccountChoice({ db, admin, deps, request, signActual, env, doc, getDoc, setDoc, assertFails, createProviderPortalHandler, createProviderPortalAdminHandler });
   console.log("PASS: own bank required at intake, personal signup without signature, company private documents and review, minimal third-party declaration without bank certificate, issuer-linked invoice and payout.");
   console.log(
     "PASS: real GB Sign PDF/signature/artifacts → GOAT application; critical review, scoped third-party decisions, no duplicate payment; external isolation and producer access.",
