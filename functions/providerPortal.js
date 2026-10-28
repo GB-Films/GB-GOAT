@@ -1,5 +1,6 @@
 const { HttpsError } = require("firebase-functions/v2/https");
 const M = require("./providerPortalModel");
+const { confirmationContent, assertConfirmationUnchanged, confirmationState } = require('./providerProfileConfirmation');
 const { createThirdPartyIntake } = require("./providerIntake");
 const { activatePersonalMembership, attachVerifiedIntakeMembership } = require('./providerPortalAccess');
 const { COMPANY_EVIDENCE } = require('./providerEvidence');
@@ -164,6 +165,7 @@ function createProviderPortalHandler({
         status = 'pending_review';
       }
       if (decl.kind === "profile") {
+        if (decl.content.confirmation) assertConfirmationUnchanged(provider, decl.content.confirmation);
         for (const [key, change] of Object.entries(decl.content.changes)) {
           if (String(provider[key] ?? "") !== change.before)
             fail(
@@ -369,6 +371,7 @@ function createProviderPortalHandler({
       // Only this provider's scoped data leave the boundary, never arbitrary financial fields or file tokens.
       return {
         provider: M.publicProfile(provider),
+        profileConfirmation: confirmationState(provider, membership, actor, declarations.docs.map(s => ({ id: s.id, ...s.data() }))),
         thirdPartyDefaults: preferences?.data()?.uid === actor.uid && preferences.data().email === actor.email
           ? preferences.data().party
           : declarations.docs.map(doc => doc.data()).filter(d => d.kind === 'third_party' && d.actor.uid === actor.uid && d.actor.email === actor.email)
@@ -442,10 +445,15 @@ function createProviderPortalHandler({
       }
       if (kind === "profile") {
         content = {
-          changes: M.ownAccountProfileChanges(provider, input.changes, input.ownAccountConfirmed),
+          changes: M.ownAccountProfileChanges(provider, input.changes, input.ownAccountConfirmed, input.confirmProfile === true),
           terms:
             "Declaro que los cambios detallados son verídicos y solicito su uso administrativo desde su entrada en vigencia. CUIT, identidad y cuenta bancaria requieren revisión.",
         };
+        if (input.confirmProfile === true) {
+          content.confirmation = confirmationContent(provider, actor, content.changes, input);
+          content.terms = content.confirmation.terms;
+          if (provider.type !== 'empresa') content.signerDni = content.confirmation.profile.dni.replace(/\D/g, '');
+        }
         if (input.ownAccountConfirmed === true) {
           const value = key => content.changes[key]?.after ?? provider[key] ?? '';
           if (value('bankAccount_cbu') || value('bankAccount_alias')) {
@@ -479,6 +487,10 @@ function createProviderPortalHandler({
         ),
         cuit: text(provider.cuit),
       };
+      if (content.confirmation) {
+        const p = content.confirmation.profile;
+        content.provider = { name: p.type === 'empresa' ? p.businessName || p.name : [p.name, p.lastName].filter(Boolean).join(' '), cuit: p.cuit };
+      }
       content.capacity =
         content.capacity ||
         membership.representation ||

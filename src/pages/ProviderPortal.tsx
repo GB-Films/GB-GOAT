@@ -11,6 +11,7 @@ import { ThirdPartyAuthorizationForm } from "../components/ThirdPartyAuthorizati
 import { CompanyRepresentationForm } from "../components/CompanyRepresentationForm";
 import { thirdPartyFormDefaults } from '../lib/thirdPartyDefaults';
 import { ProviderProfileForm } from '../components/ProviderProfileForm';
+import { ProviderConfirmationNotice } from '../components/ProviderConfirmationNotice';
 
 const tabs = [
   "Trabajos",
@@ -24,6 +25,7 @@ const labels: Record<string, string> = {
   lastName: "Apellido",
   businessName: "Razón social",
   dni: "DNI",
+  birthDate: "Fecha de nacimiento",
   cuit: "CUIT",
   address: "Domicilio",
   phone: "Teléfono",
@@ -139,7 +141,9 @@ export default function ProviderPortal() {
         providerId: signing.providerId,
         declarationId: signing.documentId,
       });
-      if (signing.declarationKind === 'profile') { setTab('Mis datos'); setProfileNotice(result.status === 'pending_review' ? 'Cambios firmados y guardados. Los datos marcados están pendientes de revisión.' : 'Cambios guardados.'); } }
+      if (signing.declarationKind === 'profile') { setTab('Mis datos'); setProfileNotice(result.content?.confirmation
+        ? result.status === 'pending_review' ? 'Datos confirmados y firma guardada. Las correcciones marcadas están pendientes de revisión.' : 'Datos confirmados y firma guardada.'
+        : result.status === 'pending_review' ? 'Cambios firmados y guardados. Los datos marcados están pendientes de revisión.' : 'Cambios guardados.'); } }
     if (await load()) setDraft({});
   }
   async function prepare(action: string, input: any) {
@@ -147,7 +151,7 @@ export default function ProviderPortal() {
     const key = JSON.stringify([providerId, action, input]);
     if (!attempts.current.has(key))
       attempts.current.set(key, crypto.randomUUID());
-    setSigning({ preparing: true, title: action === 'prepareProfile' ? 'Actualización de mis datos' : 'Preparando declaración' });
+    setSigning({ preparing: true, title: action === 'prepareProfile' ? input.confirmProfile ? 'Confirmación de mis datos' : 'Actualización de mis datos' : 'Preparando declaración' });
     await run(async () => {
       try {
       const result = await portalRequest({
@@ -239,6 +243,7 @@ export default function ProviderPortal() {
       {selected?.status === 'needs_confirmation' && selected?.type !== 'empresa' && (
         <p role="status" className={box}>Administración debe revisar la clasificación de esta ficha para activar el acceso. No necesitás firmar una declaración de representación.</p>
       )}
+      {view && <ProviderConfirmationNotice status={view.profileConfirmation?.status} onReview={() => setTab('Mis datos')} />}
       <nav
         aria-label="Secciones del proveedor"
         className="flex gap-2 overflow-x-auto"
@@ -564,7 +569,7 @@ export default function ProviderPortal() {
             <div className={box} key={d.id}>
               <p className="font-semibold">
                 {d.kind === "profile"
-                  ? "Cambios de datos"
+                  ? d.content.confirmation ? "Confirmación de datos" : "Cambios de datos"
                   : d.kind === "third_party"
                     ? "Quién factura y cobra por mí"
                     : "Representación"}{" "}
@@ -654,7 +659,7 @@ export default function ProviderPortal() {
             </p>
           </section>
           {view.provider.type === 'empresa' && <div key={providerId}><CompanyRepresentationForm providerId={providerId} email={user?.email || ''} busy={busy} onPrepare={input => prepare('prepareRepresentation', input)} /></div>}
-          <div key={providerId}><ProviderProfileForm provider={view.provider} declarations={view.declarations} labels={labels} draft={draft} onChange={setDraft} busy={busy} notice={profileNotice} onPrepare={input => prepare('prepareProfile', input)} /></div>
+          <div key={providerId}><ProviderProfileForm provider={view.provider} declarations={view.declarations} labels={labels} draft={draft} onChange={setDraft} busy={busy} notice={profileNotice} confirmationRequired={view.profileConfirmation?.status === 'required'} accessEmail={user?.email || ''} onPrepare={input => prepare('prepareProfile', input)} /></div>
           {view.provider.type === 'persona' && <ThirdPartyAuthorizationForm provider={view.provider} works={view.works} party={party} onChange={setParty} busy={busy}
             recovered={!!view.thirdPartyDefaults || !!view.thirdPartyIntake}
             onSave={async input => { await portalRequest({ action: 'saveThirdPartyDetails', providerId, ...input }); await load(); }}

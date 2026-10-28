@@ -1,0 +1,56 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const M = require('./providerPortalModel');
+const { confirmationContent, confirmationState, assertConfirmationUnchanged, snapshot } = require('./providerProfileConfirmation');
+const actor = { uid: 'person', email: 'persona@example.test' };
+const provider = { type: 'persona', name: 'Persona', lastName: 'Ejemplo', dni: '12345678', email: actor.email, address: 'Domicilio original', bankAccount_alias: 'cuenta.propia', bankAccount_holder: 'Persona Ejemplo' };
+const consent = { dataConfirmed: true, accessEmailConfirmed: true, ownAccountConfirmed: true };
+const declaration = (changes = {}, status = 'applied') => ({ id: 'd', kind: 'profile', status, actor, proof: { complete: true }, content: { changes, confirmation: confirmationContent(provider, actor, changes, consent) } });
+test('permite confirmar sin cambios, conserva la ficha completa y exige las tres conformidades', () => {
+  const changes = M.ownAccountProfileChanges(provider, {}, true, true);
+  assert.deepEqual(changes, {});
+  const content = confirmationContent(provider, actor, changes, consent);
+  assert.deepEqual(content.profile, snapshot(provider));
+  assert.equal(snapshot({ ...provider, birthDate: { toDate: () => new Date('1991-04-12T00:00:00Z') } }).birthDate, '1991-04-12');
+  assert.equal(content.accessEmail, actor.email);
+  assert.match(content.terms, /autorizarla por separado/);
+  assert.throws(() => M.profileChanges(provider, {}), /No hay cambios/);
+  for (const key of Object.keys(consent)) assert.throws(() => confirmationContent(provider, actor, changes, { ...consent, [key]: false }));
+  assert.throws(() => confirmationContent({ ...provider, dni: '' }, actor, {}, consent), /DNI/);
+  assert.throws(() => confirmationContent({ ...provider, bankAccount_alias: '' }, actor, {}, consent), /CBU/);
+});
+test('solicita la confirmación de fichas anteriores; no basta un checkbox, un borrador ni la firma de otra cuenta', () => {
+  const d = declaration();
+  const state = rows => confirmationState(provider, {}, actor, rows).status;
+  assert.equal(state([]), 'required');
+  assert.equal(state([{ ...d, proof: { complete: false } }]), 'required');
+  assert.equal(state([{ ...d, status: 'pending_signature' }]), 'required');
+  assert.equal(state([{ ...d, actor: { ...actor, uid: 'other' } }]), 'required');
+  assert.equal(state([{ ...d, actor: { ...actor, email: 'otra@example.test' } }]), 'required');
+  assert.equal(state([{ ...d, status: 'rejected' }]), 'required');
+  assert.equal(state([d]), 'confirmed');
+  assert.equal(confirmationState(provider, { source: 'verified_intake_uid' }, actor, []).status, 'not_required');
+  assert.equal(confirmationState(provider, { source: 'personal_google_intake' }, actor, []).status, 'not_required');
+  assert.equal(confirmationState({ ...provider, address: 'Cambió' }, {}, actor, [d]).status, 'required');
+});
+test('las correcciones firmadas quedan en revisión y sólo se consideran vigentes al aprobarlas', () => {
+  const changes = M.ownAccountProfileChanges(provider, { address: 'Nuevo domicilio', bankAccount_alias: 'nueva.cuenta' }, true, true);
+  const d = declaration(changes, 'pending_review');
+  const intermediate = { ...provider, address: 'Nuevo domicilio' };
+  assert.equal(confirmationState(intermediate, {}, actor, [d]).status, 'pending_review');
+  const onlyCritical = declaration(M.ownAccountProfileChanges(provider, { bankAccount_alias: 'nueva.cuenta' }, true, true), 'pending_review');
+  assert.equal(confirmationState(provider, {}, actor, [declaration(), onlyCritical]).status, 'pending_review');
+  assert.equal(provider.bankAccount_alias, 'cuenta.propia');
+  assert.equal(confirmationState({ ...intermediate, bankAccount_alias: 'nueva.cuenta' }, {}, actor, [{ ...d, status: 'applied' }]).status, 'confirmed');
+  assert.equal(confirmationState({ ...intermediate, phone: 'Cambio ajeno' }, {}, actor, [d]).status, 'required');
+  assert.doesNotThrow(() => assertConfirmationUnchanged(provider, d.content.confirmation));
+  assert.throws(() => assertConfirmationUnchanged(intermediate, d.content.confirmation), /cambiaron/);
+});
+test('la confirmación de una empresa no concede representación y contempla su razón social corregida', () => {
+  const company = { type: 'empresa', businessName: 'Empresa SRL', name: 'Empresa SRL', bankAccount_alias: 'empresa.propia', bankAccount_holder: 'Empresa SRL' };
+  const changes = M.ownAccountProfileChanges(company, { businessName: 'Nueva SRL' }, true, true);
+  const confirmation = confirmationContent(company, actor, changes, consent);
+  assert.match(confirmation.terms, /no otorga facultades de representación/);
+  const d = { ...declaration(), content: { changes, confirmation } };
+  assert.equal(confirmationState({ ...company, businessName: 'Nueva SRL', name: 'Nueva SRL', bankAccount_holder: 'Nueva SRL' }, {}, actor, [d]).status, 'confirmed');
+});

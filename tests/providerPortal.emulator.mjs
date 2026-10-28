@@ -792,6 +792,40 @@ try {
   assert.equal((await db.collection("providers").get()).size, beforeIntake + 6);
   const { testProjectContracts } = await import('./projectContracts.flow.mjs');
   await testProjectContracts({ db, admin, manage, request, sign, signActual, signEnv, env, assertFails, getDoc, updateDoc, doc });
+  // A legacy profile can confirm its complete data without proposing a fictitious edit.
+  const confirmationProvider = db.doc('providers/legacy-confirmation');
+  await confirmationProvider.set({ type: 'persona', name: 'Persona', lastName: 'Prueba', dni: '12345678', email: 'own@example.test', address: 'Domicilio original', bankAccount_alias: 'cuenta.propia', bankAccount_holder: 'Persona Prueba' });
+  await db.doc('providerPortalUsers/own/memberships/legacy-confirmation').set({ providerId: 'legacy-confirmation', email: 'own@example.test', status: 'active', source: 'verified_email_candidate' });
+  const confirmationOverview = () => own({ action: 'overview', providerId: 'legacy-confirmation' });
+  assert.equal((await confirmationOverview()).profileConfirmation.status, 'required');
+  assert.equal((await own({ action: 'overview', providerId: added.providerId })).profileConfirmation.status, 'not_required');
+  const confirmationInput = { action: 'prepareProfile', providerId: 'legacy-confirmation', changes: {}, confirmProfile: true, dataConfirmed: true, accessEmailConfirmed: true, ownAccountConfirmed: true, attemptId: 'confirm-no-changes' };
+  await assert.rejects(own({ ...confirmationInput, accessEmailConfirmed: false }), /Confirmá/);
+  const confirmation = await own(confirmationInput);
+  assert.deepEqual(confirmation.content.changes, {});
+  assert.equal(confirmation.content.confirmation.profile.bankAccount_alias, 'cuenta.propia');
+  await assert.rejects(own({ action: 'completeDeclaration', providerId: 'legacy-confirmation', declarationId: confirmation.id }), /Falta completar/);
+  await assert.rejects(other({ action: 'completeDeclaration', providerId: 'legacy-confirmation', declarationId: confirmation.id }));
+  await signActual(confirmation);
+  const confirmationBefore = (await confirmationProvider.get()).data();
+  await own({ action: 'completeDeclaration', providerId: 'legacy-confirmation', declarationId: confirmation.id });
+  assert.deepEqual((await confirmationProvider.get()).data(), confirmationBefore, 'confirmar no modifica la ficha ni las cuentas');
+  assert.equal((await confirmationOverview()).profileConfirmation.status, 'confirmed');
+  await own({ action: 'completeDeclaration', providerId: 'legacy-confirmation', declarationId: confirmation.id });
+  assert.equal((await confirmationOverview()).profileConfirmation.status, 'confirmed', 'reintentar no duplica ni vuelve a pedir la firma');
+  const correction = await own({ ...confirmationInput, attemptId: 'confirm-with-correction', changes: { address: 'Nuevo domicilio', bankAccount_alias: 'cuenta.corregida' } });
+  await signActual(correction);
+  await own({ action: 'completeDeclaration', providerId: 'legacy-confirmation', declarationId: correction.id });
+  assert.equal((await confirmationOverview()).profileConfirmation.status, 'pending_review');
+  assert.equal((await confirmationProvider.get()).data().bankAccount_alias, 'cuenta.propia');
+  await adminCall({ action: 'review', declarationId: correction.id, decision: 'approved', reason: 'Prueba local de revisión' });
+  assert.equal((await confirmationOverview()).profileConfirmation.status, 'confirmed');
+  const stale = await own({ ...confirmationInput, attemptId: 'confirm-concurrent-edit' });
+  await signActual(stale);
+  await confirmationProvider.update({ phone: '123456789' });
+  await assert.rejects(own({ action: 'completeDeclaration', providerId: 'legacy-confirmation', declarationId: stale.id }), /cambiaron/);
+  assert.equal((await confirmationOverview()).profileConfirmation.status, 'required');
+  console.log('PASS: legacy confirmation uses a real GB Sign PDF and signature, preserves unchanged profiles, rejects stale data and foreign accounts, tracks pending review and exempts new signup.');
   console.log("PASS: own bank required at intake, personal signup without signature, company private documents and review, minimal third-party declaration without bank certificate, issuer-linked invoice and payout.");
   console.log(
     "PASS: real GB Sign PDF/signature/artifacts → GOAT application; critical review, scoped third-party decisions, no duplicate payment; external isolation and producer access.",

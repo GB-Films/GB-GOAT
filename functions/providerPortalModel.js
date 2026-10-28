@@ -51,10 +51,10 @@ const CRITICAL = [
   "bankAccount_holder",
 ];
 const COMMON = ["address", "phone", "birthDate", "dietaryRestriction"];
-function ownAccountProfileChanges(provider, input, confirmed) {
+function ownAccountProfileChanges(provider, input, confirmed, allowUnchanged = false) {
   const changes = { ...input };
   const account = { cbu: changes.bankAccount_cbu ?? provider.bankAccount_cbu, alias: changes.bankAccount_alias ?? provider.bankAccount_alias };
-  const accountChanges = ['bankAccount_cbu', 'bankAccount_alias', 'bankAccount_holder', 'name', 'lastName', 'businessName'].some(key => Object.hasOwn(changes, key));
+  const accountChanges = allowUnchanged || ['bankAccount_cbu', 'bankAccount_alias', 'bankAccount_holder', 'name', 'lastName', 'businessName'].some(key => Object.hasOwn(changes, key));
   if (accountChanges && (account.cbu || account.alias)) {
     if (confirmed !== true) fail('Confirmá que la cuenta provista pertenece al proveedor de esta ficha.');
     const holder = provider.type === 'empresa' ? text(changes.businessName ?? provider.businessName ?? provider.name)
@@ -63,9 +63,9 @@ function ownAccountProfileChanges(provider, input, confirmed) {
     if (changes.bankAccount_holder && changes.bankAccount_holder !== holder) fail('La cuenta propia debe corresponder al proveedor de esta ficha.');
     changes.bankAccount_holder = holder;
   }
-  return profileChanges(provider, changes);
+  return profileChanges(provider, changes, allowUnchanged);
 }
-function profileChanges(before, input) {
+function profileChanges(before, input, allowUnchanged = false) {
   if (!input || typeof input !== "object" || Array.isArray(input))
     fail("Faltan los cambios.");
   const result = {};
@@ -88,7 +88,7 @@ function profileChanges(before, input) {
         critical: CRITICAL.includes(key),
       };
   }
-  if (!Object.keys(result).length) fail("No hay cambios.");
+  if (!Object.keys(result).length && !allowUnchanged) fail("No hay cambios.");
   return result;
 }
 function thirdPartyIdentity(input, payment = true, requireContext = true) {
@@ -171,7 +171,11 @@ function accessCandidates(providers) {
 }
 function publicProfile(p) {
   return Object.fromEntries(
-    [...CRITICAL, ...COMMON, "email", "type"].map((k) => [k, p[k] ?? ""]),
+    [...CRITICAL, ...COMMON, "email", "type"].map((k) => {
+      const value = p[k] ?? '';
+      const date = k === 'birthDate' ? value instanceof Date ? value : typeof value?.toDate === 'function' ? value.toDate() : null : null;
+      return [k, date && Number.isFinite(date.getTime()) ? date.toISOString().slice(0, 10) : value];
+    }),
   );
 }
 function expenseInvoices(item) {

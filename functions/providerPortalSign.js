@@ -205,7 +205,7 @@ function createSignBridge(db) {
       const storagePath = `projects/${project}/documents/${documentId}/original.pdf`;
       const requestId = `${project}_${documentId}_${declaration.actor.email.replace(/[^a-z0-9]/g, "_")}`;
       const preview = includePreview ? { signingDocument: { id: requestId, documentId, projectId: project,
-        title: declaration.kind === 'representation' ? 'Representación de empresa' : declaration.kind === 'profile' ? 'Actualización de mis datos' : 'Autorización de facturación y cobro',
+        title: declaration.kind === 'representation' ? 'Representación de empresa' : declaration.kind === 'profile' ? declaration.content.confirmation ? 'Confirmación de mis datos' : 'Actualización de mis datos' : 'Autorización de facturación y cobro',
         signatureFields: [field], sha256, contentHash: declaration.contentHash, status: 'pending', signed: false, portalManaged: true,
         providerId: declaration.providerId, declarationKind: declaration.kind, requiredDni: declaration.content.signerDni || '' },
         originalFile: { base64: bytes.toString('base64'), contentType: 'application/pdf', fileName: 'declaracion.pdf', sha256 } } : {};
@@ -283,7 +283,7 @@ function createSignBridge(db) {
         tx.create(ref, {
           title:
             declaration.kind === "profile"
-              ? "Declaración de datos"
+              ? declaration.content.confirmation ? "Confirmación de mis datos" : "Declaración de datos"
               : declaration.kind === "representation"
                 ? "Confirmación de representación"
                 : "Autorización de tercero",
