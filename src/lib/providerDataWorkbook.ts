@@ -42,7 +42,7 @@ export async function buildProviderDataWorkbook(providers: any[], template: Arra
 
 export type ProviderDataFormat = 'xlsx' | 'pdf';
 
-export async function downloadProviderData(providers: any[], format: ProviderDataFormat = 'xlsx') {
+export async function downloadProviderData(providers: any[], format: ProviderDataFormat = 'pdf') {
   const base = (import.meta as ImportMeta & { env?: { BASE_URL?: string } }).env?.BASE_URL || '/';
   let bytes: Uint8Array;
   if (format === 'pdf') {
