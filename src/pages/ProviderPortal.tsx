@@ -366,8 +366,8 @@ export default function ProviderPortal() {
             .map((r: any) => (
               <div className={box} key={r.id}>
                 <p>
-                  {r.number} · {r.issuerName} ·{" "}
-                  {money(r.totalCents / 100, r.currency || "ARS")} ·{" "}
+                  {r.number || r.title || 'Factura'}{r.issuerName && ` · ${r.issuerName}`}
+                  {r.totalCents != null && <> · {money(r.totalCents / 100, r.currency || "ARS")}</>}{" "}
                   {r.status === "cancelled" ? "Anulada" : ""}
                 </p>
                 {r.hasFile && (
@@ -432,7 +432,7 @@ export default function ProviderPortal() {
               <div key={r.id} className={box}>
                 <p>
                   {r.date} · {r.title || "Comprobante de operación"} ·{" "}
-                  {money(r.totalCents / 100, r.currency || "ARS")}{" "}
+                  {r.totalCents != null && money(r.totalCents / 100, r.currency || "ARS")}{" "}
                   {r.status === "cancelled" ? "· Anulado" : ""}
                 </p>
                 {r.hasFile && (

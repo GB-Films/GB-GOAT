@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { financialDocumentsForExpense, financialRecordProjects } from './providerFinancialRecords';
+import { financialDocumentsForExpense, financialRecordProjects, filterFinancialRecords } from './providerFinancialRecords';
 
 const allocations = [
   { projectId: 'one', projectName: 'Uno', collectionName: 'areaExpenses', itemId: 'a', amountCents: 30000, description: 'Sonido' },
@@ -23,4 +23,20 @@ test('project cards aggregate multiple expenses without repeating the project or
   assert.equal(rows[0].amountCents, 35000);
   assert.deepEqual(rows[0].descriptions, ['Sonido', 'Edición']);
   assert.equal(rows.reduce((sum, row) => sum + row.amountCents, 0), 125000);
+});
+test('a shared payment with its own receipt offers one document, preserving independent payments', () => {
+  const expense = { ...allocations[0], expenseId: 'a', item: { paymentHistory: [{ sharedRecordId: 'transfer', receipt: { path: 'legacy-copy' } }] } };
+  const records = [{ ...invoice, kind: 'payment', id: 'transfer' }, { ...invoice, kind: 'payment', id: 'independent' }];
+  assert.deepEqual(financialDocumentsForExpense(records, expense).map(row => row.id), ['independent']);
+  assert.equal(financialDocumentsForExpense(records, { ...expense, item: { paymentHistory: [{ sharedRecordId: 'transfer' }] } }).length, 2);
+});
+test('all types are ordered together by descending date and project search ignores accents', () => {
+  const records = [{ id: 'invoice', kind: 'invoice', date: '2026-10-15', allocations: [{ projectName: 'Producción Córdoba' }, { projectName: 'Otro' }] },
+    { id: 'payment', kind: 'payment', date: '2026-10-21', allocations: [{ projectName: 'Otro' }] },
+    { id: 'other', kind: 'other', date: '2026-10-18', allocations: [{ projectName: 'Producción Córdoba' }] }];
+  assert.deepEqual(filterFinancialRecords(records, 'all', '').map(row => row.id), ['payment', 'other', 'invoice']);
+  assert.deepEqual(filterFinancialRecords(records, 'all', 'cordoba').map(row => row.id), ['other', 'invoice']);
+  assert.deepEqual(filterFinancialRecords(records, 'invoice', 'produccion').map(row => row.id), ['invoice']);
+  assert.equal(filterFinancialRecords(records, 'payment', 'cordoba').length, 0);
+  assert.equal(records[0].id, 'invoice');
 });

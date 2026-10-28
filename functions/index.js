@@ -17,14 +17,20 @@ exports.createCashSubdelivery = require('./cashSubdeliveryEntrypoint').createCas
 exports.manageProviderFinance = onCall({ timeoutSeconds: 60, maxInstances: 2 }, createProviderFinanceHandler({
   db,
   timestamp: () => admin.firestore.FieldValue.serverTimestamp(),
-  verifyFile: async (providerId, recordId, input) => {
+  verifyFile: async (providerId, recordId, input, options = {}) => {
     const prefix = `providerFinance/${providerId}/${recordId}/`;
     if (typeof input.path !== 'string' || !input.path.startsWith(prefix)
       || input.path.slice(prefix.length).includes('/')) throw new HttpsError('invalid-argument', 'Ruta de archivo inválida.');
     const [metadata] = await admin.storage().bucket().file(input.path).getMetadata();
     if (!['application/pdf', 'image/jpeg', 'image/png', 'image/webp'].includes(metadata.contentType)
       || Number(metadata.size) <= 0 || Number(metadata.size) > 2 * 1024 * 1024) throw new HttpsError('invalid-argument', 'El documento debe ser PDF o imagen de hasta 2 MB.');
-    return { path: input.path, fileName: input.path.slice(prefix.length), contentType: metadata.contentType, size: Number(metadata.size) };
+    // Compute the digest on the server; upload metadata is client supplied.
+    let digest = {};
+    if (options.hash) {
+      const [bytes] = await admin.storage().bucket().file(input.path).download();
+      digest = { sha256: require('node:crypto').createHash('sha256').update(bytes).digest('hex') };
+    }
+    return { path: input.path, fileName: input.path.slice(prefix.length), contentType: metadata.contentType, size: Number(metadata.size), ...digest };
   },
   readFile: async file => {
     const source = admin.storage().bucket().file(file.path);

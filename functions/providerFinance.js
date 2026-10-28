@@ -25,9 +25,12 @@ const projectIndex = records => ({
 });
 function normalizeRecord(input) {
   if (!['invoice', 'payment', 'other'].includes(input.kind)) fail('Tipo de comprobante inválido.');
+  const documentOnly = input.documentOnly === true;
+  if (documentOnly && input.kind === 'payment') fail('El pago requiere su carga habitual.');
   if (input.currency && !['ARS', 'USD'].includes(input.currency)) fail('Moneda inválida.');
   if (list(input.allocations).length > 30) fail('Elegí hasta 30 gastos.');
   const result = {
+    ...(documentOnly ? { documentOnly: true, dateSource: 'upload' } : {}),
     ...(input.thirdPartyAuthorizationId?{thirdPartyAuthorizationId:id(input.thirdPartyAuthorizationId)}:{}),
     providerId: id(input.providerId), kind: input.kind, date: text(input.date, 10),
     notes: text(input.notes, 2000), currency: input.currency === 'USD' ? 'USD' : 'ARS',
@@ -44,6 +47,13 @@ function normalizeRecord(input) {
       amountCents: cents(row.amount), invoiceId: row.invoiceId ? id(row.invoiceId) : '',
     })),
   };
+  if (documentOnly) {
+    // These amounts describe the selected work, never an invented fiscal total.
+    Object.assign(result, { currency: 'ARS', exchangeRate: 1, totalCents: null, withheldCents: 0, feeCents: 0,
+      number: '', issuerName: '', issuerCuit: '', recipientCuit: '', notes: '',
+      netCents: result.allocations.reduce((sum, row) => sum + row.amountCents, 0) });
+    if (!result.allocations.length) fail('Seleccioná al menos un proyecto.');
+  }
   const date = new Date(result.date + 'T12:00:00Z');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(result.date) || Number.isNaN(date.getTime())
     || date.toISOString().slice(0, 10) !== result.date) fail('Fecha inválida.');
@@ -55,21 +65,22 @@ function normalizeRecord(input) {
   if (input.kind !== 'other') {
     if (!result.allocations.length || result.netArsCents <= 0
       || result.allocations.reduce((sum, row) => sum + row.amountCents, 0) !== result.netArsCents) fail('Las aplicaciones deben sumar exactamente el neto aplicado en pesos.');
-    if (result.totalCents <= 0 || result.netCents > result.totalCents + (input.kind === 'payment' ? result.withheldCents : 0)) fail('Revisá neto, total y retenciones.');
+    if (!documentOnly && (result.totalCents <= 0 || result.netCents > result.totalCents + (input.kind === 'payment' ? result.withheldCents : 0))) fail('Revisá neto, total y retenciones.');
   }
-  if (input.kind === 'invoice') {
+  if (input.kind === 'invoice' && !documentOnly) {
     if (!result.issuerName || result.issuerCuit.length !== 11 || result.recipientCuit.length !== 11
       || !/^(A|B|C|E|FCE-A|FCE-B) \d{5}-\d{8}$/.test(result.number)) fail('Completá emisor, ambos CUIT y número (ejemplo: C 00001-00000123).');
     if (result.allocations.some(row => row.invoiceId)) fail('Una factura se aplica a gastos, no a otras facturas.');
     result.fiscalKey = createHash('sha256').update([result.issuerCuit, result.recipientCuit, result.number].join('|')).digest('hex');
   }
+  if (documentOnly && result.allocations.some(row => row.invoiceId)) fail('El documento se aplica a trabajos, no a facturas.');
   if (input.kind === 'payment') {
     if (!result.payeeName || !result.account || !result.reference || !['transfer', 'cash'].includes(result.method)) fail('Indicá destinatario, cuenta, referencia única y medio del pago.');
     result.paymentKey = createHash('sha256').update([result.account.toUpperCase(), result.reference.toUpperCase()].join('|')).digest('hex');
     if (result.method === 'cash' && (!result.cashProjectId || result.currency !== 'ARS'
       || !result.allocations.some(row => row.projectId === result.cashProjectId))) fail('El efectivo se registra una sola vez en Caja General de un proyecto aplicado, en pesos.');
   }
-  if (input.kind === 'other' && !result.notes) fail('Indicá qué respalda el comprobante.');
+  if (input.kind === 'other' && !documentOnly && !result.notes) fail('Indicá qué respalda el comprobante.');
   return result;
 }
 
@@ -151,8 +162,11 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, clo
     const record = normalizeRecord(input);
     const fingerprint = createHash('sha256').update(JSON.stringify({ ...record, filePath: input.file?.path || '' })).digest('hex');
     // Uploads are immutable once committed. Only the caller's staging path is accepted.
-    const file = input.file ? await verifyFile(record.providerId, recordId, input.file) : null;
+    const file = input.file ? await verifyFile(record.providerId, recordId, input.file, { hash: record.documentOnly === true }) : null;
     if (record.kind !== 'payment' && !file) fail('Adjuntá el documento original.');
+    if (record.documentOnly && !/^[a-f0-9]{64}$/.test(file?.sha256 || '')) fail('No se pudo verificar el archivo original.');
+    if (record.documentOnly) record.title = file.fileName;
+    const documentKeyRef = record.documentOnly ? db.doc(`providerDocumentKeys/${createHash('sha256').update([record.providerId, record.kind, file.sha256].join('|')).digest('hex')}`) : null;
     return db.runTransaction(async tx => {
       const existing = await tx.get(recordRef);
       if (existing.exists) {
@@ -163,7 +177,13 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, clo
       if (!provider.exists) fail('No existe el proveedor.');
       if (record.thirdPartyAuthorizationId && provider.data().type !== 'persona') fail('Sólo personas físicas pueden usar autorizaciones de terceros para operaciones nuevas.');
       const authority=record.thirdPartyAuthorizationId?(await tx.get(db.doc(`providerPortalDeclarations/${record.thirdPartyAuthorizationId}`))).data():null;
+      if (record.documentOnly && authority) Object.assign(record, { issuerName: text(authority.content?.party?.name), issuerCuit: text(authority.content?.party?.cuit) });
       const authorization=record.thirdPartyAuthorizationId?authorizedParty(record,authority,clock()):null;
+      const previousDocument = documentKeyRef ? await tx.get(documentKeyRef) : null;
+      if (previousDocument?.exists) {
+        const original = await tx.get(db.doc(`providerFinancialRecords/${previousDocument.data().recordId}`));
+        if (original.data()?.status !== 'cancelled') fail('Este archivo ya está cargado. Buscalo en la ficha antes de volver a cargarlo.');
+      }
       const fiscalRef = record.fiscalKey ? db.doc(`providerFiscalKeys/${record.fiscalKey}`) : null;
       const fiscal = fiscalRef ? await tx.get(fiscalRef) : null;
       if (fiscal?.exists) {
@@ -194,6 +214,7 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, clo
         if (allocation.amountCents > cents(expense.total)) fail('La aplicación supera el costo del gasto.');
         if (record.kind === 'payment' && allocation.amountCents + paid(expense) > cents(expense.total)) fail('El pago supera el saldo actual de un gasto.');
         if (record.kind === 'invoice' && allocation.amountCents + list(expense.sharedInvoices).reduce((sum, item) => sum + item.amountCents, 0) > cents(expense.total)) fail('Este gasto ya tiene facturas compartidas por ese importe.');
+        if (record.documentOnly && record.kind === 'invoice' && allocation.amountCents !== cents(expense.total) - list(expense.sharedInvoices).reduce((sum, item) => sum + item.amountCents, 0)) fail('Cambió el saldo pendiente de facturar. Actualizá la selección de proyectos.');
         if (record.kind === 'invoice' && (expense.invoice?.url || expense.invoice?.path || list(expense.invoices).some(invoice => invoice.url || invoice.path))) fail('Este gasto tiene una factura anterior. Revisá y retirala antes de reemplazarla por una compartida.');
         if (allocation.invoiceId) {
           const invoice = invoiceMap.get(allocation.invoiceId);
@@ -222,7 +243,7 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, clo
           updates.paid = paid({ paymentHistory: updates.paymentHistory }) >= cents(expense.total);
         } else {
           const field = record.kind === 'invoice' ? 'sharedInvoices' : 'sharedReceipts';
-          updates[field] = [...list(expense[field]), { id: recordId, amountCents: allocation.amountCents, number: record.number, title: record.notes || record.number, issuerName: record.issuerName, issuerCuit: record.issuerCuit,
+          updates[field] = [...list(expense[field]), { id: recordId, amountCents: allocation.amountCents, number: record.number, title: record.documentOnly ? file.fileName : record.notes || record.number, issuerName: record.issuerName, issuerCuit: record.issuerCuit,
             ...(authorization ? { thirdPartyAuthorizationId: record.thirdPartyAuthorizationId, payeeAccount: authorization.party.cbu || authorization.party.alias } : {}) }];
         }
         tx.update(refs[index], updates);
@@ -249,6 +270,7 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, clo
       }));
       if (fiscalRef) tx.set(fiscalRef, { recordId, previousRecordId: fiscal?.data()?.recordId || '', createdAt: now });
       if (paymentKeyRef) tx.set(paymentKeyRef, { recordId, previousRecordId: previousPayment?.data()?.recordId || '', createdAt: now });
+      if (documentKeyRef) tx.set(documentKeyRef, { recordId, previousRecordId: previousDocument?.data()?.recordId || '', createdAt: now });
       return { id: recordId, status: 'active' };
     });
   };
