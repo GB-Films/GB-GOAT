@@ -30,3 +30,14 @@ test('separates recoverable VAT, withholding, fees, original currency and ARS co
   assert.throws(() => normalizeRecord({ ...value, exchangeRate: 0 }));
   assert.throws(() => normalizeRecord({ ...value, method: 'cash', cashProjectId: 'project' }));
 });
+test('simple documentary upload needs no fiscal metadata and never fabricates invoice totals or numbers', () => {
+  for (const kind of ['invoice', 'other']) {
+    const record = normalizeRecord({ providerId: 'supplier', kind, documentOnly: true, date: '2026-10-28', allocations: sample().allocations });
+    assert.equal(record.documentOnly, true); assert.equal(record.dateSource, 'upload');
+    assert.equal(record.netArsCents, 120000); assert.equal(record.totalCents, null);
+    assert.equal(record.number, ''); assert.equal(record.issuerCuit, ''); assert.equal(record.fiscalKey, undefined);
+  }
+  assert.throws(() => normalizeRecord({ ...sample(), kind: 'payment', documentOnly: true }), /carga habitual/);
+  assert.throws(() => normalizeRecord({ ...sample(), documentOnly: true, allocations: [] }), /Seleccioná/);
+  assert.throws(() => normalizeRecord({ ...sample(), documentOnly: true, allocations: [{ ...sample().allocations[0], invoiceId: 'another' }] }), /no a facturas/);
+});

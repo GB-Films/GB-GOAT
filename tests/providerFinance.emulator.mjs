@@ -17,7 +17,7 @@ const db = app.firestore();
 const context = env.authenticatedContext('admin', { email_verified: true, email: 'admin@example.test' });
 const editor = env.authenticatedContext('editor', { email_verified: true, email: 'editor@example.test' });
 const stranger = env.authenticatedContext('stranger', { email_verified: true, email: 'stranger@example.test' });
-const call = createProviderFinanceHandler({ db, timestamp: () => admin.firestore.FieldValue.serverTimestamp(), verifyFile: async (_provider, _id, file) => ({ ...file, contentType: 'application/pdf' }), readFile: async () => 'JVBERg==' });
+const call = createProviderFinanceHandler({ db, timestamp: () => admin.firestore.FieldValue.serverTimestamp(), verifyFile: async (_provider, _id, file) => ({ ...file, contentType: 'application/pdf', sha256: file.testHash || 'a'.repeat(64) }), readFile: async () => 'JVBERg==' });
 const request = data => ({ auth: { uid: 'admin', token: { email: 'admin@example.test' } }, data });
 const expenseRef = index => db.doc(`projects/project${index}/areaExpenses/expense`);
 const allocations = [300, 450, 450].map((amount, index) => ({ projectId: `project${index}`, collectionName: 'areaExpenses', itemId: 'expense', amount }));
@@ -124,6 +124,58 @@ try {
   await assertFails(deleteDoc(doc(context.firestore(), movements.docs[0].ref.path)));
   await call(request({ action: 'cancel', id: 'cash1', reason: 'Anulación global de prueba' }));
   assert.equal((await db.collectionGroup('cashMovements').get()).size, 0);
+
+  // Simple uploads bind the original file to pending work, without fiscal fields.
+  await db.doc('providers/simple').set({ type: 'persona', name: 'Persona de prueba' });
+  for (let index = 0; index < 4; index++) {
+    await db.doc(`projects/simple${index}`).set({ name: `Simple ${index}`, activeAreas: ['Post'] });
+    await db.doc(`projects/simple${index}/areaExpenses/work`).set({ providerId: 'simple', area: 'Post', total: 100,
+      paymentHistory: [], ...(index === 1 ? { sharedInvoices: [{ id: 'previous', amountCents: 2500 }] } : {}),
+      ...(index === 2 ? { invoice: { path: 'legacy-invoice.pdf' } } : {}) });
+  }
+  const simple = (id, amounts = [100, 75], hash = 'a') => ({ action: 'create', id, kind: 'invoice', providerId: 'simple', documentOnly: true, date: '2026-10-28',
+    file: { path: `simple/${id}/original.pdf`, fileName: 'original.pdf', testHash: hash.repeat(64) },
+    allocations: amounts.map((amount, index) => ({ projectId: `simple${index}`, collectionName: 'areaExpenses', itemId: 'work', amount })) });
+  const originalCosts = [0, 1].map(async index => (await db.doc(`projects/simple${index}/areaExpenses/work`).get()).data().total);
+  await call(request(simple('simple-invoice')));
+  assert.deepEqual(await call(request(simple('simple-invoice'))), { id: 'simple-invoice', status: 'active' });
+  const documentary = (await db.doc('providerFinancialRecords/simple-invoice').get()).data();
+  assert.equal(documentary.netArsCents, 17500); assert.equal(documentary.totalCents, null); assert.equal(documentary.number, '');
+  assert.equal(documentary.title, 'original.pdf'); assert.equal(documentary.fiscalKey, undefined);
+  for (const index of [0, 1]) {
+    const expense = (await db.doc(`projects/simple${index}/areaExpenses/work`).get()).data();
+    assert.equal(expense.total, await originalCosts[index]); assert.equal(expense.paymentHistory.length, 0);
+  }
+  await assert.rejects(call(request(simple('duplicate-file'))), /archivo ya está cargado/);
+  const legacySimple = simple('legacy-simple', [100], 'b'); legacySimple.allocations[0].projectId = 'simple2';
+  await assert.rejects(call(request(legacySimple)), /factura anterior/);
+  const stale = simple('stale-simple', [10], 'c'); stale.allocations[0].projectId = 'simple3';
+  await assert.rejects(call(request(stale)), /Cambió el saldo/);
+  const racing = ['race-one', 'race-two'].map((id, index) => { const input = simple(id, [100], index ? 'd' : 'e'); input.allocations[0].projectId = 'simple3'; return input; });
+  const raced = await Promise.allSettled(racing.map(input => call(request(input))));
+  assert.equal(raced.filter(result => result.status === 'fulfilled').length, 1);
+  await call(request({ action: 'cancel', id: 'simple-invoice', reason: 'Corregir adjunto de prueba' }));
+  await call(request(simple('simple-replacement')));
+  const receipt = { ...simple('simple-receipt'), kind: 'other' };
+  await call(request(receipt));
+  assert.equal((await db.doc('providerFinancialRecords/simple-receipt').get()).data().kind, 'other');
+  await assert.rejects(call({ auth: { uid: 'editor', token: { email: 'editor@example.test' } }, data: simple('forbidden') }), /Sólo administradores/);
+  await assertFails(getDoc(doc(context.firestore(), 'providerDocumentKeys/unknown')));
+  await db.doc('projects/simple4').set({ name: 'Trabajo con tercero', activeAreas: ['Post'] });
+  await db.doc('projects/simple4/areaExpenses/work').set({ providerId: 'simple', area: 'Post', total: 10, thirdPartyPayoutRequired: true, paymentHistory: [] });
+  const thirdParty = { ...simple('simple-authorized', [10], 'f'), thirdPartyAuthorizationId: 'simple-authority' };
+  thirdParty.allocations[0].projectId = 'simple4';
+  const party = { name: 'Emisor autorizado', cuit: '20333333334', holderCuit: '20333333334', cbu: '0000000000000000000000' };
+  await db.doc('providerPortalDeclarations/simple-authority').set({ providerId: 'simple', kind: 'third_party', status: 'active', proof: { complete: true, signedPdfSha256: 'test' }, contentHash: 'test', effectiveRoles: ['invoice', 'payment'], content: { termsVersion: 'third-party-v4', validity: 'until_revoked', party, workKeys: ['simple4/areaExpenses/work'] } });
+  await assert.rejects(call(request({ ...thirdParty, thirdPartyAuthorizationId: '' })), /requiere la autorización/);
+  await call(request(thirdParty));
+  assert.deepEqual(await call(request(thirdParty)), { id: 'simple-authorized', status: 'active' });
+  const thirdInvoice = (await db.doc('providerFinancialRecords/simple-authorized').get()).data();
+  assert.equal(thirdInvoice.issuerCuit, party.cuit); assert.equal(thirdInvoice.thirdPartyAuthorization.party.name, party.name);
+  const invalidScope = { ...simple('wrong-authority', [100], 'b'), thirdPartyAuthorizationId: 'simple-authority' };
+  invalidScope.allocations[0].projectId = 'simple2';
+  await assert.rejects(call(request(invalidScope)), /no incluye todos/);
+  console.log('Simple uploads: pending balances, no fiscal fiction, no payment/cost mutation, duplicate files, concurrency, legacy invoices, cancellation and admin boundary verified.');
 
   // Private shared originals: authenticated admin download, immutable after commit.
   const path = 'providerFinance/supplier/staged/original.pdf';

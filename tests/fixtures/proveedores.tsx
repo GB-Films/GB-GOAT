@@ -5,6 +5,8 @@ import { filterProviderBalances, type ProviderPaymentStatus } from '../../src/li
 import { DEFAULT_RESULT_INCIDENCES } from '../../src/lib/resultIncidences';
 import { ProviderDetailView } from '../../src/components/ProviderDetailView';
 import { ProviderFinancialRecordList } from '../../src/components/ProviderFinancialRecordList';
+import { ProviderDocumentUploadForm } from '../../src/components/ProviderDocumentUploadForm';
+import { allocateProviderDocument } from '../../src/lib/providerDocumentSelection';
 import { financialDocumentsForExpense } from '../../src/lib/providerFinancialRecords';
 import '../../src/index.css';
 
@@ -20,31 +22,38 @@ const rows: ProjectProviderBalance[] = [
 const groups = [{ area: 'Producción de Campo', rows }];
 function detailFor(provider: any) {
   const row = rows.find(row => row.provider.id === provider.id)!;
-  const lines = [0, 1, 2, 3].map(index => ({ id: `${provider.id}-${index}`, expenseId: `${provider.id}-${index}`, collectionName: 'areaExpenses', projectId: index < 2 ? 'project-one' : index === 2 ? 'project-two' : 'project-three', projectName: index < 2 ? 'Proyecto de ejemplo' : index === 2 ? 'Otro proyecto' : 'Tercer proyecto',
+  const lines = [0, 1, 2, 3, 4].map(index => ({ id: `${provider.id}-${index}`, expenseId: `${provider.id}-${index}`, collectionName: 'areaExpenses', projectId: index < 2 ? 'project-one' : index === 2 ? 'project-two' : index === 3 ? 'project-three' : 'project-four', projectName: index < 2 ? 'Proyecto de ejemplo' : index === 2 ? 'Otro proyecto' : index === 3 ? 'Tercer proyecto' : 'Proyecto nuevo',
     area: row.area, source: 'Gestión por Áreas', description: index === 0 ? row.entries[0].description : index === 1 ? 'Servicio adicional' : 'Servicio en otro proyecto',
     total: index < 2 ? row.spent / 2 : 30000, paid: index < 2 ? row.paid / 2 : 0, debt: index < 2 ? row.debt / 2 : 30000,
     payments: index < 2 && row.paid ? [{ id: `payment-${index}`, amount: row.paid / 2, date: '2026-10-27', loadedBy: 'Administración' }] : [],
     invoiceDocuments: [], paymentReceiptDocuments: [], sharedDocuments: [],
   }));
-  const allocations = lines.map(line => ({ projectId: line.projectId, projectName: line.projectName, collectionName: line.collectionName, itemId: line.expenseId, description: line.description, amountCents: Math.round(line.total * 100) }));
-  const records = [{ id: 'shared-invoice', kind: 'invoice', number: 'C 00001-00000098', date: '2026-10-15', issuerName: provider.businessName, issuerCuit: '30123456789', currency: 'ARS', totalCents: (row.spent + 60000) * 100, netArsCents: (row.spent + 60000) * 100, status: 'active', file: { fileName: 'Factura-compartida.pdf' }, notes: 'Ejemplo de una única factura aplicada a tres proyectos. Las notas extensas se consultan sólo al abrir este detalle.', allocations },
+  const allocations = lines.slice(0, 4).map(line => ({ projectId: line.projectId, projectName: line.projectName, collectionName: line.collectionName, itemId: line.expenseId, description: line.description, amountCents: Math.round(line.total * 100) }));
+  allocations[3].amountCents = 1500000;
+  const records = [{ id: 'shared-invoice', kind: 'invoice', number: 'C 00001-00000098', date: '2026-10-15', issuerName: provider.businessName, issuerCuit: '30123456789', currency: 'ARS', totalCents: (row.spent + 45000) * 100, netArsCents: (row.spent + 45000) * 100, status: 'active', file: { fileName: 'Factura-compartida.pdf' }, notes: 'Ejemplo de una única factura aplicada a tres proyectos. Las notas extensas se consultan sólo al abrir este detalle.', allocations },
     ...(row.paid ? [{ id: 'shared-payment', kind: 'payment', date: '2026-10-21', payeeName: provider.businessName, currency: 'ARS', totalCents: row.paid * 100, netArsCents: row.paid * 100, status: 'active', file: { fileName: 'Transferencia.pdf' }, notes: 'Comprobante de ejemplo.', allocations: allocations.slice(0, 2).map(allocation => ({ ...allocation, amountCents: row.paid * 50 })) }] : [])];
   lines.forEach(line => { line.sharedDocuments = financialDocumentsForExpense(records, line); });
-  const projects = ['project-one', 'project-two', 'project-three'].map(id => { const selected = lines.filter(line => line.projectId === id); return { id, name: selected[0].projectName,
+  const projects = ['project-one', 'project-two', 'project-three', 'project-four'].map(id => { const selected = lines.filter(line => line.projectId === id); return { id, name: selected[0].projectName,
     total: selected.reduce((sum, line) => sum + line.total, 0), paid: selected.reduce((sum, line) => sum + line.paid, 0), debt: selected.reduce((sum, line) => sum + line.debt, 0), invoices: selected.length, receipts: 0 }; });
-  return { provider, lines, projects, records, totals: { total: row.spent + 60000, paid: row.paid, debt: row.debt + 60000 } };
+  return { provider, lines, projects, records, totals: { total: row.spent + 90000, paid: row.paid, debt: row.debt + 90000 } };
 }
 function ExampleAssignments({ detail }: { detail: ReturnType<typeof detailFor> }) {
   const [kind, setKind] = useState('');
+  const [records, setRecords] = useState<any[]>(detail.records);
   const [notice, setNotice] = useState('');
   return <div className="space-y-4">
     <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="text-sm text-slate-500">{detail.provider.businessName}</h3><div className="flex gap-2">{['Factura', 'Pago', 'Comprobante'].map(value => <button type="button" key={value} onClick={() => setKind(kind === value ? '' : value)} className={`rounded-lg border px-3 py-2 text-xs font-semibold ${value === 'Factura' ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-200 text-slate-700'}`}>+ {value}</button>)}</div></div>
     {notice && <p role="status" className="rounded-lg bg-blue-50 p-3 text-xs text-blue-700">{notice}</p>}
-    {kind && <section className="space-y-3 rounded-lg border p-3"><h3 className="text-sm font-semibold">{kind} · ejemplo</h3>
-    <label className="block text-sm">Archivo<input type="file" className="mt-2 block w-full rounded border p-2 text-xs" /></label>
-    <h3 className="text-sm font-semibold">Aplicar a movimientos</h3><div className="divide-y rounded-lg border">{detail.lines.map(line => <label key={line.id} className="flex items-center gap-3 p-3 text-xs"><input type="checkbox" /><span className="flex-1">{line.projectName} · {line.description}</span><span>${line.total.toLocaleString('es-AR')}</span></label>)}</div>
-    <button type="button" onClick={() => { setKind(''); setNotice('Vista de ejemplo: no se guardaron cambios.'); }} className="rounded bg-slate-900 px-4 py-2 text-sm text-white">Guardar y aplicar · ejemplo</button></section>}
-    <ProviderFinancialRecordList records={detail.records} onOpen={async () => setNotice('Archivo de ejemplo: en GOAT se abre el original compartido.')} onCancel={async () => setNotice('Vista de ejemplo: no se anuló ningún registro.')} />
+    {(kind === 'Factura' || kind === 'Comprobante') && <ProviderDocumentUploadForm kind={kind === 'Factura' ? 'invoice' : 'other'} lines={detail.lines} records={records} onClose={() => setKind('')} onSave={async (file, ids) => {
+      if (!file) throw Error('Adjuntá el documento.');
+      const recordKind = kind === 'Factura' ? 'invoice' : 'other';
+      const selected = allocateProviderDocument(detail.lines, recordKind, ids, records);
+      const allocations = selected.map(row => ({ ...row, projectName: detail.projects.find(project => project.id === row.projectId)?.name, amountCents: Math.round(row.amount * 100) }));
+      setRecords(current => [{ id: crypto.randomUUID(), kind: recordKind, date: '2026-10-28', documentOnly: true, status: 'active', file: { fileName: file.name }, totalCents: null, netArsCents: allocations.reduce((sum, row) => sum + row.amountCents, 0), allocations }, ...current]);
+      setKind(''); setNotice('Agregado sólo al ejemplo. No se guardaron datos en GOAT.');
+    }} />}
+    {kind === 'Pago' && <p className="rounded-lg bg-slate-50 p-3 text-xs text-slate-500">El formulario de pagos conserva su funcionamiento. <button type="button" className="underline" onClick={() => setKind('')}>Cerrar</button></p>}
+    <ProviderFinancialRecordList records={records} onOpen={async () => setNotice('Archivo de ejemplo: en GOAT se abre el original compartido.')} onCancel={async record => { setRecords(current => current.map(row => row.id === record.id ? { ...row, status: 'cancelled' } : row)); setNotice('Anulado sólo en el ejemplo.'); }} />
   </div>;
 }
 function Example() {

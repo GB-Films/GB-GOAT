@@ -1,5 +1,6 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { X } from 'lucide-react';
+import { handleDialogCancel } from '../lib/dialogCancel';
 
 // Keep the panel mounted while hidden: closing the window must not discard a
 // draft or change the idempotency key of an operation awaiting confirmation.
@@ -11,7 +12,7 @@ export function ProviderFinanceWindow({ open, onClose, children }: { open: boole
     dialog.current?.showModal();
     return () => { dialog.current?.close(); previous?.focus(); };
   }, [open]);
-  return <dialog ref={dialog} aria-label="Asignar documentos y pagos" onCancel={event => { event.preventDefault(); onClose(); }}
+  return <dialog ref={dialog} aria-label="Asignar documentos y pagos" onCancel={event => handleDialogCancel(event, onClose)}
     onClick={event => { if (event.target === event.currentTarget) onClose(); }}
     className="m-auto max-h-[90dvh] w-[calc(100%_-_2rem)] max-w-5xl overflow-y-auto rounded-xl border border-slate-200 bg-white p-4 shadow-2xl backdrop:bg-slate-950/40">
     <header className="mb-3 flex items-center justify-between gap-3"><h2 className="text-base font-bold">Asignar documentos y pagos</h2>
