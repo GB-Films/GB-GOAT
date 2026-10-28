@@ -1,4 +1,8 @@
 rules_version = '2';
+// Company evidence/approvals live in private backend-only namespaces; no SDK grants.
+// A reviewed third-party expense carries thirdPartyPayoutRequired (server-owned).
+// Its issuer, account and new payments are checked by providerFinance; operational
+// SDK edits retain the existing project/area ACLs and financial audit constraints.
 // Provider intake: personalGoogleAccount is an immutable personal-use declaration
 // (version, uid, email, personalUse, acceptedAt=request.time), bound to a verified
 // Google token and the provider's single email. It does not certify civil identity.
@@ -536,27 +540,33 @@ service cloud.firestore {
     // Shared fiscal documents and payment applications are server-owned. Even a
     // project admin must cancel them centrally; otherwise other projects drift.
     function validatesExistingSharedSupplierRecords() {
-      let changed = request.resource.data.diff(resource.data).affectedKeys();
-      let linked = resource.data.get('sharedInvoices', []).size() > 0
-        || resource.data.get('sharedReceipts', []).size() > 0
-        || resource.data.get('sharedPaymentIds', []).size() > 0;
-      return !changed.hasAny(['sharedInvoices', 'sharedReceipts', 'sharedPaymentIds', 'sharedPaymentRecords'])
-        && (resource.data.get('sharedInvoices', []).size() == 0 || !changed.hasAny(['invoice', 'invoices']))
+      let previous = resource.data;
+      let next = request.resource.data;
+      let changed = next.diff(previous).affectedKeys();
+      let thirdParty = previous.get('thirdPartyPayoutRequired', false);
+      let invoiceCount = previous.get('sharedInvoices', []).size();
+      let paymentCount = previous.get('sharedPaymentIds', []).size();
+      let linked = thirdParty || invoiceCount > 0 || paymentCount > 0
+        || previous.get('sharedReceipts', []).size() > 0;
+      return !changed.hasAny(['sharedInvoices', 'sharedReceipts', 'sharedPaymentIds', 'sharedPaymentRecords', 'thirdPartyPayoutRequired'])
+        && ((invoiceCount == 0 && !thirdParty) || !changed.hasAny(['invoice', 'invoices']))
+        && (!thirdParty || next.get('paymentHistory', []).size() == previous.get('paymentHistory', []).size())
         && (!linked || !changed.hasAny(['providerId', 'providerName', 'area', 'total', 'unitPrice', 'quantity']))
-        && (resource.data.get('sharedPaymentIds', []).size() == 0
+        && (paymentCount == 0
           || !changed.hasAny(['paymentHistory', 'paid', 'paymentLocked', 'paymentAuthorIds'])
-          || request.resource.data.get('paymentHistory', []).hasAll(resource.data.sharedPaymentRecords));
+          || next.get('paymentHistory', []).hasAll(previous.sharedPaymentRecords));
     }
 
     function preservesSharedSupplierRecords() {
-      return resource.data.keys().hasAny(['sharedInvoices', 'sharedReceipts', 'sharedPaymentIds', 'sharedPaymentRecords'])
+      return resource.data.keys().hasAny(['sharedInvoices', 'sharedReceipts', 'sharedPaymentIds', 'sharedPaymentRecords', 'thirdPartyPayoutRequired'])
         ? validatesExistingSharedSupplierRecords()
-        : !request.resource.data.keys().hasAny(['sharedInvoices', 'sharedReceipts', 'sharedPaymentIds', 'sharedPaymentRecords']);
+        : !request.resource.data.keys().hasAny(['sharedInvoices', 'sharedReceipts', 'sharedPaymentIds', 'sharedPaymentRecords', 'thirdPartyPayoutRequired']);
     }
 
     function hasNoSharedSupplierRecords() {
-      return !resource.data.keys().hasAny(['sharedInvoices', 'sharedReceipts', 'sharedPaymentIds', 'sharedPaymentRecords'])
-        || (resource.data.get('sharedInvoices', []).size() == 0
+      return !resource.data.keys().hasAny(['sharedInvoices', 'sharedReceipts', 'sharedPaymentIds', 'sharedPaymentRecords', 'thirdPartyPayoutRequired'])
+        || (resource.data.get('thirdPartyPayoutRequired', false) == false
+        && resource.data.get('sharedInvoices', []).size() == 0
         && resource.data.get('sharedReceipts', []).size() == 0
         && resource.data.get('sharedPaymentIds', []).size() == 0);
     }
@@ -1633,7 +1643,7 @@ service cloud.firestore {
       match /budgetItems/{itemId} {
         allow list: if hasProjectAccess(projectId);
         allow get: if hasProjectAccess(projectId) || publicProviderInviteTargetIsOpen();
-        allow create: if !request.resource.data.keys().hasAny(['sharedInvoices', 'sharedReceipts', 'sharedPaymentIds', 'sharedPaymentRecords']) && isProjectAdmin(projectId)
+        allow create: if !request.resource.data.keys().hasAny(['sharedInvoices', 'sharedReceipts', 'sharedPaymentIds', 'sharedPaymentRecords', 'thirdPartyPayoutRequired']) && isProjectAdmin(projectId)
           && !(request.resource.data.area in getAfter(/databases/$(database)/documents/projects/$(projectId)).data.get('activeAreas', []))
           && budgetMembershipAdvancesRevision(projectId)
           && request.resource.data.get('paymentHistory', []) == []
@@ -1654,7 +1664,7 @@ service cloud.firestore {
       match /areaExpenses/{expenseId} {
         allow list: if hasProjectAccess(projectId);
         allow get: if hasProjectAccess(projectId) || publicProviderInviteTargetIsOpen();
-        allow create: if !request.resource.data.keys().hasAny(['sharedInvoices', 'sharedReceipts', 'sharedPaymentIds', 'sharedPaymentRecords']) && (isProjectAdmin(projectId)
+        allow create: if !request.resource.data.keys().hasAny(['sharedInvoices', 'sharedReceipts', 'sharedPaymentIds', 'sharedPaymentRecords', 'thirdPartyPayoutRequired']) && (isProjectAdmin(projectId)
           || canWriteAreaExpense(projectId, request.resource.data.area, request.resource.data.subcategory))
             && request.resource.data.createdBy == request.auth.uid
             && request.resource.data.createdByEmail is string
@@ -1670,7 +1680,9 @@ service cloud.firestore {
           || canPublicAssignProviderFromInvite(projectId, 'areaExpenses', expenseId)
           || ((!isProjectAdmin(projectId) && (
             canWriteAreaExpense(projectId, resource.data.area, resource.data.subcategory)
-            && canWriteAreaExpense(projectId, request.resource.data.area, request.resource.data.subcategory)
+            && ((resource.data.area == request.resource.data.area
+                && resource.data.subcategory == request.resource.data.subcategory)
+              || canWriteAreaExpense(projectId, request.resource.data.area, request.resource.data.subcategory))
           ) && preservesExpensePaymentAudit() && preservesPaidExpenseIdentity()
             && preservesExpenseReceipts() && preservesExistingExpenseInvoice()))
           || (request.auth == null && canPublicUploadInvoice(projectId, 'areaExpenses', expenseId)));

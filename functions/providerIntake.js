@@ -1,6 +1,6 @@
 const { fail, id, text, hash, thirdPartyIdentity } = require("./providerPortalModel");
 
-// Only this server path can register a person without their own fiscal/bank data.
+// Compatibility path for existing personal invitations; new registrations require an own bank account.
 // The public SDK intake keeps its existing, stricter schema and permissions.
 function createThirdPartyIntake({ db, timestamp, clock = () => new Date() }) {
   return async (actor, input) => {
@@ -35,6 +35,7 @@ function createThirdPartyIntake({ db, timestamp, clock = () => new Date() }) {
         if (!captured || captured.submissionHash !== fingerprint) fail("Administración debe revisar la solicitud guardada antes de continuar.");
         return { providerId, status: "registered", resumed: true };
       }
+      if (!form.bankAccount_cbu && !form.bankAccount_alias) fail("Completá tu CBU o alias propio. La autorización del tercero se gestiona después desde Mi proveedor.");
       const invite = (await tx.get(inviteRef)).data();
       if (!invite || invite.status !== "pending" || invite.used !== false) fail("Este enlace no está disponible. Pedí uno nuevo a administración.");
       if (invite.expiresAt != null && (!invite.expiresAt.toDate || invite.expiresAt.toDate() <= clock())) fail("El enlace de alta venció.");
@@ -60,8 +61,9 @@ function createThirdPartyIntake({ db, timestamp, clock = () => new Date() }) {
       // Kept outside the broadly readable internal supplier catalog. Default rules deny SDK access.
       tx.create(intakeRef, { version: "third-party-intake-v1", providerId, party, workKeys, roles: ["invoice", "payment"], capturedByUid: actor.uid, capturedAt: now, submissionHash: fingerprint });
       for (const item of identifiers) tx.create(item.ref, { providerId, providerType: "persona", identifierType: item.kind, value: item.value, inviteToken: token, createdAt: now });
-      // Representation remains pending until the person signs the existing declaration.
-      tx.create(db.doc(`providerPortalUsers/${actor.uid}/memberships/${providerId}`), { providerId, email: actor.email, status: "needs_confirmation", source: "personal_google_intake", createdAt: now });
+      // Personal access does not require a representation signature. The separate
+      // third-party authorization still requires its own signature and review.
+      tx.create(db.doc(`providerPortalUsers/${actor.uid}/memberships/${providerId}`), { providerId, email: actor.email, status: "active", representation: "own", activationMethod: "verified_google_no_signature", source: "personal_google_intake", createdAt: now });
       if (targetRef) tx.update(targetRef, { providerId, providerName: `${form.name} ${form.lastName}`, providerInviteAssignment: { token, providerId, assignedAt: now }, updatedAt: now });
       tx.update(inviteRef, invite.mode === "multi_use" ? { usageCount: Number(invite.usageCount || 0) + 1, lastUsedAt: now, lastProviderId: providerId, lastProviderType: "persona", updatedAt: now } : { used: true, status: "used", usedAt: now, providerId, providerType: "persona" });
       return { providerId, status: "registered" };

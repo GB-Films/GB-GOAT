@@ -6,8 +6,8 @@ import { ProviderFinanceWindow } from './ProviderFinanceWindow';
 import { ProjectDialog } from '../pages/project-detail/ProjectDialog';
 const formatDate = (value: any) => typeof value === 'string' ? value.split('-').reverse().join('/') : value?.seconds ? new Date(value.seconds * 1000).toLocaleDateString('es-AR') : '-';
 
-export function ProviderDetailView({ detail, loading, onClose, financePanel, canSeeBankDetails = true }: {
-  detail: any; loading: boolean; onClose: () => void; financePanel?: ReactNode; canSeeBankDetails?: boolean;
+export function ProviderDetailView({ detail, loading, onClose, financePanel, companyPanel, canSeeBankDetails = true }: {
+  detail: any; loading: boolean; onClose: () => void; financePanel?: ReactNode; companyPanel?: ReactNode; canSeeBankDetails?: boolean;
 }) {
   const [copiedProviderField, setCopiedProviderField] = useState('');
   const [showFullData, setShowFullData] = useState(false);
@@ -95,6 +95,7 @@ export function ProviderDetailView({ detail, loading, onClose, financePanel, can
                   </div>
                 )}
               </section>
+        {companyPanel && <details className="rounded-xl border border-slate-200 p-3"><summary className="cursor-pointer text-xs font-semibold text-slate-600">Representación y respaldos de la empresa · acceso restringido</summary><div className="mt-3">{companyPanel}</div></details>}
         <div key={provider.id}><ProviderProjectList projects={detail.projects || []} lines={detail.lines || []} /></div>
       </>}
     </div>

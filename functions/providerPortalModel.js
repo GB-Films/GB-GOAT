@@ -77,7 +77,7 @@ function profileChanges(before, input) {
   if (!Object.keys(result).length) fail("No hay cambios.");
   return result;
 }
-function thirdPartyIdentity(input, payment = true) {
+function thirdPartyIdentity(input, payment = true, requireContext = true) {
   for (const [key, max] of Object.entries({ name: 160, cuit: 30, email: 300, relationship: 300, activity: 500, holder: 160, cbu: 22, alias: 100 })) {
     if (input[key] != null && (typeof input[key] !== "string" || input[key].length > max)) fail("Revisá los datos del tercero.");
   }
@@ -98,16 +98,16 @@ function thirdPartyIdentity(input, payment = true) {
     (!party.holder || (!/^\d{22}$/.test(party.cbu) && !party.alias))
   )
     fail("Indicá titular y CBU/CVU o alias.");
-  if (!party.relationship || !party.activity)
+  if (requireContext && (!party.relationship || !party.activity))
     fail("Indicá la relación con el prestador y la actividad del tercero.");
   if (party.cbu && !/^\d{22}$/.test(party.cbu)) fail("CBU/CVU inválida.");
   return party;
 }
-function thirdParty(input, workKeys) {
+function thirdParty(input, workKeys, requireContext = true, requireEndDate = true) {
   const roles = [...new Set(list(input.roles))].sort();
   if (!roles.length || roles.some((r) => !["invoice", "payment"].includes(r)))
     fail("Elegí quién factura y/o cobra.");
-  const party = thirdPartyIdentity(input, roles.includes("payment"));
+  const party = thirdPartyIdentity(input, roles.includes("payment"), requireContext);
   const scope = [...new Set(list(input.workKeys))].sort();
   if (
     !scope.length ||
@@ -118,17 +118,17 @@ function thirdParty(input, workKeys) {
   if (input.cbu && !/^\d{22}$/.test(String(input.cbu)))
     fail("CBU/CVU inválida.");
   const expiresOn = text(input.expiresOn, 10);
-  if (
+  if (requireEndDate && (
     !/^\d{4}-\d{2}-\d{2}$/.test(expiresOn) ||
     Number.isNaN(Date.parse(expiresOn)) ||
     new Date(expiresOn).toISOString().slice(0, 10) !== expiresOn
-  )
+  ))
     fail("Indicá hasta cuándo autorizás.");
   return {
     party,
     roles,
     workKeys: scope,
-    expiresOn,
+    ...(requireEndDate ? { expiresOn } : { validity: 'until_revoked' }),
     termsVersion: "third-party-v2",
     terms:
       "Declaro haber realizado los servicios identificados. Designo al tercero indicado para recibir los pagos de los trabajos seleccionados cuando corresponda. Los acuerdos y la distribución posterior de los fondos entre esa persona y yo son de nuestra responsabilidad. El emisor fiscal propuesto queda sujeto a validación contable. Esta autorización no acredita un pago realizado.",
@@ -213,6 +213,7 @@ function ownExpense(item, project, path) {
     payments,
     invoiceCount: expenseInvoices(item).length,
     markedPaidWithoutDetails: item.paid === true && payments.length === 0,
+    thirdPartyPayoutRequired: item.thirdPartyPayoutRequired === true,
     otherCount: list(item.otherReceipts).length,
   };
 }

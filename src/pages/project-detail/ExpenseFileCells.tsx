@@ -53,6 +53,7 @@ export function ExpenseInvoiceCell({
     <>
       <div className="flex items-center justify-center gap-1">
       {!!item.sharedInvoices?.length && <ProviderProfileButton providerId={item.providerId}>Factura vinculada ({item.sharedInvoices.length})</ProviderProfileButton>}
+      {item.thirdPartyPayoutRequired && !item.sharedInvoices?.length && <ProviderProfileButton providerId={item.providerId}>Factura del tercero · gestionar en ficha</ProviderProfileButton>}
       {singleInvoice ? (
         <>
           <a
@@ -90,7 +91,7 @@ export function ExpenseInvoiceCell({
         <span className="text-[9px] font-bold uppercase tracking-widest text-slate-300">Sin factura</span>
       ) : null}
 
-      {canManage && !item.sharedInvoices?.length && (
+      {canManage && !item.sharedInvoices?.length && !item.thirdPartyPayoutRequired && (
         <>
           <label
             className={cn(

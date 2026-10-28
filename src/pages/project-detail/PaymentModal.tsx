@@ -14,6 +14,7 @@ import { buildPaymentAuditAppend } from '../../lib/paymentAudit';
 import { parsePaymentAmount } from '../../lib/paymentAmounts';
 import { assertCanChangePaymentCash } from '../../lib/paymentCashAccess';
 import { providerDisplayName } from '../../lib/providerConstants';
+import { ProviderProfileButton } from '../../components/ProviderProfileButton';
 import { assertReimbursementAmount, assertReimbursementCashLink, getReimbursementBalanceCents, getReimbursedCents, isThirdPartyPayment } from '../../lib/reimbursements';
 import type { Payment, PaymentCollection } from './types';
 import { SearchableSelect } from '../../components/SearchableSelect';
@@ -620,10 +621,11 @@ export function PaymentModal({
             </div>
           </div>
 
-          {canManagePayments && (
+          {item.thirdPartyPayoutRequired && <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"><p className="mb-2">Este trabajo utiliza una autorización de facturación y cobro por un tercero. El pago debe registrarse con su factura y cuenta aprobadas desde la ficha completa.</p><ProviderProfileButton providerId={item.providerId}>Gestionar factura y pago del tercero</ProviderProfileButton></div>}
+          {canManagePayments && !item.thirdPartyPayoutRequired && (
             <form onSubmit={async (e) => {
               e.preventDefault();
-              if (!projectId) return;
+              if (!projectId || item.thirdPartyPayoutRequired) return;
               
               const formData = new FormData(e.currentTarget);
               const customDate = formData.get('paymentDate') as string;

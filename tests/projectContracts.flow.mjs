@@ -26,6 +26,8 @@ export async function testProjectContracts({ db, admin, manage, request, sign, s
   const one = { id: 'first-field', signerEmail: 'own@example.test', page: 2, x: .1, y: .6, w: .32, h: .11 };
   const two = { id: 'second-field', signerEmail: 'other@example.test', page: 2, x: .55, y: .6, w: .32, h: .11 };
   const preparation = { action: 'prepareProjectContract', documentId: 'uploaded-contract', expectedSha256: original.sha256, providerIds: ['contract-person', 'contract-other'], fields: [one, two] };
+  await db.doc('providers/unreviewed-company').set({ type: 'empresa', businessName: 'Sin poder revisado', cuit: '30123456789', portalAccessEmail: 'unreviewed@example.test' });
+  await assert.rejects(call({ ...preparation, providerIds: ['unreviewed-company'], fields: [{ ...one, signerEmail: 'unreviewed@example.test' }] }), /representación revisada/);
   await assert.rejects(call({ ...preparation, expectedSha256: '0'.repeat(64) }), /PDF cambió/);
   await assert.rejects(call({ ...preparation, fields: [one] }), /recuadro/);
   await assert.rejects(call({ ...preparation, fields: [one, { ...two, page: 3 }] }), /Página/);

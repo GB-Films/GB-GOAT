@@ -61,7 +61,16 @@ function createProjectContractBridge({ db, store, bucket, readLocalFile, timesta
         const signerEmail = email(provider.portalAccessEmail || provider.email);
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(signerEmail)) fail('El proveedor necesita un correo personal para iniciar sesión con Google.');
         if (bindings.some(binding => binding.email === signerEmail)) fail('Dos proveedores comparten el correo. Elegí una sola ficha para esa cuenta.');
-        bindings.push({ providerId, email: signerEmail, name: text(provider.businessName || [provider.name, provider.lastName].filter(Boolean).join(' ') || provider.fullName || signerEmail) });
+        let companyAuthority = null;
+        if (provider.type === 'empresa') {
+          const approval = (await db.doc(`providerPortalCompanyApprovals/${providerId}`).get()).data();
+          const membership = approval?.uid ? (await db.doc(`providerPortalUsers/${approval.uid}/memberships/${providerId}`).get()).data() : null;
+          if (!approval || approval.email !== signerEmail || membership?.status !== 'active' || membership.email !== signerEmail
+            || !['company-representation-v2', 'company-representation-v3'].includes(membership.companyReviewVersion) || membership.companyReviewVersion !== (approval.version || 'company-representation-v2') || membership.declarationId !== approval.declarationId
+            || approval.company?.cuit !== String(provider.cuit || provider.cuitNormalized || '').replace(/\D/g, '') || approval.company?.name !== text(provider.businessName || provider.name)) fail('La empresa necesita una representación revisada con documentación antes de solicitar esta firma.');
+          companyAuthority = { declarationId: approval.declarationId, contentHash: approval.contentHash, scope: approval.scope, email: approval.email };
+        }
+        bindings.push({ providerId, email: signerEmail, name: text(provider.businessName || [provider.name, provider.lastName].filter(Boolean).join(' ') || provider.fullName || signerEmail), ...(companyAuthority ? { companyAuthority } : {}) });
       }
       bindings.sort((a, b) => a.email.localeCompare(b.email));
       const signerEmails = bindings.map(binding => binding.email);

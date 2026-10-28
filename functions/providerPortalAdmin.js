@@ -1,4 +1,7 @@
 const { HttpsError } = require("firebase-functions/v2/https");
+const { checkCompanyReview } = require('./providerRepresentation');
+const { COMPANY_EVIDENCE, LEGACY_COMPANY_EVIDENCE } = require('./providerEvidence');
+const { checkThirdPartyReview, thirdPartyIsCurrent, THIRD_PARTY_VERSIONS } = require('./providerThirdPartyDeclaration');
 const {
   expenseInvoices,
   dateKey,
@@ -106,9 +109,18 @@ function createProviderPortalAdminHandler({
           .map((d) => ({
             ...d,
             valid:
-              provider?.type === "persona" && d.status === "active" && d.content.expiresOn >= dateKey(clock()),
+              provider?.type === "persona" && d.status === "active" && thirdPartyIsCurrent(d.content, clock()),
           })),
       };
+    }
+    if (input.action === 'evidenceFile') return sign.evidence.read(id(input.providerId), id(input.evidenceId), actor, true);
+    if (input.action === 'companyHistory') {
+      const providerId = id(input.providerId);
+      const provider = (await db.doc(`providers/${providerId}`).get()).data();
+      if (provider?.type !== 'empresa') fail('Esta ficha no es una empresa.');
+      const rows = await db.collection('providerPortalDeclarations').where('providerId', '==', providerId).limit(201).get();
+      if (rows.size > 200) fail('Administración debe paginar el historial.');
+      return { declarations: rows.docs.map(row => ({ id: row.id, ...row.data() })).filter(d => d.kind === 'representation'), approval: (await db.doc(`providerPortalCompanyApprovals/${providerId}`).get()).data() || null };
     }
     if (input.action === "declarationFile") {
       const providerId = id(input.providerId),
@@ -261,6 +273,11 @@ function createProviderPortalAdminHandler({
       if (!reason) fail("Dejá el motivo de revisión.");
       if (!["approved", "rejected"].includes(input.decision))
         fail("Decisión inválida.");
+      const preview = (await ref.get()).data();
+      let verifiedManifest = null;
+      if (input.decision === 'approved' && preview?.kind === 'representation' && preview.content.evidence?.length) {
+        verifiedManifest = await sign.evidence.manifest(preview.providerId, preview.actor, preview.content.evidence.map(e => e.id), preview.content.version === 'company-representation-v2' ? LEGACY_COMPANY_EVIDENCE : COMPANY_EVIDENCE);
+      }
       return db.runTransaction(async (tx) => {
         const d = (await tx.get(ref)).data();
         if (
@@ -349,23 +366,43 @@ function createProviderPortalAdminHandler({
               at: timestamp(),
             },
           });
+        } else if (d.kind === 'representation') {
+          if (d.status !== 'pending_review') fail('La representación ya fue revisada.');
+          const membershipRef = db.doc(`providerPortalUsers/${d.actor.uid}/memberships/${d.providerId}`);
+          const membership = (await tx.get(membershipRef)).data();
+          checkCompanyReview(d, p, membership, input);
+          if (input.decision === 'approved') {
+            if (!verifiedManifest || hash(verifiedManifest) !== hash(d.content.evidence)) fail('Los respaldos no coinciden con la declaración firmada.');
+            tx.update(membershipRef, { status: 'active', representation: 'authorized_representative', declarationId: ref.id, companyReviewVersion: d.content.version, confirmedAt: timestamp() });
+            tx.set(db.doc(`providerPortalCompanyApprovals/${d.providerId}`), { providerId: d.providerId, uid: d.actor.uid, email: d.actor.email, declarationId: ref.id, company: d.content.provider,
+              scope: text(input.approvedScope, 500), version: d.content.version, contentHash: d.contentHash, reviewedBy: actor, reviewedAt: timestamp() });
+            tx.update(providerRef, { portalAccessEmail: d.actor.email, updatedAt: timestamp() });
+          }
+          tx.update(ref, { status: input.decision === 'approved' ? 'applied' : 'rejected', review: { actor, decision: input.decision, reason,
+            checks: Object.fromEntries(['companyVerified','identityVerified','authorityVerified','scopeVerified'].map(key => [key, input.checks?.[key] === true])), approvedScope: text(input.approvedScope, 500), previousAccessEmail: p.portalAccessEmail || p.email || '', at: timestamp() } });
         } else if (d.kind === "third_party") {
           if (p?.type !== "persona" && input.decision === "approved")
             fail("Esta alternativa requiere una ficha de persona física. Las empresas no pueden activar nuevas autorizaciones de terceros.");
-          if (d.content.expiresOn < dateKey(clock()))
+          if (!thirdPartyIsCurrent(d.content, clock()) && input.decision === 'approved')
             fail("Autorización vencida.");
           const roles = list(input.roles);
+          checkThirdPartyReview(d, roles, input);
           if (
             !roles.length ||
             roles.some((r) => !d.content.roles.includes(r) || d.decisions?.[r])
           )
             fail("Elegí funciones pendientes.");
+          const payoutRefs = input.decision === 'approved' && THIRD_PARTY_VERSIONS.includes(d.content.termsVersion)
+            ? d.content.workKeys.map(key => db.doc(`projects/${key}`)) : [];
+          const payoutRows = await Promise.all(payoutRefs.map(ref => tx.get(ref)));
+          if (payoutRows.some(row => !row.exists || row.data().providerId !== d.providerId)) fail('Un trabajo cambió de proveedor; prepará una nueva autorización.');
           const decisions = { ...(d.decisions || {}) };
           for (const role of roles)
             decisions[role] = {
               decision: input.decision,
               actor,
               reason,
+              checks: Object.fromEntries(['fiscalFrameVerified','declaredPayeeChecked'].map(key => [key, input.checks?.[key] === true])),
               at: timestamp(),
             };
           const effectiveRoles = d.content.roles.filter(
@@ -381,6 +418,7 @@ function createProviderPortalAdminHandler({
                 ? "pending_review"
                 : "rejected",
           });
+          payoutRefs.forEach(workRef => tx.update(workRef, { thirdPartyPayoutRequired: true }));
         } else fail("Tipo no revisable.");
         tx.create(audit, {
           declarationId: ref.id,

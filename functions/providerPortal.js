@@ -1,6 +1,10 @@
 const { HttpsError } = require("firebase-functions/v2/https");
 const M = require("./providerPortalModel");
 const { createThirdPartyIntake } = require("./providerIntake");
+const { activatePersonalMembership, attachVerifiedIntakeMembership } = require('./providerPortalAccess');
+const { COMPANY_EVIDENCE } = require('./providerEvidence');
+const { companyRepresentation } = require('./providerRepresentation');
+const { thirdPartyDeclaration, thirdPartyDetails } = require('./providerThirdPartyDeclaration');
 const { fail, text, email, id, list, hash } = M;
 const internalRoles = [
   "admin",
@@ -39,6 +43,17 @@ function createProviderPortalHandler({
   clock = () => new Date(),
 }) {
   const registerThirdPartyIntake = createThirdPartyIntake({ db, timestamp, clock });
+  const preferencesRef = (providerId, actor) => db.doc(`providerPortalPreferences/${hash({ providerId, uid: actor.uid })}`);
+  async function saveThirdPartyDetails(providerId, actor, input) {
+    const party = thirdPartyDetails(input);
+    await db.runTransaction(async tx => {
+      const p = (await tx.get(db.doc(`providers/${providerId}`))).data();
+      const m = (await tx.get(db.doc(`providerPortalUsers/${actor.uid}/memberships/${providerId}`))).data();
+      if (p?.type !== 'persona' || m?.status !== 'active' || m.email !== actor.email) fail('No podés guardar datos para esta ficha.');
+      tx.set(preferencesRef(providerId, actor), { providerId, uid: actor.uid, email: actor.email, party, updatedAt: timestamp() });
+    });
+    return { party };
+  }
   const config = async () => {
     if (
       (await db.doc("providerPortalConfig/current").get()).data()?.enabled !==
@@ -128,6 +143,7 @@ function createProviderPortalHandler({
     const proof = await sign.verify(decl.signing, actor, decl.contentHash);
     if (!proof.complete)
       fail("Falta completar la firma y el PDF de evidencia.");
+    if (decl.content.signerDni && proof.signerDni !== decl.content.signerDni) fail('El DNI de la firma no coincide con el DNI declarado. Prepará una declaración con los datos correctos.');
     return db.runTransaction(async (tx) => {
       const current = (await tx.get(ref)).data();
       const providerRef = db.doc(`providers/${decl.providerId}`);
@@ -145,13 +161,7 @@ function createProviderPortalHandler({
       const updates = {};
       let status = "signed";
       if (decl.kind === "representation") {
-        tx.update(membershipRef, {
-          status: "active",
-          representation: decl.content.capacity,
-          declarationId: ref.id,
-          confirmedAt: timestamp(),
-        });
-        status = "applied";
+        status = 'pending_review';
       }
       if (decl.kind === "profile") {
         for (const [key, change] of Object.entries(decl.content.changes)) {
@@ -229,6 +239,9 @@ function createProviderPortalHandler({
       return registerThirdPartyIntake(actor, input);
     }
     if (input.action === "bootstrap") {
+      const registrations = await db.collection('providers').where('personalGoogleAccount.uid', '==', actor.uid).limit(51).get();
+      if (registrations.size > 50) fail('Administración debe revisar las fichas asociadas a esta cuenta.');
+      for (const registration of registrations.docs) await attachVerifiedIntakeMembership({ db, actor, providerId: registration.id, timestamp });
       // Candidates are prepared by administration; ambiguous/shared email is never auto-associated.
       const candidateRef = db.doc(
         `providerPortalCandidates/${hash(actor.email)}`,
@@ -273,7 +286,7 @@ function createProviderPortalHandler({
         .get();
       const entries = [];
       for (const row of memberships.docs) {
-        const m = row.data();
+        let m = row.data();
         if (
           !["active", "needs_confirmation"].includes(m.status) ||
           m.email !== actor.email
@@ -281,6 +294,10 @@ function createProviderPortalHandler({
           continue;
         const p = (await db.doc(`providers/${row.id}`).get()).data();
         if (!p) continue;
+        if (m.status === 'needs_confirmation' && p.type === 'persona') {
+          m = await activatePersonalMembership({ db, actor, providerId: row.id, timestamp });
+          if (!m || !['active', 'needs_confirmation'].includes(m.status) || m.email !== actor.email) continue;
+        }
         entries.push({
           providerId: row.id,
           status: m.status,
@@ -312,11 +329,27 @@ function createProviderPortalHandler({
       actor,
       providerId,
       input.action !== "prepareRepresentation" &&
-        input.action !== "completeDeclaration",
+        input.action !== "completeDeclaration" &&
+        !['uploadEvidence', 'evidenceFile', 'companyState'].includes(input.action),
     );
+    if (input.action === 'uploadEvidence') {
+      identity(request, true);
+      const provider = (await db.doc(`providers/${providerId}`).get()).data();
+      return sign.evidence.upload(providerId, actor, input, provider?.type);
+    }
+    if (input.action === 'evidenceFile') return sign.evidence.read(providerId, id(input.evidenceId), actor);
+    if (input.action === 'saveThirdPartyDetails') { identity(request, true); return saveThirdPartyDetails(providerId, actor, input); }
+    if (input.action === 'companyState') {
+      const provider = (await db.doc(`providers/${providerId}`).get()).data();
+      if (provider?.type !== 'empresa') fail('Esta ficha no es una empresa.');
+      const declarations = await db.collection('providerPortalDeclarations').where('providerId', '==', providerId).limit(501).get();
+      if (declarations.size > 500) fail('Administración debe revisar el historial.');
+      const own = declarations.docs.map(d => ({ id: d.id, ...d.data() })).filter(d => d.kind === 'representation' && d.actor.uid === actor.uid);
+      return { evidence: await sign.evidence.list(providerId, actor), pendingReview: own.some(d => d.status === 'pending_review'), company: { name: provider.businessName || provider.name, cuit: provider.cuit || provider.cuitNormalized || '' } };
+    }
     if (input.action === "overview") {
       const provider = (await db.doc(`providers/${providerId}`).get()).data();
-      const [work, financial, declarations, intake] = await Promise.all([
+      const [work, financial, declarations, intake, preferences] = await Promise.all([
         works(providerId),
         db
           .collection("providerFinancialRecords")
@@ -329,12 +362,17 @@ function createProviderPortalHandler({
           .limit(501)
           .get(),
         provider.type === "persona" ? db.doc(`providerPortalIntakeRequests/${providerId}`).get() : Promise.resolve(null),
+        provider.type === 'persona' ? preferencesRef(providerId, actor).get() : Promise.resolve(null),
       ]);
       if (financial.size > 500 || declarations.size > 500)
         fail("El historial requiere paginación.");
       // Only this provider's scoped data leave the boundary, never arbitrary financial fields or file tokens.
       return {
         provider: M.publicProfile(provider),
+        thirdPartyDefaults: preferences?.data()?.uid === actor.uid && preferences.data().email === actor.email
+          ? preferences.data().party
+          : declarations.docs.map(doc => doc.data()).filter(d => d.kind === 'third_party' && d.actor.uid === actor.uid && d.actor.email === actor.email)
+            .sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0))[0]?.content.party || null,
         thirdPartyIntake: intake?.data()?.providerId === providerId
           ? { party: intake.data().party, workKeys: intake.data().workKeys, roles: intake.data().roles }
           : null,
@@ -391,6 +429,7 @@ function createProviderPortalHandler({
             : "third_party";
       let content;
       if (kind === "representation") {
+        if (provider.type !== 'empresa') fail('El alta de una persona física no requiere firma de representación.');
         if (!["own", "authorized_representative"].includes(input.capacity))
           fail("Indicá en qué carácter actuás.");
         if (
@@ -398,19 +437,8 @@ function createProviderPortalHandler({
           input.capacity !== "authorized_representative"
         )
           fail("Para una empresa indicá representante autorizado.");
-        content = {
-          capacity: input.capacity,
-          terms:
-            "Declaro que la cuenta Google con la que firmo me pertenece y es de uso personal; la utilizaré para ingresar a GOAT y firmar documentos. Identifico esta ficha como correspondiente al proveedor por cuya cuenta actúo, en el carácter declarado. Esta confirmación de representación no ratifica la exactitud de los datos administrativos anteriores; podré solicitar sus correcciones en Mis datos mediante una declaración específica.",
-          personalAccountDeclarationVersion: "personal-google-v1",
-          profile: {
-            name: text(
-              provider.businessName ||
-                [provider.name, provider.lastName].filter(Boolean).join(" "),
-            ),
-            cuit: text(provider.cuit),
-          },
-        };
+        content = companyRepresentation(provider, actor, input,
+          await sign.evidence.manifest(providerId, actor, input.evidenceIds, COMPANY_EVIDENCE));
       }
       if (kind === "profile")
         content = {
@@ -421,10 +449,7 @@ function createProviderPortalHandler({
       if (kind === "third_party") {
         if (provider.type !== "persona") fail("Esta alternativa requiere una ficha de persona física. Las empresas no pueden solicitar facturación o cobro mediante terceros.");
         const work = await works(providerId);
-        content = M.thirdParty(
-          input,
-          work.map((w) => w.key),
-        );
+        content = thirdPartyDeclaration(provider, actor, input, work.map(w => w.key));
         content.workDetails = work
           .filter((w) => content.workKeys.includes(w.key))
           .map((w) => ({
@@ -437,8 +462,6 @@ function createProviderPortalHandler({
         content.projectIds = [
           ...new Set(content.workDetails.map((w) => w.key.split("/")[0])),
         ];
-        if (content.expiresOn < M.dateKey(clock()))
-          fail("La autorización ya está vencida.");
       }
       content.provider = {
         name: text(
@@ -487,6 +510,7 @@ function createProviderPortalHandler({
             tx.update(ref, { signing, status: "pending_signature" });
         });
       }
+      if (kind === 'third_party') await saveThirdPartyDetails(providerId, actor, content.party);
       return { id: declarationId, ...(await ref.get()).data() };
     }
     if (input.action === "completeDeclaration") {
@@ -585,6 +609,7 @@ function createProviderPortalHandler({
       const current = (await ref.get()).data();
       if (current?.providerId !== providerId)
         throw new HttpsError("permission-denied", "Trabajo ajeno.");
+      if (current.thirdPartyPayoutRequired) fail('La factura del tercero debe registrarse con la autorización revisada desde la ficha completa de administración.');
       const result = await sign.storeInvoice({
         providerId,
         actor,
@@ -596,6 +621,7 @@ function createProviderPortalHandler({
         const e = (await tx.get(ref)).data();
         if (e?.providerId !== providerId)
           throw new HttpsError("permission-denied", "Trabajo ajeno.");
+        if (e.thirdPartyPayoutRequired) fail('Este trabajo requiere la factura y cuenta del tercero aprobadas por administración.');
         const uploadRef = db.doc(
           `providerPortalInvoiceUploads/${result.portalUploadId}`,
         );

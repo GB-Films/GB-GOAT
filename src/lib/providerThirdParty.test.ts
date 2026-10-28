@@ -3,8 +3,9 @@ import test from "node:test";
 import { emptyThirdParty, providerFiscalErrors, thirdPartyDraftErrors, initialThirdPartyCapture, thirdPartyCapture } from "./providerThirdParty";
 const party = { ...emptyThirdParty, name: "Familiar", relationship: "Hermana", activity: "Fotografía", cuit: "20333333334", holder: "Familiar", alias: "alias.familiar" };
 const own = { type: "persona", cuit: "", bankAccount_cbu: "", bankAccount_alias: "" };
-test("a person requesting third-party billing can leave their own fiscal and bank data empty", () => {
-  assert.deepEqual(providerFiscalErrors(own, true, party), {});
+test("third-party billing never exempts the supplier from supplying their own bank account", () => {
+  assert.ok(providerFiscalErrors(own, true, party).bankAccount);
+  assert.deepEqual(providerFiscalErrors({ ...own, bankAccount_alias: 'own.alias' }, true, party), {});
   assert.equal(own.cuit, ""); assert.equal(own.bankAccount_alias, "");
   assert.ok(providerFiscalErrors(own, false, party).cuit);
   assert.ok(providerFiscalErrors(own, false, party).bankAccount);

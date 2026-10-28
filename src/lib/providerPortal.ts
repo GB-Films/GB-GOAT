@@ -16,8 +16,10 @@ export async function portalRequest(
   if (
     [
       "prepareRepresentation",
+      "uploadEvidence",
       "prepareProfile",
       "prepareThirdParty",
+      "saveThirdPartyDetails",
       "registerThirdPartyIntake",
       "revokeThirdParty",
       "uploadInvoice",

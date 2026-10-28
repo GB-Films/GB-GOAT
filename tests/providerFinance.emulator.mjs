@@ -88,10 +88,28 @@ try {
   await assert.rejects(call(request({ ...partial, id: 'duplicate-reference' })), /referencia de pago ya/);
   // A scoped producer can still append a normal payment without rewriting the shared one.
   const current = (await expenseRef(0).get()).data();
+  console.log('CHECK: ordinary SDK payment append');
   await assertSucceeds(updateDoc(doc(editor.firestore(), expenseRef(0).path), {
     paymentHistory: [...current.paymentHistory, { id: 'ordinary', amount: 1, method: 'otro', createdBy: 'editor', createdByEmail: 'editor@example.test' }],
     paymentAuthorIds: [...current.paymentAuthorIds, 'editor'], paymentLocked: true,
   }));
+  // A reviewed third-party destination must not be bypassed by an ordinary SDK upload/payment.
+  console.log('PASS: ordinary SDK payment append');
+  await expenseRef(0).update({ thirdPartyPayoutRequired: true });
+  const guarded = (await expenseRef(0).get()).data();
+  for (const store of [context.firestore(), editor.firestore()]) {
+    const target = doc(store, expenseRef(0).path);
+    await assertFails(updateDoc(target, { thirdPartyPayoutRequired: false }));
+    await assertFails(updateDoc(target, { invoice: { url: 'https://example.test/bypass.pdf' } }));
+    await assertFails(updateDoc(target, { paymentHistory: [...guarded.paymentHistory, { id: 'bypass', amount: 1, method: 'otro', createdBy: 'editor', createdByEmail: 'editor@example.test' }], paymentAuthorIds: guarded.paymentAuthorIds, paymentLocked: true }));
+    await assertFails(deleteDoc(target));
+  }
+  console.log('CHECK: operative metadata edit with third-party destination');
+  await assertSucceeds(updateDoc(doc(editor.firestore(), expenseRef(0).path), { operationalNote: 'Edición permitida con tercero' }));
+  const newExpense = { providerId: 'supplier', area: 'Post', subcategory: '', total: 1, paymentHistory: [], paymentAuthorIds: [], paymentLocked: false, createdBy: 'admin', createdByEmail: 'admin@example.test' };
+  await assertFails(setDoc(doc(context.firestore(), 'projects/project0/areaExpenses/injected-flag'), { ...newExpense, thirdPartyPayoutRequired: false }));
+  await assertSucceeds(setDoc(doc(context.firestore(), 'projects/project0/areaExpenses/ordinary-create'), newExpense));
+  await expenseRef(0).update({ thirdPartyPayoutRequired: false });
   await call(request({ action: 'cancel', id: 'partial', reason: 'Revertir parte compartida' }));
   assert.equal((await expenseRef(0).get()).data().paymentHistory[0].id, 'ordinary');
   // Remove only the synthetic ordinary payment with emulator-admin to reset this fixture.

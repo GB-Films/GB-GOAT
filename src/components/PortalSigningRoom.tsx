@@ -6,7 +6,7 @@ import "./portalSigning.css";
 
 type Props = {
   key?: string;
-  document: { title: string; signatureFields?: unknown };
+  document: { title: string; signatureFields?: unknown; requiredDni?: string };
   signer: { email: string; name: string };
   url: string;
   loadError: string;
@@ -16,7 +16,7 @@ type Props = {
 };
 
 export function PortalSigningRoom({ document: doc, signer, url, loadError, onRetry, onClose, onSubmit }: Props) {
-  const [dni, setDni] = useState("");
+  const [dni, setDni] = useState(doc.requiredDni || "");
   const [name, setName] = useState(signer.name);
   const [dniConfirmed, setDniConfirmed] = useState(false);
   const [accepted, setAccepted] = useState(false);
@@ -33,7 +33,7 @@ export function PortalSigningRoom({ document: doc, signer, url, loadError, onRet
   const fields = useMemo(() => ownFields.filter(f => f.page <= pageCount), [ownFields, pageCount]);
   const selected = fields.find(f => f.id === selectedFieldId);
   const cleanDni = normalizeSigningDni(dni);
-  const validDni = /^\d{6,12}$/.test(cleanDni);
+  const validDni = /^\d{6,12}$/.test(cleanDni) && (!doc.requiredDni || cleanDni === doc.requiredDni);
   const canSign = ready && !loadError && !!selected && validDni && dniConfirmed && accepted &&
     (mode === "drawn" ? !!image : !!name.trim());
 
@@ -78,7 +78,7 @@ export function PortalSigningRoom({ document: doc, signer, url, loadError, onRet
             <section className="portal-sign-card">
               <h3>2. Confirmá tus datos</h3>
               <p className="portal-sign-muted">Vas a firmar con esta cuenta de Google:</p><strong className="portal-sign-email">{signer.email}</strong>
-              <label className="portal-sign-label">DNI<input autoComplete="off" inputMode="numeric" value={dni} placeholder="Ingresá tu DNI" onChange={e => { setDni(e.target.value); setDniConfirmed(false); }} /></label>
+              <label className="portal-sign-label">DNI<input autoComplete="off" inputMode="numeric" value={dni} readOnly={!!doc.requiredDni} placeholder="Ingresá tu DNI" onChange={e => { setDni(e.target.value); setDniConfirmed(false); }} /></label>
               <label className="portal-sign-check"><input type="checkbox" checked={dniConfirmed} disabled={!validDni || busy} onChange={e => setDniConfirmed(e.target.checked)} /><span>Confirmo que el DNI ingresado me corresponde.</span></label>
             </section>
             <section className="portal-sign-card">
