@@ -260,12 +260,9 @@ function createProviderPortalHandler({
           `providerPortalUsers/${actor.uid}/memberships/${providerId}`,
         );
         const prior = await tx.get(ref);
-        const provider = (
-          await tx.get(db.doc(`providers/${providerId}`))
-        ).data();
-        const preparation = (
-          await tx.get(db.doc("providerPortalConfig/accessPreparation"))
-        ).data();
+        if (prior.exists) return;
+        const [providerRow, preparationRow] = await Promise.all([tx.get(db.doc(`providers/${providerId}`)), tx.get(db.doc("providerPortalConfig/accessPreparation"))]);
+        const provider = providerRow.data(), preparation = preparationRow.data();
         if (
           !provider ||
           candidate.generation !== preparation?.generation ||
@@ -285,20 +282,21 @@ function createProviderPortalHandler({
         .collection(`providerPortalUsers/${actor.uid}/memberships`)
         .get();
       const entries = [];
-      for (const row of memberships.docs) {
+      for (let offset = 0; offset < memberships.docs.length; offset += 8) {
+        const batch = await Promise.all(memberships.docs.slice(offset, offset + 8).map(async row => {
         let m = row.data();
         if (
           !["active", "needs_confirmation"].includes(m.status) ||
           m.email !== actor.email
         )
-          continue;
+          return null;
         const p = (await db.doc(`providers/${row.id}`).get()).data();
-        if (!p) continue;
+        if (!p) return null;
         if (m.status === 'needs_confirmation' && p.type === 'persona') {
           m = await activatePersonalMembership({ db, actor, providerId: row.id, timestamp });
-          if (!m || !['active', 'needs_confirmation'].includes(m.status) || m.email !== actor.email) continue;
+          if (!m || !['active', 'needs_confirmation'].includes(m.status) || m.email !== actor.email) return null;
         }
-        entries.push({
+        return {
           providerId: row.id,
           status: m.status,
           name: text(
@@ -307,9 +305,11 @@ function createProviderPortalHandler({
           cuit: text(p.cuit),
           capacity: m.representation || "",
           type: p.type || "persona",
-        });
+        };
+        }));
+        entries.push(...batch.filter(Boolean));
       }
-      return { memberships: entries, actor, signing: await sign.list(actor) };
+      return { memberships: entries, actor, ...(input.includeDocuments === false ? {} : { signing: await sign.list(actor) }) };
     }
     if (input.action === "signingSession") return sign.session(actor);
     if (input.action === "myDocuments")
@@ -440,12 +440,21 @@ function createProviderPortalHandler({
         content = companyRepresentation(provider, actor, input,
           await sign.evidence.manifest(providerId, actor, input.evidenceIds, COMPANY_EVIDENCE));
       }
-      if (kind === "profile")
+      if (kind === "profile") {
         content = {
-          changes: M.profileChanges(provider, input.changes),
+          changes: M.ownAccountProfileChanges(provider, input.changes, input.ownAccountConfirmed),
           terms:
             "Declaro que los cambios detallados son verídicos y solicito su uso administrativo desde su entrada en vigencia. CUIT, identidad y cuenta bancaria requieren revisión.",
         };
+        if (input.ownAccountConfirmed === true) {
+          const value = key => content.changes[key]?.after ?? provider[key] ?? '';
+          if (value('bankAccount_cbu') || value('bankAccount_alias')) {
+            const holder = provider.type === 'empresa' ? value('businessName') || provider.name : [value('name'), value('lastName')].filter(Boolean).join(' ');
+            content.terms += ` Confirmo que la cuenta provista pertenece a ${holder}, proveedor de esta ficha.`;
+            content.accountOwnership = { confirmed: true, holder, cbu: value('bankAccount_cbu'), alias: value('bankAccount_alias') };
+          }
+        }
+      }
       if (kind === "third_party") {
         if (provider.type !== "persona") fail("Esta alternativa requiere una ficha de persona física. Las empresas no pueden solicitar facturación o cobro mediante terceros.");
         const work = await works(providerId);
@@ -494,8 +503,9 @@ function createProviderPortalHandler({
           createdAt: timestamp(),
         });
       const current = (await ref.get()).data();
-      if (current.status === "preparing") {
-        const signing = await sign.prepare({
+      let clientPreview = {};
+      if (['preparing', 'pending_signature'].includes(current.status)) {
+        const prepared = await sign.prepare({
           id: declarationId,
           kind,
           providerId,
@@ -503,7 +513,9 @@ function createProviderPortalHandler({
           content,
           contentHash,
           preparedAt: current.createdAt?.toDate?.().toISOString() || "",
-        });
+        }, true);
+        const { signingDocument, originalFile, ...signing } = prepared;
+        clientPreview = { signingDocument, originalFile };
         await db.runTransaction(async (tx) => {
           const row = (await tx.get(ref)).data();
           if (row.status === "preparing")
@@ -511,7 +523,7 @@ function createProviderPortalHandler({
         });
       }
       if (kind === 'third_party') await saveThirdPartyDetails(providerId, actor, content.party);
-      return { id: declarationId, ...(await ref.get()).data() };
+      return { id: declarationId, ...(await ref.get()).data(), ...clientPreview };
     }
     if (input.action === "completeDeclaration") {
       const ref = db.doc(

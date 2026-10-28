@@ -29,6 +29,9 @@
 .portal-sign-name-preview { display: grid; place-items: center; min-height: 100px; padding: 12px; overflow-wrap: anywhere; font: italic 30px cursive; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; }
 .portal-sign-field-status { padding: 10px; margin: 12px 0 0; background: #fffbeb; border-radius: 8px; color: #92400e; font-size: 12px; line-height: 1.5; }
 .portal-sign-field-status.is-ready { color: #166534; background: #f0fdf4; }
+.portal-sign-location { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; flex-shrink: 0; padding: 10px 12px; margin-bottom: 10px; border: 1px solid #f59e0b; border-radius: 10px; color: #92400e; background: #fffbeb; font-weight: 600; }
+.portal-sign-location.is-selected { border-color: #86efac; color: #166534; background: #f0fdf4; }
+.portal-sign-dialog .portal-sign-locate { width: 100%; margin-top: 8px; border-color: #f59e0b; background: #fffbeb; color: #92400e; font-weight: 600; }
 .portal-sign-dialog .portal-sign-submit { width: 100%; min-height: 46px; color: white; background: #0f172a; border-color: #0f172a; font-weight: 600; margin-top: 8px; }
 .portal-sign-error { padding: 12px; margin: 8px 0; color: #b91c1c; background: #fef2f2; border-radius: 8px; }
 .portal-sign-load-error { padding: 24px; }
@@ -43,7 +46,8 @@
 .portal-pdf-sheet canvas { display: block; max-width: none; }
 .portal-pdf-loading { position: absolute; inset: 24px 0 auto; text-align: center; color: #334155; }
 .portal-pdf-hint { flex-shrink: 0; margin: 8px 0 0; color: #475569; font-size: 12px; line-height: 1.4; }
-.portal-sign-dialog .portal-sign-field { position: absolute; display: grid; place-items: center; min-height: 0; padding: 2px; border: 2px dashed #2563eb; border-radius: 4px; background: #dbeafecc; color: #1e40af; font-size: clamp(9px, 1vw, 12px); line-height: 1.2; text-align: center; overflow: hidden; }
+.portal-sign-dialog .portal-sign-field { position: absolute; display: grid; place-items: center; min-height: 0; padding: 2px; border: 3px dashed #d97706; border-radius: 4px; background: #fef3c7dd; color: #92400e; font-weight: 700; font-size: clamp(9px, 1vw, 12px); line-height: 1.2; text-align: center; overflow: hidden; }
+.portal-sign-dialog .portal-sign-field:focus { outline: 4px solid #f59e0b; outline-offset: 4px; }
 .portal-sign-dialog .portal-sign-field.is-selected { border: 2px solid #15803d; background: #f0fdf4cc; color: #166534; }
 .portal-sign-visual { display: grid; place-items: center; width: 90%; height: 85%; overflow: hidden; pointer-events: none; font: italic clamp(12px, 2vw, 26px) cursive; }
 .portal-sign-visual img { width: 100%; height: 100%; min-height: 0; object-fit: contain; }
