@@ -36,7 +36,7 @@ export function ProjectSigningPanel({ state, documents, manualDocuments = [], se
     </header>
     {error && <p role="alert" className="mx-4 mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
     {notice && <p role="status" className="px-4 pt-3 text-xs text-emerald-700">{notice}</p>}
-    <div className="divide-y divide-slate-100">{rows.map(row => {
+    <div className="divide-y divide-slate-100 lg:grid lg:grid-cols-[minmax(180px,1fr)_minmax(180px,.8fr)_max-content]">{rows.map(row => {
       const document = row.signing;
       const complete = document?.status === 'completed' && document.artifactsReady;
       const inactive = document && ['revoked', 'rejected', 'cancelled', 'replaced'].includes(document.declarationStatus || document.status || '');
@@ -49,7 +49,7 @@ export function ProjectSigningPanel({ state, documents, manualDocuments = [], se
       const emails = [...new Set((document
         ? [...(document.providerBindings || []).map(binding => binding.email), ...(document.signatures || []).map(signer => signer.email)]
         : [associatedProvider?.portalAccessEmail || associatedProvider?.email || '']).map(value => String(value || '').trim().toLowerCase()).filter(Boolean))];
-      return <article key={row.id} className="grid items-center gap-2 px-4 py-2.5 lg:grid-cols-[minmax(180px,1fr)_minmax(180px,.8fr)_320px] lg:gap-4">
+      return <article key={row.id} className="grid items-center gap-2 px-4 py-2.5 lg:col-span-3 lg:grid-cols-subgrid lg:gap-4">
         <div className="flex min-w-0 items-center gap-2">
           <span role="img" aria-label={tooltip} title={tooltip} tabIndex={0}
             className={cn('shrink-0 cursor-help rounded focus-visible:outline-blue-500', !document ? 'text-blue-600' : inactive ? 'text-red-600' : complete ? 'text-emerald-600' : 'text-amber-500')}>
@@ -63,7 +63,7 @@ export function ProjectSigningPanel({ state, documents, manualDocuments = [], se
           return <span key={email} title={label} aria-label={`${email}: ${label}`} tabIndex={0}
             className={cn('max-w-full cursor-help truncate rounded-full px-2.5 py-1 text-xs focus-visible:outline-blue-500', !document ? 'bg-blue-50 text-blue-700' : signed ? 'bg-emerald-50 text-emerald-700' : inactive ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-800')}>{email}</span>;
         })}{emails.length === 0 && row.manual?.providerName && <span className="truncate text-xs text-slate-500" title={row.manual.providerName}>{row.manual.providerName}</span>}</div>
-        <div className="flex flex-wrap items-center gap-1.5 lg:justify-end">
+        <div className="flex flex-wrap items-center gap-1.5 whitespace-nowrap lg:flex-nowrap lg:justify-end">
           {!document && row.manual?.url && <a href={row.manual.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50">Abrir archivo<ExternalLink className="h-3.5 w-3.5" /></a>}
           {!document && row.manual?.sourceDocumentId && onPrepare && <button type="button" onClick={() => onPrepare(row.manual!)}
             disabled={Boolean(state === null) || Boolean(row.manual.contentType && row.manual.contentType !== 'application/pdf')}
