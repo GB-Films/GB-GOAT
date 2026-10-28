@@ -2,6 +2,7 @@ const { PDFDocument, StandardFonts } = require("pdf-lib");
 const fieldNames = {
   address: "Domicilio",
   phone: "Teléfono",
+  birthDate: "Fecha de nacimiento",
   email: "Correo de contacto",
   cuit: "CUIT",
   dni: "DNI",
@@ -55,19 +56,31 @@ async function declarationPdf(d) {
     d.kind === "representation"
       ? "Declaración de representación"
       : d.kind === "profile"
-        ? "Declaración de actualización de datos"
+        ? c.confirmation ? "Confirmación de datos del proveedor" : "Declaración de actualización de datos"
         : "Autorización para que otra persona facture y cobre por mí",
     true,
   );
   gap();
-  line(`Proveedor: ${c.provider?.name || d.providerId}`);
-  line(
-    `${d.kind === "representation" ? "CUIT informado en la ficha (dato de referencia)" : "CUIT"}: ${c.provider?.cuit || "No informado"}`,
-  );
-  line(`Cuenta que declara: ${d.actor.email}`);
-  line(
-    `Carácter declarado: ${d.kind === "representation" ? "Representante autorizado de la empresa" : "Prestador por cuenta propia"}`,
-  );
+  if (d.kind === 'profile' && c.confirmation) {
+    line('Datos que confirmo', true);
+    for (const [key, value] of Object.entries(c.confirmation.profile))
+      if (key !== 'type' && !(c.confirmation.profile.type === 'empresa' ? ['name', 'lastName', 'dni', 'birthDate'].includes(key) : key === 'businessName'))
+        line(`${fieldNames[key] || key}: ${value || 'No informado'}`);
+    line(`Cuenta Google utilizada para esta confirmación: ${c.confirmation.accessEmail}`);
+    if (c.accountChoice) {
+      line(`Correo Google elegido para la ficha: ${c.accountChoice.selected.email}`);
+      if (c.accountChoice.changesIdentity) line('La nueva cuenta fue verificada con Google. Hasta su aprobación se mantiene el acceso actual.');
+    }
+    gap();
+  }
+  if (!c.confirmation) {
+    line(`Proveedor: ${c.provider?.name || d.providerId}`);
+    line(
+      `${d.kind === "representation" ? "CUIT informado en la ficha (dato de referencia)" : "CUIT"}: ${c.provider?.cuit || "No informado"}`,
+    );
+    line(`Cuenta que declara: ${d.actor.email}`);
+    line(`Carácter declarado: ${d.kind === "representation" ? "Representante autorizado de la empresa" : "Prestador por cuenta propia"}`);
+  }
   gap();
   if (d.kind === "representation")
     for (const [key, value] of Object.entries(c.profile).sort(([a], [b]) =>

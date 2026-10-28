@@ -2,12 +2,13 @@ import { getFunctions, httpsCallable } from "firebase/functions";
 import { initializeApp, getApps } from "firebase/app";
 import {
   getAuth,
+  GoogleAuthProvider,
   reauthenticateWithPopup,
   inMemoryPersistence,
   setPersistence,
   signInWithCustomToken,
 } from "firebase/auth";
-import { auth, googleProvider } from "./firebase";
+import { auth } from "./firebase";
 import { personalSignatureFields } from "./portalSigning";
 
 export async function portalRequest(
@@ -29,7 +30,9 @@ export async function portalRequest(
     if (!user) throw Error("Iniciá sesión.");
     const session = await user.getIdTokenResult();
     if (Date.now() / 1000 - Number(session.claims.auth_time || 0) > 540) {
-      await reauthenticateWithPopup(user, googleProvider);
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: 'select_account', login_hint: user.email || '' });
+      await reauthenticateWithPopup(user, provider);
     }
   }
   return (

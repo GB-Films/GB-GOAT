@@ -11,6 +11,8 @@ import { ThirdPartyAuthorizationForm } from "../components/ThirdPartyAuthorizati
 import { CompanyRepresentationForm } from "../components/CompanyRepresentationForm";
 import { thirdPartyFormDefaults } from '../lib/thirdPartyDefaults';
 import { ProviderProfileForm } from '../components/ProviderProfileForm';
+import { ProviderConfirmationNotice } from '../components/ProviderConfirmationNotice';
+import { switchProviderGoogleAccount, verifyProviderGoogleAccount } from '../lib/providerGoogleAccount';
 
 const tabs = [
   "Trabajos",
@@ -24,6 +26,7 @@ const labels: Record<string, string> = {
   lastName: "Apellido",
   businessName: "Razón social",
   dni: "DNI",
+  birthDate: "Fecha de nacimiento",
   cuit: "CUIT",
   address: "Domicilio",
   phone: "Teléfono",
@@ -119,7 +122,7 @@ export default function ProviderPortal() {
     void load();
     const timer = window.setInterval(() => void load(), 30000);
     return () => { window.clearInterval(timer); loadRevision.current++; };
-  }, [load, user?.uid]);
+  }, [load, user?.uid, user?.email]);
   useEffect(() => { if (tab !== 'Documentos' || !user?.uid) return; void loadDocuments(); const timer = window.setInterval(() => void loadDocuments(), 30000); return () => { window.clearInterval(timer); documentRevision.current++; }; }, [tab, loadDocuments, user?.uid]);
   async function run(action: () => Promise<void>) {
     setBusy(true);
@@ -139,7 +142,9 @@ export default function ProviderPortal() {
         providerId: signing.providerId,
         declarationId: signing.documentId,
       });
-      if (signing.declarationKind === 'profile') { setTab('Mis datos'); setProfileNotice(result.status === 'pending_review' ? 'Cambios firmados y guardados. Los datos marcados están pendientes de revisión.' : 'Cambios guardados.'); } }
+      if (signing.declarationKind === 'profile') { setTab('Mis datos'); setProfileNotice(result.confirmation
+        ? result.status === 'pending_review' ? 'Datos confirmados y firma guardada. Las correcciones marcadas están pendientes de revisión.' : 'Datos confirmados y firma guardada.'
+        : result.status === 'pending_review' ? 'Cambios firmados y guardados. Los datos marcados están pendientes de revisión.' : 'Cambios guardados.'); } }
     if (await load()) setDraft({});
   }
   async function prepare(action: string, input: any) {
@@ -147,7 +152,7 @@ export default function ProviderPortal() {
     const key = JSON.stringify([providerId, action, input]);
     if (!attempts.current.has(key))
       attempts.current.set(key, crypto.randomUUID());
-    setSigning({ preparing: true, title: action === 'prepareProfile' ? 'Actualización de mis datos' : 'Preparando declaración' });
+    setSigning({ preparing: true, title: action === 'prepareProfile' ? input.confirmProfile ? 'Confirmación de mis datos' : 'Actualización de mis datos' : 'Preparando declaración' });
     await run(async () => {
       try {
       const result = await portalRequest({
@@ -221,6 +226,12 @@ export default function ProviderPortal() {
           </p>
         )}
       </header>
+      {hasLoaded && !members.length && !error && <section className={box + ' space-y-3'}>
+        <h2 className="font-semibold">¿Te registraste con otro correo?</h2>
+        <p className="text-sm text-slate-600">Ingresá con esa cuenta Google para encontrar tu ficha. Después, en Mis datos, podrás elegir qué correo usar.</p>
+        <button type="button" disabled={busy} className="rounded-xl border border-blue-200 bg-white px-4 py-2 text-sm font-semibold text-blue-700 disabled:opacity-40" onClick={() => run(switchProviderGoogleAccount)}>Ingresar con otra cuenta Google</button>
+        <p className="text-xs text-slate-500">Si ya no tenés acceso a ese correo, pedí a administración que revise la vinculación de tu ficha.</p>
+      </section>}
       {error && (
         <div role="alert" className="rounded-xl bg-red-50 p-3 text-red-800">
           {error}
@@ -239,6 +250,7 @@ export default function ProviderPortal() {
       {selected?.status === 'needs_confirmation' && selected?.type !== 'empresa' && (
         <p role="status" className={box}>Administración debe revisar la clasificación de esta ficha para activar el acceso. No necesitás firmar una declaración de representación.</p>
       )}
+      {view && <ProviderConfirmationNotice status={view.profileConfirmation?.status} onReview={() => setTab('Mis datos')} />}
       <nav
         aria-label="Secciones del proveedor"
         className="flex gap-2 overflow-x-auto"
@@ -564,7 +576,7 @@ export default function ProviderPortal() {
             <div className={box} key={d.id}>
               <p className="font-semibold">
                 {d.kind === "profile"
-                  ? "Cambios de datos"
+                  ? d.content.confirmation ? "Confirmación de datos" : "Cambios de datos"
                   : d.kind === "third_party"
                     ? "Quién factura y cobra por mí"
                     : "Representación"}{" "}
@@ -641,20 +653,8 @@ export default function ProviderPortal() {
       )}
       {tab === "Mis datos" && view && (
         <>
-          <section className={box + " mb-4 space-y-2"}>
-            <h2 className="font-bold">Mi cuenta de acceso</h2>
-            <p className="text-sm">
-              {user?.email}. Usá tu cuenta personal de Google para ingresar y
-              firmar documentos.
-            </p>
-            <p className="text-xs text-slate-500">
-              Si el correo registrado es anterior o no coincide, solicitá su
-              revisión a administración. El cambio de cuenta requiere verificar
-              nuevamente a quién pertenece.
-            </p>
-          </section>
           {view.provider.type === 'empresa' && <div key={providerId}><CompanyRepresentationForm providerId={providerId} email={user?.email || ''} busy={busy} onPrepare={input => prepare('prepareRepresentation', input)} /></div>}
-          <div key={providerId}><ProviderProfileForm provider={view.provider} declarations={view.declarations} labels={labels} draft={draft} onChange={setDraft} busy={busy} notice={profileNotice} onPrepare={input => prepare('prepareProfile', input)} /></div>
+          <div key={providerId}><ProviderProfileForm provider={view.provider} declarations={view.declarations} labels={labels} draft={draft} onChange={setDraft} busy={busy} notice={profileNotice} confirmationRequired={view.profileConfirmation?.status === 'required'} accessEmail={user?.email || ''} onVerifyAccount={email => verifyProviderGoogleAccount(providerId, email)} onPrepare={input => prepare('prepareProfile', input)} /></div>
           {view.provider.type === 'persona' && <ThirdPartyAuthorizationForm provider={view.provider} works={view.works} party={party} onChange={setParty} busy={busy}
             recovered={!!view.thirdPartyDefaults || !!view.thirdPartyIntake}
             onSave={async input => { await portalRequest({ action: 'saveThirdPartyDetails', providerId, ...input }); await load(); }}
