@@ -93,22 +93,22 @@ const authContext = (uid) =>
     email: `${uid}@example.test`,
     email_verified: true,
   });
-async function signActual(declaration) {
-  const entry = (await sign.list({ email: "own@example.test" })).find(
+async function signActual(declaration, signerEmail = "own@example.test", signerUid = "own") {
+  const entry = (await sign.list({ email: signerEmail })).find(
     (d) => d.documentId === declaration.id,
   );
   assert(entry);
   const script = `import {signDocument} from ${JSON.stringify(pathToFileURL(resolve(signRoot, "functions/index.js")).href)};const result=await signDocument.run(${JSON.stringify(
     {
       auth: {
-        uid: "sign-own",
+        uid: `sign-${signerUid}`,
         token: {
-          email: "own@example.test",
+          email: signerEmail,
           email_verified: true,
           name: "Persona prueba",
           firebase: { sign_in_provider: "custom" },
           goatPortal: true,
-          goatUid: "own",
+          goatUid: signerUid,
           identityProvider: "google.com",
         },
       },
@@ -713,6 +713,8 @@ try {
   assert.equal(companyHistory.valid, false);
   assert.equal(companyHistory.status, "active", "history is preserved without enabling new operations");
   assert.equal((await db.collection("providers").get()).size, beforeIntake + 6);
+  const { testProjectContracts } = await import('./projectContracts.flow.mjs');
+  await testProjectContracts({ db, admin, manage, request, sign, signActual, signEnv, env, assertFails, getDoc, updateDoc, doc });
   console.log("PASS: person intake without own CUIT/bank → representation → real GB Sign third-party declaration → role review; company, forgery, duplicate and work isolation guards.");
   console.log(
     "PASS: real GB Sign PDF/signature/artifacts → GOAT application; critical review, scoped third-party decisions, no duplicate payment; external isolation and producer access.",

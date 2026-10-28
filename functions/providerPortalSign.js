@@ -1,6 +1,7 @@
 const admin = require("firebase-admin");
 const { declarationPdf } = require("./providerDeclarationPdf");
 const { createHash } = require("node:crypto");
+const { createProjectContractBridge } = require('./providerProjectContracts');
 const {
   fail,
   hash,
@@ -137,6 +138,7 @@ function createSignBridge(db) {
     return result;
   }
   return {
+    ...createProjectContractBridge({ db, store, bucket, readLocalFile: file => fileBytes(file, admin.storage().bucket()), timestamp: () => admin.firestore.FieldValue.serverTimestamp() }),
     list: listDocuments,
     session: async (actor) => {
       if (!config().apiKey)
@@ -468,6 +470,9 @@ function createSignBridge(db) {
         .limit(501)
         .get();
       if (rows.size > 500) fail("Paginar documentos del proyecto.");
+      const preparations = await db.collection(`providerPortalProjectLinks/${goatProjectId}/contracts`).limit(501).get();
+      if (preparations.size > 500) fail('Paginar preparaciones del proyecto.');
+      const byDocument = new Map(preparations.docs.map(snapshot => [snapshot.data().documentId, snapshot.data()]));
       return {
         connected: true,
         signProjectId: link.signProjectId,
@@ -476,9 +481,15 @@ function createSignBridge(db) {
           ...statementRows,
           ...rows.docs.map((s) => {
             const d = s.data();
+            const preparation = byDocument.get(s.id);
+            const sourceVerified = Boolean(preparation && d.portalManaged && d.goatSourceProjectId === goatProjectId
+              && preparation.manifest === d.goatPreparationHash && preparation.sha256 === d.sha256 && preparation.sourceDocumentId === d.goatSourceDocumentId);
             return {
               id: s.id,
               source: "sign_project",
+              sourceDocumentId: sourceVerified ? preparation.sourceDocumentId : null,
+              providerBindings: sourceVerified ? preparation.bindings : [],
+              signatureFields: d.signatureFields || [],
               title: d.title,
               status: d.status || "pending",
               signatures: d.signatureStatus || [],

@@ -10,6 +10,7 @@ export type CatalogDocument = {
   id: string; family?: string; type?: string; subtype?: string; providerName: string;
   fileName: string; description: string; url: string; amount: number;
   uploadedAt?: any; paymentDate?: any; expirationDate?: string;
+  sourceDocumentId?: string; providerId?: string; contentType?: string;
 };
 
 // Display mapping only: existing documents, paths and metadata stay in place.

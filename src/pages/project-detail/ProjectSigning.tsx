@@ -1,24 +1,26 @@
 import { useEffect, useRef, useState } from 'react';
 import { downloadPortalFile, portalAdminRequest } from '../../lib/providerPortal';
-import { signingDocumentMatchesProvider } from '../../lib/projectDocumentCatalog';
-import { openSigningProject } from '../../lib/projectSigningActions';
+import type { CatalogDocument } from '../../lib/projectDocumentCatalog';
+import { ProjectContractDialog } from './ProjectContractDialog';
 import { ProjectSigningPanel, type ProjectSigningDocument, type ProjectSigningState } from './ProjectSigningPanel';
 
-export function ProjectSigning({ projectId, search = '', providers = [] }: { projectId: string; search?: string; providers?: any[] }) {
+export function ProjectSigning({ projectId, search = '', providers = [], manualDocuments = [], canPrepare = false }: { projectId: string; search?: string; providers?: any[]; manualDocuments?: CatalogDocument[]; canPrepare?: boolean }) {
   const [state, setState] = useState<ProjectSigningState | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const [busy, setBusy] = useState<'open' | 'refresh' | null>(null);
+  const [busy, setBusy] = useState<'refresh' | null>(null);
   const [downloading, setDownloading] = useState('');
-  const [fallbackUrl, setFallbackUrl] = useState('');
+  const [preparing, setPreparing] = useState<CatalogDocument | null>(null);
   const generation = useRef(0);
   const readVersion = useRef(0);
   const pending = useRef(false);
+  const scope = useRef(projectId);
+  scope.current = projectId;
 
   useEffect(() => {
     const current = ++generation.current;
     let polling = false;
-    setState(null); setError(''); setNotice(''); setFallbackUrl(''); setDownloading(''); setBusy('refresh'); pending.current = false;
+    setState(null); setError(''); setNotice(''); setPreparing(null); setDownloading(''); setBusy('refresh'); pending.current = false;
     async function load(initial = false) {
       if (polling || pending.current) return;
       polling = true;
@@ -39,7 +41,7 @@ export function ProjectSigning({ projectId, search = '', providers = [] }: { pro
   }, [projectId]);
 
   async function refresh() {
-    if (pending.current) return;
+    if (pending.current || scope.current !== projectId) return;
     const current = generation.current;
     const version = ++readVersion.current;
     pending.current = true; setBusy('refresh'); setError(''); setNotice('');
@@ -48,26 +50,6 @@ export function ProjectSigning({ projectId, search = '', providers = [] }: { pro
       if (generation.current === current && readVersion.current === version) { setState(next); setNotice('Firmas actualizadas.'); }
     } catch (error: any) {
       if (generation.current === current) setError(error.message || 'No pudimos actualizar las firmas. Reintentá.');
-    } finally {
-      if (generation.current === current) { pending.current = false; setBusy(null); }
-    }
-  }
-
-  async function openSign() {
-    if (pending.current) return;
-    const current = generation.current;
-    readVersion.current += 1;
-    pending.current = true; setBusy('open'); setError(''); setNotice(''); setFallbackUrl('');
-    try {
-      // This also gives the current authorized project administrator access in GB Sign.
-      const result = await openSigningProject(projectId, { openWindow: () => window.open('', '_blank'), request: portalAdminRequest,
-        isCurrent: () => generation.current === current });
-      if (!result) return;
-      setState(previous => ({ documents: previous?.documents || [], ...previous, connected: true, url: result.url }));
-      if (!result.opened) setFallbackUrl(result.url);
-      setNotice('Proyecto listo en GB Sign.');
-    } catch (error: any) {
-      if (generation.current === current) setError(error.message || 'No pudimos abrir GB Sign. Reintentá.');
     } finally {
       if (generation.current === current) { pending.current = false; setBusy(null); }
     }
@@ -85,6 +67,11 @@ export function ProjectSigning({ projectId, search = '', providers = [] }: { pro
     } finally { if (generation.current === current) setDownloading(''); }
   }
 
-  return <ProjectSigningPanel state={state} documents={(state?.documents || []).filter(document => signingDocumentMatchesProvider(document, search, providers))}
-    busy={busy} downloading={downloading} error={error} notice={notice} onOpen={openSign} onRefresh={refresh} onDownload={download} fallbackUrl={fallbackUrl} />;
+  return <>
+    <ProjectSigningPanel state={state} documents={state?.documents || []} manualDocuments={manualDocuments} search={search} providers={providers}
+      busy={busy} downloading={downloading} error={error} notice={notice} onRefresh={refresh} onDownload={download}
+      onPrepare={canPrepare ? setPreparing : undefined} />
+    {preparing && <ProjectContractDialog projectId={projectId} document={preparing} providers={providers} onClose={() => setPreparing(null)}
+      onPrepared={async () => { if (scope.current !== projectId) return; await refresh(); if (scope.current === projectId) setNotice('Contrato disponible para firmar desde la cuenta de cada proveedor.'); }} />}
+  </>;
 }

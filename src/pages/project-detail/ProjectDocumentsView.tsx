@@ -16,7 +16,7 @@ export function ProjectDocumentsView({ documents, category, onCategoryChange, se
       <h2 className="text-base font-bold text-slate-900">Documentos</h2>
       {onUpload && <button type="button" onClick={onUpload}
         className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700">
-        <Upload className="h-4 w-4" />Subir documento
+        <Upload className="h-4 w-4" />{category === 'contratos' ? 'Cargar contrato' : 'Subir documento'}
       </button>}
     </header>
     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -39,7 +39,7 @@ export function ProjectDocumentsView({ documents, category, onCategoryChange, se
       </div>
     </div>
     {category === 'contratos' && signingSection}
-    {(filtered.length > 0 || category !== 'contratos' || !signingSection) && <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+    {(category !== 'contratos' || !signingSection) && <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
       <table className="w-full text-left text-sm">
         <thead className="border-b border-slate-200 bg-slate-50 text-xs text-slate-500"><tr>
           {['Documento', 'Proveedor', 'Fecha', 'Monto', ''].map(label => <th key={label} scope="col" className={cn('px-4 py-3 font-medium', (label === 'Monto' || !label) && 'text-right')}>{label || <span className="sr-only">Archivo</span>}</th>)}

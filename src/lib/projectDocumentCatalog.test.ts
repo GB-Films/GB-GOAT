@@ -40,11 +40,24 @@ test('the document view has exactly three quick categories and a supplier search
 });
 
 test('signature controls show progress and confirmation while preserving separate approval status and artifacts', () => {
-  const props = { state: { connected: true, documents: [] }, documents: [{ id: 'contract', title: 'Contrato', status: 'completed', declarationStatus: 'pending_review', artifactsReady: true, signatures: [] }], busy: null, downloading: '', error: '', notice: 'Firmas actualizadas.', onOpen() {}, onRefresh() {}, onDownload() {} };
+  const props = { state: { connected: true, documents: [] }, documents: [{ id: 'contract', title: 'Contrato', status: 'completed', declarationStatus: 'pending_review', artifactsReady: true, signatures: [] }], busy: null, downloading: '', error: '', notice: 'Firmas actualizadas.', onRefresh() {}, onDownload() {} };
   const html = renderToStaticMarkup(createElement(ProjectSigningPanel, props));
-  assert.match(html, /Abrir GB Sign/); assert.match(html, /Actualizar firmas/); assert.match(html, /Firmas actualizadas/);
+  assert.doesNotMatch(html, /Abrir GB Sign/); assert.match(html, /Actualizar firmas/); assert.match(html, /Firmas actualizadas/);
   assert.match(html, /PDF firmado/); assert.match(html, /Certificado/); assert.match(html, /Pendiente de aprobación/);
   assert.doesNotMatch(html, /Actualizar conexión|Actualizar estados/);
   const loading = renderToStaticMarkup(createElement(ProjectSigningPanel, { ...props, busy: 'refresh' }));
   assert.match(loading, /Actualizando…/); assert.match(loading, /disabled/);
+});
+
+test('contracts use one list: preparation replaces the uploaded row and keeps the canonical signing artifacts', () => {
+  const manualDocuments: CatalogDocument[] = [{ id: 'manual-1', sourceDocumentId: 'local-1', family: 'contratos', providerName: 'María', fileName: 'contrato.pdf', description: 'Contrato María', url: 'https://example.test/manual', amount: 0 }];
+  const base = { state: { documents: [] }, busy: null, downloading: '', error: '', notice: '', onRefresh() {}, onDownload() {}, onPrepare() {}, manualDocuments };
+  const draft = renderToStaticMarkup(createElement(ProjectSigningPanel, { ...base, documents: [] }));
+  assert.match(draft, /Preparar firma/);
+  const prepared = renderToStaticMarkup(createElement(ProjectSigningPanel, { ...base, documents: [{ id: 'sign-1', sourceDocumentId: 'local-1', title: 'Contrato María', status: 'completed', artifactsReady: true, signatures: [] }] }));
+  assert.equal(prepared.match(/<article/g)?.length, 1);
+  assert.doesNotMatch(prepared, /Preparar firma|https:\/\/example.test\/manual/);
+  assert.match(prepared, /PDF firmado/);
+  const readOnly = renderToStaticMarkup(createElement(ProjectSigningPanel, { ...base, documents: [], onPrepare: undefined }));
+  assert.doesNotMatch(readOnly, /Preparar firma/);
 });

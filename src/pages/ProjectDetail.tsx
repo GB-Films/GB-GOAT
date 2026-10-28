@@ -4564,6 +4564,8 @@ export default function ProjectDetail() {
       uploadedAt?: any;
       paymentDate?: string;
       expirationDate?: string;
+      sourceDocumentId?: string;
+      contentType?: string;
     }> = [];
 
     providerSaldosByArea.forEach((group) => {
@@ -4630,6 +4632,8 @@ export default function ProjectDetail() {
     manualProjectDocuments.forEach((document) => {
       docs.push({
         id: `manual-${document.id}`,
+        sourceDocumentId: document.id,
+        contentType: document.contentType,
         family: document.family || 'contratos',
         type: document.type || document.subtype || 'Documento',
         area: document.area || 'General',
@@ -8326,7 +8330,8 @@ export default function ProjectDetail() {
           <ProjectDocumentsView documents={projectDocuments} category={documentCategoryFilter} onCategoryChange={setDocumentCategoryFilter}
             search={documentSearch} onSearchChange={setDocumentSearch}
             onUpload={canUploadProjectDocuments ? () => setShowDocumentUploadModal(true) : undefined}
-            signingSection={id && canManageProjectSignatures ? <ProjectSigning projectId={id} search={documentSearch} providers={providers} /> : undefined} />
+            signingSection={id && canManageProjectSignatures ? <ProjectSigning projectId={id} search={documentSearch} providers={providers} manualDocuments={projectDocuments}
+              canPrepare={isProjectAdmin || profile?.role === 'ayudante_admin' || normalizeEmail(user?.email) === 'info@granbertafilms.com'} /> : undefined} />
         )}
 
         {activeTab === 'equipo' && (
