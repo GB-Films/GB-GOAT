@@ -61,6 +61,9 @@ import { ProjectCommercialSummary } from './project-detail/ProjectCommercialSumm
 import { ProjectSummaryMetrics } from './project-detail/ProjectSummaryMetrics';
 import { ProjectKeyContacts } from './project-detail/ProjectKeyContacts';
 import { ProjectSigning } from './project-detail/ProjectSigning';
+import { ProjectDocumentsView } from './project-detail/ProjectDocumentsView';
+import { ProjectDocumentUpload } from './project-detail/ProjectDocumentUpload';
+import { documentCategory, type DocumentCategory } from '../lib/projectDocumentCatalog';
 import { ProjectAdministration } from './project-detail/ProjectAdministration';
 import { readAuthorizedProject, readProjectCommercial } from '../lib/projectCommercial';
 import { splitProjectCommercial } from '../lib/projectCommercialFields';
@@ -135,16 +138,6 @@ const RESULT_INCIDENCES = [
   { id: 'margen', label: 'Margen' },
 ];
 
-const DOCUMENT_FAMILIES = [
-  { id: 'todos', label: 'Todos' },
-  { id: 'finanzas', label: 'Finanzas' },
-  { id: 'contratos', label: 'Contratos' },
-  { id: 'seguros', label: 'Seguros' },
-  { id: 'locaciones', label: 'Locaciones' },
-] as const;
-
-const MANUAL_DOCUMENT_FAMILIES = DOCUMENT_FAMILIES.filter((family) => family.id !== 'todos' && family.id !== 'finanzas');
-
 const DEFAULT_AREA_EXPENSE_SUBCATEGORY = 'Sin subcategoria';
 const DEFAULT_AREA_EXPENSE_SUBCATEGORY_LABEL = 'Subcategoria';
 
@@ -178,12 +171,6 @@ const AREA_EXPENSE_SORT_OPTIONS: Array<{ id: AreaExpenseSortKey; label: string }
   { id: 'amountAsc', label: 'Monto menor' },
   { id: 'created', label: 'Carga reciente' },
 ];
-
-const DOCUMENT_SUBTYPES: Record<string, string[]> = {
-  contratos: ['Contrato proveedor', 'Contrato talento / crew', 'Prestacion de servicios', 'Cesion de derechos', 'Release', 'Otro'],
-  seguros: ['Seguro tecnico / equipos', 'ART / accidentes personales', 'Responsabilidad civil', 'Seguro de locacion', 'Poliza / certificado', 'Otro'],
-  locaciones: ['Permiso de filmacion', 'Autorizacion de locacion', 'Condiciones de uso', 'Contacto / datos utiles', 'Otro'],
-};
 
 const BUDGET_AREAS = DEFAULT_BUDGET_CATEGORIES;
 
@@ -812,9 +799,7 @@ export default function ProjectDetail() {
   const [selectedPaymentBucketKey, setSelectedPaymentBucketKey] = useState<string | null>(null);
   const [expandedPaymentLineId, setExpandedPaymentLineId] = useState<string | null>(null);
   const [copiedPaymentLineId, setCopiedPaymentLineId] = useState<string | null>(null);
-  const [documentFamilyFilter, setDocumentFamilyFilter] = useState<'todos' | 'finanzas' | 'contratos' | 'seguros' | 'locaciones'>('todos');
-  const [documentTypeFilter, setDocumentTypeFilter] = useState<'all' | 'factura' | 'comprobante'>('all');
-  const [documentAreaFilter, setDocumentAreaFilter] = useState('all');
+  const [documentCategoryFilter, setDocumentCategoryFilter] = useState<DocumentCategory>('comprobantes');
   const [documentSearch, setDocumentSearch] = useState('');
   const [showDocumentUploadModal, setShowDocumentUploadModal] = useState(false);
   const [isUploadingProjectDocument, setIsUploadingProjectDocument] = useState(false);
@@ -2873,7 +2858,8 @@ export default function ProjectDetail() {
 
       await setDoc(docRef, payload);
       setManualProjectDocuments((current) => [{ id: docRef.id, ...payload, createdAt: new Date(), updatedAt: new Date() }, ...current]);
-      setDocumentFamilyFilter(family as any);
+      setDocumentCategoryFilter(documentCategory({ family, type: subtype }));
+      setDocumentSearch('');
       setShowDocumentUploadModal(false);
     } catch (error) {
       console.error('Error uploading project document:', error);
@@ -3887,6 +3873,8 @@ export default function ProjectDetail() {
   const canUploadProjectDocuments = isProjectAdmin || (
     isProductionLead && safeArray(userPermissions?.allowedTabs).includes('documentos')
   );
+  const canManageProjectSignatures = canUploadProjectDocuments || profile?.role === 'ayudante_admin'
+    || normalizeEmail(user?.email) === 'info@granbertafilms.com';
   const canSeeFullPayroll = isProjectAdmin || isProductionLead;
   const roleOptionsForCurrentUser = isProjectAdmin ? PROJECT_ADMIN_ROLE_OPTIONS : PRODUCTION_LEAD_ROLE_OPTIONS;
   const assignableAreaOptions = isProjectAdmin ? categories : safeArray(userPermissions?.allowedCategories);
@@ -4575,6 +4563,9 @@ export default function ProjectDetail() {
       source: string;
       uploadedAt?: any;
       paymentDate?: string;
+      expirationDate?: string;
+      sourceDocumentId?: string;
+      contentType?: string;
     }> = [];
 
     providerSaldosByArea.forEach((group) => {
@@ -4641,6 +4632,8 @@ export default function ProjectDetail() {
     manualProjectDocuments.forEach((document) => {
       docs.push({
         id: `manual-${document.id}`,
+        sourceDocumentId: document.id,
+        contentType: document.contentType,
         family: document.family || 'contratos',
         type: document.type || document.subtype || 'Documento',
         area: document.area || 'General',
@@ -4651,6 +4644,7 @@ export default function ProjectDetail() {
         url: document.url,
         amount: 0,
         source: document.expirationDate ? `Carga manual / vence ${document.expirationDate}` : 'Carga manual',
+        expirationDate: document.expirationDate,
         uploadedAt: document.createdAt,
       });
     });
@@ -4661,31 +4655,6 @@ export default function ProjectDetail() {
       return a.providerName.localeCompare(b.providerName, 'es');
     });
   }, [manualProjectDocuments, providerSaldosByArea]);
-
-  const filteredProjectDocuments = React.useMemo(() => {
-    const search = documentSearch.trim().toLowerCase();
-    return projectDocuments.filter((docItem) => {
-      const matchesFamily = documentFamilyFilter === 'todos' || docItem.family === documentFamilyFilter;
-      const matchesType = documentTypeFilter === 'all' || docItem.type === documentTypeFilter;
-      const matchesArea = documentAreaFilter === 'all' || docItem.area === documentAreaFilter;
-      const matchesSearch = !search
-        || docItem.providerName.toLowerCase().includes(search)
-        || docItem.description.toLowerCase().includes(search)
-        || docItem.fileName.toLowerCase().includes(search);
-
-      return matchesFamily && matchesType && matchesArea && matchesSearch;
-    });
-  }, [documentAreaFilter, documentFamilyFilter, documentSearch, documentTypeFilter, projectDocuments]);
-
-  const documentTotals = React.useMemo(() => ({
-    invoices: projectDocuments.filter((docItem) => docItem.type === 'factura').length,
-    receipts: projectDocuments.filter((docItem) => docItem.type === 'comprobante').length,
-    finances: projectDocuments.filter((docItem) => docItem.family === 'finanzas').length,
-    contracts: projectDocuments.filter((docItem) => docItem.family === 'contratos').length,
-    insurance: projectDocuments.filter((docItem) => docItem.family === 'seguros').length,
-    locations: projectDocuments.filter((docItem) => docItem.family === 'locaciones').length,
-    visible: filteredProjectDocuments.length,
-  }), [filteredProjectDocuments.length, projectDocuments]);
 
   const projectAreaProviderRows = React.useMemo(() => {
     const allowedCategories = canSeeFullPayroll ? categories : safeArray(userPermissions?.allowedCategories);
@@ -8358,184 +8327,11 @@ export default function ProjectDetail() {
         )}
 
         {activeTab === 'documentos' && (
-          <div className="space-y-4 pb-20">
-            {id && <ProjectSigning projectId={id} />}
-            <header className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-              <div>
-                <h2 className="text-base font-bold text-slate-900">Documentos</h2>
-              </div>
-              <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
-                {documentTotals.visible} documentos visibles
-              </div>
-              {canUploadProjectDocuments && (
-                <button
-                  type="button"
-                  onClick={() => setShowDocumentUploadModal(true)}
-                  className="px-4 py-2 bg-black text-white text-[10px] font-bold uppercase tracking-widest rounded flex items-center gap-2 hover:bg-slate-800 transition-all"
-                >
-                  <Upload className="w-3 h-3" />
-                  Subir documento
-                </button>
-              )}
-            </header>
-
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-2 p-1 bg-slate-100 rounded-xl">
-              {DOCUMENT_FAMILIES.map((family) => {
-                const count = family.id === 'todos'
-                  ? projectDocuments.length
-                  : projectDocuments.filter((docItem) => docItem.family === family.id).length;
-                const selected = documentFamilyFilter === family.id;
-                return (
-                  <button
-                    key={family.id}
-                    type="button"
-                    onClick={() => setDocumentFamilyFilter(family.id)}
-                    className={cn(
-                      "px-4 py-3 rounded-lg text-left transition-all",
-                      selected ? "bg-white shadow-sm text-slate-900" : "text-slate-400 hover:text-slate-700"
-                    )}
-                  >
-                    <div className="text-[10px] font-black uppercase tracking-widest">{family.label}</div>
-                    <div className="text-lg font-black mt-1">{count}</div>
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-              {[
-                { label: 'Facturas', value: documentTotals.invoices },
-                { label: 'Comprobantes', value: documentTotals.receipts },
-                { label: 'Contratos', value: documentTotals.contracts },
-                { label: 'Seguros / Locaciones', value: documentTotals.insurance + documentTotals.locations },
-              ].map((item) => (
-                <div key={item.label} className="bg-white p-4 rounded-xl border border-slate-200 shadow-[0_8px_22px_rgba(15,23,42,0.08)]">
-                  <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">{item.label}</div>
-                  <div className="text-lg font-bold text-slate-900">{item.value}</div>
-                </div>
-              ))}
-            </div>
-
-            <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 grid grid-cols-1 md:grid-cols-4 gap-3">
-              <div>
-                <label className="block text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Familia</label>
-                <select
-                  value={documentFamilyFilter}
-                  onChange={(event) => setDocumentFamilyFilter(event.target.value as any)}
-                  className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black"
-                >
-                  {DOCUMENT_FAMILIES.map((family) => (
-                    <option key={family.id} value={family.id}>{family.label}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Buscar</label>
-                <input
-                  value={documentSearch}
-                  onChange={(event) => setDocumentSearch(event.target.value)}
-                  placeholder="Proveedor, concepto o archivo"
-                  className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-100 rounded text-xs font-medium focus:outline-none focus:border-black"
-                />
-              </div>
-              <div>
-                <label className="block text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Tipo</label>
-                <select
-                  value={documentTypeFilter}
-                  onChange={(event) => setDocumentTypeFilter(event.target.value as any)}
-                  className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black"
-                >
-                  <option value="all">Todos</option>
-                  <option value="factura">Facturas</option>
-                  <option value="comprobante">Comprobantes</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Area</label>
-                <select
-                  value={documentAreaFilter}
-                  onChange={(event) => setDocumentAreaFilter(event.target.value)}
-                  className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-100 rounded text-xs font-bold focus:outline-none focus:border-black"
-                >
-                  <option value="all">Todas</option>
-                  {providerSaldosByArea.map((group) => (
-                    <option key={group.area} value={group.area}>{group.area}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-              <table className="w-full text-left">
-                <thead>
-                  <tr className="bg-slate-50 border-b border-slate-200">
-                    <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Familia</th>
-                    <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Tipo</th>
-                    <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Documento</th>
-                    <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Proveedor</th>
-                    <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Area</th>
-                    <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Monto</th>
-                    <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Origen</th>
-                    <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Archivo</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {filteredProjectDocuments.map((docItem) => (
-                    <tr key={docItem.id} className="hover:bg-slate-50/60 transition-colors">
-                      <td className="px-5 py-4">
-                        <span className="inline-flex px-2 py-1 rounded border border-slate-100 bg-slate-50 text-[9px] font-black uppercase tracking-widest text-slate-500">
-                          {DOCUMENT_FAMILIES.find((family) => family.id === docItem.family)?.label || docItem.family}
-                        </span>
-                      </td>
-                      <td className="px-5 py-4">
-                        <span className={cn(
-                          "inline-flex items-center gap-1 px-2 py-1 rounded border text-[9px] font-black uppercase tracking-widest",
-                          docItem.type === 'factura'
-                            ? "bg-emerald-50 border-emerald-100 text-emerald-700"
-                            : "bg-blue-50 border-blue-100 text-blue-700"
-                        )}>
-                          {docItem.type === 'factura' ? <FileText className="w-3 h-3" /> : <Paperclip className="w-3 h-3" />}
-                          {docItem.type}
-                        </span>
-                      </td>
-                      <td className="px-5 py-4 max-w-[260px]">
-                        <div className="text-xs font-bold text-slate-900 truncate">{docItem.fileName}</div>
-                        <div className="text-[10px] text-slate-400 truncate">{docItem.description}</div>
-                      </td>
-                      <td className="px-5 py-4 text-xs font-bold text-slate-700">{docItem.providerName}</td>
-                      <td className="px-5 py-4 text-xs text-slate-500">{docItem.area}</td>
-                      <td className="px-5 py-4 text-right text-xs font-bold text-slate-700">{docItem.amount > 0 ? `$${docItem.amount.toLocaleString()}` : '-'}</td>
-                      <td className="px-5 py-4 text-xs text-slate-500">{docItem.paymentDate ? `${docItem.source} / ${formatDate(docItem.paymentDate)}` : docItem.source}</td>
-                      <td className="px-5 py-4 text-right">
-                        <a
-                          href={docItem.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-2 px-3 py-1.5 rounded border border-slate-200 text-[10px] font-bold uppercase tracking-widest text-slate-600 hover:border-black hover:text-black"
-                        >
-                          Abrir
-                          <LinkIcon className="w-3 h-3" />
-                        </a>
-                      </td>
-                    </tr>
-                  ))}
-                  {filteredProjectDocuments.length === 0 && (
-                    <tr>
-                      <td colSpan={8} className="px-6 py-12 text-center text-[10px] font-bold uppercase text-slate-300 tracking-widest italic">
-                        {documentFamilyFilter === 'contratos'
-                          ? 'Todavia no hay contratos cargados en el proyecto'
-                          : documentFamilyFilter === 'seguros'
-                            ? 'Todavia no hay seguros cargados en el proyecto'
-                            : documentFamilyFilter === 'locaciones'
-                              ? 'Todavia no hay documentos de locaciones cargados'
-                              : 'No hay documentos que coincidan con los filtros'}
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
+          <ProjectDocumentsView documents={projectDocuments} category={documentCategoryFilter} onCategoryChange={setDocumentCategoryFilter}
+            search={documentSearch} onSearchChange={setDocumentSearch}
+            onUpload={canUploadProjectDocuments ? () => setShowDocumentUploadModal(true) : undefined}
+            signingSection={id && canManageProjectSignatures ? <ProjectSigning projectId={id} search={documentSearch} providers={providers} manualDocuments={projectDocuments}
+              canPrepare={isProjectAdmin || profile?.role === 'ayudante_admin' || normalizeEmail(user?.email) === 'info@granbertafilms.com'} /> : undefined} />
         )}
 
         {activeTab === 'equipo' && (
@@ -9190,101 +8986,9 @@ export default function ProjectDetail() {
           )))}
           onCashMovementDeleted={(movementId) => setCashMovements((current) => current.filter((movement) => movement.id !== movementId))}
         />
-        {showDocumentUploadModal && (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[260] flex items-center justify-center p-4">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden"
-            >
-              <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/30">
-                <div>
-                  <h2 className="text-xs font-bold uppercase tracking-widest text-slate-900 flex items-center gap-2">
-                    <Upload className="w-4 h-4" />
-                    Subir Documento
-                  </h2>
-                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">Contratos, seguros y locaciones</p>
-                </div>
-                <button onClick={() => setShowDocumentUploadModal(false)} className="text-slate-400 hover:text-black">
-                  <Plus className="w-5 h-5 rotate-45" />
-                </button>
-              </div>
-
-              <form onSubmit={uploadProjectDocument} className="p-6 space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Familia</label>
-                    <select name="family" defaultValue={documentFamilyFilter !== 'todos' && documentFamilyFilter !== 'finanzas' ? documentFamilyFilter : 'contratos'} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black">
-                      {MANUAL_DOCUMENT_FAMILIES.map((family) => (
-                        <option key={family.id} value={family.id}>{family.label}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Tipo</label>
-                    <select name="subtype" className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black">
-                      {[...DOCUMENT_SUBTYPES.contratos, ...DOCUMENT_SUBTYPES.seguros, ...DOCUMENT_SUBTYPES.locaciones]
-                        .filter((value, index, array) => array.indexOf(value) === index)
-                        .map((subtype) => (
-                          <option key={subtype} value={subtype}>{subtype}</option>
-                        ))}
-                    </select>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Titulo</label>
-                  <input name="title" className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black" placeholder="Ej: Poliza RC productora / Contrato director" />
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  <div>
-                    <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Proveedor</label>
-                    <select name="providerId" className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black">
-                      <option value="">Sin proveedor</option>
-                      {providers.map((provider) => (
-                        <option key={provider.id} value={provider.id}>{providerDisplayName(provider)}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Area</label>
-                    <select name="area" className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black">
-                      <option value="">General</option>
-                      {categories.map((area) => (
-                        <option key={area} value={area}>{area}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Vencimiento</label>
-                    <input name="expirationDate" type="date" className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black" />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Archivo</label>
-                  <input name="file" type="file" accept="application/pdf,image/jpeg,image/png,image/webp,.pdf,.jpg,.jpeg,.png,.webp" className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black" required />
-                </div>
-
-                <div>
-                  <label className="block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest">Notas</label>
-                  <textarea name="notes" rows={3} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black resize-none" placeholder="Observaciones, condiciones o datos utiles" />
-                </div>
-
-                <div className="flex justify-end gap-3 pt-2">
-                  <button type="button" onClick={() => setShowDocumentUploadModal(false)} className="px-5 py-3 text-[10px] font-bold uppercase tracking-widest text-slate-400 hover:text-black">
-                    Cancelar
-                  </button>
-                  <button disabled={isUploadingProjectDocument} type="submit" className="px-5 py-3 bg-black text-white rounded text-[10px] font-bold uppercase tracking-widest disabled:bg-slate-300">
-                    {isUploadingProjectDocument ? 'Subiendo...' : 'Subir documento'}
-                  </button>
-                </div>
-              </form>
-            </motion.div>
-          </div>
-        )}
+        {showDocumentUploadModal && <ProjectDocumentUpload initialCategory={documentCategoryFilter}
+          providers={providers.map(provider => ({ id: provider.id, label: providerDisplayName(provider) }))} areas={categories}
+          busy={isUploadingProjectDocument} onClose={() => setShowDocumentUploadModal(false)} onSubmit={uploadProjectDocument} />}
         {showEditProjectModal && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
             <motion.div 

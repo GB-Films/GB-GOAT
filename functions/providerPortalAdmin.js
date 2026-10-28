@@ -33,6 +33,8 @@ function createProviderPortalAdminHandler({
       "projectDocuments",
       "projectFile",
       "connectProject",
+      "projectContractSource",
+      "prepareProjectContract",
     ].includes(input.action);
     if (!global) {
       if (!projectAction)
@@ -56,6 +58,16 @@ function createProviderPortalAdminHandler({
           "permission-denied",
           "No administrás documentos de este proyecto.",
         );
+    }
+    if (['projectContractSource', 'prepareProjectContract'].includes(input.action)) {
+      const projectId = id(input.projectId);
+      if (!global) {
+        const p = (await db.doc(`projects/${projectId}`).get()).data();
+        const c = (await db.doc(`projects/${projectId}/collaborators/${actor.email}`).get()).data();
+        if (p?.createdBy !== actor.uid && c?.role !== 'admin') throw new HttpsError('permission-denied', 'Sólo administración puede preparar contratos para firma.');
+      }
+      if (input.action === 'projectContractSource') return sign.projectContractSource(projectId, id(input.documentId));
+      return sign.prepareProjectContract({ ...input, projectId, documentId: id(input.documentId) }, actor);
     }
     if (input.action === "projectFile") {
       if (input.source === "portal_declaration") {

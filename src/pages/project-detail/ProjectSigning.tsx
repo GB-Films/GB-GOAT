@@ -1,139 +1,77 @@
-import { useEffect, useState } from "react";
-import {
-  downloadPortalFile,
-  portalAdminRequest,
-} from "../../lib/providerPortal";
-const declarationLabels: Record<string, string> = {
-  pending_review: "Pendiente de aprobación",
-  active: "Vigente",
-  revoked: "Revocada",
-  rejected: "Rechazada",
-  pending_signature: "Pendiente de firma",
-  preparing: "Preparando documento",
-};
-export function ProjectSigning({ projectId }: { projectId: string }) {
-  const [state, setState] = useState<any>(null),
-    [error, setError] = useState(""),
-    [busy, setBusy] = useState(false);
-  async function load() {
+import { useEffect, useRef, useState } from 'react';
+import { downloadPortalFile, portalAdminRequest } from '../../lib/providerPortal';
+import type { CatalogDocument } from '../../lib/projectDocumentCatalog';
+import { ProjectContractDialog } from './ProjectContractDialog';
+import { ProjectSigningPanel, type ProjectSigningDocument, type ProjectSigningState } from './ProjectSigningPanel';
+
+export function ProjectSigning({ projectId, search = '', providers = [], manualDocuments = [], canPrepare = false }: { projectId: string; search?: string; providers?: any[]; manualDocuments?: CatalogDocument[]; canPrepare?: boolean }) {
+  const [state, setState] = useState<ProjectSigningState | null>(null);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [busy, setBusy] = useState<'refresh' | null>(null);
+  const [downloading, setDownloading] = useState('');
+  const [preparing, setPreparing] = useState<CatalogDocument | null>(null);
+  const generation = useRef(0);
+  const readVersion = useRef(0);
+  const pending = useRef(false);
+  const scope = useRef(projectId);
+  scope.current = projectId;
+
+  useEffect(() => {
+    const current = ++generation.current;
+    let polling = false;
+    setState(null); setError(''); setNotice(''); setPreparing(null); setDownloading(''); setBusy('refresh'); pending.current = false;
+    async function load(initial = false) {
+      if (polling || pending.current) return;
+      polling = true;
+      const version = ++readVersion.current;
+      try {
+        const next = await portalAdminRequest({ action: 'projectDocuments', projectId });
+        if (generation.current === current && readVersion.current === version) { setState(next); setError(''); }
+      } catch (error: any) {
+        if (generation.current === current && readVersion.current === version) setError(error.message || 'No pudimos consultar las firmas. Reintentá.');
+      } finally {
+        polling = false;
+        if (initial && generation.current === current && readVersion.current === version) setBusy(null);
+      }
+    }
+    void load(true);
+    const timer = window.setInterval(() => void load(), 30000);
+    return () => { generation.current += 1; window.clearInterval(timer); };
+  }, [projectId]);
+
+  async function refresh() {
+    if (pending.current || scope.current !== projectId) return;
+    const current = generation.current;
+    const version = ++readVersion.current;
+    pending.current = true; setBusy('refresh'); setError(''); setNotice('');
     try {
-      setState(
-        await portalAdminRequest({ action: "projectDocuments", projectId }),
-      );
-      setError("");
-    } catch (e: any) {
-      setError(e.message);
+      const next = await portalAdminRequest({ action: 'projectDocuments', projectId });
+      if (generation.current === current && readVersion.current === version) { setState(next); setNotice('Firmas actualizadas.'); }
+    } catch (error: any) {
+      if (generation.current === current) setError(error.message || 'No pudimos actualizar las firmas. Reintentá.');
+    } finally {
+      if (generation.current === current) { pending.current = false; setBusy(null); }
     }
   }
-  useEffect(() => {
-    void load();
-    const timer = window.setInterval(() => void load(), 30000);
-    return () => window.clearInterval(timer);
-  }, [projectId]);
-  return (
-    <section className="mb-5 rounded-2xl border border-slate-200 bg-white p-4">
-      <h2 className="font-bold">Contratos y firmas · GB Sign</h2>
-      {error && (
-        <p role="alert" className="mt-2 text-sm text-red-700">
-          {error}
-        </p>
-      )}
-      <p className="my-2 text-sm text-slate-600">
-        Prepará contratos y cesiones con los campos de firma de GB Sign. Los
-        firmantes también los encontrarán en su portal.
-      </p>
-      <button
-        disabled={busy}
-        className="rounded bg-slate-900 px-3 py-2 text-sm text-white"
-        onClick={async () => {
-          setBusy(true);
-          try {
-            await portalAdminRequest({ action: "connectProject", projectId });
-            await load();
-          } catch (e: any) {
-            setError(e.message);
-          } finally {
-            setBusy(false);
-          }
-        }}
-      >
-        {state?.connected
-          ? "Actualizar conexión"
-          : "Conectar proyecto con GB Sign"}
-      </button>
-      {state?.connected && (
-        <a
-          className="ml-4 text-sm underline"
-          href={state.url}
-          target="_blank"
-          rel="noreferrer"
-        >
-          Preparar documentos en GB Sign
-        </a>
-      )}
-      <button onClick={() => void load()} className="ml-4 text-sm underline">
-        Actualizar estados
-      </button>
-      {state?.documents.map((d: any) => (
-        <div key={d.id} className="mt-3 border-t pt-3 text-sm">
-          <strong>{d.title}</strong>
-          {d.declarationStatus && (
-            <span className="ml-2 text-xs text-slate-500">
-              Declaración:{" "}
-              {declarationLabels[d.declarationStatus] || d.declarationStatus}
-            </span>
-          )}
-          <span className="ml-3">
-            {d.status === "completed" && d.artifactsReady
-              ? "Firmado completo"
-              : d.status === "partially_signed"
-                ? "Parcialmente firmado"
-                : "Pendiente"}
-          </span>
-          <div className="mt-2 flex gap-3">
-            {(d.fileAvailable === false
-              ? []
-              : [
-                  "original",
-                  ...(d.artifactsReady ? ["signed", "certificate"] : []),
-                ]
-            ).map((artifact) => (
-              <button
-                key={artifact}
-                className="underline"
-                onClick={async () => {
-                  try {
-                    downloadPortalFile(
-                      await portalAdminRequest({
-                        action: "projectFile",
-                        projectId,
-                        documentId: d.id,
-                        source: d.source,
-                        artifact,
-                      }),
-                    );
-                  } catch (e: any) {
-                    setError(e.message);
-                  }
-                }}
-              >
-                {artifact === "original"
-                  ? "Original"
-                  : artifact === "signed"
-                    ? "PDF firmado"
-                    : "Evidencia"}
-              </button>
-            ))}
-          </div>
-          <ul className="mt-1 text-slate-600">
-            {d.signatures.map((s: any) => (
-              <li key={s.email}>
-                {s.email} · {s.status === "signed" ? "Firmó" : "Pendiente"}
-              </li>
-            ))}
-          </ul>
-        </div>
-      ))}
-    </section>
-  );
+
+  async function download(document: ProjectSigningDocument, artifact: string) {
+    if (downloading) return;
+    const current = generation.current;
+    setDownloading(`${document.source}:${document.id}:${artifact}`); setError('');
+    try {
+      const file = await portalAdminRequest({ action: 'projectFile', projectId, documentId: document.id, source: document.source, artifact });
+      if (generation.current === current) downloadPortalFile(file);
+    } catch (error: any) {
+      if (generation.current === current) setError(error.message || 'No pudimos descargar el archivo.');
+    } finally { if (generation.current === current) setDownloading(''); }
+  }
+
+  return <>
+    <ProjectSigningPanel state={state} documents={state?.documents || []} manualDocuments={manualDocuments} search={search} providers={providers}
+      busy={busy} downloading={downloading} error={error} notice={notice} onRefresh={refresh} onDownload={download}
+      onPrepare={canPrepare ? setPreparing : undefined} />
+    {preparing && <ProjectContractDialog projectId={projectId} document={preparing} providers={providers} onClose={() => setPreparing(null)}
+      onPrepared={async () => { if (scope.current !== projectId) return; await refresh(); if (scope.current === projectId) setNotice('Contrato disponible para firmar desde la cuenta de cada proveedor.'); }} />}
+  </>;
 }
