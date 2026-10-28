@@ -1,0 +1,52 @@
+.project-contracts {
+  container: project-contracts / inline-size;
+}
+
+/* Let individual groups wrap only when the panel actually runs out of room. */
+.contract-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+}
+.contract-title { flex: 1 0 100%; }
+.contract-contacts { flex: 1 1 140px; }
+.contract-actions {
+  flex: 0 1 auto;
+  max-width: 100%;
+  justify-content: flex-end;
+}
+.contract-actions > :is(button, a) {
+  flex-shrink: 0;
+  padding-inline: 8px;
+}
+
+/* Medium panels keep actions at the right, beside title and email together. */
+@container project-contracts (min-width: 42rem) {
+  .contract-list {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) max-content;
+    column-gap: 16px;
+  }
+  .contract-row {
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns: subgrid;
+    grid-template-areas: "heading actions" "contacts actions";
+    gap: 4px 16px;
+  }
+  .contract-title { grid-area: heading; }
+  .contract-contacts { grid-area: contacts; }
+  .contract-actions { grid-area: actions; flex-wrap: nowrap; }
+}
+
+/* Only roomy panels separate all three groups into a single row. */
+@container project-contracts (min-width: 64rem) {
+  .contract-list {
+    grid-template-columns: minmax(0, 1.2fr) minmax(140px, .8fr) max-content;
+  }
+  .contract-row {
+    grid-template-areas: "heading contacts actions";
+    column-gap: 16px;
+  }
+}
