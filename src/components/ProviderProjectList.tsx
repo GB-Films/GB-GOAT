@@ -1,4 +1,4 @@
-import { ChevronRight, ExternalLink } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
 import type { ExpenseInvoiceDocument } from '../lib/invoices';
 import { ProviderDocumentLinks } from './ProviderDocumentLinks';
 
@@ -73,7 +73,6 @@ export function ProviderProjectList({ projects, lines }: { projects: ProviderPro
             <Amounts {...project} />
           </summary>
           <div className="border-t border-slate-100">
-            <div className="flex justify-end px-3 py-1.5"><a href={`#/proyectos/${project.id}`} className="inline-flex items-center gap-1 text-[11px] text-blue-700 hover:underline">Abrir proyecto<ExternalLink aria-hidden="true" className="h-3 w-3" /></a></div>
             <div className="overflow-x-auto"><table className="w-full min-w-[700px] text-left text-xs">
               <thead className="border-b border-slate-100 bg-slate-50 text-[10px] font-medium text-slate-500"><tr>
                 <th className="px-3 py-2">Movimiento</th>{expenses.length > 1 && <><th className="px-3 py-2 text-right">Importe</th><th className="px-3 py-2 text-right">Pagado</th><th className="px-3 py-2 text-right">Saldo</th></>}<th className="px-3 py-2">Comprobantes</th>

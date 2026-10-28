@@ -31,7 +31,6 @@ test('una sola lista agrupa gastos, pagos y documentos bajo su proyecto sin repe
   assert.match(first, /Fecha prevista: 30\/10\/2026/);
   assert.equal((html.match(/href="https:\/\/example.test\/invoice"/g) || []).length, 1);
   assert.equal((html.match(/href="https:\/\/example.test\/payment"/g) || []).length, 1);
-  assert.match(html, /href="#\/proyectos\/one"/);
   assert.equal(JSON.stringify({ projects, lines }), before);
 });
 
