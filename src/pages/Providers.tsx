@@ -761,7 +761,7 @@ export default function Providers() {
         </>}
       />
 
-      {showDataExport && hasGlobalRole(profile?.role, PROVIDER_ACCESS_ROLES) && <ProviderDataExportDialog providers={providers} onClose={() => setShowDataExport(false)} onExport={async selected => { const { downloadProviderData } = await import('../lib/providerDataWorkbook'); await downloadProviderData(selected); }} />}
+      {showDataExport && hasGlobalRole(profile?.role, PROVIDER_ACCESS_ROLES) && <ProviderDataExportDialog providers={providers} onClose={() => setShowDataExport(false)} onExport={async (selected, format) => { const { downloadProviderData } = await import('../lib/providerDataWorkbook'); await downloadProviderData(selected, format); }} />}
 
       {false && generatedInviteLink && (
         <div className="bg-white rounded-xl border border-emerald-200 p-5 shadow-sm flex flex-col lg:flex-row gap-4 lg:items-center justify-between">

@@ -40,16 +40,25 @@ export async function buildProviderDataWorkbook(providers: any[], template: Arra
   return workbook;
 }
 
-export async function downloadProviderData(providers: any[]) {
+export type ProviderDataFormat = 'xlsx' | 'pdf';
+
+export async function downloadProviderData(providers: any[], format: ProviderDataFormat = 'xlsx') {
   const base = (import.meta as ImportMeta & { env?: { BASE_URL?: string } }).env?.BASE_URL || '/';
-  const response = await fetch(`${base}templates/proveedores-datos.xlsx`);
-  if (!response.ok) throw Error('No se pudo cargar el membrete.');
-  const workbook = await buildProviderDataWorkbook(providers, await response.arrayBuffer());
-  const bytes = new Uint8Array(await workbook.xlsx.writeBuffer());
-  const url = URL.createObjectURL(new Blob([bytes.buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+  let bytes: Uint8Array;
+  if (format === 'pdf') {
+    const [{ buildProviderDataPdf }, logo, font] = await Promise.all([import('./providerDataPdf'), fetch(`${base}gb-films-logo.png`), fetch(`${base}fonts/DejaVuSans.ttf`)]);
+    if (!logo.ok || !font.ok) throw Error('No se pudo cargar el membrete.');
+    bytes = await buildProviderDataPdf(providers, { logo: await logo.arrayBuffer(), font: await font.arrayBuffer() });
+  } else {
+    const response = await fetch(`${base}templates/proveedores-datos.xlsx`);
+    if (!response.ok) throw Error('No se pudo cargar el membrete.');
+    const workbook = await buildProviderDataWorkbook(providers, await response.arrayBuffer());
+    bytes = new Uint8Array(await workbook.xlsx.writeBuffer());
+  }
+  const url = URL.createObjectURL(new Blob([new Uint8Array(bytes).buffer], { type: format === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
   const link = document.createElement('a'); link.href = url;
   const today = new Date();
-  link.download = `Gran_Berta_Proveedores_${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}.xlsx`;
+  link.download = `Gran_Berta_Proveedores_${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}.${format}`;
   link.click();
   window.setTimeout(() => URL.revokeObjectURL(url), 60000);
 }

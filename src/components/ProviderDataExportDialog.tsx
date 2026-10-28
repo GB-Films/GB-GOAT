@@ -3,14 +3,16 @@ import { Download, Plus, Search, UserRound, X } from 'lucide-react';
 import { ProjectDialog } from '../pages/project-detail/ProjectDialog';
 import { isExportablePerson, missingProviderInsuranceData, providerExportName, providerPersonalAlias, searchExportProviders, selectedExportProviders } from '../lib/providerDataExport';
 import { inferLegacyIdentifiers } from '../lib/providerConstants';
+import type { ProviderDataFormat } from '../lib/providerDataWorkbook';
 
-export function ProviderDataExportDialog({ providers, onClose, onExport }: { providers: any[]; onClose: () => void; onExport: (providers: any[]) => Promise<void> }) {
+export function ProviderDataExportDialog({ providers, onClose, onExport }: { providers: any[]; onClose: () => void; onExport: (providers: any[], format: ProviderDataFormat) => Promise<void> }) {
   const [search, setSearch] = useState('');
   const [ids, setIds] = useState<string[]>([]);
   const [active, setActive] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [format, setFormat] = useState<ProviderDataFormat>('xlsx');
   const input = useRef<HTMLInputElement>(null);
   const results = useMemo(() => searchExportProviders(providers, search, ids), [providers, search, ids]);
   const selected = useMemo(() => selectedExportProviders(providers, ids), [providers, ids]);
@@ -50,8 +52,9 @@ export function ProviderDataExportDialog({ providers, onClose, onExport }: { pro
       {!!incomplete && <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">{incomplete} {incomplete === 1 ? 'persona tiene datos incompletos' : 'personas tienen datos incompletos'}. Quedarán señalados en la planilla.</p>}
       <p role="status" className="sr-only">{notice}</p>
       {error && <p role="alert" className="text-sm text-rose-700">{error}</p>}
-      <footer className="flex items-center justify-end gap-2 border-t border-slate-100 pt-4"><button type="button" disabled={busy} onClick={onClose} className="rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-600 disabled:opacity-40">Cerrar</button>
-        <button type="button" disabled={busy || !selected.length} onClick={async () => { setBusy(true); setError(''); try { await onExport(selected); setNotice('La planilla se descargó correctamente.'); } catch { setError('No se pudo generar la planilla. Volvé a intentar.'); } finally { setBusy(false); } }} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-40"><Download className="h-4 w-4"/>{busy ? 'Preparando planilla…' : `Exportar Excel${selected.length ? ` (${selected.length})` : ''}`}</button>
+      <footer className="flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 pt-4"><button type="button" disabled={busy} onClick={onClose} className="rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-600 disabled:opacity-40">Cerrar</button>
+        <select aria-label="Formato de descarga" disabled={busy} value={format} onChange={event => setFormat(event.target.value as ProviderDataFormat)} className="rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700"><option value="xlsx">Excel (.xlsx)</option><option value="pdf">PDF (.pdf)</option></select>
+        <button type="button" disabled={busy || !selected.length} onClick={async () => { setBusy(true); setError(''); try { await onExport(selected, format); setNotice('El archivo se descargó correctamente.'); } catch { setError('No se pudo generar el archivo. Volvé a intentar.'); } finally { setBusy(false); } }} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-40"><Download className="h-4 w-4"/>{busy ? 'Preparando archivo…' : `Descargar ${format === 'pdf' ? 'PDF' : 'Excel'}${selected.length ? ` (${selected.length})` : ''}`}</button>
       </footer>
     </div>
   </ProjectDialog>;
