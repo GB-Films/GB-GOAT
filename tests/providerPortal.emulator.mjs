@@ -231,7 +231,7 @@ try {
   assert.equal((await own({ action: 'companyState', providerId: 'company-representation' })).evidence.length, 2);
   for (const uid of ['own', 'admin']) {
     await assertFails(getDoc(doc(authContext(uid).firestore(), `providerPortalEvidence/${evidence[0].id}`)));
-    await assertFails(getBytes(ref(authContext(uid).storage(), `providerPortalPrivateEvidence/company-representation/own/${evidence[0].id}/original`)));
+    await assertFails(getBytes(ref(authContext(uid).storage(), `providerPortalUploads/privateEvidence/company-representation/own/${evidence[0].id}/original`)));
   }
   await db.doc('providerPortalUsers/other/memberships/company-representation').set({ email: 'other@example.test', status: 'needs_confirmation' });
   await assert.rejects(other({ action: 'evidenceFile', providerId: 'company-representation', evidenceId: evidence[0].id }), /acceso/);

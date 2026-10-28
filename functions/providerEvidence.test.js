@@ -17,7 +17,7 @@ test('los originales privados son inmutables e idempotentes, y el cliente no eli
   const second = await f.service.upload('company', actor, input, 'empresa');
   assert.equal(first.id, second.id); assert.equal(f.files.size, 1); assert.equal(f.records.size, 1);
   assert.equal(first.path, undefined);
-  assert([...f.files.keys()][0].startsWith('providerPortalPrivateEvidence/company/person/'));
+  assert([...f.files.keys()][0].startsWith('providerPortalUploads/privateEvidence/company/person/'));
   await assert.rejects(f.service.upload('company', actor, { ...input, file: { ...file, base64: Buffer.from('%PDF-diferente').toString('base64') } }, 'empresa'));
   await assert.rejects(f.service.upload('person', actor, input, 'persona'));
 });

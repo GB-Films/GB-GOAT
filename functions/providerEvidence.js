@@ -36,7 +36,7 @@ function createEvidenceStore({ db, bucket, timestamp }) {
       const bytes = evidenceBytes(input.file), sha256 = createHash('sha256').update(bytes).digest('hex');
       const evidenceId = hash({ providerId, uid: actor.uid, kind, attempt: id(input.attemptId) });
       const ref = db.doc(`providerPortalEvidence/${evidenceId}`);
-      const path = `providerPortalPrivateEvidence/${providerId}/${actor.uid}/${evidenceId}/original`;
+      const path = `providerPortalUploads/privateEvidence/${providerId}/${actor.uid}/${evidenceId}/original`;
       const record = { id: evidenceId, providerId, uid: actor.uid, kind, sha256, path, contentType: input.file.contentType, fileName: text(input.file.fileName, 140), size: bytes.length };
       const previous = (await ref.get()).data();
       if (previous && (previous.sha256 !== sha256 || previous.kind !== kind || previous.uid !== actor.uid)) fail('Ese intento corresponde a otro documento.');
@@ -53,7 +53,7 @@ function createEvidenceStore({ db, bucket, timestamp }) {
       if (records.some(r => r.uid !== actor.uid)) fail('Los respaldos deben pertenecer a tu cuenta y a esta ficha.');
       validateEvidenceGroups(records, kinds);
       for (const record of records) {
-        if (record.path !== `providerPortalPrivateEvidence/${providerId}/${actor.uid}/${record.id}/original`) fail('El respaldo no pertenece al alcance de esta presentación.');
+        if (record.path !== `providerPortalUploads/privateEvidence/${providerId}/${actor.uid}/${record.id}/original`) fail('El respaldo no pertenece al alcance de esta presentación.');
         const [bytes] = await bucket().file(record.path).download();
         if (createHash('sha256').update(bytes).digest('hex') !== record.sha256) fail('Un respaldo no coincide con el original guardado.');
       }
@@ -62,7 +62,7 @@ function createEvidenceStore({ db, bucket, timestamp }) {
     async read(providerId, evidenceId, actor, internal = false) {
       const record = await row(providerId, evidenceId);
       if (!internal && record.uid !== actor.uid) fail('No tenés acceso a este documento.');
-      const expected = `providerPortalPrivateEvidence/${providerId}/${record.uid}/${record.id}/original`;
+      const expected = `providerPortalUploads/privateEvidence/${providerId}/${record.uid}/${record.id}/original`;
       if (record.path !== expected) fail('Ruta de documento inválida.');
       const [bytes] = await bucket().file(expected).download();
       if (createHash('sha256').update(bytes).digest('hex') !== record.sha256) fail('El respaldo no coincide con su hash.');
