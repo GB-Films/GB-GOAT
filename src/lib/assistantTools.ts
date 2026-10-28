@@ -5,6 +5,7 @@ import {
   type AssistantCapabilities,
 } from './assistantCapabilities';
 import { listAssistantHelpTopics, searchAssistantHelp } from './assistantHelp';
+import { resolveResultIncidences } from './resultIncidences';
 import {
   findProjectByReference,
   type AssistantProjectFinance,
@@ -412,9 +413,10 @@ export const buildAssistantTools = ({
           imprevistos: 'Imprevistos',
           impuestos: 'Impuestos',
           financiacion: 'Financiación',
+          administracion: 'Indirectos',
           margen: 'Margen',
         };
-        const incidencias = Object.entries(context.meta.resultIncidences || {}).map(([id, value]) => ({
+        const incidencias = Object.entries(resolveResultIncidences(context.meta.resultIncidences)).map(([id, value]) => ({
           incidencia: incidenceLabels[id] || id,
           porcentaje: Number(value) || 0,
           monto: round2(Number(context.meta.budgetTotal || 0) * ((Number(value) || 0) / 100)),

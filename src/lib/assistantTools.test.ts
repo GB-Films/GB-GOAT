@@ -290,17 +290,18 @@ test('el Resultado calcula margen, incidencias y costos por área', async () => 
 
   assert.equal(result.venta, 10000);
   assert.equal(result.costosDirectos, 1550);
-  assert.equal(result.incidenciasDeGasto, 500);
-  assert.equal(result.costoTotal, 2050);
-  assert.equal(result.margenEstimado, 7950);
-  assert.equal(result.margen, 8950);
-  assert.equal(result.margenPorcentaje, 89.5);
+  assert.equal(result.incidenciasDeGasto, 1950);
+  assert.equal(result.costoTotal, 3500);
+  assert.equal(result.margenEstimado, 6500);
+  assert.equal(result.margen, 7500);
+  assert.equal(result.margenPorcentaje, 75);
   assert.deepEqual(result.costosPorArea, [
     { area: 'Arte', costo: 300 },
     { area: 'Vestuario', costo: 350 },
     { area: 'Locaciones', costo: 900 },
   ]);
   assert.ok(result.incidencias.some((incidence: any) => incidence.incidencia === 'Imprevistos' && incidence.monto === 500));
+  assert.ok(result.incidencias.some((incidence: any) => incidence.incidencia === 'Indirectos' && incidence.monto === 800));
 });
 
 test('los pagos próximos separan vencidos de los que vienen', async () => {
