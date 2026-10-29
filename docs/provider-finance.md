@@ -83,7 +83,7 @@ de otras áreas sin aplicaciones compartidas.
 
 ## Acceso y archivos
 
-Los registros financieros globales siguen restringidos a administradores. El equipo autorizado de un proyecto puede listar y descargar facturas, pagos y otros comprobantes vinculados a sus gastos mediante las acciones `projectDocuments` y `download` de la callable. Cada descarga comprueba el acceso vigente, la aplicación del registro y la referencia en la fila; devuelve el archivo original, sin las aplicaciones ni datos de otros proyectos y sin crear URLs públicas permanentes.
+Los registros financieros globales siguen restringidos a administradores. El equipo autorizado de un proyecto puede listar y descargar facturas, pagos y otros comprobantes vinculados a sus gastos mediante las acciones `projectDocuments` y `download` de la callable. Cada descarga comprueba el acceso vigente, la aplicación del registro y la referencia en la fila. La lista sólo devuelve metadatos de las aplicaciones del proyecto consultado; la descarga entrega el original vinculado, que puede abarcar varios proyectos, sin generar URLs públicas permanentes.
 Escritura de registros: exclusivamente el servidor. Las referencias del gasto
 son legibles por quienes ya tienen acceso a ese proyecto; no conceden acceso a
 documentos completos ni a otros proyectos. Los colaboradores conservan las
