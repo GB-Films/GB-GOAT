@@ -4,6 +4,7 @@ import { getPaymentTotal } from './projectFinance';
 import { getProviderExpenseDocuments, uniqueProviderDocuments } from './providerDocuments';
 import { financialDocumentsForExpense } from './providerFinancialRecords';
 import { isInternalBudgetEstimate } from './internalBudgetEstimate';
+import { providerFinanceRequest } from './providerFinance';
 export async function loadProviderDetail(provider: any, profile: any) {
 
   const projectsRef = collection(db, 'projects');
@@ -86,6 +87,18 @@ export async function loadProviderDetail(provider: any, profile: any) {
     areaSnap.docs.forEach((item) => pushLine({ id: item.id, ...item.data() }, 'Gestion por Areas'));
   }));
 
+  if (profile.role !== 'admin') await Promise.all(projects.map(async project => {
+    const references = lines.filter(line => line.projectId === project.id).flatMap(line => [
+      ...(line.item?.sharedInvoices || []).map((record: any) => record.id),
+      ...(line.item?.sharedReceipts || []).map((record: any) => record.id),
+      ...(line.item?.paymentHistory || []).map((payment: any) => payment.sharedRecordId),
+    ]).filter(Boolean);
+    const ids = [...new Set(references)];
+    for (let offset = 0; offset < ids.length; offset += 100) {
+      const response = await providerFinanceRequest({ action: 'projectDocuments', projectId: project.id, recordIds: ids.slice(offset, offset + 100) }) as { records: any[] };
+      sharedRecords.push(...response.records);
+    }
+  }));
   for (const line of lines) line.sharedDocuments = financialDocumentsForExpense(sharedRecords, line);
   const projectMap = new Map<string, any>();
   lines.forEach((line) => {

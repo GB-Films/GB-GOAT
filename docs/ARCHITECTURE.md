@@ -35,7 +35,7 @@ Cuando un área está activa, los reportes financieros toman sus gastos desde `a
 ## Política financiera
 
 - Un colaborador autorizado puede crear gastos en su alcance y anexar pagos o comprobantes.
-- El historial existente es inmutable para colaboradores.
+- El SDK de un colaborador no puede reescribir el historial. Puede corregir un pago propio desde la callable, con autor original, alcance vigente, versión abierta, saldo y auditoría comprobados en una transacción. Los pagos ajenos y las aplicaciones compartidas permanecen protegidos.
 - Corregir o eliminar pagos requiere administración del proyecto y auditoría en la misma operación. Sólo se puede afectar Caja General o la caja asignada a quien opera; la caja ajena permanece protegida. La identidad de una fila con historial financiero conserva su bloqueo. Si todos sus pagos fueron eliminados y no quedan movimientos de caja, un administrador puede borrar individualmente la fila guardando el documento anterior completo en la auditoría; los archivos originales se conservan.
 - Las devoluciones de caja nacen pendientes: sólo el administrador destinatario puede confirmar la recepción y entonces se reduce el saldo de la persona. El emisor puede cancelar una devolución pendiente, conservando el registro. Caja General muestra salidas netas, sin saldo inicial.
 - Los archivos financieros se crean dentro del alcance de la fila y no pueden reemplazarse o borrarse por un colaborador.

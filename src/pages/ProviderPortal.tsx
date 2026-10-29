@@ -143,8 +143,7 @@ export default function ProviderPortal() {
         declarationId: signing.documentId,
       });
       if (signing.declarationKind === 'profile') { setTab('Mis datos'); setProfileNotice(result.confirmation
-        ? result.status === 'pending_review' ? 'Datos confirmados y firma guardada. Las correcciones marcadas están pendientes de revisión.' : 'Datos confirmados y firma guardada.'
-        : result.status === 'pending_review' ? 'Cambios firmados y guardados. Los datos marcados están pendientes de revisión.' : 'Cambios guardados.'); } }
+        ? 'Datos confirmados, firma guardada y cambios aplicados.' : 'Cambios firmados y aplicados.'); } }
     if (await load()) setDraft({});
   }
   async function prepare(action: string, input: any) {
@@ -580,16 +579,14 @@ export default function ProviderPortal() {
                   : d.kind === "third_party"
                     ? "Quién factura y cobra por mí"
                     : "Representación"}{" "}
-                · {status[d.status] || d.status}
+                · {d.kind === 'profile' && d.status === 'pending_review' ? 'Firmado · completar aplicación' : status[d.status] || d.status}
               </p>
               {d.content.changes &&
                 Object.entries(d.content.changes).map(([key, c]: any) => (
                   <p key={key} className="mt-1 text-sm">
                     {labels[key] || key}: {c.before || "Sin dato"} →{" "}
                     {c.after || "Sin dato"}{" "}
-                    {c.critical
-                      ? "· Requiere revisión"
-                      : "· Aplicación tras firma"}
+                    {d.kind === 'profile' ? '· Aplicación con tu firma' : c.critical ? '· Requiere revisión' : '· Aplicación tras firma'}
                   </p>
                 ))}
               {d.kind === "third_party" && (
@@ -626,7 +623,7 @@ export default function ProviderPortal() {
                   )}
                 </>
               )}
-              {d.owned && d.status === "pending_signature" && (
+              {d.owned && (d.status === "pending_signature" || d.kind === 'profile' && d.status === 'pending_review') && (
                 <button
                   disabled={busy}
                   className="mt-2 text-sm underline"
@@ -654,7 +651,7 @@ export default function ProviderPortal() {
       {tab === "Mis datos" && view && (
         <>
           {view.provider.type === 'empresa' && <div key={providerId}><CompanyRepresentationForm providerId={providerId} email={user?.email || ''} busy={busy} onPrepare={input => prepare('prepareRepresentation', input)} /></div>}
-          <div key={providerId}><ProviderProfileForm provider={view.provider} declarations={view.declarations} labels={labels} draft={draft} onChange={setDraft} busy={busy} notice={profileNotice} confirmationRequired={view.profileConfirmation?.status === 'required'} accessEmail={user?.email || ''} onVerifyAccount={email => verifyProviderGoogleAccount(providerId, email)} onPrepare={input => prepare('prepareProfile', input)} /></div>
+          <div key={providerId}><ProviderProfileForm provider={view.provider} declarations={view.declarations} labels={labels} draft={draft} onChange={setDraft} busy={busy} notice={profileNotice} confirmationRequired={view.profileConfirmation?.status === 'required'} accessEmail={user?.email || ''} onVerifyAccount={email => verifyProviderGoogleAccount(providerId, email)} onPrepare={input => prepare('prepareProfile', input)} onApplySigned={id => run(async () => { await portalRequest({ action: 'completeDeclaration', providerId, declarationId: id }); setProfileNotice('Datos firmados y aplicados.'); if (await load()) setDraft({}); })} /></div>
           {view.provider.type === 'persona' && <ThirdPartyAuthorizationForm provider={view.provider} works={view.works} party={party} onChange={setParty} busy={busy}
             recovered={!!view.thirdPartyDefaults || !!view.thirdPartyIntake}
             onSave={async input => { await portalRequest({ action: 'saveThirdPartyDetails', providerId, ...input }); await load(); }}

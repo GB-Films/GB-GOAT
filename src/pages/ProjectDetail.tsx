@@ -3005,7 +3005,7 @@ export default function ProjectDetail() {
   };
 
   const deletePaymentFromSelectedItem = async (paymentIndex: number) => {
-    if (!id || !selectedItemForPayment) return;
+    if (!id || !selectedItemForPayment || !isProjectAdmin) return;
     const collectionName: PaymentCollection = selectedItemForPayment.__paymentCollection || paymentType;
     if (!canManagePaymentForItem(selectedItemForPayment, collectionName)) return;
     if (collectionName === 'areaExpenses' && !isProjectAdmin && selectedItemForPayment.paymentLocked !== true) {
@@ -3912,7 +3912,8 @@ export default function ProjectDetail() {
   };
   const canEditPaymentRecord = (payment?: Payment | null) => {
     if (!payment || payment.sharedRecordId) return false;
-    return canEditExistingPayment(isProjectAdmin) && canChangePaymentCash(payment, currentUserEmail,
+    return (isProjectAdmin || canManagePaymentForItem(selectedItemForPayment, selectedItemForPayment?.__paymentCollection || paymentType))
+      && canEditExistingPayment(isProjectAdmin, payment, user?.uid || '', currentUserEmail) && canChangePaymentCash(payment, currentUserEmail,
       cashMovements.find(movement => movement.id === payment.cashMovementId));
   };
   const canUploadAreaFiles = (area?: string | null, subcategory?: string | null) => canEditAreaSubcategory(area, subcategory);
@@ -8381,6 +8382,7 @@ export default function ProjectDetail() {
           paymentType={paymentType}
           isDeletingPayment={isDeletingPayment}
           canEditExistingPayments={isProjectAdmin}
+          canCorrectOwnPayments={!isProjectAdmin && canManagePaymentForItem(selectedItemForPayment, selectedItemForPayment?.__paymentCollection || paymentType)}
           currentUserEmail={currentUserEmail}
           currentUserId={user?.uid || ''}
           currentUserName={currentUserName}

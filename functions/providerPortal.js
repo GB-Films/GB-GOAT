@@ -1,6 +1,6 @@
 const { HttpsError } = require("firebase-functions/v2/https");
 const M = require("./providerPortalModel");
-const { confirmationContent, assertConfirmationUnchanged, confirmationState } = require('./providerProfileConfirmation');
+const { confirmationContent, confirmationState } = require('./providerProfileConfirmation');
 const { createAccountChoiceService } = require('./providerAccountChoice');
 const { createTeamOnboarding } = require('./teamOnboarding');
 const { hasTeamWorkAccess } = require('./teamWorkAccess');
@@ -9,6 +9,7 @@ const { activatePersonalMembership, attachVerifiedIntakeMembership } = require('
 const { COMPANY_EVIDENCE } = require('./providerEvidence');
 const { companyRepresentation } = require('./providerRepresentation');
 const { thirdPartyDeclaration, thirdPartyDetails } = require('./providerThirdPartyDeclaration');
+const { applySignedProviderProfile } = require('./signedProviderProfile');
 const { fail, text, email, id, list, hash } = M;
 const internalRoles = [
   "admin",
@@ -46,6 +47,7 @@ function createProviderPortalHandler({
   readFile,
   clock = () => new Date(),
   verifyGoogleToken,
+  findAccountByUid,
 }) {
   const accountChoices = createAccountChoiceService({ db, timestamp, clock, verifyGoogleToken });
   const teamOnboarding = createTeamOnboarding({ db, timestamp, clock });
@@ -146,11 +148,18 @@ function createProviderPortalHandler({
       });
       return syncDeclaration(ref, actor);
     }
-    if (decl.status !== "pending_signature") return decl;
+    const applicable = value => value.status === 'pending_signature' || value.kind === 'profile' && value.status === 'pending_review';
+    if (!applicable(decl)) return decl;
     const proof = await sign.verify(decl.signing, actor, decl.contentHash);
     if (!proof.complete)
       fail("Falta completar la firma y el PDF de evidencia.");
     if (decl.content.signerDni && proof.signerDni !== decl.content.signerDni) fail('El DNI de la firma no coincide con el DNI declarado. Prepará una declaración con los datos correctos.');
+    let selectedAccount;
+    if (decl.kind === 'profile' && decl.content.accountChoice?.changesIdentity) {
+      if (!findAccountByUid) fail('No está disponible la comprobación de la cuenta elegida.');
+      try { selectedAccount = await findAccountByUid(decl.content.accountChoice.selected.uid); }
+      catch { fail('No pudimos comprobar la cuenta elegida. Verificala antes de aplicar.'); }
+    }
     return db.runTransaction(async (tx) => {
       const current = (await tx.get(ref)).data();
       const providerRef = db.doc(`providers/${decl.providerId}`);
@@ -159,7 +168,8 @@ function createProviderPortalHandler({
         `providerPortalUsers/${actor.uid}/memberships/${decl.providerId}`,
       );
       const membership = (await tx.get(membershipRef)).data();
-      if (current.status !== "pending_signature") return current;
+      if (!applicable(current)) return current;
+      if (current.contentHash !== decl.contentHash) fail('La declaración cambió mientras comprobabas la firma.');
       if (
         !membership ||
         !["active", "needs_confirmation"].includes(membership.status) || membership.email !== actor.email
@@ -171,24 +181,10 @@ function createProviderPortalHandler({
         status = 'pending_review';
       }
       if (decl.kind === "profile") {
-        if (decl.content.confirmation) assertConfirmationUnchanged(provider, decl.content.confirmation);
-        if (decl.content.accountChoice && email(provider.portalAccessEmail || provider.email) !== decl.content.accountChoice.previousAccessEmail)
-          fail('Cambió la cuenta de acceso mientras firmabas. Prepará una nueva confirmación.');
-        for (const [key, change] of Object.entries(decl.content.changes)) {
-          if (String(provider[key] ?? "") !== change.before)
-            fail(
-              "Los datos cambiaron mientras firmabas. Prepará una nueva declaración.",
-            );
-          if (!change.critical) updates[key] = change.after;
-        }
-        if (Object.keys(updates).length)
-          tx.update(providerRef, {
-            ...updates,
-            portalRevision: Number(provider.portalRevision || 0) + 1,
-          });
-        status = Object.values(decl.content.changes).some((c) => c.critical) || decl.content.accountChoice?.changesIdentity
-          ? "pending_review"
-          : "applied";
+        if (membership.status !== 'active') throw new HttpsError('permission-denied', 'La cuenta aprobada ya no está activa para esta ficha.');
+        const application = await applySignedProviderProfile({ db, tx, ref, declaration: current, providerRef, provider, membership, actor, selectedAccount, timestamp });
+        status = 'applied';
+        tx.update(ref, application);
       }
       if (decl.kind === "third_party") status = "pending_review";
       const result = { ...current, status, proof, signedAt: timestamp() };
@@ -196,7 +192,7 @@ function createProviderPortalHandler({
         status,
         proof,
         signedAt: timestamp(),
-        commonApplied: Object.keys(updates),
+        ...(decl.kind !== 'profile' ? { commonApplied: Object.keys(updates) } : {}),
       });
       return result;
     });
@@ -456,9 +452,10 @@ function createProviderPortalHandler({
       }
       if (kind === "profile") {
         content = {
+          application: 'signed_immediate',
           changes: M.ownAccountProfileChanges(provider, input.changes, input.ownAccountConfirmed, input.confirmProfile === true),
           terms:
-            "Declaro que los cambios detallados son verídicos y solicito su uso administrativo desde su entrada en vigencia. CUIT, identidad y cuenta bancaria requieren revisión.",
+            "Declaro que los cambios detallados son verídicos y autorizo su aplicación al completar la firma desde mi cuenta Google aprobada. No requieren una aprobación administrativa posterior.",
         };
         if (input.confirmProfile === true) {
           content.accountChoice = await accountChoices.resolve(providerId, actor, provider, input);

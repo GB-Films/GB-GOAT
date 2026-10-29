@@ -20,7 +20,7 @@ function confirmationContent(provider, actor, changes, input, accountChoice) {
   const selectedEmail = accountChoice?.selected.email || actor.email;
   return {
     version: VERSION, before, profile, accessEmail: actor.email,
-    terms: `Declaro que revisé los datos detallados en este documento y que son correctos. Confirmo que controlo personalmente la cuenta Google ${selectedEmail} y la elijo para gestionar esta ficha.${selectedEmail !== actor.email ? ` También verifiqué esa cuenta mediante un inicio de sesión con Google. Firmo esta solicitud con ${actor.email}; el cambio de cuenta requiere aprobación administrativa.` : ''} ${profile.type === 'empresa' ? 'La cuenta bancaria informada pertenece a la empresa identificada. Esta confirmación de datos no otorga facultades de representación; esas facultades se declaran y revisan por separado.' : 'La cuenta bancaria informada me pertenece. Si otra persona factura y cobra por mis trabajos, debo identificarla y autorizarla por separado para los trabajos correspondientes.'} Las correcciones de identidad, correo de acceso, CUIT y cuenta bancaria quedan sujetas a aprobación administrativa. Esta declaración no es una autorización de cobro por un tercero ni un recibo de pago.`,
+    terms: `Declaro que revisé los datos detallados en este documento y que son correctos. Confirmo que controlo personalmente la cuenta Google ${selectedEmail} y la elijo para gestionar esta ficha.${selectedEmail !== actor.email ? ` También verifiqué esa cuenta mediante un inicio de sesión con Google. Firmo esta solicitud con mi cuenta aprobada ${actor.email} y autorizo el cambio de acceso.` : ''} ${profile.type === 'empresa' ? 'La cuenta bancaria informada pertenece a la empresa identificada. Esta confirmación de datos no otorga facultades de representación; esas facultades se declaran y revisan por separado.' : 'La cuenta bancaria informada me pertenece. Si otra persona factura y cobra por mis trabajos, debo identificarla y autorizarla por separado para los trabajos correspondientes.'} Los cambios declarados se aplican al completar mi firma, sin aprobación administrativa posterior. Esta declaración no es una autorización de cobro por un tercero ni un recibo de pago.`,
   };
 }
 function assertConfirmationUnchanged(provider, confirmation) {
@@ -34,7 +34,7 @@ function confirmationState(provider, membership, actor, declarations) {
     const c = declaration.content?.confirmation;
     const signedByActor = declaration.actor?.uid === actor.uid && declaration.actor?.email === actor.email && c?.accessEmail === actor.email;
     const transferred = declaration.accountChoiceApplied?.selected?.uid === actor.uid && declaration.accountChoiceApplied?.selected?.email === actor.email
-      && declaration.review?.decision === 'approved' && declaration.content?.accountChoice?.selected.uid === actor.uid && declaration.content.accountChoice.selected.email === actor.email;
+      && (declaration.review?.decision === 'approved' || declaration.accountChoiceApplied.authority === 'signed_verified_accounts') && declaration.content?.accountChoice?.selected.uid === actor.uid && declaration.content.accountChoice.selected.email === actor.email;
     if (declaration.kind !== 'profile' || c?.version !== VERSION || (!signedByActor && !transferred) || !declaration.proof?.complete) continue;
     if (declaration.status === 'applied' && current === M.hash(c.profile)) confirmed = { status: 'confirmed', declarationId: declaration.id };
     if (declaration.status === 'pending_review') {

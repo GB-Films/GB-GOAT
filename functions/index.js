@@ -17,6 +17,7 @@ exports.createCashSubdelivery = require('./cashSubdeliveryEntrypoint').createCas
 exports.manageProviderFinance = onCall({ timeoutSeconds: 60, maxInstances: 2 }, createProviderFinanceHandler({
   db,
   timestamp: () => admin.firestore.FieldValue.serverTimestamp(),
+  verifyPaymentReceipt: (...args) => require('./paymentReceiptVerification').createPaymentReceiptVerifier(admin.storage().bucket())(...args),
   verifyFile: async (providerId, recordId, input, options = {}) => {
     const prefix = `providerFinance/${providerId}/${recordId}/`;
     if (typeof input.path !== 'string' || !input.path.startsWith(prefix)

@@ -134,5 +134,6 @@ export const canEditProjectSubcategory = (
   );
 };
 
-export const canEditExistingPayment = (isProjectAdmin: boolean) => isProjectAdmin;
+export const canEditExistingPayment = (isProjectAdmin: boolean, payment?: { id?: string; sharedRecordId?: string; createdBy?: string; createdByEmail?: string }, uid = '', email = '') =>
+  isProjectAdmin || Boolean(payment?.id && !payment.sharedRecordId && uid && email && payment.createdBy === uid && payment.createdByEmail === email);
 

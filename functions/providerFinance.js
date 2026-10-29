@@ -3,6 +3,8 @@ const { isInternalBudgetEstimate } = require('./internalBudgetEstimate');
 const { createHash } = require('node:crypto');
 const { HttpsError } = require('firebase-functions/v2/https');
 const { FieldValue } = require('firebase-admin/firestore');
+const { projectFinanceAccess, linkedAllocation } = require('./projectFinanceAccess');
+const { createOwnPaymentCorrection } = require('./ownPaymentCorrection');
 
 const fail = message => { throw new HttpsError('failed-precondition', message); };
 const text = (value, max = 500) => String(value || '').trim().slice(0, max);
@@ -85,19 +87,53 @@ function normalizeRecord(input) {
   return result;
 }
 
-function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, clock=()=>new Date() }) {
+function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, verifyPaymentReceipt, clock=()=>new Date() }) {
   return async request => {
     if (!request.auth?.uid || !request.auth.token?.email) throw new HttpsError('unauthenticated', 'Iniciá sesión.');
     const user = await db.doc(`users/${request.auth.uid}`).get();
-    if (request.auth.token.email !== 'info@granbertafilms.com' && (user.data()?.role !== 'admin' || !require('./teamWorkAccess').hasTeamWorkAccess(user.data()))) throw new HttpsError('permission-denied', 'Sólo administradores pueden registrar operaciones compartidas.');
     const input = request.data || {};
+    const actor = { uid: request.auth.uid, email: String(request.auth.token.email).trim().toLowerCase() };
+    const admin = actor.email === 'info@granbertafilms.com' || user.data()?.role === 'admin' && require('./teamWorkAccess').hasTeamWorkAccess(user.data());
+    if (input.action === 'correctOwnPayment') {
+      if (request.auth.token.email_verified !== true) throw new HttpsError('permission-denied', 'Verificá tu correo.');
+      return createOwnPaymentCorrection({ db, timestamp, verifyPaymentReceipt })(actor, input);
+    }
+    if (input.action === 'projectDocuments') {
+      if (request.auth.token.email_verified !== true) throw new HttpsError('permission-denied', 'Verificá tu correo.');
+      const projectId = id(input.projectId);
+      await projectFinanceAccess({ db, actor, projectId });
+      if (!Array.isArray(input.recordIds) || input.recordIds.length > 100) fail('Consultá hasta 100 comprobantes por vez.');
+      const ids = [...new Set(input.recordIds.map(id))];
+      const records = await Promise.all(ids.map(async recordId => {
+        const record = { ...(await db.doc(`providerFinancialRecords/${recordId}`).get()).data(), id: recordId };
+        if (record.status !== 'active' || !record.file) return null;
+        const allocations = list(record.allocations).filter(row => row.projectId === projectId);
+        const linked = await Promise.all(allocations.map(async row => ['areaExpenses', 'budgetItems'].includes(row.collectionName)
+          && linkedAllocation(record, projectId, row.itemId, row.collectionName,
+            (await db.doc(`projects/${projectId}/${row.collectionName}/${id(row.itemId)}`).get()).data())));
+        if (!linked.some(Boolean)) throw new HttpsError('permission-denied', 'Comprobante ajeno al proyecto.');
+        return { id: recordId, kind: record.kind, status: record.status, number: record.number || '',
+          file: { fileName: record.file.fileName }, allocations: allocations.filter((_, index) => linked[index]).map(row => ({ projectId, collectionName: row.collectionName, itemId: row.itemId })) };
+      }));
+      return { records: records.filter(Boolean) };
+    }
+    if (!admin && input.action !== 'download') throw new HttpsError('permission-denied', 'Sólo administradores pueden registrar operaciones compartidas.');
     const recordId = id(input.id);
     const recordRef = db.doc(`providerFinancialRecords/${recordId}`);
-    const actor = { uid: request.auth.uid, email: request.auth.token.email };
     const now = timestamp();
     if (input.action === 'download') {
       const snapshot = await recordRef.get();
-      const file = snapshot.data()?.file;
+      const record = { ...snapshot.data(), id: recordId };
+      if (!admin) {
+        if (request.auth.token.email_verified !== true) throw new HttpsError('permission-denied', 'Verificá tu correo.');
+        const projectId = id(input.projectId), itemId = id(input.itemId), collectionName = input.collectionName;
+        if (!['areaExpenses', 'budgetItems'].includes(collectionName)) fail('Gasto inválido.');
+        await projectFinanceAccess({ db, actor, projectId });
+        const expense = (await db.doc(`projects/${projectId}/${collectionName}/${itemId}`).get()).data();
+        if (record.status !== 'active' || !linkedAllocation(record, projectId, itemId, collectionName, expense))
+          throw new HttpsError('permission-denied', 'Comprobante ajeno o retirado del proyecto.');
+      }
+      const file = record.file;
       if (!file || !readFile) fail('El registro no tiene un archivo descargable.');
       return { fileName: file.fileName, contentType: file.contentType, base64: await readFile(file) };
     }

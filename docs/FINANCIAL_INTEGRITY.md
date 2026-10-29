@@ -18,6 +18,8 @@ The September 2026 incident showed that one paid area expense could be repurpose
 
 ## Route review
 
+Collaborators can correct their own ordinary area payments through the callable, which checks the original UID/email, current area permissions, opened version, expense and cash balances, and an immutable before/after audit in one transaction. Other authors' payments and shared applications stay protected. Browser SDK access still cannot rewrite payment history; changing the cash source or deleting payments retains the administrative flow.
+
 | Route | Protection |
 | --- | --- |
 | Area and main budget row edits | Transaction and paid identity check; server rule for every role |

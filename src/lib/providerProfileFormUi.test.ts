@@ -11,7 +11,8 @@ test('el formulario conserva valores pendientes y sustituye el titular manual po
     declarations: [{ id: 'd', kind: 'profile', owned: true, status: 'pending_review', signedAt: '2026-10-28', content: { changes: { dni: { critical: true, after: '12345678' } } } }],
   }));
   assert(html.includes('value="12345678"'));
-  assert(html.includes('Pendiente de revisión'));
+  assert(html.includes('Firmado · pendiente de aplicación'));
+  assert(html.includes('No necesitan aprobación administrativa'));
   assert(html.includes('Soy titular de la cuenta provista'));
   assert(!html.includes('Titular manual'));
 });

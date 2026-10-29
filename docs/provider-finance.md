@@ -83,7 +83,7 @@ de otras áreas sin aplicaciones compartidas.
 
 ## Acceso y archivos
 
-Registros globales y archivos compartidos: sólo administradores globales.
+Los registros financieros globales siguen restringidos a administradores. El equipo autorizado de un proyecto puede listar y descargar facturas, pagos y otros comprobantes vinculados a sus gastos mediante las acciones `projectDocuments` y `download` de la callable. Cada descarga comprueba el acceso vigente, la aplicación del registro y la referencia en la fila. La lista sólo devuelve metadatos de las aplicaciones del proyecto consultado; la descarga entrega el original vinculado, que puede abarcar varios proyectos, sin generar URLs públicas permanentes.
 Escritura de registros: exclusivamente el servidor. Las referencias del gasto
 son legibles por quienes ya tienen acceso a ese proyecto; no conceden acceso a
 documentos completos ni a otros proyectos. Los colaboradores conservan las
@@ -94,8 +94,10 @@ se puede reescribir un pago compartido desde la fila, aunque sea admin.
 Storage `providerFinance/{providerId}/{operationId}/{file}` acepta PDF, JPG, PNG o
 WEBP, máximo 2 MB. El cliente calcula SHA-256 para recuperar una carga interrumpida.
 Después de confirmar el registro, el archivo no se sobrescribe ni elimina. Se
-descarga mediante la callable, que verifica nuevamente el rol administrador y
+descarga mediante la callable, que verifica administración o el vínculo autorizado con el proyecto y
 entrega los bytes; no se distribuyen tokens de descarga ni se amplía CORS del bucket.
+
+Un colaborador con permiso de edición en el área puede corregir importe, fecha, detalle y adjunto de un pago propio mediante `correctOwnPayment`. El servidor verifica UID y correo del autor, saldo vivo del gasto y de la caja asignada, concurrencia y archivo del mismo pago. Mantiene el origen de caja y la identidad del pago, guarda el antes/después y conserva los demás pagos. No permite corregir pagos ajenos, aplicaciones compartidas, alterar reintegros ni borrar pagos; los cambios administrativos de origen de caja y anulaciones conservan su circuito.
 
 ## Verificación y publicación
 

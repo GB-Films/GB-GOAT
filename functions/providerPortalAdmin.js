@@ -2,7 +2,7 @@ const { HttpsError } = require("firebase-functions/v2/https");
 const { createTeamOnboarding } = require('./teamOnboarding');
 const { hasTeamWorkAccess } = require('./teamWorkAccess');
 const { checkCompanyReview } = require('./providerRepresentation');
-const { checkAccountReview } = require('./providerAccountChoice');
+
 const { COMPANY_EVIDENCE, LEGACY_COMPANY_EVIDENCE } = require('./providerEvidence');
 const { checkThirdPartyReview, thirdPartyIsCurrent, THIRD_PARTY_VERSIONS } = require('./providerThirdPartyDeclaration');
 const {
@@ -22,7 +22,6 @@ function createProviderPortalAdminHandler({
   sign,
   clock = () => new Date(),
   findAccount,
-  findAccountByUid,
 }) {
   return async (request) => {
     if (!request.auth?.uid || request.auth.token?.email_verified !== true)
@@ -214,7 +213,7 @@ function createProviderPortalAdminHandler({
           .map((s) => ({ id: s.id, ...s.data() }))
           .filter(
             (r) =>
-              r.status === "pending_review" ||
+              (r.kind !== 'profile' && r.status === "pending_review") ||
               (r.kind === "third_party" &&
                 r.content.roles.some((role) => !r.decisions?.[role])),
           ),
@@ -284,12 +283,7 @@ function createProviderPortalAdminHandler({
       if (!["approved", "rejected"].includes(input.decision))
         fail("Decisión inválida.");
       const preview = (await ref.get()).data();
-      let selectedAccount = null;
-      if (input.decision === 'approved' && preview?.kind === 'profile' && preview.content.accountChoice) {
-        if (!findAccountByUid) fail('No está disponible la comprobación de la cuenta Google.');
-        try { selectedAccount = await findAccountByUid(preview.content.accountChoice.selected.uid); }
-        catch { fail('No pudimos comprobar la cuenta elegida. Revisá su acceso antes de aprobar.'); }
-      }
+      if (preview?.kind === "profile") fail("Los datos firmados se aplican desde la cuenta del proveedor, sin revisión administrativa.");
       let verifiedManifest = null;
       if (input.decision === 'approved' && preview?.kind === 'representation' && preview.content.evidence?.length) {
         verifiedManifest = await sign.evidence.manifest(preview.providerId, preview.actor, preview.content.evidence.map(e => e.id), preview.content.version === 'company-representation-v2' ? LEGACY_COMPANY_EVIDENCE : COMPANY_EVIDENCE);
@@ -305,104 +299,7 @@ function createProviderPortalAdminHandler({
         const providerRef = db.doc(`providers/${d.providerId}`);
         const p = (await tx.get(providerRef)).data();
         const audit = db.collection("providerPortalAudit").doc();
-        if (d.kind === "profile") {
-          if (d.status !== "pending_review") fail("Revisión ya aplicada.");
-          const changes = {};
-          if (input.decision === "approved")
-            for (const [key, c] of Object.entries(d.content.changes))
-              if (c.critical) {
-                if (String(p[key] ?? "") !== c.before)
-                  fail(
-                    "Cambió el dato vigente. Hace falta una nueva declaración.",
-                  );
-                changes[key] = c.after;
-              }
-          const identifiers = [];
-          for (const field of ["cuit", "dni"])
-            if (Object.hasOwn(changes, field)) {
-              const value = String(changes[field]).replace(/\D/g, "");
-              const previous = String(
-                p[field + "Normalized"] || p[field] || "",
-              ).replace(/\D/g, "");
-              changes[field + "Normalized"] = value;
-              const nextRef = value
-                ? db.doc(`providerIdentifiers/${field}_${value}`)
-                : null;
-              const next = nextRef ? await tx.get(nextRef) : null;
-              if (next?.exists && next.data().providerId !== d.providerId)
-                fail(
-                  "Ese identificador ya corresponde a otro proveedor. Revisá la identidad antes de aplicar.",
-                );
-              const oldRef =
-                previous && previous !== value
-                  ? db.doc(`providerIdentifiers/${field}_${previous}`)
-                  : null;
-              const old = oldRef ? await tx.get(oldRef) : null;
-              identifiers.push({ field, value, nextRef, oldRef, old });
-            }
-          if (
-            Object.hasOwn(changes, "name") ||
-            Object.hasOwn(changes, "lastName")
-          )
-            changes.fullName = [
-              changes.name ?? p.name,
-              changes.lastName ?? p.lastName,
-            ]
-              .filter(Boolean)
-              .join(" ");
-          if (p.type === "empresa" && Object.hasOwn(changes, "businessName"))
-            changes.name = changes.businessName;
-          let accountChoice, targetRef, targetMembership, oldMembershipRef;
-          if (input.decision === 'approved' && d.content.accountChoice) {
-            oldMembershipRef = db.doc(`providerPortalUsers/${d.actor.uid}/memberships/${d.providerId}`);
-            targetRef = db.doc(`providerPortalUsers/${id(d.content.accountChoice.selected.uid)}/memberships/${d.providerId}`);
-            const oldMembership = (await tx.get(oldMembershipRef)).data();
-            targetMembership = (await tx.get(targetRef)).data();
-            accountChoice = checkAccountReview(d, p, oldMembership, targetMembership, selectedAccount);
-            changes.portalAccessEmail = accountChoice.selected.email;
-            if (p.personalGoogleAccount?.uid === d.actor.uid) changes.personalGoogleAccount = { ...p.personalGoogleAccount,
-              uid: accountChoice.selected.uid, email: accountChoice.selected.email, changedByDeclarationId: ref.id };
-          }
-          for (const item of identifiers) {
-            if (item.old?.exists && item.old.data().providerId === d.providerId)
-              tx.delete(item.oldRef);
-            if (item.nextRef)
-              tx.set(
-                item.nextRef,
-                {
-                  providerId: d.providerId,
-                  providerType: p.type || "persona",
-                  identifierType: item.field,
-                  value: item.value,
-                  updatedAt: timestamp(),
-                },
-                { merge: true },
-              );
-          }
-          if (accountChoice?.changesIdentity) {
-            if (accountChoice.selected.uid !== d.actor.uid) tx.update(oldMembershipRef, { status: 'revoked', revokedAt: timestamp(), replacedByDeclarationId: ref.id });
-            const alreadyAuthorizedCompany = p.type === 'empresa' && targetMembership?.status === 'active' && targetMembership.representation === 'authorized_representative';
-            tx.set(targetRef, { ...(targetMembership || {}), providerId: d.providerId, email: accountChoice.selected.email,
-              status: p.type === 'empresa' && !alreadyAuthorizedCompany ? 'needs_confirmation' : 'active',
-              representation: p.type === 'empresa' ? alreadyAuthorizedCompany ? 'authorized_representative' : '' : 'own',
-              source: 'verified_account_change', accountChangeDeclarationId: ref.id, accountVerifiedAt: timestamp() });
-          }
-          if (Object.keys(changes).length)
-            tx.update(providerRef, {
-              ...changes,
-              portalRevision: Number(p.portalRevision || 0) + 1,
-            });
-          tx.update(ref, {
-            status: input.decision === "approved" ? "applied" : "rejected",
-            ...(accountChoice ? { accountChoiceApplied: { selected: accountChoice.selected, at: timestamp() } } : {}),
-            review: {
-              actor,
-              reason,
-              decision: input.decision,
-              at: timestamp(),
-            },
-          });
-        } else if (d.kind === 'representation') {
+        if (d.kind === 'representation') {
           if (d.status !== 'pending_review') fail('La representación ya fue revisada.');
           const membershipRef = db.doc(`providerPortalUsers/${d.actor.uid}/memberships/${d.providerId}`);
           const membership = (await tx.get(membershipRef)).data();
