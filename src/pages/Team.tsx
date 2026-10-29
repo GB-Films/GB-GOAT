@@ -7,12 +7,8 @@ import { useAuth, APP_OWNER_EMAIL } from '../context/AuthContext';
 import { roleSearchText } from '../lib/roles';
 import { normalizeEmail } from '../lib/identity';
 import { PageHeader } from '../components/PageHeader';
-
-const generateInviteToken = () => {
-  const bytes = new Uint8Array(20);
-  window.crypto.getRandomValues(bytes);
-  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
-};
+import { portalAdminRequest } from '../lib/providerPortal';
+import TeamOnboardingReviews from '../components/TeamOnboardingReviews';
 
 const getUserInviteLink = (token: string) => {
   const baseUrl = ((import.meta as ImportMeta & { env?: { BASE_URL?: string } }).env?.BASE_URL || '/');
@@ -100,16 +96,9 @@ export default function Team() {
     setCopiedInviteLink(false);
 
     try {
-      const token = generateInviteToken();
-      await setDoc(doc(db, 'userInvites', token), {
-        token,
-        email,
-        status: 'pending',
-        used: false,
-        createdBy: profile?.uid,
-        createdByEmail: profile?.email,
-        createdAt: serverTimestamp(),
-      });
+      const result = await portalAdminRequest({action:'teamCreateInvite',email});
+      if(result.alreadyMember) {alert('Este correo ya tiene acceso al equipo. Revisá sus permisos en la lista.');return;}
+      const token = result.token;
 
       const link = getUserInviteLink(token);
       setGeneratedInviteLink(link);
@@ -137,6 +126,7 @@ export default function Team() {
   return (
     <div className="max-w-full mx-auto space-y-6">
       <PageHeader eyebrow="GB GOAT / Accesos" title="Usuarios y permisos" className="mb-8" />
+      <TeamOnboardingReviews />
 
       {isAdmin && (
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
@@ -164,7 +154,7 @@ export default function Team() {
                 </button>
               </div>
               <p className="text-[11px] text-slate-400 mt-2">
-                El usuario deberá iniciar sesión con este mismo email. Todos ingresan como colaboradores.
+                Ingresará con este correo Google y vinculará o completará su ficha de proveedor. Después podrá trabajar según los permisos asignados.
               </p>
             </form>
           </div>

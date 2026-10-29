@@ -170,6 +170,9 @@ exports.assistantChat = onCall(
       if (!request.auth) {
         throw new HttpsError('unauthenticated', 'Iniciá sesión para usar el asistente.');
       }
+      const profile = (await db.doc(`users/${request.auth.uid}`).get()).data();
+      if (request.auth.token?.email_verified !== true || !require('./teamWorkAccess').hasTeamWorkAccess(profile))
+        throw new HttpsError('permission-denied', 'Completá tu acceso al equipo antes de usar el asistente.');
 
     const messages = validatePayload(request.data);
     const tools = Array.isArray(request.data?.tools) ? request.data.tools : [];

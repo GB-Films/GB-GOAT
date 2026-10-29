@@ -2,6 +2,8 @@ const { HttpsError } = require("firebase-functions/v2/https");
 const M = require("./providerPortalModel");
 const { confirmationContent, assertConfirmationUnchanged, confirmationState } = require('./providerProfileConfirmation');
 const { createAccountChoiceService } = require('./providerAccountChoice');
+const { createTeamOnboarding } = require('./teamOnboarding');
+const { hasTeamWorkAccess } = require('./teamWorkAccess');
 const { createThirdPartyIntake } = require("./providerIntake");
 const { activatePersonalMembership, attachVerifiedIntakeMembership } = require('./providerPortalAccess');
 const { COMPANY_EVIDENCE } = require('./providerEvidence');
@@ -46,6 +48,7 @@ function createProviderPortalHandler({
   verifyGoogleToken,
 }) {
   const accountChoices = createAccountChoiceService({ db, timestamp, clock, verifyGoogleToken });
+  const teamOnboarding = createTeamOnboarding({ db, timestamp, clock });
   const registerThirdPartyIntake = createThirdPartyIntake({ db, timestamp, clock });
   const preferencesRef = (providerId, actor) => db.doc(`providerPortalPreferences/${hash({ providerId, uid: actor.uid })}`);
   async function saveThirdPartyDetails(providerId, actor, input) {
@@ -204,7 +207,7 @@ function createProviderPortalHandler({
     if (input.action === "internalInvoice") {
       const user = (await db.doc(`users/${actor.uid}`).get()).data();
       if (
-        !internalRoles.includes(user?.role) &&
+        !hasTeamWorkAccess(user) &&
         actor.email !== "info@granbertafilms.com"
       )
         throw new HttpsError("permission-denied", "Sólo equipo autorizado.");
@@ -241,6 +244,8 @@ function createProviderPortalHandler({
       });
     }
     await config();
+    if (input.action === 'teamBootstrap') return teamOnboarding.bootstrap(actor, input);
+    if (input.action === 'teamComplete') return teamOnboarding.submit(actor, input);
     if (input.action === "registerThirdPartyIntake") {
       identity(request, true);
       return registerThirdPartyIntake(actor, input);

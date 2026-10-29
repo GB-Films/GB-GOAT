@@ -4,7 +4,7 @@ import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebas
 import { doc, setDoc, updateDoc, writeBatch, serverTimestamp, getDocs, collection, getDoc } from 'firebase/firestore';
 
 if (!process.env.FIRESTORE_EMULATOR_HOST) throw Error('Local emulator required.');
-const env = await initializeTestEnvironment({ projectId: 'demo-goat-provider-intake', firestore: { rules: readFileSync('firestore.rules', 'utf8') } });
+const env = await initializeTestEnvironment({ projectId: 'demo-goat-provider-intake', firestore: { rules: readFileSync(process.env.GOAT_RULES_PATH || 'firestore.rules', 'utf8') } });
 const google = (uid = 'person', extra = {}) => env.authenticatedContext(uid, {
   email: 'personal@other.test', email_verified: true,
   firebase: { sign_in_provider: 'google.com' }, ...extra,
@@ -44,15 +44,18 @@ const intake = (db, token, id = token, overrides = {}, multi = false, target = n
 try {
   await seed('valid');
   await assertSucceeds(intake(google(), 'valid'));
+  console.log('PASS single-use intake');
   await assertFails(intake(google(), 'valid', 'replay'));
   await seed('multi', { mode: 'multi_use', usageCount: 0 });
   await assertSucceeds(intake(google(), 'multi', 'multi', {}, true));
+  console.log('PASS multi-use intake');
   for (const kind of ['budgetItems', 'areaExpenses']) {
     const token = `linked-${kind}`;
     const target = `projects/project/${kind}/expense`;
     await seed(token, { projectId: 'project', collectionName: kind, expenseId: 'expense' });
     await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), target), { providerId: '', providerName: '', area: 'Post', subcategory: '', paymentHistory: [], paid: false, providerInviteLink: { status: 'pending' } }));
     await assertSucceeds(intake(google(), token, token, {}, false, target));
+    console.log(`PASS linked intake ${kind}`);
     await assertFails(updateDoc(doc(google(), target), { providerId: 'valid', providerName: 'Otra persona' }));
   }
   const invalidContexts = [env.unauthenticatedContext().firestore(), google('other'), google('person', { email_verified: false }), google('person', { firebase: { sign_in_provider: 'password' } }), google('person', { firebase: { sign_in_provider: 'custom' } })];

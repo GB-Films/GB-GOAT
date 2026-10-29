@@ -13,6 +13,7 @@ const ProjectDetail = lazy(() => import('./pages/ProjectDetail'));
 const Team = lazy(() => import('./pages/Team'));
 const Providers = lazy(() => import('./pages/Providers'));
 const ProviderInvite = lazy(() => import('./pages/ProviderInvite'));
+const TeamOnboarding = lazy(() => import('./pages/TeamOnboarding'));
 const InvoiceUploadInvite = lazy(() => import('./pages/InvoiceUploadInvite'));
 const Clients = lazy(() => import('./pages/Clients'));
 const Reports = lazy(() => import('./pages/Reports'));
@@ -52,6 +53,7 @@ export default function App() {
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/alta-proveedor/:token" element={<ProviderInvite />} />
+            <Route path="/alta-equipo" element={<TeamOnboarding />} />
             <Route path="/carga-factura/:token" element={<InvoiceUploadInvite />} />
             
             <Route element={<Layout />}>

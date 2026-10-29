@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { sendEmailVerification } from 'firebase/auth';
 import { auth } from '../lib/firebase';
 import { normalizeEmail } from '../lib/identity';
+import { needsTeamOnboarding } from '../lib/teamOnboarding';
 
 export default function Layout() {
   const { user, profile, loading } = useAuth();
@@ -24,6 +25,8 @@ export default function Layout() {
   if (!user) {
     return <Navigate to="/login" replace />;
   }
+  if (needsTeamOnboarding(profile) && !location.pathname.startsWith('/mi-proveedor'))
+    return <Navigate to="/alta-equipo" state={{ from: location.pathname }} replace />;
 
   if(profile?.role === 'unverified') return <div className="mx-auto max-w-lg p-8 space-y-4"><h1 className="text-xl font-bold">Verificá tu correo</h1><p>Para acceder a tus datos y firmar documentos necesitamos confirmar {user.email}.</p><button className="rounded bg-slate-900 px-4 py-2 text-white" onClick={async()=>{try{await sendEmailVerification(user);alert('Te enviamos el enlace de verificación.');}catch{alert('No pudimos enviar la verificación. Probá de nuevo en unos minutos.');}}}>Enviar enlace de verificación</button><button className="block underline" onClick={async()=>{await user.reload();await user.getIdToken(true);window.location.reload();}}>Ya lo verifiqué</button><button onClick={()=>auth.signOut()}>Cerrar sesión</button></div>;
   if(profile?.role === 'portal' && !location.pathname.startsWith('/mi-proveedor')) return <Navigate to="/mi-proveedor" replace />;
@@ -37,7 +40,7 @@ export default function Layout() {
       <main className="flex-1 bg-[radial-gradient(circle_at_top_left,#ffffff_0,#f5f7fb_34%,#e9edf4_100%)] p-2 pb-20 sm:p-3 lg:p-4 lg:pb-4 overflow-auto">
         <Outlet />
       </main>
-      {profile?.role !== 'portal' && <AssistantChat
+      {profile?.role !== 'portal' && !needsTeamOnboarding(profile) && <AssistantChat
         uid={user.uid}
         email={normalizeEmail(user.email || profile?.email || '')}
         globalRole={profile?.role || null}
