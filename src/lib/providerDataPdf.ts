@@ -1,6 +1,7 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 import { PROVIDER_DATA_HEADERS, providerDataRow, selectedExportProviders } from './providerDataExport';
+import type { ProviderSortOrder } from './providerOrdering';
 
 // Split long words too, so emails and identifiers never cross a column edge.
 export function wrapProviderPdfText(value: string, width: number, measure: (text: string) => number): string[] {
@@ -20,8 +21,8 @@ export function wrapProviderPdfText(value: string, width: number, measure: (text
   return lines.length ? lines : [''];
 }
 
-export async function buildProviderDataPdf(providers: any[], assets: { logo: ArrayBuffer; font: ArrayBuffer }, exportedAt = new Date()) {
-  const selected = selectedExportProviders(providers, providers.map(provider => provider.id));
+export async function buildProviderDataPdf(providers: any[], assets: { logo: ArrayBuffer; font: ArrayBuffer }, exportedAt = new Date(), order: ProviderSortOrder = 'name') {
+  const selected = selectedExportProviders(providers, providers.map(provider => provider.id), order);
   if (!selected.length) throw Error('Seleccioná al menos una persona.');
   const document = await PDFDocument.create(); document.registerFontkit(fontkit);
   document.setTitle('Gran Berta Films - Datos de proveedores'); document.setAuthor('Gran Berta Films'); document.setCreator('GB GOAT'); document.setCreationDate(exportedAt); document.setModificationDate(exportedAt);
