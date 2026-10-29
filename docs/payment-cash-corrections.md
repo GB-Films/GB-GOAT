@@ -17,7 +17,7 @@ o medio de pago invalida el formulario abierto para evitar sobreescribirla.
 Las reglas exigen permisos administrativos, auditoría nueva y coherencia entre el
 pago y el movimiento posterior. El cambio de origen no puede guardarse si falta su
 alta, actualización o eliminación de movimiento. Los colaboradores conservan sus
-permisos existentes para anexar pagos, sin poder corregir los anteriores.
+permisos para anexar pagos y pueden corregir los propios por servidor, manteniendo el origen de caja. La callable valida autor original, permisos actuales, versión, saldo y auditoría; no habilita la edición de pagos ajenos ni la escritura directa del historial por el SDK.
 
 ## Verificación y publicación
 

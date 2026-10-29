@@ -78,6 +78,7 @@ function profileChanges(before, input, allowUnchanged = false) {
     )
       fail("Dato no editable.");
     const value = text(raw);
+    if (key === 'dni' && !/^\d{7,9}$/.test(value.replace(/\D/g, ''))) fail('El DNI debe tener entre 7 y 9 dígitos.');
     if (key === "cuit" && !/^\d{11}$/.test(value.replace(/\D/g, "")))
       fail("El CUIT debe tener 11 dígitos.");
     if (key === "bankAccount_cbu" && value && !/^\d{22}$/.test(value))

@@ -15,6 +15,9 @@ import { parsePaymentAmount } from '../../lib/paymentAmounts';
 import { assertCanChangePaymentCash } from '../../lib/paymentCashAccess';
 import { providerDisplayName } from '../../lib/providerConstants';
 import { ProviderProfileButton } from '../../components/ProviderProfileButton';
+import { SharedProviderFileButton } from '../../components/SharedProviderFileButton';
+import { providerFinanceRequest } from '../../lib/providerFinance';
+import { paymentCorrectionSnapshot } from '../../lib/ownPaymentCorrection';
 import { assertReimbursementAmount, assertReimbursementCashLink, getReimbursementBalanceCents, getReimbursedCents, isThirdPartyPayment } from '../../lib/reimbursements';
 import type { Payment, PaymentCollection } from './types';
 import { SearchableSelect } from '../../components/SearchableSelect';
@@ -79,6 +82,7 @@ interface PaymentModalProps {
   paymentType: PaymentCollection;
   isDeletingPayment: number | null;
   canEditExistingPayments?: boolean;
+  canCorrectOwnPayments?: boolean;
   currentUserEmail?: string;
   currentUserId?: string;
   currentUserName?: string;
@@ -109,6 +113,7 @@ export function PaymentModal({
   paymentType,
   isDeletingPayment,
   canEditExistingPayments = false,
+  canCorrectOwnPayments = false,
   currentUserEmail = '',
   currentUserId = '',
   currentUserName = '',
@@ -124,6 +129,8 @@ export function PaymentModal({
   const amountRef = useRef<HTMLInputElement>(null);
   const [selectedReceipt, setSelectedReceipt] = useState<File | null>(null);
   const [receiptPreviewUrl, setReceiptPreviewUrl] = useState('');
+  const ownCorrectionAttempt = useRef<{ key: string; id: string } | null>(null);
+  const ownCorrectionUpload = useRef<{ file: File; paymentId: string; receipt: Payment['receipt'] } | null>(null);
   const [isReceiptDragOver, setIsReceiptDragOver] = useState(false);
   const [paymentDateInput, setPaymentDateInput] = useState(() => toDateInputValue());
   const [editingPaymentIndex, setEditingPaymentIndex] = useState<number | null>(null);
@@ -209,7 +216,7 @@ export function PaymentModal({
   const updateExistingPayment = async (event: FormEvent<HTMLFormElement>, paymentIndex: number) => {
     event.preventDefault();
     const currentPayment = paymentHistory[paymentIndex] as Payment | undefined;
-    if (!projectId || !currentPayment || !canEditExistingPayments || !canEditPaymentRecord?.(currentPayment, paymentIndex)) return;
+    if (!projectId || !currentPayment || !(canEditExistingPayments || canCorrectOwnPayments) || !canEditPaymentRecord?.(currentPayment, paymentIndex)) return;
 
     const formData = new FormData(event.currentTarget);
     const nextAmount = Number(formData.get('editAmount'));
@@ -235,7 +242,10 @@ export function PaymentModal({
 
     try {
       if (editReceipt) {
-        const fileName = buildReceiptFileName(currentPayment.id || Math.random().toString(36).slice(2), editReceipt);
+        if (!canEditExistingPayments && ownCorrectionUpload.current?.file === editReceipt && ownCorrectionUpload.current.paymentId === currentPayment.id) {
+          nextReceipt = ownCorrectionUpload.current.receipt;
+        } else {
+        const fileName = buildReceiptFileName(`${currentPayment.id || 'pago'}-${crypto.randomUUID()}`, editReceipt);
         const path = `projects/${projectId}/${collectionName}/${item.id}/comprobantes/${fileName}`;
         const storageRef = ref(storage, path);
 
@@ -262,7 +272,8 @@ export function PaymentModal({
           uploadedAt: new Date(),
           uploadedBy: currentUserEmail,
         };
-
+        if (!canEditExistingPayments) ownCorrectionUpload.current = { file: editReceipt, paymentId: currentPayment.id, receipt: nextReceipt };
+        }
       }
 
       const paymentChanges: Payment = {
@@ -273,6 +284,18 @@ export function PaymentModal({
         type: nextAmount >= (Number(item.total) || 0) - 0.01 ? 'total' : 'partial',
         receipt: nextReceipt,
       };
+      if (!canEditExistingPayments && canCorrectOwnPayments) {
+        const input = { action: 'correctOwnPayment', projectId, collectionName, itemId: item.id,
+          paymentId: currentPayment.id, expected: paymentCorrectionSnapshot(currentPayment),
+          amount: nextAmount, date: nextDate, detail: nextDetail, ...(editReceipt && nextReceipt ? { receipt: nextReceipt } : {}) };
+        const key = JSON.stringify(input);
+        if (ownCorrectionAttempt.current?.key !== key) ownCorrectionAttempt.current = { key, id: crypto.randomUUID() };
+        const result = await providerFinanceRequest({ ...input, attemptId: ownCorrectionAttempt.current.id }) as { paymentHistory: Payment[]; paid: boolean };
+        onPaymentStateChange(item.id, collectionName, result.paymentHistory, result.paid);
+        if (currentPayment.cashMovementId) onCashMovementUpdated?.(currentPayment.cashMovementId, { amount: nextAmount, date: nextDate, notes: nextDetail });
+        setEditingPaymentIndex(null); setEditReceipt(null);
+        return;
+      }
       const itemRef = doc(db, 'projects', projectId, collectionName, item.id);
       const auditRef = doc(collection(db, 'projects', projectId, 'activityLog'));
       const newMovementRef = doc(collection(db, 'projects', projectId, 'cashMovements'));
@@ -414,6 +437,7 @@ export function PaymentModal({
       setEditReceipt(null);
     } catch (error: any) {
       console.error('Error editing payment:', error);
+      if (!canEditExistingPayments && canCorrectOwnPayments) { alert(error?.message || 'No se pudo actualizar el pago.'); return; }
       if (editReceipt && nextReceipt?.path && nextReceipt.path !== currentPayment.receipt?.path) {
         deleteObject(ref(storage, nextReceipt.path)).catch(() => {});
       }
@@ -1034,7 +1058,7 @@ export function PaymentModal({
                           placeholder="Detalle"
                           className="w-full px-3 py-2 bg-white border border-slate-100 rounded text-xs focus:outline-none focus:border-black"
                         />
-                        {!isExternal && (
+                        {!isExternal && canEditExistingPayments && (
                           <label className="block text-xs font-bold text-amber-900">
                             Caja del pago
                             <select name="editCashBoxId" defaultValue="keep" className="mt-1 w-full rounded border border-amber-200 bg-white px-3 py-2 text-xs">
@@ -1093,7 +1117,7 @@ export function PaymentModal({
                               <div>Reintegrado: ${(getReimbursedCents(payment) / 100).toLocaleString('es-AR')} · Pendiente: ${reimbursementBalance.toLocaleString('es-AR')}</div>
                             </div>
                           )}
-                          {payment.sharedRecordId && <p className="mt-2 text-xs text-indigo-600">Pago compartido · comprobante y anulación en la ficha del proveedor.</p>}
+                          {payment.sharedRecordId && projectId && <div className="mt-2"><SharedProviderFileButton id={payment.sharedRecordId} scope={{ projectId, collectionName, itemId: item.id }} /></div>}
                           {payment.receipt?.url && (
                             <a
                               href={payment.receipt.url}
@@ -1111,7 +1135,7 @@ export function PaymentModal({
                             <Calendar className="w-2.5 h-2.5" />
                             {formatDate(payment.date)}
                           </div>
-                          {canEditExistingPayments && canEditPaymentRecord?.(payment, idx) && (
+                          {(canEditExistingPayments || canCorrectOwnPayments) && canEditPaymentRecord?.(payment, idx) && (
                             <button
                               type="button"
                               onClick={() => {
@@ -1124,7 +1148,7 @@ export function PaymentModal({
                               Editar
                             </button>
                           )}
-                          {canEditPaymentRecord?.(payment, idx) && (!isExternal || !payment.reimbursements?.length) && (
+                          {canEditExistingPayments && canEditPaymentRecord?.(payment, idx) && (!isExternal || !payment.reimbursements?.length) && (
                             <button
                               type="button"
                               disabled={isDeletingPayment === idx}

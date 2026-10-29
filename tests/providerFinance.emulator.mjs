@@ -38,7 +38,15 @@ try {
   await assert.rejects(call({ auth: { uid: 'editor', token: { email: 'editor@example.test' } }, data: invoice }), /Sólo administradores/);
   await call(request(invoice));
   assert.equal((await call(request({ action: 'download', id: 'invoice1' }))).base64, 'JVBERg==');
-  await assert.rejects(call({ auth: { uid: 'editor', token: { email: 'editor@example.test' } }, data: { action: 'download', id: 'invoice1' } }), /Sólo administradores/);
+  const scopedEditor = data => call({ auth: { uid: 'editor', token: { email: 'editor@example.test', email_verified: true } }, data });
+  await assert.rejects(scopedEditor({ action: 'download', id: 'invoice1' }));
+  const scope = { projectId: 'project0', collectionName: 'areaExpenses', itemId: 'expense' };
+  assert.equal((await scopedEditor({ action: 'download', id: 'invoice1', ...scope })).base64, 'JVBERg==');
+  const visible = await scopedEditor({ action: 'projectDocuments', projectId: 'project0', recordIds: ['invoice1'] });
+  assert.equal(visible.records.length, 1); assert.equal(visible.records[0].allocations.length, 1);
+  assert.equal(visible.records[0].file.path, undefined, 'shared metadata does not return a permanent link or raw storage path');
+  await assert.rejects(scopedEditor({ action: 'download', id: 'invoice1', ...scope, itemId: 'foreign' }), /ajeno/);
+  await assert.rejects(call({ auth: { uid: 'stranger', token: { email: 'stranger@example.test', email_verified: true } }, data: { action: 'download', id: 'invoice1', ...scope } }), /acceso/);
   assert.deepEqual(await call(request(invoice)), { id: 'invoice1', status: 'active' });
   await assert.rejects(call(request({ ...invoice, id: 'duplicate' })), /ya está registrada/);
   assert.equal((await expenseRef(0).get()).data().total, 300);
@@ -188,5 +196,26 @@ try {
   await assertFails(uploadBytes(file, new Uint8Array([2]), metadata));
   await db.doc('providerFinancialRecords/staged').set({ providerId: 'supplier', status: 'active' });
   await assertFails(deleteObject(file));
+  // All shared document kinds are readable by a project member, but the
+  // original/global record and unrelated projects remain private.
+  await db.doc('projects/document-scope').set({ collaboratorEmails: ['editor@example.test'] });
+  const documentExpense = db.doc('projects/document-scope/areaExpenses/row');
+  await documentExpense.set({ providerId: 'supplier', sharedInvoices: [{ id: 'scope-invoice' }], sharedReceipts: [{ id: 'scope-other' }], paymentHistory: [{ id: 'scope-payment', sharedRecordId: 'scope-payment', amount: 1 }] });
+  for (const kind of ['invoice', 'payment', 'other']) {
+    const recordId = `scope-${kind}`;
+    await db.doc(`providerFinancialRecords/${recordId}`).set({ providerId: 'supplier', status: 'active', kind, file: { path: `mock-${kind}`, fileName: `${kind}.pdf`, contentType: 'application/pdf' },
+      allocations: [{ projectId: 'document-scope', collectionName: 'areaExpenses', itemId: 'row' }, { projectId: 'private-other-project', collectionName: 'areaExpenses', itemId: 'private' }] });
+    const input = { action: 'download', id: recordId, projectId: 'document-scope', collectionName: 'areaExpenses', itemId: 'row' };
+    assert.equal((await scopedEditor(input)).base64, 'JVBERg==');
+    await assert.rejects(scopedEditor({ ...input, projectId: 'project0' }), /ajeno/);
+  }
+  const scopedList = await scopedEditor({ action: 'projectDocuments', projectId: 'document-scope', recordIds: ['scope-invoice', 'scope-payment', 'scope-other'] });
+  assert.equal(scopedList.records.length, 3);
+  assert(scopedList.records.every(record => record.allocations.length === 1 && record.allocations[0].projectId === 'document-scope'));
+  await db.doc('projects/document-scope').update({ collaboratorEmails: [] });
+  await assert.rejects(scopedEditor({ action: 'download', id: 'scope-payment', projectId: 'document-scope', collectionName: 'areaExpenses', itemId: 'row' }), /acceso/);
+  const { testOwnPaymentCorrections } = await import('./ownPaymentCorrection.flow.mjs');
+  const { paymentCorrectionSnapshot } = require('../functions/paymentCorrectionSnapshot');
+  await testOwnPaymentCorrections({ db, call, snapshot: paymentCorrectionSnapshot });
   console.log('Shared provider finance: exact applications, idempotency, concurrent payments, cancellation, single cash outflow and private immutable files verified.');
 } finally { await env.cleanup(); await app.delete(); }

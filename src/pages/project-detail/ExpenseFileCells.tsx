@@ -242,6 +242,7 @@ export function ExpenseReceiptsCell({
           Soltar comprobante
         </div>
       )}
+      {!!item.sharedReceipts?.length && <ProviderProfileButton providerId={item.providerId}>Comprobantes vinculados ({item.sharedReceipts.length})</ProviderProfileButton>}
       {receipts.map((receipt: any, receiptIndex: number) => (
         <div key={receipt.id || receipt.path || receipt.url || receiptIndex} className="flex items-center">
           <a

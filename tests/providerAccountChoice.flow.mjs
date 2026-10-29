@@ -35,8 +35,8 @@ export async function testProviderAccountChoice({ db, admin, deps, request, sign
   assert.equal(align.content.confirmation.profile.email, 'own@example.test');
   assert.equal(align.content.changes.email.critical, true);
   await signActual(align); await complete(align);
-  assert.equal((await providerRef.get()).data().email, 'anterior@example.test', 'a signature does not silently replace the registered email');
-  await review(align);
+  assert.equal((await providerRef.get()).data().email, 'own@example.test', 'the approved Google account signs the explicit email alignment');
+  await assert.rejects(review(align), /sin revisión administrativa/);
   assert.equal((await providerRef.get()).data().email, 'own@example.test');
   assert.equal((await own({ action: 'overview', providerId })).profileConfirmation.status, 'confirmed');
   await assert.rejects(own({ ...prepare, attemptId: 'unverified-email', selectedAccountEmail: 'nueva@example.test' }), /verificá/);
@@ -52,15 +52,14 @@ export async function testProviderAccountChoice({ db, admin, deps, request, sign
   const change = await own({ ...prepare, attemptId: 'choose-verified-google', selectedAccountEmail: verified.email, accountVerificationId: verified.verificationId });
   assert.equal(change.content.accountChoice.selected.uid, 'next-account');
   assert.equal(change.actor.email, 'own@example.test', 'the existing Google session signs the explicit change request');
-  await signActual(change); await complete(change);
-  assert.equal((await own({ action: 'overview', providerId })).profileConfirmation.status, 'pending_review');
+  await signActual(change);
   await assert.rejects(next({ action: 'overview', providerId }));
   await auth.updateUser('next-account', { disabled: true });
-  await assert.rejects(review(change), /cuenta elegida/);
+  await assert.rejects(complete(change), /cuenta elegida/);
   assert.equal((await providerRef.get()).data().email, 'own@example.test');
   await auth.updateUser('next-account', { disabled: false });
   target = await signInTarget();
-  await review(change);
+  await complete(change);
   const changed = (await providerRef.get()).data();
   assert.equal(changed.email, verified.email); assert.equal(changed.portalAccessEmail, verified.email);
   assert.equal(changed.bankAccount_alias, provider.bankAccount_alias);
@@ -69,7 +68,7 @@ export async function testProviderAccountChoice({ db, admin, deps, request, sign
   assert.equal((await next({ action: 'overview', providerId })).profileConfirmation.status, 'confirmed');
   await assert.rejects(own({ action: 'overview', providerId }));
   assert.equal((await db.doc('users/next-account').get()).exists, false, 'no internal role is created or transferred');
-  await assert.rejects(review(change), /no revisable/);
+  await assert.rejects(review(change), /sin revisión administrativa/);
   const companyId = 'company-account-choice';
   await db.doc(`providers/${companyId}`).set({ type: 'empresa', name: 'Empresa de prueba', businessName: 'Empresa de prueba', email: 'own@example.test', portalAccessEmail: 'own@example.test', bankAccount_alias: 'empresa.propia', bankAccount_holder: 'Empresa de prueba' });
   await db.doc(`providerPortalUsers/own/memberships/${companyId}`).set({ providerId: companyId, email: 'own@example.test', status: 'active', representation: 'authorized_representative' });
@@ -77,9 +76,9 @@ export async function testProviderAccountChoice({ db, admin, deps, request, sign
   await assert.rejects(own({ ...prepare, providerId: companyId, attemptId: 'proof-for-wrong-provider', selectedAccountEmail: verified.email, accountVerificationId: verified.verificationId }), /verificación/);
   const companyProof = await own({ action: 'verifyAccount', providerId: companyId, expectedEmail: verified.email, idToken: target.idToken });
   const company = await own({ ...prepare, providerId: companyId, attemptId: 'company-account-change', selectedAccountEmail: verified.email, accountVerificationId: companyProof.verificationId });
-  await signActual(company); await complete(company); await review(company);
+  await signActual(company); await complete(company);
   assert.equal((await db.doc(`providerPortalUsers/next-account/memberships/${companyId}`).get()).data().status, 'needs_confirmation');
   assert.equal((await db.doc(`providerPortalCompanyApprovals/${companyId}`).get()).data().declarationId, 'company-history', 'the old authority evidence is preserved and never transferred to a new signer');
   await assert.rejects(next({ action: 'overview', providerId: companyId }));
-  console.log('PASS: actual Auth SDK verification in local Auth emulator → signed account choice in GB Sign → atomic administrative review; mismatch, forged token, private proof, scope, disabled account, access revocation, unchanged banking and company authority guards.');
+  console.log('PASS: actual Auth SDK verification → signed account choice in GB Sign → atomic application without administrative review; mismatch, forged token, private proof, scope, disabled account, revocation and company authority guards.');
 }

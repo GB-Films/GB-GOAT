@@ -38,9 +38,9 @@ Pruebas: `tests/projectCommercialRules.emulator.mjs`, política compartida front
 ## Invariantes financieras
 
 - Los pagos nuevos deben tener importe mayor que cero y autor/autora iguales a la sesión autenticada.
-- Un colaborador sólo puede anexar un pago; no puede reescribir ni acortar `paymentHistory`.
+- Un colaborador puede anexar pagos por el SDK; no puede reescribir ni acortar `paymentHistory` directamente. La callable permite corregir un pago propio con UID/correo originales, alcance vigente, versión abierta, saldo y auditoría transaccionales, sin modificar pagos ajenos ni su origen de caja.
 - Un gasto con pagos vigentes no puede eliminarse. Después de eliminar el último pago, administración puede eliminar la fila individual con auditoría, copia íntegra del documento anterior y verificación de que no quedan movimientos de caja.
-- Los movimientos de caja asociados a pagos sólo pueden corregirse o eliminarse administrativamente, y sólo si pertenecen a Caja General o a la caja propia de quien opera. La validación usa el movimiento real, no sólo la etiqueta del pago.
+- Los movimientos de caja no se corrigen directamente por el colaborador. Al corregir su pago por servidor se ajusta el movimiento vinculado en la misma transacción, conservando el origen de caja y comprobando saldo y autor. Cambiar el origen o eliminar pagos/movimientos conserva el circuito administrativo. La validación usa el movimiento real, no sólo la etiqueta del pago.
 - Luego de eliminar el último pago, sólo un administrador puede corregir cantidad, precio e importe de la fila. Debe conservar el bloqueo histórico, los autores y las auditorías previas, y registrar los valores anteriores y nuevos en una actividad inmutable dentro de la misma transacción. Se aplica a Áreas y Presu Ppal; si aún hay pagos o la marca `paid` sigue activa, la corrección de importes se rechaza.
 - Un comprobante adicional de colaborador sólo puede agregarse al final y debe registrar su email.
 
@@ -69,15 +69,14 @@ La sintaxis se valida localmente con `npm run lint:rules`. La validación funcio
 
 El diseño agrega reglas preliminares para proteger referencias de gasto y
 archivos compartidos, verificadas con emuladores antes de activarse. La callable
-`manageProviderFinance` exige rol global admin y aplica operación y proyecciones
+`manageProviderFinance` exige rol global admin para registrar/anular operaciones compartidas y aplica operación y proyecciones
 en una única transacción. El cliente no escribe `providerFinancialRecords`, las
 claves fiscales/de pago ni las referencias compartidas de gastos. Sólo administra
 estos registros el servidor, que comprueba identidad del prestador, estado,
 gestión activa del gasto, importes y saldo actualizado.
 
-Los documentos completos multiproyecto son privados para administradores. Los
-miembros del proyecto ven sólo la aplicación de su gasto; la referencia no amplía
-sus permisos. Los originales confirmados son inmutables y la anulación global
+Los registros globales multiproyecto son privados para administradores. Los
+miembros vigentes pueden descargar el original vinculado al gasto de su proyecto mediante la callable, sin obtener metadatos de las aplicaciones de otros proyectos ni acceso a documentos ajenos. Los originales confirmados son inmutables y la anulación global
 conserva evidencia y auditoría. Ningún rol puede corregir una sola proyección de
 pago compartido por el SDK cliente. El circuito no concede permisos nuevos sobre
 CT, cuentas bancarias o proyectos ajenos. Ver `docs/provider-finance.md`.

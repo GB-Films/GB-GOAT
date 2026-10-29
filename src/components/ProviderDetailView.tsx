@@ -4,11 +4,12 @@ import { providerDisplayName, inferLegacyIdentifiers, formatIdentifier, normaliz
 import { ProviderProjectList } from './ProviderProjectList';
 import { ProviderFinanceWindow } from './ProviderFinanceWindow';
 import { ProjectDialog } from '../pages/project-detail/ProjectDialog';
+import type { ProjectDocumentScope } from '../lib/providerFinance';
 const formatDate = (value: any) => typeof value === 'string' ? value.split('-').reverse().join('/') : value?.seconds ? new Date(value.seconds * 1000).toLocaleDateString('es-AR') : '-';
 
 export function ProviderDetailView({ detail, loading, onClose, financePanel, companyPanel, canSeeBankDetails = true, initialProjectId, onOpenSharedDocument }: {
   detail: any; loading: boolean; onClose: () => void; financePanel?: ReactNode; companyPanel?: ReactNode; canSeeBankDetails?: boolean;
-  initialProjectId?: string; onOpenSharedDocument?: (id: string) => Promise<unknown>;
+  initialProjectId?: string; onOpenSharedDocument?: (id: string, scope?: ProjectDocumentScope) => Promise<unknown>;
 }) {
   const [copiedProviderField, setCopiedProviderField] = useState('');
   const [showFullData, setShowFullData] = useState(false);

@@ -2,9 +2,10 @@ import { useEffect, useState } from 'react';
 import { pendingProfileFields, proposedProfileValue } from '../lib/providerProfileForm';
 import { ProviderGoogleAccountChoice, type ProviderAccountSelection } from './ProviderGoogleAccountChoice';
 import type { AccountVerification } from '../lib/providerGoogleAccount';
-export function ProviderProfileForm({ provider, declarations, labels, draft, onChange, onPrepare, busy, notice = '', confirmationRequired = false, accessEmail = '', onVerifyAccount }: {
+export function ProviderProfileForm({ provider, declarations, labels, draft, onChange, onPrepare, onApplySigned, busy, notice = '', confirmationRequired = false, accessEmail = '', onVerifyAccount }: {
   provider: any; declarations: any[]; labels: Record<string, string>; draft: Record<string, string>;
   onChange: (draft: Record<string, string>) => void; onPrepare: (input: any) => Promise<void>; busy: boolean; notice?: string; confirmationRequired?: boolean; accessEmail?: string; onVerifyAccount?: (email: string) => Promise<AccountVerification>;
+  onApplySigned?: (id: string) => Promise<void>;
 }) {
   const [confirmed, setConfirmed] = useState(false);
   const [dataConfirmed, setDataConfirmed] = useState(false), [emailConfirmed, setEmailConfirmed] = useState(false);
@@ -26,15 +27,17 @@ export function ProviderProfileForm({ provider, declarations, labels, draft, onC
     <h2 className="font-bold">{confirmationMode ? 'Confirmá tus datos' : 'Mis datos'}</h2>
     {confirmationMode && <p className="text-sm text-slate-600">Vas a firmar un documento con el detalle completo de esta ficha. Podés corregir los datos antes de continuar.</p>}
     {notice && <p role="status" className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800">{notice}</p>}
-    {!!Object.keys(pending).length && <p role="status" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Los datos marcados ya fueron enviados y están pendientes de revisión.</p>}
+    {!!Object.keys(pending).length && <div role="status" className="space-y-2 rounded-lg bg-amber-50 p-3 text-sm text-amber-900"><p>Tenés cambios ya firmados pendientes de aplicación. No necesitan aprobación administrativa.</p>
+      {onApplySigned && declarations.filter(d => d.kind === 'profile' && d.owned && d.status === 'pending_review').map(d => <button key={d.id} type="button" disabled={busy} className="block font-semibold underline disabled:opacity-40" onClick={() => void onApplySigned(d.id)}>Aplicar datos firmados</button>)}
+    </div>}
     <fieldset disabled={busy} className="space-y-4">
       {!!accessEmail && <ProviderGoogleAccountChoice accessEmail={accessEmail} registeredEmail={provider.email || ''} pendingEmail={pendingEmail} selection={account}
         onChange={selection => { setAccount(selection); setDataConfirmed(false); setEmailConfirmed(false); }} onVerify={onVerifyAccount} verifying={verifying} onVerifying={setVerifying} error={accountError} onError={setAccountError} disabled={busy} />}
-      <div className="grid gap-3 sm:grid-cols-2">{Object.entries(labels).filter(([key]) => !['bankAccount_holder', 'email'].includes(key) && (provider.type === 'empresa' ? !['name','lastName','dni','birthDate'].includes(key) : key !== 'businessName')).map(([key, label]) => <label key={key} className="text-sm">{label}<input type="text" className="mt-1 block w-full rounded border p-2" value={value(key)} onChange={event => { onChange({ ...draft, [key]: event.target.value }); setDataConfirmed(false); if (['bankAccount_cbu','bankAccount_alias','name','lastName','businessName'].includes(key)) setConfirmed(false); }} />{pending[key] && draft[key] === undefined && <span className="mt-1 block text-xs text-amber-700">Pendiente de revisión</span>}</label>)}</div>
+      <div className="grid gap-3 sm:grid-cols-2">{Object.entries(labels).filter(([key]) => !['bankAccount_holder', 'email'].includes(key) && (provider.type === 'empresa' ? !['name','lastName','dni','birthDate'].includes(key) : key !== 'businessName')).map(([key, label]) => <label key={key} className="text-sm">{label}<input type="text" className="mt-1 block w-full rounded border p-2" value={value(key)} onChange={event => { onChange({ ...draft, [key]: event.target.value }); setDataConfirmed(false); if (['bankAccount_cbu','bankAccount_alias','name','lastName','businessName'].includes(key)) setConfirmed(false); }} />{pending[key] && draft[key] === undefined && <span className="mt-1 block text-xs text-amber-700">Firmado · pendiente de aplicación</span>}</label>)}</div>
       {confirmationMode && <><label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={dataConfirmed} onChange={event => setDataConfirmed(event.target.checked)} /><span>Revisé los datos de esta ficha y confirmo que son correctos.</span></label>
       <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={emailConfirmed} onChange={event => setEmailConfirmed(event.target.checked)} /><span>Controlo personalmente la cuenta Google <strong>{account.email}</strong> y la elijo para gestionar esta ficha.</span></label></>}
       <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} /><span>{provider.type === 'empresa' ? 'Confirmo que la cuenta provista pertenece a esta empresa.' : 'Soy titular de la cuenta provista.'}</span></label>
-      <p className="text-sm text-slate-500">Los cambios de identidad, correo, CUIT y cuenta bancaria requieren revisión. Tus datos enviados quedan visibles mientras se revisan.</p>
+      <p className="text-sm text-slate-500">Los cambios se aplican al completar tu firma desde la cuenta aprobada, sin una revisión administrativa posterior.</p>
       <button disabled={verifying || !accountVerified || (!confirmationMode && !Object.keys(draft).length) || (needsConfirmation && !confirmed) || (confirmationMode && (!dataConfirmed || !emailConfirmed || !hasBank))} className="rounded bg-slate-900 px-4 py-2 text-white disabled:opacity-40">{confirmationMode ? 'Revisar confirmación y firmar' : 'Revisar cambios y firmar'}</button>
     </fieldset>
   </form>;

@@ -4,6 +4,7 @@ import { FileText, Link, Paperclip, Trash2 } from 'lucide-react';
 import { getExpenseInvoices, getInvoiceDocumentKey, type ExpenseInvoiceDocument } from '../../lib/invoices';
 import { ProjectDialog } from './ProjectDialog';
 import { INVOICE_INPUT_ACCEPT, RECEIPT_INPUT_ACCEPT } from './ExpenseFileCells';
+import { ProviderProfileButton } from '../../components/ProviderProfileButton';
 
 export type MobileExpenseDocumentsProps = {
   item: any;
@@ -53,9 +54,10 @@ export function ExpenseDocumentsPanel(props: MobileExpenseDocumentsProps) {
     <p className="break-words text-xs text-slate-500">{item.providerName || item.description || 'Documentación del gasto'}</p>
     <section className="space-y-2">
       <h3 className="text-xs font-black uppercase tracking-wide text-slate-600">Facturas</h3>
+      {!!item.sharedInvoices?.length && <ProviderProfileButton providerId={item.providerId}>Facturas vinculadas ({item.sharedInvoices.length})</ProviderProfileButton>}
       {invoices.map((invoice, index) => renderDocument(invoice, getInvoiceDocumentKey(invoice) || String(index), `Factura ${index + 1}`,
         canRemove ? () => props.onRemoveInvoice(invoice) : undefined, uploadingInvoice))}
-      {!invoices.length && <p className="text-xs text-slate-400">Sin facturas cargadas.</p>}
+      {!invoices.length && !item.sharedInvoices?.length && <p className="text-xs text-slate-400">Sin facturas cargadas.</p>}
       {canManage && <>
         {upload('invoice')}
         <button type="button" onClick={props.onCreateInvoiceLink} disabled={generatingLink}
@@ -66,13 +68,15 @@ export function ExpenseDocumentsPanel(props: MobileExpenseDocumentsProps) {
     </section>
     <section className="space-y-2">
       <h3 className="text-xs font-black uppercase tracking-wide text-slate-600">Otros comprobantes</h3>
+      {!!item.sharedReceipts?.length && <ProviderProfileButton providerId={item.providerId}>Comprobantes vinculados ({item.sharedReceipts.length})</ProviderProfileButton>}
       {receipts.map((receipt: any, index: number) => renderDocument(receipt, receipt.id || receipt.path || String(index), `Comprobante ${index + 1}`,
         canRemove ? () => props.onRemoveReceipt(receipt) : undefined, uploadingReceipt))}
-      {!receipts.length && <p className="text-xs text-slate-400">Sin otros comprobantes cargados.</p>}
+      {!receipts.length && !item.sharedReceipts?.length && <p className="text-xs text-slate-400">Sin otros comprobantes cargados.</p>}
       {canManage && upload('receipt')}
     </section>
-    {payments.length > 0 && <section className="space-y-2">
+    {(payments.length > 0 || !!item.sharedPaymentIds?.length) && <section className="space-y-2">
       <h3 className="text-xs font-black uppercase tracking-wide text-slate-600">Comprobantes de pagos</h3>
+      {!!item.sharedPaymentIds?.length && <ProviderProfileButton providerId={item.providerId}>Comprobantes de pagos vinculados ({item.sharedPaymentIds.length})</ProviderProfileButton>}
       {payments.map((payment: any, index: number) => renderDocument(payment.receipt, payment.id || String(index), `Pago ${index + 1}`))}
       <p className="text-xs text-slate-500">Los comprobantes asociados a pagos se gestionan desde Pagos.</p>
     </section>}

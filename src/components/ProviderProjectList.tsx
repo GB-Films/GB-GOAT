@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ChevronRight, FileText, Paperclip } from 'lucide-react';
 import type { ExpenseInvoiceDocument } from '../lib/invoices';
 import type { SharedProviderDocument } from '../lib/providerFinancialRecords';
+import type { ProjectDocumentScope } from '../lib/providerFinance';
 import { ProviderDocumentLinks } from './ProviderDocumentLinks';
 
 interface ProviderProjectSummary {
@@ -16,6 +17,8 @@ interface ProviderProjectSummary {
 
 interface ProviderProjectExpense {
   id: string;
+  collectionName?: string;
+  expenseId?: string;
   projectId: string;
   area: string;
   source: string;
@@ -61,7 +64,7 @@ function Amounts({ total, paid, debt }: { total: number; paid: number; debt: num
   </div>;
 }
 
-export function ProviderProjectList({ projects, lines, initialProjectId, onOpenSharedDocument }: { projects: ProviderProjectSummary[]; lines: ProviderProjectExpense[]; initialProjectId?: string; onOpenSharedDocument?: (id: string) => Promise<unknown> }) {
+export function ProviderProjectList({ projects, lines, initialProjectId, onOpenSharedDocument }: { projects: ProviderProjectSummary[]; lines: ProviderProjectExpense[]; initialProjectId?: string; onOpenSharedDocument?: (id: string, scope?: ProjectDocumentScope) => Promise<unknown> }) {
   const selectedProject = useRef<HTMLDetailsElement>(null);
   const [expanded, setExpanded] = useState(() => new Set(initialProjectId ? [initialProjectId] : []));
   const [opening, setOpening] = useState('');
@@ -111,7 +114,7 @@ export function ProviderProjectList({ projects, lines, initialProjectId, onOpenS
                   <td className="px-3 py-2"><div className="flex flex-wrap gap-1">
                     {line.sharedDocuments?.map(document => <button key={document.id} type="button" disabled={!!opening || !onOpenSharedDocument} title={`${document.name} · Documento compartido`} aria-label={`Abrir ${document.name}`}
                       className={`inline-flex items-center gap-1 rounded border px-2 py-1 text-[9px] font-bold disabled:opacity-50 ${document.kind === 'invoice' ? line.debt <= 0 ? 'border-emerald-100 bg-emerald-50 text-emerald-700' : line.paid > 0 ? 'border-amber-100 bg-amber-50 text-amber-700' : 'border-rose-100 bg-rose-50 text-rose-700' : document.kind === 'payment' ? 'border-violet-100 bg-violet-50 text-violet-700' : 'border-blue-100 bg-blue-50 text-blue-700'}`}
-                      onClick={async () => { if (!onOpenSharedDocument) return; setOpening(document.id); setError(''); try { await onOpenSharedDocument(document.id); } catch { setError('No se pudo abrir el comprobante. Volvé a intentar.'); } finally { setOpening(''); } }}>
+                      onClick={async () => { if (!onOpenSharedDocument) return; setOpening(document.id); setError(''); try { await onOpenSharedDocument(document.id, { projectId: line.projectId, collectionName: line.collectionName || '', itemId: line.expenseId || '' }); } catch { setError('No se pudo abrir el comprobante. Volvé a intentar.'); } finally { setOpening(''); } }}>
                       {document.kind === 'invoice' ? <FileText className="h-3 w-3"/> : <Paperclip className="h-3 w-3"/>}{opening === document.id ? 'Abriendo…' : document.kind === 'invoice' ? 'Factura' : document.kind === 'payment' ? 'Pago' : 'Comprobante'}
                     </button>)}
                     {!!line.invoiceDocuments?.length && <ProviderDocumentLinks documents={line.invoiceDocuments} kind="invoice" compact invoicePayment={line} />}

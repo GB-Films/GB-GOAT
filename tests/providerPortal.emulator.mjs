@@ -398,12 +398,12 @@ try {
         declarationId: change.id,
       })
     ).status,
-    "pending_review",
+    "applied",
   );
   const intermediate = (await db.doc("providers/supplier").get()).data();
   assert.equal(intermediate.address, "new");
-  assert.equal(intermediate.cuit, before.data().cuit);
-  assert.equal(intermediate.bankAccount_alias, "original.alias");
+  assert.equal(intermediate.cuit, '20222222223');
+  assert.equal(intermediate.bankAccount_alias, "new.alias");
   await assert.rejects(
     manage(
       request("own", "own@example.test", {
@@ -414,12 +414,12 @@ try {
       }),
     ),
   );
-  await adminCall({
+  await assert.rejects(adminCall({
     action: "review",
     declarationId: change.id,
     decision: "approved",
     reason: "Identidad y cuenta cotejadas",
-  });
+  }), /sin revisión administrativa/);
   const after = (await db.doc("providers/supplier").get()).data();
   assert.equal(after.cuit, "20222222223");
   assert.equal(after.bankAccount_alias, "new.alias");
@@ -428,6 +428,19 @@ try {
       .providerId,
     "supplier",
   );
+  // A previously signed profile whose common fields were already applied can
+  // finish without an administrator and without requesting another signature.
+  await db.doc('providers/supplier').update({ cuit: before.data().cuit, bankAccount_alias: 'original.alias', bankAccount_holder: '' });
+  await db.doc(`providerPortalDeclarations/${change.id}`).update({ status: 'pending_review', commonApplied: ['address'] });
+  assert.equal((await own({ action: 'completeDeclaration', providerId: 'supplier', declarationId: change.id })).status, 'applied');
+  assert.equal((await db.doc('providers/supplier').get()).data().bankAccount_alias, 'new.alias');
+  const duplicateProfile = await own({ action: 'prepareProfile', providerId: 'supplier', attemptId: 'duplicate-signed-profile', changes: { cuit: '20999999999' } });
+  await signActual(duplicateProfile);
+  await db.doc('providerIdentifiers/cuit_20999999999').set({ providerId: 'foreign', value: '20999999999' });
+  const priorDuplicate = (await db.doc('providers/supplier').get()).data();
+  await assert.rejects(own({ action: 'completeDeclaration', providerId: 'supplier', declarationId: duplicateProfile.id }), /otro proveedor/);
+  assert.deepEqual((await db.doc('providers/supplier').get()).data(), priorDuplicate, 'duplicate identifiers never partially apply signed data');
+  assert(!(await adminCall({ action: 'reviews' })).reviews.some(row => row.kind === 'profile'), 'profile changes do not enter administrative review');
   // The single personal email is not editable through ordinary profile changes.
   await assert.rejects(own({
     action: "prepareProfile",
@@ -817,21 +830,21 @@ try {
   const correction = await own({ ...confirmationInput, attemptId: 'confirm-with-correction', changes: { address: 'Nuevo domicilio', bankAccount_alias: 'cuenta.corregida' } });
   await signActual(correction);
   await own({ action: 'completeDeclaration', providerId: 'legacy-confirmation', declarationId: correction.id });
-  assert.equal((await confirmationOverview()).profileConfirmation.status, 'pending_review');
-  assert.equal((await confirmationProvider.get()).data().bankAccount_alias, 'cuenta.propia');
-  await adminCall({ action: 'review', declarationId: correction.id, decision: 'approved', reason: 'Prueba local de revisión' });
+  assert.equal((await confirmationOverview()).profileConfirmation.status, 'confirmed');
+  assert.equal((await confirmationProvider.get()).data().bankAccount_alias, 'cuenta.corregida');
+  await assert.rejects(adminCall({ action: 'review', declarationId: correction.id, decision: 'approved', reason: 'Prueba local' }), /sin revisión administrativa/);
   assert.equal((await confirmationOverview()).profileConfirmation.status, 'confirmed');
   const stale = await own({ ...confirmationInput, attemptId: 'confirm-concurrent-edit' });
   await signActual(stale);
   await confirmationProvider.update({ phone: '123456789' });
   await assert.rejects(own({ action: 'completeDeclaration', providerId: 'legacy-confirmation', declarationId: stale.id }), /cambiaron/);
   assert.equal((await confirmationOverview()).profileConfirmation.status, 'required');
-  console.log('PASS: legacy confirmation uses a real GB Sign PDF and signature, preserves unchanged profiles, rejects stale data and foreign accounts, tracks pending review and exempts new signup.');
+  console.log('PASS: signed profiles apply immediately, resume legacy signed updates, preserve unchanged profiles, reject duplicate identifiers, stale data and foreign accounts, and require no administrative review.');
   const { testProviderAccountChoice } = await import('./providerAccountChoice.flow.mjs');
   await testProviderAccountChoice({ db, admin, deps, request, signActual, env, doc, getDoc, setDoc, assertFails, createProviderPortalHandler, createProviderPortalAdminHandler });
   console.log("PASS: own bank required at intake, personal signup without signature, company private documents and review, minimal third-party declaration without bank certificate, issuer-linked invoice and payout.");
   console.log(
-    "PASS: real GB Sign PDF/signature/artifacts → GOAT application; critical review, scoped third-party decisions, no duplicate payment; external isolation and producer access.",
+    "PASS: real GB Sign PDF/signature/artifacts → immediate signed profile application; scoped third-party decisions, no duplicate payment; external isolation and producer access.",
   );
 } finally {
   await env.cleanup();

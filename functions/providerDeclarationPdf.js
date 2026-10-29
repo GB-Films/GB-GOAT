@@ -95,7 +95,7 @@ async function declarationPdf(d) {
       line(`Valor anterior: ${value.before || "Sin dato"}`);
       line(`Valor propuesto: ${value.after || "Sin dato"}`);
       line(
-        value.critical
+        value.critical && c.application !== 'signed_immediate'
           ? "Entrada en vigencia: pendiente de aprobación administrativa."
           : "Entrada en vigencia: al completar la firma.",
       );
