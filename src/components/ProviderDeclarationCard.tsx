@@ -7,6 +7,7 @@ export function ProviderDeclarationCard({ declaration: d, document: doc, provide
   onDownload: (artifact: string) => Promise<void>; onReviewData: () => void;
 }) {
   const ui = declarationPresentation(d, providerType, doc);
+  const signedAt = Date.parse(d.signedAt || '');
   const [feedback, setFeedback] = useState(''), [error, setError] = useState(''), [working, setWorking] = useState(false);
   const running = useRef(false);
   async function execute(action: () => Promise<string | void>) {
@@ -22,7 +23,7 @@ export function ProviderDeclarationCard({ declaration: d, document: doc, provide
     <div className="flex flex-wrap justify-between gap-2"><h3 className="font-semibold">{ui.title}</h3><span className="text-sm">{ui.status}</span></div>
     <p className="text-sm text-slate-600">{ui.explanation}</p>
     {children}
-    <p className="text-xs text-slate-500">Constancia {d.id}{d.signedAt ? ` · Firma: ${d.signedAt}` : ''}</p>
+    {Number.isFinite(signedAt) && <p className="text-xs text-slate-500">Firmada el {new Intl.DateTimeFormat('es-AR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Argentina/Buenos_Aires' }).format(signedAt)}</p>}
     {ui.missingDocument && <p className="text-sm text-amber-800">No encontramos un documento de firma disponible para esta solicitud. Volvé a consultar Documentos; si sigue sin aparecer, pedí que revisen esta constancia.</p>}
     <div className="flex flex-wrap gap-3">
       {ui.action === 'sign' && <button type="button" disabled={disabled} className={button} onClick={onSign}>Revisar y firmar</button>}
