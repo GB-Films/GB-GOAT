@@ -1,6 +1,7 @@
 const { createHash, randomUUID } = require('node:crypto');
 const { PDFDocument } = require('pdf-lib');
 const { fail, id, email, text, hash } = require('./providerPortalModel');
+const { companySigningAuthority, DECLARED_COMPANY_VERSION } = require('./providerRepresentation');
 
 function contractFields(input, signers, pages) {
   if (!Array.isArray(input) || input.length !== signers.length || input.length > 10) fail('Marcá un recuadro de firma por persona.');
@@ -65,10 +66,9 @@ function createProjectContractBridge({ db, store, bucket, readLocalFile, timesta
         if (provider.type === 'empresa') {
           const approval = (await db.doc(`providerPortalCompanyApprovals/${providerId}`).get()).data();
           const membership = approval?.uid ? (await db.doc(`providerPortalUsers/${approval.uid}/memberships/${providerId}`).get()).data() : null;
-          if (!approval || approval.email !== signerEmail || membership?.status !== 'active' || membership.email !== signerEmail
-            || !['company-representation-v2', 'company-representation-v3'].includes(membership.companyReviewVersion) || membership.companyReviewVersion !== (approval.version || 'company-representation-v2') || membership.declarationId !== approval.declarationId
-            || approval.company?.cuit !== String(provider.cuit || provider.cuitNormalized || '').replace(/\D/g, '') || approval.company?.name !== text(provider.businessName || provider.name)) fail('La empresa necesita una representación revisada con documentación antes de solicitar esta firma.');
-          companyAuthority = { declarationId: approval.declarationId, contentHash: approval.contentHash, scope: approval.scope, email: approval.email };
+          const declaration = approval?.version === DECLARED_COMPANY_VERSION ? (await db.doc(`providerPortalDeclarations/${id(approval.declarationId)}`).get()).data() : null;
+          if (declaration && declaration.providerId !== providerId) fail('La declaración pertenece a otra empresa.');
+          companyAuthority = companySigningAuthority(provider, approval, membership, declaration);
         }
         bindings.push({ providerId, email: signerEmail, name: text(provider.businessName || [provider.name, provider.lastName].filter(Boolean).join(' ') || provider.fullName || signerEmail), ...(companyAuthority ? { companyAuthority } : {}) });
       }

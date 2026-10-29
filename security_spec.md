@@ -81,6 +81,10 @@ conserva evidencia y auditoría. Ningún rol puede corregir una sola proyección
 pago compartido por el SDK cliente. El circuito no concede permisos nuevos sobre
 CT, cuentas bancarias o proyectos ajenos. Ver `docs/provider-finance.md`.
 
+## Representación empresarial declarada
+
+La política `company-representation-v4` admite poder opcional; conserva DNI adjunto, identidad y facultades declaradas bajo responsabilidad expresa. Sólo una identidad Google verificada con UID/correo de la cuenta registrada vigente y membresía no revocada prepara y aplica su declaración. La aplicación exige firma/evidencia completas, DNI coincidente, empresa sin cambios, contenido íntegro y respaldos privados con hash verificable. En una transacción activa la membresía, guarda autoridad como `signed_declaration` y crea auditoría. No registra una revisión de documentos que no ocurrió, no crea roles internos ni modifica usuarios de equipo. Las solicitudes de contrato revalidan la autoridad y, para v4, la declaración aplicada y su hash. Las declaraciones antiguas no se migran ni se alteran. Las reglas del SDK y el IAM permanecen sin cambios.
+
 ## Riesgo de dependencia pendiente
 
 La versión de `xlsx` publicada en npm mantiene avisos de seguridad sin corrección disponible en ese registro. Las importaciones quedaron limitadas por tipo y a 5 MB para reducir exposición, pero esto no elimina el riesgo de un archivo malicioso. La actualización recomendada por SheetJS se distribuye fuera de npm y requiere aprobación explícita del origen, o bien reemplazar el parser en una migración dedicada.

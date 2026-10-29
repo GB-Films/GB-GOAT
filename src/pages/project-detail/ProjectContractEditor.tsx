@@ -80,7 +80,7 @@ export function ProjectContractEditor({ title, url, providers, initialProviderId
           catch (error: any) { setError(error.message || 'No pudimos solicitar las firmas. Reintentá.'); }
           finally { busyRef.current = false; setBusy(false); }
         }}>{busy ? 'Solicitando firmas…' : 'Solicitar firmas'}</button>
-        <p className="portal-sign-muted">Al confirmar, el contrato quedará disponible en el portal de cada firmante.</p>
+        <p className="portal-sign-muted">Al confirmar, cada firmante encontrará este contrato en Mi proveedor → Documentos → Revisar y firmar, ingresando con el correo Google indicado arriba. La solicitud no envía un correo automáticamente.</p>
       </fieldset></aside>
     </div>
   </dialog>;

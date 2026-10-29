@@ -27,7 +27,7 @@ export async function testProjectContracts({ db, admin, manage, request, sign, s
   const two = { id: 'second-field', signerEmail: 'other@example.test', page: 2, x: .55, y: .6, w: .32, h: .11 };
   const preparation = { action: 'prepareProjectContract', documentId: 'uploaded-contract', expectedSha256: original.sha256, providerIds: ['contract-person', 'contract-other'], fields: [one, two] };
   await db.doc('providers/unreviewed-company').set({ type: 'empresa', businessName: 'Sin poder revisado', cuit: '30123456789', portalAccessEmail: 'unreviewed@example.test' });
-  await assert.rejects(call({ ...preparation, providerIds: ['unreviewed-company'], fields: [{ ...one, signerEmail: 'unreviewed@example.test' }] }), /representación revisada/);
+  await assert.rejects(call({ ...preparation, providerIds: ['unreviewed-company'], fields: [{ ...one, signerEmail: 'unreviewed@example.test' }] }), /declaración de representación/);
   await assert.rejects(call({ ...preparation, expectedSha256: '0'.repeat(64) }), /PDF cambió/);
   await assert.rejects(call({ ...preparation, fields: [one] }), /recuadro/);
   await assert.rejects(call({ ...preparation, fields: [one, { ...two, page: 3 }] }), /Página/);
@@ -74,8 +74,25 @@ export async function testProjectContracts({ db, admin, manage, request, sign, s
   assert.deepEqual(await call(preparation), prepared, 'an identical retry does not reset recorded signatures');
   await assert.rejects(call({ ...preparation, fields: [{ ...one, y: .3 }, two] }), /otra preparación/);
   assert.equal((await db.collection('projects/contracts/areaExpenses').get()).size, 0);
+  // Company completed its actual responsibility declaration with DNI only, no power and no admin review.
+  const companyPath = 'projects/contracts/documents/company-contract/contract.pdf';
+  await admin.storage().bucket().file(companyPath).save(bytes, { contentType: 'application/pdf' });
+  await db.doc('projects/contracts/projectDocuments/company-contract').set({ family: 'locaciones', path: companyPath, title: 'Locacion empresa sin poder - TEST ONLY', contentType: 'application/pdf' });
+  const companyInput = { ...preparation, documentId: 'company-contract', providerIds: ['company-representation'], fields: [one] };
+  const companyContract = await call(companyInput);
+  const assignedCompanyContract = (await sign.list({ email: 'own@example.test' })).find(document => document.documentId === companyContract.documentId);
+  assert(assignedCompanyContract); assert.equal(assignedCompanyContract.signed, false);
+  assert.equal((await sign.list({ email: 'other@example.test' })).some(document => document.documentId === companyContract.documentId), false);
+  await db.doc('providerPortalUsers/own/memberships/company-representation').update({ status: 'revoked' });
+  await assert.rejects(call(companyInput), /declaración de representación/);
+  await db.doc('providerPortalUsers/own/memberships/company-representation').update({ status: 'active' });
+  await signActual({ id: companyContract.documentId });
+  const companySigned = (await call({ action: 'projectDocuments' })).documents.find(document => document.id === companyContract.documentId);
+  assert.equal(companySigned.status, 'completed'); assert.equal(companySigned.artifactsReady, true);
+  for (const artifact of ['signed', 'certificate']) assert.equal(Buffer.from((await call({ action: 'projectFile', documentId: companyContract.documentId, artifact })).base64, 'base64').subarray(0, 5).toString(), '%PDF-');
+  assert.equal((await db.doc('providerPortalCompanyApprovals/company-representation').get()).data().method, 'signed_declaration');
   const changed = await PDFDocument.create(); changed.addPage().drawText('DIFFERENT TEST VERSION');
   await admin.storage().bucket().file(filePath).save(Buffer.from(await changed.save()), { contentType: 'application/pdf' });
   await assert.rejects(call(preparation), /PDF cambió/);
-  console.log('PASS: upload contract → in-GOAT preparation → two scoped providers → actual GB Sign signatures → signed PDF/certificate; admin, hash, idempotency and original guards.');
+  console.log('PASS: upload contract → in-GOAT preparation → scoped providers and company declared without power/review → actual GB Sign signatures → signed PDF/certificate; account, revocation, admin, hash, idempotency and original guards.');
 }
