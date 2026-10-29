@@ -1,7 +1,8 @@
 import { PROVIDER_DATA_HEADERS, providerDataRow, selectedExportProviders } from './providerDataExport';
+import type { ProviderSortOrder } from './providerOrdering';
 
-export async function buildProviderDataWorkbook(providers: any[], template: ArrayBuffer, exportedAt = new Date()) {
-  const selected = selectedExportProviders(providers, providers.map(provider => provider.id));
+export async function buildProviderDataWorkbook(providers: any[], template: ArrayBuffer, exportedAt = new Date(), order: ProviderSortOrder = 'name') {
+  const selected = selectedExportProviders(providers, providers.map(provider => provider.id), order);
   if (!selected.length) throw Error('Seleccioná al menos una persona.');
   const { default: ExcelJS } = await import('exceljs');
   const workbook = new ExcelJS.Workbook();
@@ -42,17 +43,17 @@ export async function buildProviderDataWorkbook(providers: any[], template: Arra
 
 export type ProviderDataFormat = 'xlsx' | 'pdf';
 
-export async function downloadProviderData(providers: any[], format: ProviderDataFormat = 'pdf') {
+export async function downloadProviderData(providers: any[], format: ProviderDataFormat = 'pdf', order: ProviderSortOrder = 'name') {
   const base = (import.meta as ImportMeta & { env?: { BASE_URL?: string } }).env?.BASE_URL || '/';
   let bytes: Uint8Array;
   if (format === 'pdf') {
     const [{ buildProviderDataPdf }, logo, font] = await Promise.all([import('./providerDataPdf'), fetch(`${base}gb-films-logo.png`), fetch(`${base}fonts/DejaVuSans.ttf`)]);
     if (!logo.ok || !font.ok) throw Error('No se pudo cargar el membrete.');
-    bytes = await buildProviderDataPdf(providers, { logo: await logo.arrayBuffer(), font: await font.arrayBuffer() });
+    bytes = await buildProviderDataPdf(providers, { logo: await logo.arrayBuffer(), font: await font.arrayBuffer() }, new Date(), order);
   } else {
     const response = await fetch(`${base}templates/proveedores-datos.xlsx`);
     if (!response.ok) throw Error('No se pudo cargar el membrete.');
-    const workbook = await buildProviderDataWorkbook(providers, await response.arrayBuffer());
+    const workbook = await buildProviderDataWorkbook(providers, await response.arrayBuffer(), new Date(), order);
     bytes = new Uint8Array(await workbook.xlsx.writeBuffer());
   }
   const url = URL.createObjectURL(new Blob([new Uint8Array(bytes).buffer], { type: format === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));

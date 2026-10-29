@@ -1,6 +1,8 @@
 import { ProviderDetailModal } from '../components/ProviderDetailModal';
 import { loadProviderDetail } from '../lib/providerDetail';
 import { ProviderDataExportDialog } from '../components/ProviderDataExportDialog';
+import { ProviderSortSelect } from '../components/ProviderSortSelect';
+import { providerRegistrationLabel, sortProviders, type ProviderSortOrder } from '../lib/providerOrdering';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   collection,
@@ -123,15 +125,16 @@ export default function Providers() {
   const [savingProvider, setSavingProvider] = useState(false);
   const { profile } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
+  const [providerOrder, setProviderOrder] = useState<ProviderSortOrder>('updated-desc');
   const canDeleteProviders = profile?.role === 'admin';
   const canEditProviders = hasGlobalRole(profile?.role, PROVIDER_UPDATE_ROLES);
   const canCreateProviders = hasGlobalRole(profile?.role, PROVIDER_CREATE_ROLES);
 
   const filteredProviders = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
-    if (!term) return providers;
-    return providers.filter((provider) => providerSearchText(provider).includes(term));
-  }, [providers, searchTerm]);
+    const matches = term ? providers.filter((provider) => providerSearchText(provider).includes(term)) : providers;
+    return sortProviders(matches, providerOrder);
+  }, [providers, searchTerm, providerOrder]);
 
   const syncProviderIdentifiers = async (items: any[]) => {
     const providersWithIdentifiers = items.filter((provider) => buildProviderIdentifiers(provider).length > 0);
@@ -437,7 +440,7 @@ export default function Providers() {
       }
 
       const providerId = await createProviderWithUniqueIdentifiers(data);
-      setProviders([{ id: providerId, ...data, createdAt: new Date() }, ...providers]);
+      setProviders([{ id: providerId, ...data, createdAt: new Date(), updatedAt: new Date() }, ...providers]);
       setShowNewModal(false);
       alert('Proveedor cargado con exito.');
     } catch (error: any) {
@@ -620,7 +623,7 @@ export default function Providers() {
         </>}
       />
 
-      {showDataExport && hasGlobalRole(profile?.role, PROVIDER_ACCESS_ROLES) && <ProviderDataExportDialog providers={providers} onClose={() => setShowDataExport(false)} onExport={async (selected, format) => { const { downloadProviderData } = await import('../lib/providerDataWorkbook'); await downloadProviderData(selected, format); }} />}
+      {showDataExport && hasGlobalRole(profile?.role, PROVIDER_ACCESS_ROLES) && <ProviderDataExportDialog providers={providers} initialOrder={providerOrder === 'updated-desc' ? 'name' : providerOrder} onClose={() => setShowDataExport(false)} onExport={async (selected, format, order) => { const { downloadProviderData } = await import('../lib/providerDataWorkbook'); await downloadProviderData(selected, format, order); }} />}
 
       {false && generatedInviteLink && (
         <div className="bg-white rounded-xl border border-emerald-200 p-5 shadow-sm flex flex-col lg:flex-row gap-4 lg:items-center justify-between">
@@ -674,15 +677,18 @@ export default function Providers() {
         </div>
       )}
 
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
-        <input
-          type="text"
-          placeholder="Buscar por nombre, razón social, DNI, CUIT, email o categoría..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-slate-400 transition-all placeholder:text-slate-300"
-        />
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+        <div className="relative min-w-0 flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
+          <input
+            type="text"
+            placeholder="Buscar por nombre, razón social, DNI, CUIT, email o categoría..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-slate-400 transition-all placeholder:text-slate-300"
+          />
+        </div>
+        <ProviderSortSelect value={providerOrder} onChange={setProviderOrder} includeUpdated />
       </div>
 
       {loading ? (
@@ -725,6 +731,7 @@ export default function Providers() {
                     <td className="px-5 py-4">
                       <div className="text-sm font-bold text-slate-900">{providerDisplayName(provider)}</div>
                       <div className="text-[10px] text-slate-400 font-medium">{provider.source === 'provider_invite' ? 'Alta por link' : 'Carga interna'}</div>
+                      <div className="mt-1 text-[11px] text-slate-500">{providerRegistrationLabel(provider)}</div>
                     </td>
                     <td className="px-5 py-4 text-xs text-slate-600 font-medium whitespace-nowrap">{formatIdentifier(provider.dni || inferred.dniNormalized) || '-'}</td>
                     <td className="px-5 py-4 text-xs text-slate-600 font-medium whitespace-nowrap">{formatIdentifier(provider.cuit || inferred.cuitNormalized) || '-'}</td>

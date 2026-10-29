@@ -1,4 +1,5 @@
 import { inferLegacyIdentifiers, normalizeDigits, normalizeProviderText, providerDisplayName } from './providerConstants';
+import { compareProviderOrder, type ProviderSortOrder } from './providerOrdering';
 
 export const PROVIDER_DATA_HEADERS = ['Apellido y nombre', 'DNI', 'CUIL / CUIT', 'Fecha de nacimiento', 'Domicilio', 'Actividad / oficio', 'Teléfono', 'Correo electrónico'];
 export const providerPersonalAlias = (provider: any) => String(provider.nickname || provider.apodo || provider.alias || provider.preferredName || '').trim();
@@ -35,7 +36,7 @@ export function missingProviderInsuranceData(provider: any) {
   return [!/^\d{7,9}$/.test(normalizeDigits(identifiers.dniNormalized)) && 'DNI', !providerBirthDate(provider.birthDate) && 'nacimiento', !text(provider.address) && 'domicilio'].filter(Boolean) as string[];
 }
 
-export function searchExportProviders(providers: any[], search: string, selectedIds: readonly string[] = []) {
+export function searchExportProviders(providers: any[], search: string, selectedIds: readonly string[] = [], order: ProviderSortOrder = 'name') {
   const selected = new Set(selectedIds);
   const term = normalizeProviderText(search);
   const tokens = term.split(' ').filter(Boolean);
@@ -45,12 +46,12 @@ export function searchExportProviders(providers: any[], search: string, selected
     const score = !term ? 0 : names.includes(term) ? 0 : names.some(name => name.startsWith(term)) ? 1 : 2;
     return { provider, haystack, score };
   }).filter(row => tokens.every(token => row.haystack.includes(token)));
-  return ranked.sort((a, b) => a.score - b.score || providerExportName(a.provider).localeCompare(providerExportName(b.provider), 'es', { sensitivity: 'base' })).map(row => row.provider);
+  return ranked.sort((a, b) => (order === 'name' ? a.score - b.score : 0) || compareProviderOrder(a.provider, b.provider, order, providerExportName)).map(row => row.provider);
 }
 
-export function selectedExportProviders(providers: any[], ids: readonly string[]) {
+export function selectedExportProviders(providers: any[], ids: readonly string[], order: ProviderSortOrder = 'name') {
   const byId = new Map(providers.filter(isExportablePerson).map(provider => [provider.id, provider]));
-  return [...new Set(ids)].map(id => byId.get(id)).filter(Boolean).sort((a, b) => providerExportName(a).localeCompare(providerExportName(b), 'es', { sensitivity: 'base' }));
+  return [...new Set(ids)].map(id => byId.get(id)).filter(Boolean).sort((a, b) => compareProviderOrder(a, b, order, providerExportName));
 }
 
 export function providerDataRow(provider: any): Array<string | Date> {

@@ -31,3 +31,17 @@ test('birth dates validate day and month without timezone shifts or guessed data
   for (const value of ['', '1990-02-31', '31/13/1990', '14/02/2990', 'unknown', {}, new Date(NaN)]) assert.equal(providerBirthDate(value), null);
   assert.match(String(providerDataRow({ ...people[0], dni: '123', dniNormalized: '', birthDate: '31/02/1990' })[1]), /Revisar/);
 });
+
+test('registration order applies to search and selected people without changing filtering or fabricating legacy dates', () => {
+  const rows = [
+    { id: 'old', type: 'persona', name: 'Ana', lastName: 'Pérez', createdAt: '2026-10-01T12:00:00Z', updatedAt: '2026-10-30T12:00:00Z' },
+    { id: 'new', type: 'persona', name: 'Zoe', lastName: 'Pérez', createdAt: '2026-10-29T12:00:00Z' },
+    { id: 'legacy', type: 'persona', name: 'María', lastName: 'Pérez', updatedAt: '2026-10-31T12:00:00Z' },
+    { id: 'company', type: 'empresa', name: 'Pérez', createdAt: '2026-10-30T12:00:00Z' },
+    { id: 'other', type: 'persona', name: 'Otro', createdAt: '2026-10-30T12:00:00Z' },
+  ];
+  assert.deepEqual(searchExportProviders(rows, 'perez', [], 'registration-desc').map(row => row.id), ['new', 'old', 'legacy']);
+  assert.deepEqual(searchExportProviders(rows, 'perez', ['new'], 'registration-asc').map(row => row.id), ['old', 'legacy']);
+  assert.deepEqual(selectedExportProviders(rows, ['old', 'new', 'legacy', 'new', 'company', 'gone'], 'registration-desc').map(row => row.id), ['new', 'old', 'legacy']);
+  assert.deepEqual(selectedExportProviders(rows, ['new', 'old', 'legacy'], 'registration-asc').map(row => row.id), ['old', 'new', 'legacy']);
+});

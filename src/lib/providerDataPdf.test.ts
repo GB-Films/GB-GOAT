@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import { PDFDocument } from 'pdf-lib';
 import { buildProviderDataPdf, wrapProviderPdfText } from './providerDataPdf';
 
@@ -26,4 +27,25 @@ test('PDF downloads have landscape pages, branded metadata and pagination for lo
   for (const page of many.getPages()) { assert.ok(Math.abs(page.getWidth() - 841.89) < 0.1); assert.ok(page.getHeight() < page.getWidth()); }
   assert.equal(many.getForm().getFields().length, 0);
   await assert.rejects(buildProviderDataPdf([], assets), /Seleccioná/);
+});
+
+test('PDF keeps the chosen registration order, including undated people at the end', async () => {
+  const array = (buffer: Buffer) => buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer;
+  const [logo, font] = await Promise.all([readFile(new URL('../../public/gb-films-logo.png', import.meta.url)), readFile(new URL('../../public/fonts/DejaVuSans.ttf', import.meta.url))]);
+  const rows = [
+    { id: 'old', name: 'Ana', createdAt: '2026-10-01T12:00:00Z' },
+    { id: 'new', name: 'Zoe', createdAt: '2026-10-29T12:00:00Z' },
+    { id: 'legacy', name: 'Celia' },
+  ];
+  const bytes = await buildProviderDataPdf(rows, { logo: array(logo), font: array(font) }, new Date('2026-10-29T15:00:00Z'), 'registration-desc');
+  const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const fontDirectory = fileURLToPath(new URL('../../node_modules/pdfjs-dist/standard_fonts/', import.meta.url)).replace(/\\/g, '/');
+  const task = getDocument({ data: new Uint8Array(bytes), standardFontDataUrl: fontDirectory });
+  try {
+    const pdf = await task.promise;
+    const content = await (await pdf.getPage(1)).getTextContent();
+    const text = content.items.map(item => 'str' in item ? item.str : '').join(' ');
+    assert.ok(text.indexOf('Zoe') >= 0 && text.indexOf('Zoe') < text.indexOf('Ana'));
+    assert.ok(text.indexOf('Ana') < text.indexOf('Celia'));
+  } finally { await task.destroy(); }
 });

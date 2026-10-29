@@ -18,3 +18,15 @@ test('exported XLSX preserves logo, selected people, dates, text identifiers, fi
   assert.equal(sheet.autoFilter, 'A7:H9'); assert.equal((sheet.views[0] as { ySplit?: number }).ySplit, 7); assert.equal(sheet.pageSetup.orientation, 'landscape');
   assert.doesNotMatch(JSON.stringify(sheet.getSheetValues()), /DO-NOT-EXPORT|No incluir/);
 });
+
+test('XLSX keeps the registration order selected in the app instead of sorting names again', async () => {
+  const template = await readFile(new URL('../../public/templates/proveedores-datos.xlsx', import.meta.url));
+  const rows = [
+    { id: 'old', name: 'Ana', createdAt: '2026-10-01T12:00:00Z' },
+    { id: 'new', name: 'Zoe', createdAt: '2026-10-29T12:00:00Z' },
+    { id: 'legacy', name: 'Celia' },
+  ];
+  const workbook = await buildProviderDataWorkbook(rows, template.buffer.slice(template.byteOffset, template.byteOffset + template.byteLength), new Date('2026-10-29T15:00:00Z'), 'registration-desc');
+  const sheet = workbook.getWorksheet('Personas')!;
+  assert.deepEqual([8, 9, 10].map(row => sheet.getCell(`A${row}`).value), ['Zoe', 'Ana', 'Celia']);
+});
