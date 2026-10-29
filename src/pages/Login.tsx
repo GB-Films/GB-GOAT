@@ -3,14 +3,17 @@ import { signInWithPopup } from 'firebase/auth';
 import { auth, googleProvider } from '../lib/firebase';
 import { Navigate, useLocation } from 'react-router-dom';
 import { USER_INVITE_TOKEN_KEY, useAuth } from '../context/AuthContext';
+import { portalRequest } from '../lib/providerPortal';
+import { needsTeamOnboarding } from '../lib/teamOnboarding';
 import { motion } from 'motion/react';
 
 export default function Login() {
-  const { user, profile, loading, authError } = useAuth();
+  const { user, profile, loading, authError, refreshProfile } = useAuth();
   const location = useLocation();
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [loginError, setLoginError] = useState('');
   const [hasInviteLink, setHasInviteLink] = useState(false);
+  const [acceptingInvite,setAcceptingInvite] = useState(false);
   const logoSrc = `${(import.meta as any).env.BASE_URL}gb-films-logo.png`;
 
   useEffect(() => {
@@ -22,6 +25,13 @@ export default function Login() {
       setHasInviteLink(!!window.localStorage.getItem(USER_INVITE_TOKEN_KEY));
     }
   }, [location.search]);
+  const inviteToken = new URLSearchParams(location.search).get('invite');
+  useEffect(()=>{
+    if(!user || profile?.role!=='portal' || !inviteToken) return;
+    let cancelled=false;setAcceptingInvite(true);
+    portalRequest({action:'teamBootstrap',inviteToken}).then(()=>refreshProfile()).catch(e=>setLoginError(e.message)).finally(()=>{if(!cancelled)setAcceptingInvite(false);});
+    return ()=>{cancelled=true;};
+  },[user?.uid,profile?.role,inviteToken]);
 
   useEffect(() => {
     if (authError) {
@@ -30,11 +40,11 @@ export default function Login() {
     }
   }, [authError]);
 
-  if (user && profile) {
-    return <Navigate to={profile.role === 'portal' || profile.role === 'unverified' ? '/mi-proveedor' : '/'} replace />;
+  if (user && profile && !(profile.role==='portal' && inviteToken)) {
+    return <Navigate to={needsTeamOnboarding(profile) ? '/alta-equipo' : profile.role === 'portal' || profile.role === 'unverified' ? '/mi-proveedor' : '/'} replace />;
   }
 
-  if (loading) {
+  if (loading || acceptingInvite) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-slate-50">
         <div className="w-10 h-10 border-4 border-black border-t-transparent rounded-full animate-spin" />

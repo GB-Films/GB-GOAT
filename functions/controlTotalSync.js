@@ -110,7 +110,7 @@ function createControlTotalHandler({ db, fetchImpl = fetch, now = () => new Date
   return async request => {
     const { email, data } = validateRequest(request);
     const user = await db.collection('users').doc(request.auth.uid).get();
-    if (user.data()?.role !== 'admin') throw new HttpsError('permission-denied', 'Sólo los administradores globales de GOAT pueden actualizar CT.');
+    if (user.data()?.role !== 'admin' || !require('./teamWorkAccess').hasTeamWorkAccess(user.data())) throw new HttpsError('permission-denied', 'Sólo los administradores globales de GOAT pueden actualizar CT.');
     const stateRef = db.collection('ctSyncProjects').doc(data.projectId);
     const state = (await stateRef.get()).data() || {};
     if (data.action === 'status') return { lastRun: state.lastRun || null, config: state.config || null };

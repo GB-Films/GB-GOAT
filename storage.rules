@@ -23,6 +23,8 @@ service firebase.storage {
           || (
             firestore.exists(/databases/(default)/documents/users/$(request.auth.uid))
             && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'admin'
+            && (!firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.keys().hasAny(['teamOnboarding'])
+              || firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.teamOnboarding.status == 'ready')
           )
         );
     }
@@ -37,15 +39,18 @@ service firebase.storage {
 
     function hasCollaboratorDoc(projectId) {
       return isSignedIn()
-        && firestore.exists(/databases/(default)/documents/projects/$(projectId)/collaborators/$(userEmail()));
+        && firestore.exists(/databases/(default)/documents/projects/$(projectId)/collaborators/$(userEmail()))
+        && collaboratorDoc(projectId).get('teamOnboardingBlockedEmail', '') != userEmail();
     }
 
     function isProjectOwner(projectId) {
-      return isSignedIn() && projectDoc(projectId).createdBy == request.auth.uid;
+      return isSignedIn() && projectDoc(projectId).createdBy == request.auth.uid
+        && !(userEmail() in projectDoc(projectId).get('teamOnboardingBlockedEmails', []));
     }
 
     function isProjectCollaborator(projectId) {
       return isSignedIn()
+        && !(userEmail() in projectDoc(projectId).get('teamOnboardingBlockedEmails', []))
         && (
           hasCollaboratorDoc(projectId)
           || userEmail() in projectDoc(projectId).collaboratorEmails
@@ -79,6 +84,7 @@ service firebase.storage {
           || (
             projectDoc(projectId).keys().hasAny(['collaboratorEmails'])
             && userEmail() in projectDoc(projectId).collaboratorEmails
+            && !(userEmail() in projectDoc(projectId).get('teamOnboardingBlockedEmails', []))
           )
         );
     }

@@ -3,6 +3,7 @@ import { User, onAuthStateChanged, signOut } from 'firebase/auth';
 import { doc, getDoc, runTransaction, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
 import { normalizeEmail } from '../lib/identity';
+import { portalRequest } from '../lib/providerPortal';
 
 interface AuthContextType {
   user: User | null;
@@ -11,6 +12,7 @@ interface AuthContextType {
   authError: string;
   isOwner: boolean;
   isAdmin: boolean;
+  refreshProfile: () => Promise<void>;
 }
 
 export const APP_OWNER_EMAIL = 'info@granbertafilms.com';
@@ -23,6 +25,7 @@ const AuthContext = createContext<AuthContextType>({
   authError: '',
   isOwner: false,
   isAdmin: false,
+  refreshProfile: async () => {},
 });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -74,12 +77,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
           if (!data.role) data.role = 'colaborador';
           setProfile(data);
-          clearInviteToken();
+          if (!data.teamOnboarding || data.teamOnboarding.status === 'ready') clearInviteToken();
           setLoading(false);
           return;
         }
 
-        const inviteToken = window.localStorage.getItem(USER_INVITE_TOKEN_KEY) || '';
+        // Read the link here as well: auth can restore before Login's effect runs.
+        const linkedToken = new URLSearchParams(window.location.hash.split('?')[1] || '').get('invite') || '';
+        const inviteToken = linkedToken || window.localStorage.getItem(USER_INVITE_TOKEN_KEY) || '';
         const role = normalizedEmail === APP_OWNER_EMAIL ? 'admin' : 'colaborador';
         const newProfile = {
           uid: firebaseUser.uid,
@@ -99,25 +104,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setLoading(false);return;
           }
 
-          await runTransaction(db, async (transaction) => {
-            const inviteRef = doc(db, 'userInvites', inviteToken);
-            const inviteSnap = await transaction.get(inviteRef);
-
-            if (!inviteSnap.exists()) throw new Error('INVITE_NOT_FOUND');
-
-            const invite = inviteSnap.data();
-            if (invite.status !== 'pending' || invite.used === true) throw new Error('INVITE_USED');
-            if (normalizeEmail(invite.email) !== normalizedEmail) throw new Error('INVITE_EMAIL_MISMATCH');
-
-            transaction.set(userRef, newProfile);
-            transaction.update(inviteRef, {
-              status: 'used',
-              used: true,
-              usedAt: serverTimestamp(),
-              usedBy: firebaseUser.uid,
-              usedByEmail: normalizedEmail,
-            });
-          });
+          const result = await portalRequest({ action: 'teamBootstrap', inviteToken });
+          setProfile(result.profile);
+          if (result.status === 'ready') clearInviteToken();
+          return;
         } else {
           await runTransaction(db, async (transaction) => {
             transaction.set(userRef, newProfile);
@@ -148,9 +138,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const isOwner = normalizeEmail(profile?.email) === APP_OWNER_EMAIL;
   const isAdmin = profile?.role === 'admin';
+  const refreshProfile = async () => {
+    if (!auth.currentUser) return;
+    const snapshot = await getDoc(doc(db, 'users', auth.currentUser.uid));
+    if (snapshot.exists()) setProfile(snapshot.data());
+  };
 
   return (
-    <AuthContext.Provider value={{ user, profile, loading, authError, isOwner, isAdmin }}>
+    <AuthContext.Provider value={{ user, profile, loading, authError, isOwner, isAdmin, refreshProfile }}>
       {children}
     </AuthContext.Provider>
   );

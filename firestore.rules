@@ -23,6 +23,31 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+    // New team invitations are server-owned. Legacy users without a marker retain
+    // their ACLs. Provider membership never creates internal access.
+    function teamNotPending() {
+      // Backend writes this gate and the profile in the same transaction.
+      // Checking one bounded record avoids exhausting rule expression limits.
+      return teamTargetReady(userEmail());
+    }
+    function teamTargetReady(email) {
+      return email is string && email.size() <= 254
+        && (!exists(/databases/$(database)/documents/teamAccessEmails/$(email))
+          || get(/databases/$(database)/documents/teamAccessEmails/$(email)).data.status == 'ready');
+    }
+    function teamOwnerTargetReady(uid) {
+      return uid is string && uid.size() > 0 && uid.size() <= 160
+        && exists(/databases/$(database)/documents/users/$(uid))
+        && teamTargetReady(get(/databases/$(database)/documents/users/$(uid)).data.email);
+    }
+    function validTeamTargets(added) {
+      return added is list && added.size() <= 5
+        && (added.size() < 1 || teamTargetReady(added[0]))
+        && (added.size() < 2 || teamTargetReady(added[1]))
+        && (added.size() < 3 || teamTargetReady(added[2]))
+        && (added.size() < 4 || teamTargetReady(added[3]))
+        && (added.size() < 5 || teamTargetReady(added[4]));
+    }
     function isAuthenticated() { return request.auth != null; }
     function isSignedIn() { return request.auth != null && request.auth.token.email_verified; }
     // Broad catalogs are for existing internal users. Project ACLs remain independent.
@@ -31,7 +56,7 @@ service cloud.firestore {
         request.auth.token.email == 'info@granbertafilms.com'
         || (exists(/databases/$(database)/documents/users/$(request.auth.uid))
           && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role','colaborador') in ['admin','ayudante_admin','jefe_produccion','colaborador'])
-      );
+      ) && teamNotPending();
     }
 
     function userEmail() {
@@ -45,7 +70,7 @@ service cloud.firestore {
     function isAppAdmin() {
       return isSignedIn()
         && (
-          isAppOwner()
+          userEmail() == 'info@granbertafilms.com'
           || (
             exists(/databases/$(database)/documents/users/$(request.auth.uid))
             && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
@@ -71,8 +96,9 @@ service cloud.firestore {
     }
 
     function hasCollaboratorDoc(projectId) {
-      return isSignedIn()
-        && exists(/databases/$(database)/documents/projects/$(projectId)/collaborators/$(userEmail()));
+      let collaborator = collaboratorDoc(projectId);
+      return isSignedIn() && collaborator != null
+        && collaborator.get('teamOnboardingBlockedEmail', '') != userEmail();
     }
 
     function hasCollaboratorDocByEmail(projectId, email) {
@@ -93,7 +119,8 @@ service cloud.firestore {
     function isProjectOwner(projectId) {
       // Imported projects may have no creator; ownership must then be false,
       // so assigned collaborators can still be evaluated through their ACL.
-      return isSignedIn() && projectDoc(projectId).get('createdBy', '') == request.auth.uid;
+      return isSignedIn() && projectDoc(projectId).get('createdBy', '') == request.auth.uid
+        && !(userEmail() in projectDoc(projectId).get('teamOnboardingBlockedEmails', []));
     }
 
     function isProjectCollaborator(projectId) {
@@ -101,7 +128,7 @@ service cloud.firestore {
         && (
           hasCollaboratorDoc(projectId)
           || userEmail() in projectDoc(projectId).collaboratorEmails
-        );
+        ) && !(userEmail() in projectDoc(projectId).get('teamOnboardingBlockedEmails', []));
     }
 
     function isProjectAdmin(projectId) {
@@ -1364,18 +1391,12 @@ service cloud.firestore {
     match /users/{userId} {
       allow get: if isInternalUser() || (isAuthenticated() && request.auth.uid == userId);
       allow list: if isInternalUser();
-      allow create: if isSignedIn() && (
-        isAppOwner()
-        || (
-          request.auth.uid == userId
-          && request.resource.data.uid == request.auth.uid
-          && request.resource.data.email == userEmail()
-          && request.resource.data.role == 'colaborador'
-          && request.resource.data.inviteToken is string
-          && userInviteMatchesSignedInEmail(request.resource.data.inviteToken)
-        )
-      );
-      allow update: if isAppOwner()
+      // First internal registration is performed only by the verified backend.
+      allow create: if isAppOwner() && request.auth.uid == userId
+        && request.resource.data.uid == userId && request.resource.data.email == userEmail()
+        && request.resource.data.role == 'admin'
+        && !request.resource.data.keys().hasAny(['teamOnboarding']);
+      allow update: if (isAppOwner()
         || (
           isAppAdmin()
           && resource.data.email != 'info@granbertafilms.com'
@@ -1388,7 +1409,7 @@ service cloud.firestore {
           isSignedIn()
           && request.auth.uid == userId
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName','photoURL','pinnedProjectIds'])
-        );
+      )) && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']) || teamTargetReady(resource.data.email));
       allow delete: if isAppOwner();
     }
 
@@ -1398,22 +1419,10 @@ service cloud.firestore {
         && resource.data.email == userEmail()
       );
       allow list: if isAppAdmin();
-      allow create: if isAppAdmin()
-        && request.resource.data.email is string
-        && request.resource.data.status == 'pending'
-        && request.resource.data.used == false;
+      allow create: if false; // manageProviderPortal.teamCreateInvite also blocks old ACLs atomically.
       allow update: if isAppAdmin()
-        || (
-          isSignedIn()
-          && resource.data.email == userEmail()
-          && resource.data.status == 'pending'
-          && resource.data.used == false
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'used', 'usedAt', 'usedBy', 'usedByEmail'])
-          && request.resource.data.status == 'used'
-          && request.resource.data.used == true
-          && request.resource.data.usedBy == request.auth.uid
-          && request.resource.data.usedByEmail == userEmail()
-        );
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
+        && request.resource.data.status == 'cancelled';
       allow delete: if isAppAdmin();
     }
 
@@ -1613,7 +1622,7 @@ service cloud.firestore {
 
     match /projects/{projectId} {
       allow list: if isAppAdmin() || (
-        isSignedIn()
+        isSignedIn() && teamNotPending()
         && (
           resource.data.createdBy == request.auth.uid
           || userEmail() in resource.data.collaboratorEmails
@@ -1622,8 +1631,12 @@ service cloud.firestore {
       allow get: if hasProjectAccess(projectId);
       allow create: if isAppAdmin() && request.resource.data.createdBy == request.auth.uid
         && !request.resource.data.keys().hasAny(['generalCashDeliveryBlockedEmails', 'cashSubdeliveryRevision'])
-        && !request.resource.data.keys().hasAny(commercialFieldNames());
-      allow update: if preservesSharedExpenseManagement(projectId)
+        && !request.resource.data.keys().hasAny(commercialFieldNames().concat(['teamOnboardingBlockedEmails']))
+        && validTeamTargets(request.resource.data.get('collaboratorEmails', []));
+      allow update: if !request.resource.data.diff(resource.data).affectedKeys().hasAny(['teamOnboardingBlockedEmails'])
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['createdBy']) || teamOwnerTargetReady(request.resource.data.createdBy))
+        && validTeamTargets(request.resource.data.get('collaboratorEmails', []).removeAll(resource.data.get('collaboratorEmails', [])))
+        && preservesSharedExpenseManagement(projectId)
         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['generalCashDeliveryBlockedEmails', 'cashSubdeliveryRevision'])
         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(commercialFieldNames()) && (isProjectAdmin(projectId)
         || canAppendCollaboratorEmailAsProductionLead(projectId)
@@ -1635,9 +1648,11 @@ service cloud.firestore {
       match /collaborators/{email} {
         allow read: if hasProjectAccess(projectId);
         allow create: if collaboratorIdentityIsValid(email)
-          && (isProjectAdmin(projectId) || canCreateCollaboratorAsProductionLead(projectId));
-        allow delete: if isProjectAdmin(projectId);
-        allow update: if isProjectAdmin(projectId) || canAssignAreasAsProductionLead(projectId);
+          && (isProjectAdmin(projectId) || canCreateCollaboratorAsProductionLead(projectId)) && teamTargetReady(email)
+          && !request.resource.data.keys().hasAny(['teamOnboardingBlockedEmail']);
+        allow update: if (isProjectAdmin(projectId) || canAssignAreasAsProductionLead(projectId)) && teamTargetReady(email)
+          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['teamOnboardingBlockedEmail']);
+        allow delete: if isProjectAdmin(projectId) && teamTargetReady(email);
       }
 
       match /budgetItems/{itemId} {
@@ -1794,6 +1809,8 @@ service cloud.firestore {
         && validProviderInviteExpiration();
       allow update: if isAppAdmin()
         || (
+          request.resource.data.status == 'cancelled'
+          &&
           (canCreateGlobalProvider() || canCancelLinkedProviderInvite())
           && resource.data.used == false
           && resource.data.status == 'pending'
@@ -1803,8 +1820,8 @@ service cloud.firestore {
         || (
           resource.data.used == false
           && resource.data.status == 'pending'
-          && providerInviteNotExpired(token)
           && (!resource.data.keys().hasAny(['mode']) || resource.data.mode != 'multi_use')
+          && providerInviteNotExpired(token)
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'status', 'usedAt', 'providerId', 'providerType'])
           && request.resource.data.used == true
           && request.resource.data.status == 'used'

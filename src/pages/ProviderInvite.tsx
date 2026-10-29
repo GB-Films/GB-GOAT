@@ -11,6 +11,7 @@ import {
 } from '../lib/providerConstants';
 import { getProviderInviteTargetIssue } from '../lib/providerInvites';
 import { emptyThirdParty, providerFiscalErrors } from '../lib/providerThirdParty';
+import { portalRequest } from '../lib/providerPortal';
 
 type ProviderType = 'persona' | 'empresa';
 type DuplicateState = { dni?: boolean; cuit?: boolean };
@@ -332,7 +333,7 @@ function Field({ label, required, error, children }: { label: string; required?:
   );
 }
 
-export default function ProviderInvite() {
+export default function ProviderInvite({teamOnboarding}: {teamOnboarding?: {initialForm?: Partial<ProviderForm>; onComplete:()=>Promise<void>; onReview?:()=>Promise<void>}} = {}) {
   const { token = '' } = useParams();
   const [invite, setInvite] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
@@ -342,7 +343,8 @@ export default function ProviderInvite() {
   const [registeredProviderId, setRegisteredProviderId] = useState('');
   const [error, setError] = useState('');
   const [duplicates, setDuplicates] = useState<DuplicateState>({});
-  const [form, setForm] = useState(emptyForm);
+  const [form, setForm] = useState(()=>teamOnboarding ? {...emptyForm,...teamOnboarding.initialForm,type:'persona' as const,email:auth.currentUser?.email?.trim().toLowerCase() || ''} : emptyForm);
+  const [ownAccountConfirmed,setOwnAccountConfirmed] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<FormErrors>({});
   const [showFieldErrors, setShowFieldErrors] = useState(false);
   const [googleUser, setGoogleUser] = useState<User | null>(auth.currentUser);
@@ -382,6 +384,7 @@ export default function ProviderInvite() {
 
   useEffect(() => {
     const loadInvite = async () => {
+      if(teamOnboarding) {setInvite({id:'team',status:'pending'});setLoading(false);return;}
       const isLocalPreview = Boolean((import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV) && token === 'preview';
       if (isLocalPreview) {
         setInvite({ id: 'preview', status: 'pending', mode: 'single_use' });
@@ -422,10 +425,11 @@ export default function ProviderInvite() {
       }
     };
 
-    if (token) loadInvite();
+    if (token || teamOnboarding) loadInvite();
   }, [token]);
 
   useEffect(() => {
+    if(teamOnboarding) return; // Server checks canonical identifiers without exposing another supplier's record.
     let cancelled = false;
 
     const checkDuplicates = async () => {
@@ -545,6 +549,16 @@ export default function ProviderInvite() {
       if (identity.signInProvider !== 'google.com' || identity.claims.email_verified !== true
         || String(identity.claims.email || '').toLowerCase() !== form.email) {
         throw new Error('Iniciá sesión con una cuenta Google con correo verificado.');
+      }
+      if(teamOnboarding) {
+        if(!ownAccountConfirmed) throw new Error('Confirmá que sos titular de la cuenta provista.');
+        const result=await portalRequest({action:'teamComplete',form:{...form,bankAccount_cbu:normalizeDigits(form.bankAccount_cbu)},personalAccountAccepted,ownAccountConfirmed});
+        if(!['ready','legacy'].includes(result.status)) {
+          await teamOnboarding.onReview?.();
+          return;
+        }
+        await teamOnboarding.onComplete();
+        return;
       }
       const newProviderId = await runTransaction(db, async (transaction) => {
         const inviteRef = doc(db, 'providerInvites', token);
@@ -762,11 +776,11 @@ export default function ProviderInvite() {
             <label className="flex gap-2 text-sm"><input type="checkbox" checked={personalAccountAccepted} disabled={!googleUser || submitLoading} onChange={(e) => setPersonalAccountAccepted(e.target.checked)} />{form.type === 'empresa' ? 'Confirmo que tengo control personal de esta cuenta Google y que la uso para gestionar a la empresa. Entiendo que las facultades para representarla deben documentarse y aprobarse por separado.' : 'Confirmo que esta cuenta Google me pertenece, es de uso personal y la utilizaré para ingresar a mi ficha en GOAT.'}</label>
             {error && !form.type && <p role="alert" className="text-sm text-red-600">{error}</p>}
           </section>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-8">
+          {!teamOnboarding && <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-8">
             <button
               type="button"
               onClick={() => selectType('persona')}
-              disabled={submitLoading}
+              disabled={submitLoading || !!teamOnboarding}
               className={`p-5 rounded-xl border text-left transition-all ${form.type === 'persona' ? 'border-black bg-slate-950 text-white' : 'border-slate-200 hover:border-slate-400'}`}
             >
               <UserRound className="w-5 h-5 mb-3" />
@@ -776,14 +790,14 @@ export default function ProviderInvite() {
             <button
               type="button"
               onClick={() => selectType('empresa')}
-              disabled={submitLoading}
+              disabled={submitLoading || !!teamOnboarding}
               className={`p-5 rounded-xl border text-left transition-all ${form.type === 'empresa' ? 'border-black bg-slate-950 text-white' : 'border-slate-200 hover:border-slate-400'}`}
             >
               <Building2 className="w-5 h-5 mb-3" />
               <div className="text-sm font-bold uppercase tracking-widest">Empresa</div>
               <p className={`text-xs mt-2 ${form.type === 'empresa' ? 'text-slate-300' : 'text-slate-400'}`}>Sociedad, rental, estudio, locación, servicio o proveedor comercial.</p>
             </button>
-          </div>
+          </div>}
 
           {form.type && (
             <form onSubmit={handleSubmit} noValidate data-provider-form className="space-y-6">
@@ -901,13 +915,17 @@ export default function ProviderInvite() {
                 </div>
               )}
 
+              {teamOnboarding && <div className="space-y-3 rounded-xl bg-blue-50 p-4 text-sm">
+                <label className="flex gap-2"><input type="checkbox" checked={ownAccountConfirmed} onChange={e=>setOwnAccountConfirmed(e.target.checked)} />Soy titular de la cuenta bancaria provista.</label>
+                <p>Administración revisará tu CUIT y cuenta bancaria. Podrás comenzar a trabajar con los permisos asignados al enviar esta ficha.</p>
+              </div>}
               <button
                 type="submit"
                 disabled={submitLoading || checkingDuplicates || duplicates.dni || duplicates.cuit}
                 className="w-full px-5 py-4 rounded-xl bg-black text-white text-xs font-bold uppercase tracking-widest disabled:bg-slate-300 disabled:cursor-not-allowed hover:bg-slate-800 transition-colors flex items-center justify-center gap-2"
               >
                 {submitLoading && <Loader2 className="w-4 h-4 animate-spin" />}
-                Enviar alta de proveedor
+                {teamOnboarding ? 'Guardar ficha y continuar' : 'Enviar alta de proveedor'}
               </button>
               </fieldset>
             </form>

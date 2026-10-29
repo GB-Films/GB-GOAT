@@ -991,7 +991,7 @@ export default function ProjectDetail() {
     const fetchUsers = async () => {
       try {
         const snap = await getDocs(collection(db, 'users'));
-        if (!cancelled) setAvailableUsers(snap.docs.map((userDoc) => ({ id: userDoc.id, ...userDoc.data() })));
+        if (!cancelled) setAvailableUsers(snap.docs.map((userDoc) => ({ id: userDoc.id, ...userDoc.data() })).filter((u: any) => !u.teamOnboarding || u.teamOnboarding.status === 'ready'));
       } catch (error) {
         console.error('Error fetching available users:', error);
       }

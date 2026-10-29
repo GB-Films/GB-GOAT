@@ -89,7 +89,7 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, clo
   return async request => {
     if (!request.auth?.uid || !request.auth.token?.email) throw new HttpsError('unauthenticated', 'Iniciá sesión.');
     const user = await db.doc(`users/${request.auth.uid}`).get();
-    if (request.auth.token.email !== 'info@granbertafilms.com' && user.data()?.role !== 'admin') throw new HttpsError('permission-denied', 'Sólo administradores pueden registrar operaciones compartidas.');
+    if (request.auth.token.email !== 'info@granbertafilms.com' && (user.data()?.role !== 'admin' || !require('./teamWorkAccess').hasTeamWorkAccess(user.data()))) throw new HttpsError('permission-denied', 'Sólo administradores pueden registrar operaciones compartidas.');
     const input = request.data || {};
     const recordId = id(input.id);
     const recordRef = db.doc(`providerFinancialRecords/${recordId}`);
