@@ -13,6 +13,8 @@ import { thirdPartyFormDefaults } from '../lib/thirdPartyDefaults';
 import { ProviderProfileForm } from '../components/ProviderProfileForm';
 import { ProviderConfirmationNotice } from '../components/ProviderConfirmationNotice';
 import { switchProviderGoogleAccount, verifyProviderGoogleAccount } from '../lib/providerGoogleAccount';
+import { ProviderDeclarationCard } from '../components/ProviderDeclarationCard';
+import { declarationCompletionMessage, declarationDocument } from '../lib/providerDeclarationUi';
 
 const tabs = [
   "Trabajos",
@@ -145,6 +147,7 @@ export default function ProviderPortal() {
       if (signing.declarationKind === 'profile') { setTab('Mis datos'); setProfileNotice(result.confirmation
         ? 'Datos confirmados, firma guardada y cambios aplicados.' : 'Cambios firmados y aplicados.'); } }
     if (await load()) setDraft({});
+    await loadDocuments();
   }
   async function prepare(action: string, input: any) {
     const revision = ++preparationRevision.current;
@@ -467,7 +470,7 @@ export default function ProviderPortal() {
       {tab === "Documentos" && (
         <section className="space-y-3">
           {documentsLoading && <p role="status" className={box}>Consultando documentos…</p>}
-          {docs.map((d) => (
+          {docs.filter(d => !view?.declarations.some((declaration: any) => declarationDocument(declaration, [d], providerId))).map((d) => (
             <div className={box} key={d.id}>
               <div className="flex flex-wrap justify-between gap-2">
                 <h2 className="font-semibold">{d.title}</h2>
@@ -571,22 +574,30 @@ export default function ProviderPortal() {
               </div>
             </div>
           ))}
-          {view?.declarations.map((d: any) => (
-            <div className={box} key={d.id}>
-              <p className="font-semibold">
-                {d.kind === "profile"
-                  ? d.content.confirmation ? "Confirmación de datos" : "Cambios de datos"
-                  : d.kind === "third_party"
-                    ? "Quién factura y cobra por mí"
-                    : "Representación"}{" "}
-                · {d.kind === 'profile' && d.status === 'pending_review' ? 'Firmado · completar aplicación' : status[d.status] || d.status}
-              </p>
+          {!!view?.declarations.length && <div className="pt-3"><h2 className="font-bold">Declaraciones de esta ficha</h2><p className="text-sm text-slate-600">Cada constancia conserva su estado e historia. Los antecedentes no reemplazan los datos actuales de tu ficha.</p></div>}
+          {view?.declarations.map((d: any) => {
+            const document = declarationDocument(d, docs, providerId);
+            return <ProviderDeclarationCard key={`${providerId}/${d.id}`} declaration={d} document={document} providerType={view.provider.type} busy={busy}
+              onSign={() => { if (document) setSigning(document); }}
+              onReviewData={() => setTab('Mis datos')}
+              onDownload={async artifact => {
+                if (!document) throw Error('El documento no está disponible para esta cuenta.');
+                downloadPortalFile(await portalRequest({ action: 'signingFile', requestId: document.id, projectId: document.projectId, documentId: document.documentId, artifact }));
+              }}
+              onComplete={async recover => {
+                setBusy(true);
+                try {
+                  if (recover && document) await signPortalDocument(document, { dni: '', typedName: '' });
+                  const result = await portalRequest({ action: 'completeDeclaration', providerId, declarationId: d.id });
+                  return declarationCompletionMessage(d.kind, result.status);
+                } finally { await Promise.all([load(), loadDocuments()]); setBusy(false); }
+              }}>
               {d.content.changes &&
                 Object.entries(d.content.changes).map(([key, c]: any) => (
                   <p key={key} className="mt-1 text-sm">
                     {labels[key] || key}: {c.before || "Sin dato"} →{" "}
                     {c.after || "Sin dato"}{" "}
-                    {d.kind === 'profile' ? '· Aplicación con tu firma' : c.critical ? '· Requiere revisión' : '· Aplicación tras firma'}
+                    {d.kind !== 'profile' && (c.critical ? '· Requiere revisión' : '· Aplicación tras firma')}
                   </p>
                 ))}
               {d.kind === "third_party" && (
@@ -623,26 +634,8 @@ export default function ProviderPortal() {
                   )}
                 </>
               )}
-              {d.owned && (d.status === "pending_signature" || d.kind === 'profile' && d.status === 'pending_review') && (
-                <button
-                  disabled={busy}
-                  className="mt-2 text-sm underline"
-                  onClick={() =>
-                    run(async () => {
-                      await portalRequest({
-                        action: "completeDeclaration",
-                        providerId,
-                        declarationId: d.id,
-                      });
-                      await load();
-                    })
-                  }
-                >
-                  Comprobar firma y aplicar
-                </button>
-              )}
-            </div>
-          ))}
+            </ProviderDeclarationCard>;
+          })}
           {documentsLoaded && !documentsLoading && !docs.length && !view?.declarations.length && (
             <p className={box}>No tenés documentos asignados.</p>
           )}
