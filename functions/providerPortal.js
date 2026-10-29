@@ -6,8 +6,9 @@ const { createTeamOnboarding } = require('./teamOnboarding');
 const { hasTeamWorkAccess } = require('./teamWorkAccess');
 const { createThirdPartyIntake } = require("./providerIntake");
 const { activatePersonalMembership, attachVerifiedIntakeMembership } = require('./providerPortalAccess');
-const { COMPANY_EVIDENCE } = require('./providerEvidence');
-const { companyRepresentation } = require('./providerRepresentation');
+const { DECLARED_COMPANY_EVIDENCE } = require('./providerEvidence');
+const { companyRepresentation, assertCompanyAccount, DECLARED_COMPANY_VERSION } = require('./providerRepresentation');
+const { applySignedCompanyRepresentation } = require('./signedCompanyRepresentation');
 const { thirdPartyDeclaration, thirdPartyDetails } = require('./providerThirdPartyDeclaration');
 const { applySignedProviderProfile } = require('./signedProviderProfile');
 const { fail, text, email, id, list, hash } = M;
@@ -154,6 +155,10 @@ function createProviderPortalHandler({
     if (!proof.complete)
       fail("Falta completar la firma y el PDF de evidencia.");
     if (decl.content.signerDni && proof.signerDni !== decl.content.signerDni) fail('El DNI de la firma no coincide con el DNI declarado. Prepará una declaración con los datos correctos.');
+    if (decl.kind === 'representation' && decl.content.version === DECLARED_COMPANY_VERSION) {
+      const evidence = await sign.evidence.manifest(decl.providerId, actor, decl.content.evidence.map(file => file.id), DECLARED_COMPANY_EVIDENCE);
+      if (hash(evidence) !== hash(decl.content.evidence)) fail('Los respaldos no coinciden con la declaración firmada.');
+    }
     let selectedAccount;
     if (decl.kind === 'profile' && decl.content.accountChoice?.changesIdentity) {
       if (!findAccountByUid) fail('No está disponible la comprobación de la cuenta elegida.');
@@ -178,7 +183,10 @@ function createProviderPortalHandler({
       const updates = {};
       let status = "signed";
       if (decl.kind === "representation") {
-        status = 'pending_review';
+        if (current.content.version === DECLARED_COMPANY_VERSION) {
+          await applySignedCompanyRepresentation({ db, tx, ref, declaration: current, providerRef, provider, membershipRef, membership, actor, proof, timestamp });
+          status = 'applied';
+        } else status = 'pending_review';
       }
       if (decl.kind === "profile") {
         if (membership.status !== 'active') throw new HttpsError('permission-denied', 'La cuenta aprobada ya no está activa para esta ficha.');
@@ -354,7 +362,12 @@ function createProviderPortalHandler({
       const declarations = await db.collection('providerPortalDeclarations').where('providerId', '==', providerId).limit(501).get();
       if (declarations.size > 500) fail('Administración debe revisar el historial.');
       const own = declarations.docs.map(d => ({ id: d.id, ...d.data() })).filter(d => d.kind === 'representation' && d.actor.uid === actor.uid);
-      return { evidence: await sign.evidence.list(providerId, actor), pendingReview: own.some(d => d.status === 'pending_review'), company: { name: provider.businessName || provider.name, cuit: provider.cuit || provider.cuitNormalized || '' } };
+      const authority = (await db.doc(`providerPortalCompanyApprovals/${providerId}`).get()).data();
+      return { evidence: await sign.evidence.list(providerId, actor), pendingReview: own.some(d => d.status === 'pending_review'),
+        authority: authority?.uid === actor.uid && membership.status === 'active' && membership.declarationId === authority.declarationId
+          && authority.company?.name === text(provider.businessName || provider.name) && authority.company?.cuit === String(provider.cuit || provider.cuitNormalized || '').replace(/\D/g, '')
+          ? { method: authority.method || 'administrative_review', signedAt: authority.signedAt || '', declarationId: authority.declarationId } : null,
+        company: { name: provider.businessName || provider.name, cuit: provider.cuit || provider.cuitNormalized || '', registeredEmail: provider.personalGoogleAccount?.email || provider.portalAccessEmail || '' } };
     }
     if (input.action === "overview") {
       const provider = (await db.doc(`providers/${providerId}`).get()).data();
@@ -447,8 +460,9 @@ function createProviderPortalHandler({
           input.capacity !== "authorized_representative"
         )
           fail("Para una empresa indicá representante autorizado.");
+        assertCompanyAccount(provider, actor, membership);
         content = companyRepresentation(provider, actor, input,
-          await sign.evidence.manifest(providerId, actor, input.evidenceIds, COMPANY_EVIDENCE));
+          await sign.evidence.manifest(providerId, actor, input.evidenceIds, DECLARED_COMPANY_EVIDENCE));
       }
       if (kind === "profile") {
         content = {

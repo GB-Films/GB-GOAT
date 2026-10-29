@@ -14,7 +14,8 @@ import { ProviderProfileForm } from '../components/ProviderProfileForm';
 import { ProviderConfirmationNotice } from '../components/ProviderConfirmationNotice';
 import { switchProviderGoogleAccount, verifyProviderGoogleAccount } from '../lib/providerGoogleAccount';
 import { ProviderDeclarationCard } from '../components/ProviderDeclarationCard';
-import { declarationCompletionMessage, declarationDocument } from '../lib/providerDeclarationUi';
+import { declarationCompletionMessage, declarationDocument, portalDeclarationCompletionInput } from '../lib/providerDeclarationUi';
+import { ProviderSigningGuide } from '../components/ProviderSigningGuide';
 
 const tabs = [
   "Trabajos",
@@ -121,10 +122,10 @@ export default function ProviderPortal() {
     loadRevision.current++; documentRevision.current++; preparationRevision.current++;
     setHasLoaded(false); setMembers([]); setView(null); setDocs([]); setDocumentsLoaded(false); setDraft({}); setSigning(null); intakePrefilled.current = '';
     if (!user?.uid) return;
-    void load();
+    void load(); void loadDocuments();
     const timer = window.setInterval(() => void load(), 30000);
     return () => { window.clearInterval(timer); loadRevision.current++; };
-  }, [load, user?.uid, user?.email]);
+  }, [load, loadDocuments, user?.uid, user?.email]);
   useEffect(() => { if (tab !== 'Documentos' || !user?.uid) return; void loadDocuments(); const timer = window.setInterval(() => void loadDocuments(), 30000); return () => { window.clearInterval(timer); documentRevision.current++; }; }, [tab, loadDocuments, user?.uid]);
   async function run(action: () => Promise<void>) {
     setBusy(true);
@@ -138,14 +139,15 @@ export default function ProviderPortal() {
     }
   }
   async function finish() {
-    if (signing?.portalManaged && signing.providerId)
-      { const result = await portalRequest({
-        action: "completeDeclaration",
-        providerId: signing.providerId,
-        declarationId: signing.documentId,
-      });
+    const completion = portalDeclarationCompletionInput(signing);
+    if (completion)
+      { const result = await portalRequest(completion);
       if (signing.declarationKind === 'profile') { setTab('Mis datos'); setProfileNotice(result.confirmation
-        ? 'Datos confirmados, firma guardada y cambios aplicados.' : 'Cambios firmados y aplicados.'); } }
+        ? 'Datos confirmados, firma guardada y cambios aplicados.' : 'Cambios firmados y aplicados.'); }
+      if (signing.declarationKind === 'representation') { setTab('Documentos'); setProfileNotice(result.status === 'applied'
+        ? 'Declaración firmada. Tu representación quedó habilitada; los contratos asignados aparecen en Documentos.'
+        : 'La firma de esta presentación anterior quedó guardada. Completá la nueva declaración de representación para habilitarte sin esperar una revisión.'); } }
+    else { setTab('Documentos'); setProfileNotice('Tu firma quedó guardada. Consultá el estado del contrato y sus constancias aquí. Si faltan otras firmas, se indicará en el documento.'); }
     if (await load()) setDraft({});
     await loadDocuments();
   }
@@ -181,6 +183,10 @@ export default function ProviderPortal() {
         await portalRequest({ action: "download", providerId, ...input }),
       );
     });
+  }
+  function reviewCompanyRepresentation() {
+    setTab('Mis datos');
+    window.requestAnimationFrame(() => document.getElementById('company-representation-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
   }
   return (
     <div className="mx-auto max-w-6xl space-y-5 p-2 sm:p-5">
@@ -248,6 +254,7 @@ export default function ProviderPortal() {
           </button>
         </div>
       )}
+      {user?.email && <ProviderSigningGuide email={user.email} needsRepresentation={selected?.status === 'needs_confirmation' && selected?.type === 'empresa'} pendingCount={docs.filter(d => !d.signed && !['cancelled', 'revoked', 'replaced', 'rejected'].includes(d.status)).length} onDocuments={() => setTab('Documentos')} />}
       {selected?.status === 'needs_confirmation' && selected?.type === 'empresa' && <div key={`${providerId}/${docs.filter(d => d.providerId === providerId && d.signed).length}`}><CompanyRepresentationForm providerId={providerId} email={user?.email || ''} busy={busy} onPrepare={input => prepare('prepareRepresentation', input)} /></div>}
       {selected?.status === 'needs_confirmation' && selected?.type !== 'empresa' && (
         <p role="status" className={box}>Administración debe revisar la clasificación de esta ficha para activar el acceso. No necesitás firmar una declaración de representación.</p>
@@ -469,6 +476,9 @@ export default function ProviderPortal() {
       )}
       {tab === "Documentos" && (
         <section className="space-y-3">
+          <h2 className="font-bold">Contratos y documentos asignados a tu cuenta</h2>
+          <p className="text-sm text-slate-600">Buscá el título del documento y elegí Revisar y firmar. La firma se registra con {user?.email}. Los documentos aparecen aquí cuando Gran Berta prepara la solicitud de firma.</p>
+          {profileNotice && <p role="status" className="rounded-lg bg-green-50 p-3 text-sm text-green-900">{profileNotice}</p>}
           {documentsLoading && <p role="status" className={box}>Consultando documentos…</p>}
           {docs.filter(d => !view?.declarations.some((declaration: any) => declarationDocument(declaration, [d], providerId))).map((d) => (
             <div className={box} key={d.id}>
@@ -476,8 +486,8 @@ export default function ProviderPortal() {
                 <h2 className="font-semibold">{d.title}</h2>
                 <span className="text-sm">
                   {d.signed
-                    ? "Firmado por vos"
-                    : status[d.status] || "Pendiente"}
+                    ? d.status === 'partially_signed' ? 'Firmado por vos · faltan otras firmas' : !d.artifactsReady ? 'Firmado por vos · PDF en preparación' : 'Firmado por vos'
+                    : ['cancelled', 'revoked', 'replaced', 'rejected'].includes(d.status) ? status[d.status] || 'Solicitud sin vigencia' : "Pendiente de tu firma"}
                 </span>
               </div>
               <div className="mt-3 flex flex-wrap gap-4 text-sm">
@@ -507,20 +517,16 @@ export default function ProviderPortal() {
                     onClick={() =>
                       run(async () => {
                         await signPortalDocument(d, { dni: "", typedName: "" });
-                        if (d.portalManaged && d.providerId)
-                          await portalRequest({
-                            action: "completeDeclaration",
-                            providerId: d.providerId,
-                            declarationId: d.documentId,
-                          });
-                        await load();
+                        const completion = portalDeclarationCompletionInput(d);
+                        if (completion) await portalRequest(completion);
+                        await load(); await loadDocuments();
                       })
                     }
                   >
                     Completar PDF de firma
                   </button>
                 )}
-                {!d.signed && (
+                {!d.signed && !['cancelled', 'revoked', 'replaced', 'rejected'].includes(d.status) && !(d.declarationKind === 'representation' && d.declarationVersion !== 'company-representation-v4') && (
                   <button
                     className="rounded bg-slate-900 px-3 py-2 text-white"
                     onClick={() => setSigning(d)}
@@ -528,18 +534,20 @@ export default function ProviderPortal() {
                     Revisar y firmar
                   </button>
                 )}
-                {d.signed && d.portalManaged && providerId && (
+                {d.declarationKind === 'representation' && d.declarationVersion !== 'company-representation-v4' && selected?.type === 'empresa' && <div className="space-y-2 text-sm"><p>Presentación anterior. Completá la nueva declaración de responsabilidad para habilitarte; el poder es opcional.</p><button type="button" className="underline" onClick={reviewCompanyRepresentation}>Completar nueva declaración de representación</button></div>}
+                {d.signed && portalDeclarationCompletionInput(d) && !['applied', 'active', 'rejected', 'revoked'].includes(d.declarationStatus) && !(d.declarationKind === 'representation' && d.declarationVersion !== 'company-representation-v4') && (
                   <button
                     disabled={busy}
                     className="underline"
                     onClick={() =>
                       run(async () => {
-                        await portalRequest({
+                        const result = await portalRequest({
                           action: "completeDeclaration",
                           providerId: d.providerId || providerId,
                           declarationId: d.documentId,
                         });
-                        await load();
+                        setProfileNotice(declarationCompletionMessage(d.declarationKind, result.status));
+                        await load(); await loadDocuments();
                       })
                     }
                   >

@@ -118,13 +118,15 @@ function createSignBridge(db) {
       if (!snap.exists) return null;
       const d = snap.data();
       if (!list(d.signerEmails).map(email).includes(actor.email)) return null;
-      let requiredDni = '', declarationKind = '';
+      let requiredDni = '', declarationKind = '', declarationVersion = '', declarationStatus = '';
       // Keep signed originals as history, but stop requesting the obsolete
       // representation signature from people who act on their own behalf.
       if (d.portalManaged && d.goatDeclarationId) {
         const declaration = (await db.doc(`providerPortalDeclarations/${id(d.goatDeclarationId)}`).get()).data();
         requiredDni = declaration?.content?.signerDni || '';
         declarationKind = declaration?.kind || '';
+        declarationVersion = declaration?.content?.version || '';
+        declarationStatus = declaration?.status || '';
         if (declaration?.kind === 'representation' && !declaration.proof?.complete) {
           const provider = (await db.doc(`providers/${id(declaration.providerId)}`).get()).data();
           if (provider?.type === 'persona') return null;
@@ -149,6 +151,8 @@ function createSignBridge(db) {
         providerId: d.goatProviderId || null,
         requiredDni,
         declarationKind,
+        declarationVersion,
+        declarationStatus,
       };
       }));
       result.push(...batch.filter(Boolean));

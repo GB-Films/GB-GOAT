@@ -2,12 +2,13 @@ const { createHash } = require('node:crypto');
 const { fail, id, text, hash } = require('./providerPortalModel');
 const LEGACY_COMPANY_EVIDENCE = ['company_registration', 'representation_authority', 'dni_front', 'dni_back'];
 const COMPANY_EVIDENCE = { representation_support: { min: 1, max: 6 }, identity_document: { min: 1, max: 2 } };
+const DECLARED_COMPANY_EVIDENCE = { representation_support: { min: 0, max: 6 }, identity_document: { min: 1, max: 2 } };
 const EVIDENCE_LABELS = { representation_support: 'Documentación de representación', identity_document: 'DNI del representante', company_registration: 'Constitución o registro de la empresa', representation_authority: 'Designación vigente o poder de representación', dni_front: 'DNI del representante · frente', dni_back: 'DNI del representante · dorso' };
 function validateEvidenceGroups(records, policy = COMPANY_EVIDENCE) {
   const groups = Array.isArray(policy) ? Object.fromEntries(policy.map(kind => [kind, { min: 1, max: 1 }])) : policy;
   if (!Array.isArray(records) || records.length > Object.values(groups).reduce((sum, group) => sum + group.max, 0)
     || new Set(records.map(record => record.id)).size !== records.length || records.some(record => !Object.hasOwn(groups, record.kind))
-    || Object.entries(groups).some(([kind, { min, max }]) => { const count = records.filter(record => record.kind === kind).length; return count < min || count > max; })) fail('Adjuntá documentación de representación y uno o dos archivos de DNI.');
+    || Object.entries(groups).some(([kind, { min, max }]) => { const count = records.filter(record => record.kind === kind).length; return count < min || count > max; })) fail(groups.representation_support?.min === 0 ? 'Adjuntá uno o dos archivos de DNI. El poder o respaldo de representación es opcional.' : 'Adjuntá documentación de representación y uno o dos archivos de DNI.');
 }
 function evidenceBytes(file) {
   if (!file || typeof file.base64 !== 'string' || file.base64.length > 3e6 || !/^[A-Za-z0-9+/]*={0,2}$/.test(file.base64)
@@ -70,4 +71,4 @@ function createEvidenceStore({ db, bucket, timestamp }) {
     },
   };
 }
-module.exports = { createEvidenceStore, evidenceBytes, COMPANY_EVIDENCE, LEGACY_COMPANY_EVIDENCE, EVIDENCE_LABELS, validateEvidenceGroups };
+module.exports = { createEvidenceStore, evidenceBytes, COMPANY_EVIDENCE, DECLARED_COMPANY_EVIDENCE, LEGACY_COMPANY_EVIDENCE, EVIDENCE_LABELS, validateEvidenceGroups };

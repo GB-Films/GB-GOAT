@@ -284,6 +284,7 @@ function createProviderPortalAdminHandler({
         fail("Decisión inválida.");
       const preview = (await ref.get()).data();
       if (preview?.kind === "profile") fail("Los datos firmados se aplican desde la cuenta del proveedor, sin revisión administrativa.");
+      if (preview?.kind === 'representation' && preview.content.version === 'company-representation-v4') fail('La representación declarada se habilita al completar la firma desde la cuenta registrada, sin revisión administrativa.');
       let verifiedManifest = null;
       if (input.decision === 'approved' && preview?.kind === 'representation' && preview.content.evidence?.length) {
         verifiedManifest = await sign.evidence.manifest(preview.providerId, preview.actor, preview.content.evidence.map(e => e.id), preview.content.version === 'company-representation-v2' ? LEGACY_COMPANY_EVIDENCE : COMPANY_EVIDENCE);

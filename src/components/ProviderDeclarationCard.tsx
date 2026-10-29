@@ -31,6 +31,7 @@ export function ProviderDeclarationCard({ declaration: d, document: doc, provide
         {working ? 'Procesando…' : ui.action === 'recover' ? 'Completar PDF y comprobar aplicación' : ui.action === 'prepare' ? 'Recuperar documento para firmar' : 'Comprobar aplicación de la firma'}
       </button>}
       {d.kind === 'profile' && d.owned && d.status !== 'applied' && <button type="button" disabled={disabled} className={button} onClick={onReviewData}>Revisar mis datos actuales</button>}
+      {d.kind === 'representation' && providerType === 'empresa' && d.owned && d.status === 'pending_review' && <button type="button" disabled={disabled} className={button} onClick={onReviewData}>Completar nueva declaración de representación</button>}
       {doc && <button type="button" disabled={disabled} className="text-sm underline disabled:opacity-40" onClick={() => void execute(() => onDownload('original'))}>Ver declaración original</button>}
       {doc?.artifactsReady && ['signed', 'certificate'].map(artifact => <button type="button" key={artifact} disabled={disabled} className="text-sm underline disabled:opacity-40" onClick={() => void execute(() => onDownload(artifact))}>{artifact === 'signed' ? 'PDF firmado' : 'Certificado de evidencia'}</button>)}
     </div>

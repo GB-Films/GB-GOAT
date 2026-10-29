@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { createEvidenceStore, evidenceBytes, COMPANY_EVIDENCE } = require('./providerEvidence');
+const { createEvidenceStore, evidenceBytes, COMPANY_EVIDENCE, DECLARED_COMPANY_EVIDENCE } = require('./providerEvidence');
 function fixture() {
   const records = new Map(), files = new Map();
   const db = { doc: path => ({ path, get: async () => ({ data: () => records.get(path) }) }),
@@ -35,6 +35,8 @@ test('el manifiesto admite un respaldo de representación y uno o dos DNI de est
   for (const kind of Object.keys(COMPANY_EVIDENCE)) ids.push((await f.service.upload('company', actor, { kind, attemptId: kind, file }, 'empresa')).id);
   assert.equal((await f.service.manifest('company', actor, ids, COMPANY_EVIDENCE)).length, 2);
   await assert.rejects(f.service.manifest('company', actor, ids.slice(1), COMPANY_EVIDENCE));
+  assert.equal((await f.service.manifest('company', actor, ids.slice(1), DECLARED_COMPANY_EVIDENCE)).length, 1, 'poder opcional en la nueva declaración');
+  await assert.rejects(f.service.manifest('company', actor, ids.slice(0, 1), DECLARED_COMPANY_EVIDENCE), /DNI/);
   await assert.rejects(f.service.manifest('company', { uid: 'other' }, ids, COMPANY_EVIDENCE));
   await assert.rejects(f.service.manifest('company', actor, [ids[0], ids[0]], COMPANY_EVIDENCE));
   const second = (await f.service.upload('company', actor, { kind: 'identity_document', attemptId: 'second', file }, 'empresa')).id;

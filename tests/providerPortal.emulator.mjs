@@ -223,7 +223,7 @@ try {
   assert(!(await own({ action: 'myDocuments' })).documents.some(d => d.documentId === legacyPersonal.id), 'obsolete personal representation is not presented for signature');
   assert.equal((await db.doc(`providerPortalDeclarations/${legacyPersonal.id}`).get()).data().status, 'pending_signature', 'preserve the historical original instead of cancelling or deleting it');
 
-  await db.doc('providers/company-representation').set({ type: 'empresa', businessName: 'Empresa de prueba', cuit: '30111111112' });
+  await db.doc('providers/company-representation').set({ type: 'empresa', businessName: 'Empresa de prueba', cuit: '30111111112', personalGoogleAccount: { uid: 'own', email: 'own@example.test' } });
   await db.doc('providerPortalUsers/own/memberships/company-representation').set({ providerId: 'company-representation', email: 'own@example.test', status: 'needs_confirmation' });
   assert.equal((await own({ action: 'bootstrap' })).memberships.find(m => m.providerId === 'company-representation').status, 'needs_confirmation');
   await assert.rejects(own({ action: 'overview', providerId: 'company-representation' }), /No representás/);
@@ -233,7 +233,7 @@ try {
     file: { base64: evidencePdf.base64, contentType: 'application/pdf', fileName: `${kind}-test.pdf` },
   })));
   const companyInput = { representative: { name: 'Persona prueba', dni: '12345678', role: 'Representante con poder' },
-    accountConfirmed: true, identityConfirmed: true, authorityConfirmed: true, evidenceIds: evidence.map(file => file.id) };
+    accountConfirmed: true, identityConfirmed: true, authorityConfirmed: true, responsibilityConfirmed: true, evidenceIds: evidence.filter(file => file.kind === 'identity_document').map(file => file.id) };
   assert.equal((await own({ action: 'companyState', providerId: 'company-representation' })).evidence.length, 2);
   for (const uid of ['own', 'admin']) {
     await assertFails(getDoc(doc(authContext(uid).firestore(), `providerPortalEvidence/${evidence[0].id}`)));
@@ -242,7 +242,9 @@ try {
   await db.doc('providerPortalUsers/other/memberships/company-representation').set({ email: 'other@example.test', status: 'needs_confirmation' });
   await assert.rejects(other({ action: 'evidenceFile', providerId: 'company-representation', evidenceId: evidence[0].id }), /acceso/);
   await assert.rejects(own({ action: 'uploadEvidence', providerId: 'supplier', kind: 'dni_front', attemptId: 'not-company', file: { base64: evidencePdf.base64, contentType: 'application/pdf', fileName: 'test.pdf' } }), /no permitido/);
-  await assert.rejects(own({ action: 'prepareRepresentation', providerId: 'company-representation', attemptId: 'no-docs', capacity: 'authorized_representative', ...companyInput, evidenceIds: [] }), /representación/);
+  await assert.rejects(own({ action: 'prepareRepresentation', providerId: 'company-representation', attemptId: 'no-docs', capacity: 'authorized_representative', ...companyInput, evidenceIds: [] }), /DNI/);
+  await assert.rejects(own({ action: 'prepareRepresentation', providerId: 'company-representation', attemptId: 'no-responsibility', capacity: 'authorized_representative', ...companyInput, responsibilityConfirmed: false }), /responsabilidad/);
+  await assert.rejects(other({ action: 'prepareRepresentation', providerId: 'company-representation', attemptId: 'foreign-account', capacity: 'authorized_representative', ...companyInput }), /cuenta Google registrada/);
   const representation = await own({
     action: "prepareRepresentation",
     providerId: "company-representation",
@@ -275,9 +277,17 @@ try {
   assert.equal(recovered.id, representation.id);
   assert.equal(recovered.status, "pending_signature");
   const requestDoc=(await sign.list({email:'own@example.test'})).find(d=>d.documentId===representation.id);
+  assert.equal(requestDoc.declarationVersion, 'company-representation-v4'); assert.equal(requestDoc.declarationStatus, 'pending_signature');
   const assignedFile=await own({action:'signingFile',documentId:representation.id,projectId:requestDoc.projectId,requestId:requestDoc.id,artifact:'original'});assert(assignedFile.sha256);
   await assert.rejects(own({action:'signingFile',documentId:representation.id,projectId:'other_project',requestId:requestDoc.id,artifact:'original'}));
   await signActual(representation);
+  await assert.rejects(other({ action: 'completeDeclaration', providerId: 'company-representation', declarationId: representation.id }), /otra cuenta/);
+  await db.doc('providerPortalUsers/own/memberships/company-representation').update({ status: 'revoked' });
+  await assert.rejects(own({ action: 'completeDeclaration', providerId: 'company-representation', declarationId: representation.id }), /No representás/);
+  await db.doc('providerPortalUsers/own/memberships/company-representation').update({ status: 'needs_confirmation' });
+  await db.doc('providers/company-representation').update({ cuit: '30999999999' });
+  await assert.rejects(own({ action: 'completeDeclaration', providerId: 'company-representation', declarationId: representation.id }), /empresa cambiaron/);
+  await db.doc('providers/company-representation').update({ cuit: '30111111112' });
   assert.equal(
     (
       await own({
@@ -286,15 +296,19 @@ try {
         declarationId: representation.id,
       })
     ).status,
-    "pending_review",
+    "applied",
   );
-  await assert.rejects(own({ action: 'overview', providerId: 'company-representation' }), /No representás/);
-  await assert.rejects(adminCall({ action: 'review', declarationId: representation.id, decision: 'approved', reason: 'Incomplete review' }), /confirmá/);
+  assert.equal((await own({ action: 'overview', providerId: 'company-representation' })).provider.type, 'empresa');
+  await assert.rejects(adminCall({ action: 'review', declarationId: representation.id, decision: 'approved', reason: 'No review needed' }), /sin revisión administrativa/);
   assert.equal((await adminCall({ action: 'evidenceFile', providerId: 'company-representation', evidenceId: evidence[0].id })).sha256, evidencePdf.sha256);
-  await adminCall({ action: 'review', declarationId: representation.id, decision: 'approved', reason: 'Fictitious company documents reviewed',
-    checks: { companyVerified: true, identityVerified: true, authorityVerified: true, scopeVerified: true }, approvedScope: 'Firmar contratos del proyecto de prueba según el poder adjunto' });
   assert.equal((await db.doc('providerPortalUsers/own/memberships/company-representation').get()).data().status, 'active');
-  assert.equal((await db.doc('providerPortalCompanyApprovals/company-representation').get()).data().email, 'own@example.test');
+  const authority = (await db.doc('providerPortalCompanyApprovals/company-representation').get()).data();
+  assert.equal(authority.email, 'own@example.test'); assert.equal(authority.method, 'signed_declaration'); assert.equal(authority.reviewedBy, undefined);
+  const auditCount = (await db.collection('providerPortalAudit').where('declarationId', '==', representation.id).get()).size;
+  await own({ action: 'completeDeclaration', providerId: 'company-representation', declarationId: representation.id });
+  assert.equal((await db.collection('providerPortalAudit').where('declarationId', '==', representation.id).get()).size, auditCount, 'retry does not duplicate activation/audit');
+  assert.equal((await db.doc(`providerPortalDeclarations/${representation.id}`).get()).data().content.evidence.length, 1, 'no power was required or attached');
+  assert.equal((await own({ action: 'myDocuments' })).documents.find(document => document.documentId === representation.id).declarationStatus, 'applied');
   const view = await own({ action: "overview", providerId: "supplier" });
   assert.equal(view.works.length, 1);
   assert.equal(view.works[0].total, 100);
@@ -842,7 +856,7 @@ try {
   console.log('PASS: signed profiles apply immediately, resume legacy signed updates, preserve unchanged profiles, reject duplicate identifiers, stale data and foreign accounts, and require no administrative review.');
   const { testProviderAccountChoice } = await import('./providerAccountChoice.flow.mjs');
   await testProviderAccountChoice({ db, admin, deps, request, signActual, env, doc, getDoc, setDoc, assertFails, createProviderPortalHandler, createProviderPortalAdminHandler });
-  console.log("PASS: own bank required at intake, personal signup without signature, company private documents and review, minimal third-party declaration without bank certificate, issuer-linked invoice and payout.");
+  console.log("PASS: own bank required at intake, personal signup without signature, company responsibility declaration with DNI and optional power activates without admin review, minimal third-party declaration, issuer-linked invoice and payout.");
   console.log(
     "PASS: real GB Sign PDF/signature/artifacts → immediate signed profile application; scoped third-party decisions, no duplicate payment; external isolation and producer access.",
   );

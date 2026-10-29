@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { declarationCompletionMessage, declarationDocument, declarationPresentation, type PortalDeclaration } from './providerDeclarationUi';
+import { declarationCompletionMessage, declarationDocument, declarationPresentation, portalDeclarationCompletionInput, type PortalDeclaration } from './providerDeclarationUi';
 import { ProviderDeclarationCard } from '../components/ProviderDeclarationCard';
 
 const profile: PortalDeclaration = { id: 'profile-change', kind: 'profile', owned: true, status: 'pending_signature', content: {} };
@@ -88,4 +88,20 @@ test('el mensaje de respuesta distingue aplicado, pendiente y firma incompleta',
   assert.match(declarationCompletionMessage('profile', 'pending_review'), /aplicación todavía no se completó/);
   assert.match(declarationCompletionMessage('representation', 'pending_review'), /pendiente de revisión/);
   assert.match(declarationCompletionMessage('profile', 'pending_signature'), /falta completar la firma/);
+  assert.match(declarationCompletionMessage('representation', 'applied'), /representación quedó habilitada/);
+});
+
+test('la representación declarada identifica responsabilidad y habilitación sin inventar una revisión', () => {
+  const rendered = html({ ...profile, kind: 'representation', status: 'applied', content: { version: 'company-representation-v4' } }, 'empresa');
+  assert.match(rendered, /Representación declarada · habilitada/);
+  assert.match(rendered, /bajo tu responsabilidad/);
+  assert.match(rendered, /poder es opcional/);
+  assert.doesNotMatch(rendered, /acredita tu representación|pendiente de revisión|Comprobar aplicación de la firma/);
+});
+
+test('firmar un contrato con proveedor asociado no intenta aplicarlo como declaración de datos', () => {
+  assert.equal(portalDeclarationCompletionInput(doc), null, 'los contratos también tienen portalManaged y providerId');
+  for (const declarationKind of ['representation', 'profile', 'third_party']) assert.deepEqual(portalDeclarationCompletionInput({ ...doc, declarationKind }), { action: 'completeDeclaration', providerId: 'person', declarationId: profile.id });
+  assert.equal(portalDeclarationCompletionInput({ ...doc, declarationKind: 'contract' }), null);
+  assert.equal(portalDeclarationCompletionInput({ ...doc, declarationKind: 'representation', portalManaged: false }), null);
 });
