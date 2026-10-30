@@ -96,6 +96,103 @@ function withBani(overrides = {}, bChanges = {}) {
 const baniMaster = { name: 'BANI VFX LLC', businessName: 'BANI VFX LLC', type: 'empresa', category: 'Postproducción' };
 const baniSeed = () => ({ [`providers/${Bani.BANI_PROVIDER_ID}`]: baniMaster });
 
+function standaloneB(overrides = {}, rowChanges = {}) {
+  const data = historical({ schemaVersion: 3, importMode: 'new', projectStatus: 'Presupuesto', status: 'Activo', saleId: 'VE-TESTLOCAL',
+    projectCode: 'B ZZZ 0001', sourceProjectId: 'B ZZZ 0001 Prueba local', confirmationDate: '2026-10-09', deliveryDate: '2026-11-01',
+    ownerUnit: 'BANI', condition: 'Externo', contractCurrency: 'USD', contractAmount: 5200, contractConfirmed: true, ...overrides });
+  const b = { codigo: data.sourceProjectId.slice(2), codigo_empresa: data.sourceProjectId, codigo_n: 'b-independent-operation', codigo_discord: 'b-independent-channel',
+    proyecto: data.name, cliente: data.clientName, fecha_carga: '2026-10-09 12:00:00', fecha_entrega: data.deliveryDate || '', venta_id: data.saleId || '',
+    empresa: 'Bani VFX', tipo_cliente: data.condition, origen: 'v3-form', precio_final: String(data.contractAmount ?? ''), moneda: data.contractCurrency, ...rowChanges };
+  data.sourceEvidence = { ...evidence, rowSha256: Bani.rowHash(b) };
+  data.bIndependent = { bRow: b, gRows: [], gCandidateCount: 0, bCodeCount: 1 };
+  return data;
+}
+
+test('independent B preserves BANI identity, converts confirmed per-code USD once and never allocates Toda la Post to itself', async () => {
+  const db = database(baniSeed()), payload = standaloneB(); let calls = 0;
+  const result = await importProject({ db, payload, timestamp: () => 123, clock, getQuote: async () => { calls++; return quote; } });
+  assert.equal(result.projectId, 'ct-B-ZZZ-0001'); assert.equal(calls, 1);
+  const commercial = db.records.get('projectCommercial/ct-B-ZZZ-0001');
+  assert.equal(commercial.controlTotalOwnerUnit, 'BANI'); assert.equal(commercial.controlTotalContractUsd, 5200);
+  assert.equal(commercial.budgetTotal, 525200); assert.equal(db.writes.length, 3);
+  assert(!db.writes.some(path => path.includes('budgetItems') || path.includes('areaExpenses')));
+  assert.equal(db.records.get('crmProjectImports/ct-B-ZZZ-0001').baniPost.state, 'not_applicable_independent_b');
+  assert.equal(db.records.get('projects/ct-B-ZZZ-0001').projectCode, payload.projectCode);
+});
+
+test('paired B, ambiguous operation, duplicate B and unverified evidence cannot create another project', async () => {
+  for (const mode of ['paired', 'ambiguous', 'duplicate', 'forged', 'own-post', 'sale-budget', 'missing-key']) {
+    const payload = standaloneB();
+    const g = { ...payload.bIndependent.bRow, codigo_empresa: 'G ZZZ 0001 Prueba local', empresa: 'Gran Berta', tipo_cliente: 'Externo' };
+    if (mode === 'paired' || mode === 'ambiguous') { payload.bIndependent.gRows = [g]; payload.bIndependent.gCandidateCount = 1; if (mode === 'ambiguous') g.cliente = 'Different'; }
+    if (mode === 'duplicate') payload.bIndependent.bCodeCount = 2;
+    if (mode === 'forged') payload.sourceEvidence.rowSha256 = 'e'.repeat(64);
+    if (mode === 'own-post') payload.baniPost = {};
+    if (mode === 'sale-budget') payload.contractAmount = 999999;
+    if (mode === 'missing-key') { payload.bIndependent.bRow.codigo_n = ''; payload.sourceEvidence.rowSha256 = Bani.rowHash(payload.bIndependent.bRow); }
+    const db = database();
+    await assert.rejects(importProject({ db, payload, timestamp: () => 123, clock }), error => [400, 409].includes(error.status), mode);
+    assert.equal(db.writes.length, 0);
+  }
+});
+
+test('same number/name in a G with a different operation is not a relationship, while existing ARS and deleted B remain intact', async () => {
+  const payload = standaloneB({ contractCurrency: 'ARS', contractAmount: 12500 });
+  const unrelated = { ...payload.bIndependent.bRow, codigo_empresa: 'G ZZZ 0001 Prueba local', codigo_n: 'unrelated', codigo_discord: 'unrelated', empresa: 'Gran Berta', tipo_cliente: 'Externo' };
+  payload.bIndependent.gRows = [unrelated]; payload.bIndependent.gCandidateCount = 1;
+  const db = database({ 'projects/g-existing': { projectCode: 'G ZZZ 0001', name: payload.name }, 'projectCommercial/g-existing': { budgetTotal: 777 } });
+  const options = { db, payload, timestamp: () => 123, clock };
+  assert.equal((await importProject(options)).outcome, 'created');
+  db.records.get('projectCommercial/ct-B-ZZZ-0001').budgetTotal = 888;
+  assert.equal((await importProject({ ...options, payload: standaloneB() })).outcome, 'already_processed');
+  assert.equal(db.records.get('projectCommercial/ct-B-ZZZ-0001').budgetTotal, 888);
+  db.records.delete('projects/ct-B-ZZZ-0001');
+  assert.equal((await importProject(options)).outcome, 'already_processed'); assert(!db.records.has('projects/ct-B-ZZZ-0001'));
+  assert.equal(db.records.get('projectCommercial/g-existing').budgetTotal, 777);
+  const existing = database({ 'projects/b-existing': { projectCode: payload.projectCode, name: payload.name }, 'projectCommercial/b-existing': { budgetTotal: 99000 } });
+  assert.equal((await importProject({ ...options, db: existing })).outcome, 'existing');
+  assert.equal(existing.records.get('projectCommercial/b-existing').budgetTotal, 99000);
+});
+
+test('B unknown/zero/historical prices and quote failure preserve their meaning without creating own BANI allocation', async () => {
+  for (const amount of [null, 0]) {
+    const payload = standaloneB({ contractAmount: amount, contractCurrency: amount === null ? '' : 'ARS', contractConfirmed: amount !== null });
+    const db = database(); await importProject({ db, payload, timestamp: () => 123, clock });
+    assert.equal(db.records.get('projectCommercial/ct-B-ZZZ-0001').controlTotalContractAmount, amount);
+    assert.equal(db.writes.length, 3);
+  }
+  const payload = standaloneB({ importMode: 'historical', projectStatus: 'Histórico', contractAmount: null, contractCurrency: '', contractConfirmed: false, saleId: '', confirmationDate: null, deliveryDate: null }, { origen: 'import-v2', fecha_carga: '' });
+  const db = database(); await importProject({ db, payload, timestamp: () => 123, clock }); assert.equal(db.records.get('projects/ct-B-ZZZ-0001').status, 'Histórico');
+  const failure = database(); await assert.rejects(importProject({ db: failure, payload: standaloneB(), timestamp: () => 123, clock, getQuote: async () => { throw Error('offline'); } }), { status: 503 }); assert.equal(failure.writes.length, 0);
+});
+
+test('human confirmation5200 overrides original CSV4800 only with a matching server-side authorization and preserves both sources', async () => {
+  const payload = standaloneB({ contractAmount: 4800 }); payload.contractOverride = { approvalId: 'app-human-confirmation-5200' };
+  const authorization = { schemaVersion: 1, decision: 'approved', approvalId: payload.contractOverride.approvalId, projectCode: payload.projectCode, saleId: payload.saleId,
+    rowSha256: payload.sourceEvidence.rowSha256, originalAmount: 4800, originalCurrency: 'USD', amount: 5200, currency: 'USD',
+    source: 'Human confirmation, immutable administrative report TEST ONLY', sourceSha256: 'f'.repeat(64), confirmedAt: '2026-10-28T19:00:00Z' };
+  const seed = { 'crmProjectImportAuthorizations/ct-B-ZZZ-0001': authorization };
+  const day = () => new Date('2026-10-30T12:55:00Z');
+  payload.sourceEvidence.verifiedAt = day().toISOString();
+  const bna = { ...quote, date: '2026-10-30', buy: 1510, sell: 1560, rate: 1535, retrievedAt: day().toISOString() };
+  const db = database(seed); await importProject({ db, payload, timestamp: () => 123, clock: day, getQuote: async () => bna });
+  assert.equal(db.records.get('projectCommercial/ct-B-ZZZ-0001').budgetTotal, 7982000);
+  assert.equal(db.records.get('projectCommercial/ct-B-ZZZ-0001').controlTotalContractUsd, 5200);
+  const receipt = db.records.get('crmProjectImports/ct-B-ZZZ-0001');
+  assert.equal(receipt.source.contractAmount, 4800); assert.equal(receipt.source.bIndependent.bRow.precio_final, '4800');
+  assert.equal(receipt.contractOverride.amount, 5200); assert.equal(receipt.contractOverride.originalAmount, 4800);
+  assert.deepEqual(db.records.get('crmProjectImportAuthorizations/ct-B-ZZZ-0001'), authorization);
+  for (const broken of [null, { ...authorization, approvalId: 'another-approval' }, { ...authorization, decision: 'revoked' }, { ...authorization, rowSha256: 'a'.repeat(64) }, { ...authorization, saleId: 'another-sale' }]) {
+    const attempt = database(broken ? { 'crmProjectImportAuthorizations/ct-B-ZZZ-0001': broken } : {});
+    await assert.rejects(importProject({ db: attempt, payload, timestamp: () => 123, clock: day, getQuote: async () => bna }), { status: 409 }); assert.equal(attempt.writes.length, 0);
+  }
+  const omitted = database(seed); const noRef = { ...payload }; delete noRef.contractOverride;
+  await assert.rejects(importProject({ db: omitted, payload: noRef, timestamp: () => 123, clock: day }), { status: 409 }); assert.equal(omitted.writes.length, 0, 'never silently uses4800 when an approval is recorded');
+  const existing = database({ ...seed, 'projects/existing-b': { projectCode: payload.projectCode }, 'projectCommercial/existing-b': { budgetTotal: 123456 } });
+  assert.equal((await importProject({ db: existing, payload, timestamp: () => 123, clock: day })).outcome, 'existing');
+  assert.equal(existing.records.get('projectCommercial/existing-b').budgetTotal, 123456);
+});
+
 test('BANI creates only an internal main-budget estimate with its own ARS assignment, atomically and once', async () => {
   const db = database(baniSeed()), payload = withBani();
   const options = { db, payload, timestamp: () => 123, clock, getQuote: async () => { throw Error('must not query BNA for ARS'); } };
@@ -309,11 +406,31 @@ test('Firestore transaction deduplicates concurrent deliveries', { skip: !proces
   const app = initializeApp({ projectId: process.env.GCLOUD_PROJECT }, 'crm-import-test');
   try {
     const db = getFirestore(app);
+    // A transport/transaction timeout is an uncertain delivery, as it is for
+    // the CRM caller. Replay the same identity, never create a replacement job.
+    const concurrentDeliveries = async options => {
+      const attempts = await Promise.allSettled(Array.from({ length: 5 }, () => importProject(options)));
+      const results = [];
+      for (const attempt of attempts) {
+        if (attempt.status === 'fulfilled') results.push(attempt.value);
+        else {
+          assert.ok([3, 4, 10, 14].includes(attempt.reason.code), attempt.reason.message);
+          results.push(await importProject(options));
+        }
+      }
+      return results;
+    };
     const payload = fixture({ projectCode: 'G ZZZ 9999', sourceProjectId: 'G ZZZ 9999 Concurrencia local', name: 'Concurrencia local' });
-    const results = await Promise.all(Array.from({ length: 5 }, () => importProject({ db, payload, timestamp: () => FieldValue.serverTimestamp() })));
+    const results = await concurrentDeliveries({ db, payload, timestamp: () => FieldValue.serverTimestamp() });
     assert.equal(results.filter(result => result.outcome === 'created').length, 1);
     assert.equal(results.filter(result => result.outcome === 'already_processed').length, 4);
     assert.equal((await db.collection('projects').where('projectCode', '==', payload.projectCode).get()).size, 1);
+    const b = standaloneB({ projectCode: 'B ZZZ 9996', name: 'B concurrente local', sourceProjectId: 'B ZZZ 9996 B concurrente local' });
+    const bOptions = { db, payload: b, timestamp: () => FieldValue.serverTimestamp(), clock, getQuote: async () => quote };
+    const bResults = await concurrentDeliveries(bOptions);
+    assert.equal(bResults.filter(r => r.outcome === 'created').length, 1); assert.equal(bResults.filter(r => r.outcome === 'already_processed').length, 4);
+    assert.equal((await db.collection('projects/ct-B-ZZZ-9996/budgetItems').get()).size, 0);
+    assert.equal((await db.collection('projectCommercial').doc('ct-B-ZZZ-9996').get()).data().budgetTotal, 525200);
 
     for (const currency of ['', 'USD']) {
       const code = currency ? 'G ZZZ 9997' : 'G ZZZ 9998';
@@ -321,7 +438,7 @@ test('Firestore transaction deduplicates concurrent deliveries', { skip: !proces
       const historicalPayload = historical({ projectCode: code, sourceProjectId: `${code} ${name}`, name,
         ...(currency ? { contractCurrency: 'USD', contractAmount: 900, contractConfirmed: true } : {}) });
       const options = { db, payload: historicalPayload, timestamp: () => FieldValue.serverTimestamp(), clock, getQuote: async () => quote };
-      const deliveries = await Promise.all(Array.from({ length: 5 }, () => importProject(options)));
+      const deliveries = await concurrentDeliveries(options);
       assert.equal(deliveries.filter(result => result.outcome === 'created').length, 1);
       assert.equal(deliveries.filter(result => result.outcome === 'already_processed').length, 4);
       const projects = await db.collection('projects').where('projectCode', '==', code).get();

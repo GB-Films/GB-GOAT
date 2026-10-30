@@ -16,7 +16,9 @@ const FIELDS = [
   'internalProviderUnit', 'condition', 'status',
 ];
 const V2_FIELDS = [...FIELDS, 'importMode', 'projectStatus', 'sourceEvidence', 'contractConfirmed', 'baniPost'];
+const V3_FIELDS = [...V2_FIELDS, 'bIndependent', 'contractOverride'];
 const Bani = require('./crmBaniPost');
+const { validateIndependentB } = require('./crmIndependentB');
 const HISTORICAL_STATUSES = ['Cerrado', 'Archivado', 'Cancelado', 'Histórico'];
 const { fetchBnaQuote, convertUsd, validateQuote } = require('./bnaQuote');
 const NEED_QUOTE = Symbol('verified-quote-required');
@@ -24,9 +26,9 @@ const invalid = message => { throw new ImportError(400, message); };
 
 function validatePayload(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) invalid('Se requiere un objeto JSON.');
-  const v2 = input.schemaVersion === 2, historical = v2 && input.importMode === 'historical';
-  if (Object.keys(input).some(key => !(v2 ? V2_FIELDS : FIELDS).includes(key))) invalid('El mensaje contiene campos no admitidos.');
-  if (![1, 2].includes(input.schemaVersion)) invalid('Versión de integración no admitida.');
+  const v3 = input.schemaVersion === 3, v2 = input.schemaVersion === 2 || v3, historical = v2 && input.importMode === 'historical';
+  if (Object.keys(input).some(key => !(v3 ? V3_FIELDS : v2 ? V2_FIELDS : FIELDS).includes(key))) invalid('El mensaje contiene campos no admitidos.');
+  if (![1, 2, 3].includes(input.schemaVersion)) invalid('Versión de integración no admitida.');
   const data = { schemaVersion: input.schemaVersion };
   for (const key of FIELDS.filter(key => !['schemaVersion', 'contractAmount'].includes(key))) {
     const value = historical && ['confirmationDate', 'deliveryDate', 'saleId'].includes(key) && input[key] === null ? '' : input[key];
@@ -35,12 +37,13 @@ function validatePayload(input) {
     }
     data[key] = value.trim();
   }
-  if (!/^G [A-Z0-9_-]{1,20} \d{4,8}$/.test(data.projectCode)
-      || Number(data.projectCode.split(' ')[2]) < 1) invalid('Sólo se admiten códigos oficiales G.');
+  if (!(v3 ? /^B [A-Z0-9_-]{1,20} \d{4,8}$/ : /^G [A-Z0-9_-]{1,20} \d{4,8}$/).test(data.projectCode)
+      || Number(data.projectCode.split(' ')[2]) < 1) invalid('Se admite G en v1/v2 o B independiente acreditado en v3.');
   if (!data.name || data.sourceProjectId !== `${data.projectCode} ${data.name}`) invalid('El nombre y el código completo no coinciden.');
   if ((!data.saleId && !historical) || data.saleId.length > 128 || /[\s/]/.test(data.saleId)) invalid('Falta la venta de origen o el marcador interno.');
   if (!data.clientName) invalid('Falta el cliente del código.');
-  if (data.ownerUnit !== 'GB' || (!historical && (data.internalProviderUnit !== '' || data.condition !== 'Externo' || data.status !== 'Activo'))) {
+  if ((!v3 && (data.ownerUnit !== 'GB' || (!historical && (data.internalProviderUnit !== '' || data.condition !== 'Externo' || data.status !== 'Activo'))))
+    || (v3 && (data.ownerUnit !== 'BANI' || (!historical && data.status !== 'Activo')))) {
     invalid('Sólo se admite el alta externa de Gran Berta.');
   }
   for (const key of ['confirmationDate', 'deliveryDate']) {
@@ -67,8 +70,14 @@ function validatePayload(input) {
     data.importMode = input.importMode; data.projectStatus = input.projectStatus; data.contractConfirmed = input.contractConfirmed;
     data.sourceEvidence = { ...evidence };
     if (input.baniPost !== undefined) {
+      if (v3) invalid('Un B independiente no puede agregar Toda la Post a sí mismo.');
       if (JSON.stringify(input.baniPost).length > 16000) invalid('La evidencia BANI supera el tamaño admitido.');
       data.baniPost = input.baniPost;
+    }
+    if (v3) data.bIndependent = validateIndependentB(data, input.bIndependent, (status, message) => { throw new ImportError(status, message); });
+    if (v3 && input.contractOverride !== undefined) {
+      if (!input.contractOverride || Object.keys(input.contractOverride).join(',') !== 'approvalId' || !/^[A-Za-z0-9_-]{1,200}$/.test(input.contractOverride.approvalId || '')) invalid('Indicá la referencia de la confirmación humana del importe.');
+      data.contractOverride = { approvalId: input.contractOverride.approvalId };
     }
   }
   return data;
@@ -85,7 +94,7 @@ function projectFromPayload(data, timestamp, quote = null, now = new Date()) {
   if (data.contractCurrency === 'USD') {
     // V1 already defines this as the confirmed per-code contract amount. Keep
     // that protocol usable while the caller rolls forward to evidenced V2.
-    if ((data.schemaVersion === 2 && !data.contractConfirmed) || !quote) throw new ImportError(409, 'USD requiere confirmación explícita y cotización oficial del día.');
+    if ((data.schemaVersion >= 2 && !data.contractConfirmed) || !quote) throw new ImportError(409, 'USD requiere confirmación explícita y cotización oficial del día.');
     try { budget = convertUsd(data.contractAmount, quote, now); }
     catch { throw new ImportError(503, 'La cotización BNA no se pudo verificar. El alta queda pendiente.'); }
     warnings.push(`USD ${data.contractAmount} confirmado; convertido al crear con BNA billetes ${quote.date}: compra ${quote.buy}, venta ${quote.sell}, promedio ${quote.rate}. Fuente: ${quote.source}`);
@@ -172,6 +181,7 @@ async function importProject({ db, payload, timestamp, clock = () => new Date(),
     const targetId = existing ? existing.id : projectId;
     const outcome = existing ? 'existing' : 'created';
     let baniAudit = { state: 'not_applied_existing' };
+    let contractOverrideAudit = null;
     // Reads precede writes; create() also protects against concurrent creation.
     if (!existing) {
       const orphanBudget = await transaction.get(db.collection(`projects/${projectId}/budgetItems`).limit(1));
@@ -181,11 +191,27 @@ async function importProject({ db, payload, timestamp, clock = () => new Date(),
         const age = clock().getTime() - Date.parse(data.sourceEvidence.verifiedAt);
         if (age > 36 * 60 * 60 * 1000 || age < -300000) invalid('La verificación del registro está vencida o tiene fecha futura.');
       }
-      if (data.contractCurrency === 'USD') {
+      let effectiveData = data, overrideAudit = null;
+      if (data.schemaVersion === 3) {
+        const authorization = (await transaction.get(db.collection('crmProjectImportAuthorizations').doc(projectId))).data();
+        if (authorization || data.contractOverride) {
+          if (!authorization || authorization.schemaVersion !== 1 || authorization.decision !== 'approved' || !data.contractOverride
+            || authorization.approvalId !== data.contractOverride.approvalId || authorization.projectCode !== data.projectCode || authorization.saleId !== data.saleId
+            || authorization.rowSha256 !== data.sourceEvidence.rowSha256 || authorization.originalAmount !== data.contractAmount || authorization.originalCurrency !== data.contractCurrency
+            || !['ARS', 'USD'].includes(authorization.currency) || typeof authorization.amount !== 'number' || !Number.isFinite(authorization.amount) || authorization.amount < 0 || authorization.amount > 1e12
+            || !Number.isSafeInteger(Math.round(authorization.amount * 100)) || Math.round(authorization.amount * 100) / 100 !== authorization.amount || typeof authorization.source !== 'string' || !authorization.source.trim() || authorization.source.length > 1000
+            || !/^[a-f0-9]{64}$/.test(authorization.sourceSha256 || '') || !Number.isFinite(Date.parse(authorization.confirmedAt)) || Date.parse(authorization.confirmedAt) > clock().getTime() + 300000) {
+            throw new ImportError(409, 'La confirmación humana del importe falta, cambió o no coincide con este código/fila. No se usa el precio anterior.');
+          }
+          effectiveData = { ...data, contractAmount: authorization.amount, contractCurrency: authorization.currency, contractConfirmed: true };
+          overrideAudit = { state: 'applied', authorizationId: projectId, ...authorization };
+        }
+      }
+      if (effectiveData.contractCurrency === 'USD') {
         if (!quote && !quoteUnavailable) throw NEED_QUOTE;
         if (quoteUnavailable) throw new ImportError(503, 'BNA no está disponible o la cotización no es del día. El alta queda pendiente.');
       }
-      let post = Bani.prepareBaniPost(data);
+      let post = data.schemaVersion === 3 ? { state: 'not_applicable_independent_b' } : Bani.prepareBaniPost(data);
       const budgetRef = db.collection(`projects/${projectId}/budgetItems`).doc(Bani.BUDGET_ITEM_ID);
       if (post.state === 'ready') {
         const provider = await transaction.get(db.collection('providers').doc(Bani.BANI_PROVIDER_ID));
@@ -202,17 +228,20 @@ async function importProject({ db, payload, timestamp, clock = () => new Date(),
         catch { post = Bani.pending('invalid_amount', post.source); }
       }
       baniAudit = budget ? budget.audit : post;
-      const project = projectFromPayload(data, now, quote, clock());
+      const project = projectFromPayload(effectiveData, now, quote, clock());
+      if (overrideAudit) project.controlTotalSourceWarning = [project.controlTotalSourceWarning, `Importe confirmado por ${overrideAudit.approvalId}: ${overrideAudit.currency} ${overrideAudit.amount}; registro original ${data.contractCurrency} ${data.contractAmount}. Fuente ${overrideAudit.source}.`].filter(Boolean).join(' ').slice(0, 2000);
       if (!budget) project.controlTotalSourceWarning = [project.controlTotalSourceWarning, post.message].filter(Boolean).join(' ').slice(0, 2000);
       const { publicData, commercial } = splitProjectCommercial(project);
       transaction.create(projectRef, { ...publicData, commercialDataVersion: 1, ...(budget ? { budgetRevision: 1 } : {}) });
       transaction.create(db.collection('projectCommercial').doc(projectId), { ...commercial, schemaVersion: 1, updatedAt: now });
       if (budget) transaction.create(budgetRef, budget.row);
+      if (overrideAudit) contractOverrideAudit = overrideAudit;
     }
     transaction.create(markerRef, {
       schemaVersion: 1, projectCode: data.projectCode, saleId: data.saleId,
       projectId: targetId, outcome, receivedAt: timestamp(), source: data,
       baniPost: baniAudit,
+      ...(contractOverrideAudit ? { contractOverride: contractOverrideAudit } : data.contractOverride ? { contractOverride: { state: 'not_applied_existing' } } : {}),
       ...(outcome === 'created' && quote ? { conversion: quote } : {}),
     });
     return response(data, targetId, outcome, baniAudit);

@@ -57,4 +57,4 @@ function makeBaniBudget(post, projectId, timestamp, quote, now) {
     quantity: 1, unitPrice: amountArs, total: amountArs, order: 1, economicNature: 'internal_estimate',
     crmBaniPost: audit, createdBy: 'crm-code-generator', createdByEmail: '', createdAt: timestamp, updatedAt: timestamp } };
 }
-module.exports = { BANI_PROVIDER_ID, BANI_PROVIDER_NAME, BUDGET_ITEM_ID, prepareBaniPost, validBaniProvider, makeBaniBudget, pending, rowHash };
+module.exports = { BANI_PROVIDER_ID, BANI_PROVIDER_NAME, BUDGET_ITEM_ID, prepareBaniPost, validBaniProvider, makeBaniBudget, pending, rowHash, rowValid, GROUP_FIELDS };
