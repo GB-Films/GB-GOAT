@@ -33,7 +33,7 @@ export function declarationPresentation(d: PortalDeclaration, providerType: stri
     status: legacy ? 'Sin acción pendiente' : declaredCompany && d.status === 'applied' ? 'Representación declarada · habilitada' : statuses[d.status] || d.status,
     explanation: legacy ? 'Esta solicitud de representación pertenece al circuito anterior. No necesitás firmarla para actualizar tus datos personales; hacelo desde Mis datos.'
       : profile && d.status === 'applied' ? 'Estos cambios ya se aplicaron con tu firma. Se conserva el documento como constancia.'
-      : profile && d.status === 'pending_review' ? 'Es una solicitud del circuito anterior que ya tiene firma. Podés comprobar su aplicación sin aprobación administrativa. Si la ficha cambió desde entonces, revisá tus datos y prepará una nueva declaración.'
+      : profile && d.status === 'pending_review' ? 'Tu firma está guardada. Falta aplicar los datos.'
       : profile ? 'Al firmar declarás que los datos son verídicos y autorizás su aplicación automática, sin revisión administrativa posterior.'
       : declaredCompany ? 'Declarás bajo tu responsabilidad que tenés facultades para representar a la empresa y firmar en su nombre. Al completar tu firma se habilita la representación; adjuntar el poder es opcional.'
       : d.kind === 'representation' ? 'Presentación del circuito anterior de representación empresarial. Podés completar la nueva declaración desde Mis datos; el poder es opcional y no requiere esperar una revisión.'

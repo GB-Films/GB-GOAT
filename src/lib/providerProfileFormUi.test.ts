@@ -12,7 +12,7 @@ test('el formulario conserva valores pendientes y sustituye el titular manual po
   }));
   assert(html.includes('value="12345678"'));
   assert(html.includes('Firmado · pendiente de aplicación'));
-  assert(html.includes('No necesitan aprobación administrativa'));
+  assert(html.includes('sin aprobación administrativa'));
   assert(html.includes('Soy titular de la cuenta provista'));
   assert(!html.includes('Titular manual'));
 });
