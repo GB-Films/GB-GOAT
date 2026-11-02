@@ -28,6 +28,14 @@ Tanto los pendientes como Contratos y constancias se agrupan por `projectId` de 
 
 Los grupos de proyecto se pueden plegar de forma independiente con su encabezado. Los contratos y constancias guardados empiezan plegados; los grupos con firmas propias pendientes empiezan abiertos y también se pueden cerrar. El nombre y la cantidad de documentos permanecen visibles. Esta ampliación es sólo de frontend: no cambia solicitudes ni descargas y no requiere volver a publicar funciones, reglas o IAM.
 
+### Firma guiada · preparada, pendiente de publicación
+
+La ventana de firma mantiene visible una indicación del próximo paso: cargar el PDF, tocar el recuadro propio en la página indicada, ingresar/confirmar DNI, preparar la firma y aceptar el documento. El acceso directo ubica el recuadro sin seleccionarlo ni firmar por la persona; en pantallas pequeñas también desplaza la sección para dejarlo visible. Los demás accesos enfocan el dato o la confirmación pendiente. El botón de firma sólo se habilita cuando todos los requisitos están completos. Se conservan el consentimiento, la identidad, las coordenadas y el motor de GB Sign.
+
+Durante el envío se informa la conexión o generación del PDF. Si carga o envío superan quince segundos aparece una orientación adicional; una carga fallida o lenta permite reintentar. Las llamadas de firma/generación esperan hasta150 segundos, por encima de los120 segundos del servicio. Si el resultado es incierto por conexión/timeout, o la firma se guardó pero falló la actualización posterior, se bloquea otro envío desde esa ventana y se ofrece volver a Documentos para consultar el estado. Al cerrar se actualizan ficha y documentos. Esto no ejecuta otra firma ni cambia el circuito de recuperación de artefactos existentes.
+
+Las pruebas locales usan exclusivamente PDFs ficticios, navegador aislado sin sesión personal y solicitudes limitadas a127.0.0.1. Cubren escritorio y pantallas móviles, selección explícita, DNI, firma escrita/dibujada, cada orientación, carga fallida/lenta, envío lento y recuperación sin duplicar un intento incierto. La integración con emuladores comprueba las funciones reales de Sign, PDF firmado, certificado y denegaciones. No identifica la causa del incidente de un extra de Bancor sin conocer su cuenta/documento ni verifica OAuth/IAM de producción. Este lote no incluye publicación ni cambios de backend, reglas o IAM.
+
 El único inicio de sesión disponible es Google, tanto en GOAT como en GB Sign. GOAT no ofrece registro con contraseña propia ni vinculación de otros proveedores de identidad. Se exige correo verificado. Google puede pedir autenticar la cuenta cuando no hay una sesión vigente; no se crea otra contraseña para la aplicación. Ningún correo se envía al desplegar o preparar asociaciones.
 
 ### Qué correo cargar y cómo se habilita el acceso
