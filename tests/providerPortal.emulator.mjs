@@ -626,6 +626,23 @@ try {
   });
   const signApp = admin.app("provider-portal-sign");
   const signDb = signApp.firestore();
+  // Names are already recorded on the assigned signature requests. Only that
+  // display field may be exposed, after rechecking the document's signers.
+  for (const [key, name, requestEmail, signerEmail] of [
+    ['group-one', 'Proyecto de prueba Uno', 'own@example.test', 'own@example.test'],
+    ['group-two', 'Proyecto de prueba Dos', 'own@example.test', 'own@example.test'],
+    ['group-withdrawn', 'NO EXPONER PROYECTO RETIRADO', 'own@example.test', 'other@example.test'],
+    ['group-other', 'NO EXPONER PROYECTO AJENO', 'other@example.test', 'other@example.test'],
+  ]) {
+    await signDb.doc(`projects/${key}/documents/contract`).set({ title: 'Contrato de prueba', signerEmails: [signerEmail], status: 'pending' });
+    await signDb.doc(`signatureRequests/${key}`).set({ projectId: key, docId: 'contract', projectName: name, signerEmail: requestEmail, privateNote: 'PRIVATE REQUEST DATA' });
+  }
+  const groupedDocuments = (await own({ action: 'myDocuments' })).documents;
+  assert.equal(groupedDocuments.find(d => d.id === 'group-one').projectName, 'Proyecto de prueba Uno');
+  assert.equal(groupedDocuments.find(d => d.id === 'group-two').projectName, 'Proyecto de prueba Dos');
+  assert(!groupedDocuments.some(d => ['group-withdrawn', 'group-other'].includes(d.id)));
+  assert(!JSON.stringify(groupedDocuments).includes('PRIVATE REQUEST DATA'));
+  assert(!JSON.stringify(groupedDocuments).includes('NO EXPONER PROYECTO'));
   const signDoc = (
     await signDb
       .doc(`projects/${tamper.signing.projectId}/documents/${tamper.id}`)

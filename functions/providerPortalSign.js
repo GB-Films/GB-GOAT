@@ -136,6 +136,7 @@ function createSignBridge(db) {
         id: s.id,
         documentId: r.docId,
         projectId: r.projectId,
+        projectName: text(r.projectName),
         title: d.title || d.fileName,
         status: d.status || r.status,
         contentHash: d.portalContentHash || "",

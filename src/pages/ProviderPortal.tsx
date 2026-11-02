@@ -132,7 +132,7 @@ export default function ProviderPortal() {
     const completion = portalDeclarationCompletionInput(signing);
     if (completion)
       { const result = await portalRequest(completion);
-      if (signing.declarationKind === 'profile') { setTab('Mis datos'); setProfileNotice(result.confirmation
+      if (signing.declarationKind === 'profile') { reviewProfileData(); setProfileNotice(result.confirmation
         ? 'Datos confirmados, firma guardada y cambios aplicados.' : 'Cambios firmados y aplicados.'); }
       if (signing.declarationKind === 'representation') { setTab('Documentos'); setProfileNotice(result.status === 'applied'
         ? 'Declaración firmada. Tu representación quedó habilitada; los contratos asignados aparecen en Documentos.'
@@ -177,6 +177,10 @@ export default function ProviderPortal() {
   function reviewCompanyRepresentation() {
     setTab('Mis datos');
     window.requestAnimationFrame(() => { const form = document.getElementById('company-representation-form'); form?.closest('details')?.setAttribute('open', ''); form?.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
+  }
+  function reviewProfileData() {
+    setTab('Mis datos');
+    window.requestAnimationFrame(() => { const section = document.getElementById('provider-profile-details'); section?.setAttribute('open', ''); section?.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
   }
   async function applyDeclaration(id: string, kind: string, doc?: DeclarationDocument, recover = false) {
     setBusy(true);
@@ -261,7 +265,7 @@ export default function ProviderPortal() {
       {selected?.status === 'needs_confirmation' && selected?.type !== 'empresa' && (
         <p role="status" className={box}>Administración debe revisar la clasificación de esta ficha para activar el acceso. No necesitás firmar una declaración de representación.</p>
       )}
-      {view && tab !== 'Mis datos' && <ProviderConfirmationNotice status={view.profileConfirmation?.status} onReview={() => setTab('Mis datos')} />}
+      {view && tab !== 'Mis datos' && <ProviderConfirmationNotice status={view.profileConfirmation?.status} onReview={reviewProfileData} />}
       <nav
         aria-label="Secciones del proveedor"
         className="flex gap-1 overflow-x-auto rounded-2xl border border-slate-200 bg-white p-1.5 shadow-sm shadow-slate-200/20"
@@ -482,7 +486,7 @@ export default function ProviderPortal() {
       )}
       {tab === "Documentos" && <ProviderPortalDocuments documents={docs} declarations={view?.declarations || []} providerId={providerId} providerType={selected?.type || ''} provider={view?.provider}
         busy={busy} loading={documentsLoading} loaded={documentsLoaded} notice={profileNotice} labels={labels}
-        onRefresh={() => { void load(); void loadDocuments(); }} onSign={setSigning} onReviewData={() => setTab('Mis datos')} onReviewCompany={reviewCompanyRepresentation}
+        onRefresh={() => { void load(); void loadDocuments(); }} onSign={setSigning} onReviewData={reviewProfileData} onReviewCompany={reviewCompanyRepresentation}
         onDownload={(doc, artifact) => run(async () => { downloadPortalFile(await portalRequest({ action: 'signingFile', requestId: doc.id, projectId: doc.projectId, documentId: doc.documentId, artifact })); })}
         onRecover={doc => run(async () => { await signPortalDocument(doc, { dni: '', typedName: '' }); const completion = portalDeclarationCompletionInput(doc); if (completion) await portalRequest(completion); await load(); await loadDocuments(); })}
         onApply={applyDeclaration}
@@ -491,9 +495,9 @@ export default function ProviderPortal() {
       />}
       {tab === "Mis datos" && view && (
         <>
-          {view.provider.type === 'empresa' && <details className="portal-details portal-panel" key={`company/${providerId}`}><summary>Tu representación de la empresa</summary><div className="mt-4"><CompanyRepresentationForm providerId={providerId} email={user?.email || ''} busy={busy} onPrepare={input => prepare('prepareRepresentation', input)} /></div></details>}
           <div key={providerId}><ProviderProfileForm provider={view.provider} declarations={view.declarations} labels={labels} draft={draft} onChange={setDraft} busy={busy} notice={profileNotice} confirmationRequired={view.profileConfirmation?.status === 'required'} accessEmail={user?.email || ''} onVerifyAccount={email => verifyProviderGoogleAccount(providerId, email)} onPrepare={input => prepare('prepareProfile', input)} onApplySigned={async id => { await applyDeclaration(id, 'profile'); }} /></div>
-          {view.provider.type === 'persona' && <details className="portal-details portal-panel"><summary>¿Otra persona factura o cobra por vos?</summary><div className="mt-4"><ThirdPartyAuthorizationForm provider={view.provider} works={view.works} party={party} onChange={setParty} busy={busy}
+          {view.provider.type === 'empresa' && <details className="portal-details portal-panel" key={`company/${providerId}`}><summary>Tu representación de la empresa</summary><div className="mt-4"><CompanyRepresentationForm providerId={providerId} email={user?.email || ''} busy={busy} onPrepare={input => prepare('prepareRepresentation', input)} /></div></details>}
+          {view.provider.type === 'persona' && <details className="portal-details portal-panel"><summary>Quién factura y cobra por mí</summary><div className="mt-4"><ThirdPartyAuthorizationForm embedded provider={view.provider} works={view.works} party={party} onChange={setParty} busy={busy}
             recovered={!!view.thirdPartyDefaults || !!view.thirdPartyIntake}
             onSave={async input => { await portalRequest({ action: 'saveThirdPartyDetails', providerId, ...input }); await load(); }}
             onPrepare={input => prepare('prepareThirdParty', input)} /></div></details>}

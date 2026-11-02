@@ -27,11 +27,13 @@ export function ProviderProfileForm({ provider, declarations, labels, draft, onC
   const hasBank = !!(value('bankAccount_cbu') || value('bankAccount_alias'));
   const needsConfirmation = confirmationMode || hasBank && Object.keys(draft).some(key => ['bankAccount_cbu','bankAccount_alias','name','lastName','businessName'].includes(key));
   useEffect(() => { if (!Object.keys(draft).length) setConfirmed(false); }, [draft]);
-  return <form className="portal-panel space-y-5" onSubmit={event => { event.preventDefault();
+  return <details id="provider-profile-details" className="portal-details portal-panel">
+    <summary className="font-bold">Mis datos</summary>
+    <form className="mt-5 space-y-5" onSubmit={event => { event.preventDefault();
     if (verifying || !accountVerified || (confirmationMode && (!confirmed || !dataConfirmed || !emailConfirmed))) return;
     void onPrepare({ changes: confirmationMode ? { ...Object.fromEntries(Object.entries(pending).filter(([key]) => key !== 'email').map(([key, change]) => [key, change.after])), ...draft } : draft, ownAccountConfirmed: confirmed,
       ...(confirmationMode ? { confirmProfile: true, dataConfirmed, accessEmailConfirmed: emailConfirmed, selectedAccountEmail: account.email, ...(account.verificationId ? { accountVerificationId: account.verificationId } : {}) } : {}) }); }}>
-    <h2 className="font-bold">{confirmationMode ? 'Confirmá tus datos' : 'Mis datos'}</h2>
+    {confirmationMode && <h2 className="font-bold">Confirmá tus datos</h2>}
     {confirmationMode && <p className="text-sm text-slate-600">Vas a firmar un documento con el detalle completo de esta ficha. Podés corregir los datos antes de continuar.</p>}
     {notice && <p role="status" className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800">{notice}</p>}
     {needsNewSignature && <p role="status" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">Tu ficha cambió después de una firma anterior. Revisá los datos actuales y firmá nuevamente.</p>}
@@ -55,5 +57,6 @@ export function ProviderProfileForm({ provider, declarations, labels, draft, onC
       <p className="text-sm text-slate-500">Tus cambios se aplican al completar la firma, sin aprobación administrativa.</p>
       <button disabled={verifying || !accountVerified || (!confirmationMode && !Object.keys(draft).length) || (needsConfirmation && !confirmed) || (confirmationMode && (!dataConfirmed || !emailConfirmed || !hasBank))} className="portal-button portal-button-primary">{confirmationMode ? 'Revisar confirmación y firmar' : 'Revisar cambios y firmar'}</button>
     </fieldset>
-  </form>;
+    </form>
+  </details>;
 }

@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
-export function ThirdPartyAuthorizationForm({ provider, works, party, onChange, onPrepare, onSave, busy, recovered = false }: {
+export function ThirdPartyAuthorizationForm({ provider, works, party, onChange, onPrepare, onSave, busy, recovered = false, embedded = false }: {
   provider: any; works: any[]; party: any; onChange: (party: any) => void; onPrepare: (input: any) => Promise<void>;
-  onSave?: (input: any) => Promise<void>; busy: boolean; recovered?: boolean;
+  onSave?: (input: any) => Promise<void>; busy: boolean; recovered?: boolean; embedded?: boolean;
 }) {
   const form = useRef<HTMLFormElement>(null);
   const [saving, setSaving] = useState(false), [notice, setNotice] = useState(''), [error, setError] = useState('');
@@ -15,7 +15,7 @@ export function ThirdPartyAuthorizationForm({ provider, works, party, onChange, 
     if (!party.responsibilityConfirmed) { setError('Confirmá la autorización antes de continuar.'); return; }
     void onPrepare({ ...details(), responsibilityConfirmed: true, roles: ['invoice', 'payment'], workKeys: party.workKeys });
   }}>
-    <header className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-bold">Quién factura y cobra por mí</h2>{onSave && <button type="button" disabled={busy || saving} className="rounded-lg border border-slate-200 px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50" onClick={async () => {
+    <header className={`flex flex-wrap items-center gap-3 ${embedded ? 'justify-end' : 'justify-between'}`}>{!embedded && <h2 className="font-bold">Quién factura y cobra por mí</h2>}{onSave && <button type="button" disabled={busy || saving} className="rounded-lg border border-slate-200 px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50" onClick={async () => {
       if (!form.current?.reportValidity()) return;
       setError(''); setNotice(''); setSaving(true);
       try { await onSave(details()); setNotice('Datos guardados para próximas autorizaciones.'); }

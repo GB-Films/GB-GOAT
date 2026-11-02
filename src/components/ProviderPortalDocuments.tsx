@@ -1,7 +1,7 @@
-import { CheckCircle2, Clock3, Download, FileText, PenLine, RefreshCw } from 'lucide-react';
+import { CheckCircle2, Clock3, Download, FileText, FolderOpen, PenLine, RefreshCw } from 'lucide-react';
 import { ProviderDeclarationCard } from './ProviderDeclarationCard';
 import { declarationDocument, declarationPresentation, portalDeclarationCompletionInput, type DeclarationDocument } from '../lib/providerDeclarationUi';
-import { needsPortalSignature } from '../lib/providerPortalUi';
+import { groupPortalDocumentsByProject, needsPortalSignature } from '../lib/providerPortalUi';
 import { outdatedProfileDeclaration } from '../lib/providerProfileForm';
 
 export function ProviderPortalDocuments({ documents, declarations, providerId, providerType, provider, busy, loading, loaded, notice, onRefresh, onSign, onDownload, onRecover, onApply, onApplyDocument, onReviewData, onReviewCompany, onRevoke, labels }: {
@@ -56,13 +56,17 @@ export function ProviderPortalDocuments({ documents, declarations, providerId, p
       {['active', 'pending_review'].includes(d.status) && <button disabled={busy} className="portal-button" onClick={() => onRevoke(d.id)}>Revocar autorización</button>}
     </div>}
   </ProviderDeclarationCard>;
+  const projects = (items: any[]) => groupPortalDocumentsByProject(items).map(group => <section key={group.key} aria-label={group.name} className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-3 sm:p-4">
+    <header className="flex items-start gap-2 px-1 py-1"><FolderOpen className="mt-0.5 h-4 w-4 shrink-0 text-slate-500" aria-hidden="true" /><div className="min-w-0 flex-1"><h4 className="break-words font-semibold text-slate-800">{group.name}</h4></div><span className="portal-status">{group.documents.length} {group.documents.length === 1 ? 'documento' : 'documentos'}</span></header>
+    {group.documents.map(card)}
+  </section>);
   return <section className="space-y-5" aria-label="Tus documentos">
     <div className="flex items-center justify-between gap-3"><div><h2 className="text-lg font-semibold">Tus documentos</h2><p className="mt-1 text-sm text-slate-500">Firmá los pendientes y descargá tus constancias.</p></div>
       <button disabled={busy || loading} className="portal-button" onClick={onRefresh}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />Actualizar</button></div>
     {notice && <p role="status" className="rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800">{notice}</p>}
     {!loaded && loading && <p role="status" className="portal-panel text-sm text-slate-500">Buscando tus documentos…</p>}
-    {!!(pending.length || activeDeclarations.length) && <section className="space-y-3" aria-label="Documentos pendientes"><h3 className="text-sm font-semibold text-amber-900">Necesitan tu atención</h3>{pending.map(card)}{activeDeclarations.map(declarationCard)}</section>}
-    {!!remaining.length && <section className="space-y-3" aria-label="Documentos guardados"><h3 className="text-sm font-semibold text-slate-500">Contratos y constancias</h3>{remaining.map(card)}</section>}
+    {!!(pending.length || activeDeclarations.length) && <section className="space-y-3" aria-label="Documentos pendientes"><h3 className="text-sm font-semibold text-amber-900">Necesitan tu atención</h3>{projects(pending)}{activeDeclarations.map(declarationCard)}</section>}
+    {!!remaining.length && <section className="space-y-3" aria-label="Documentos guardados"><h3 className="text-sm font-semibold text-slate-500">Contratos y constancias</h3>{projects(remaining)}</section>}
     {!!history.length && <details className="portal-details portal-panel"><summary>Historial de declaraciones <span className="ml-2 text-slate-400">{history.length}</span></summary><div className="mt-4 space-y-3">{history.map(declarationCard)}</div></details>}
     {loaded && !documents.length && !declarations.length && <div className="portal-panel py-12 text-center"><FileText className="mx-auto mb-3 h-8 w-8 text-slate-300" aria-hidden="true" /><h3 className="font-medium">Todavía no tenés documentos</h3><p className="mt-1 text-sm text-slate-500">Los documentos que te asignen aparecerán acá.</p></div>}
   </section>;

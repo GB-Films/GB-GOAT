@@ -17,8 +17,8 @@ export function ProviderGoogleAccountChoice({ accessEmail, registeredEmail, pend
     <input className="mt-1" type="radio" name="provider-google-account" checked={checked} onChange={() => choose(email)} />
     <span className="min-w-0 text-sm"><span className="block font-semibold">{label}</span><span className="break-all">{email}</span></span>
   </label>;
-  return <fieldset disabled={disabled || verifying || !!pendingEmail} className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
-    <legend className="px-1 font-semibold">Tu correo en GOAT</legend>
+  return <fieldset aria-label="Tu correo en GOAT" disabled={disabled || verifying || !!pendingEmail} className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
+    <h3 className="font-semibold">Tu correo en GOAT</h3>
     <div className="flex items-center gap-2 text-sm"><ShieldCheck className="h-4 w-4 shrink-0 text-emerald-600" aria-hidden="true" /><span>Ingresaste con Google: <strong className="break-all">{accessEmail}</strong></span></div>
     {pendingEmail ? <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm">Correo solicitado: <strong className="break-all">{pendingEmail}</strong>. Completá la aplicación de los datos firmados; mientras tanto, seguí ingresando con <strong className="break-all">{accessEmail}</strong>.</p> : <>
       {differs && <p className="flex items-start gap-2 rounded-lg bg-amber-50 p-3 text-sm text-amber-900"><Mail className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" /><span>En tu ficha figura <strong className="break-all">{registeredEmail}</strong>. Es distinto de la cuenta con la que ingresaste. Elegí cuál usar.</span></p>}
