@@ -36,6 +36,7 @@ type Props = {
   onPageCount: (count: number) => void;
   onReady: (ready: boolean) => void;
   onRetry: () => void;
+  onLoadError?: (message: string) => void;
   focusFieldRequest?: { id: string; revision: number };
   editor?: { disabled?: boolean; onPlace: (page: number, x: number, y: number) => void; onChange: (field: PortalSignatureField) => void };
 };
@@ -135,7 +136,7 @@ function DocumentPage({ pdf, pageNumber, root, size, fit, zoom, fields, selected
   </div>;
 }
 
-export function PortalDocumentViewer({ url, fields, selectedFieldId, signatureImage, signatureName, onSelectField, onPageCount, onReady, onRetry, editor, focusFieldRequest }: Props) {
+export function PortalDocumentViewer({ url, fields, selectedFieldId, signatureImage, signatureName, onSelectField, onPageCount, onReady, onRetry, onLoadError, editor, focusFieldRequest }: Props) {
   const initialFit = editor ? "page" : "width";
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [pageNumber, setPageNumber] = useState(1);
@@ -158,6 +159,7 @@ export function PortalDocumentViewer({ url, fields, selectedFieldId, signatureIm
   }, []);
 
   useEffect(() => { onReady(ready); }, [ready, onReady]);
+  useEffect(() => { onLoadError?.(error); }, [error, onLoadError]);
   useEffect(() => {
     const element = viewport.current;
     if (!element) return;
@@ -220,7 +222,14 @@ export function PortalDocumentViewer({ url, fields, selectedFieldId, signatureIm
       navigatedFocus.current = focusFieldRequest.revision;
       goToPage(field.page, field.id);
       const layout = viewport.current?.closest<HTMLElement>('.portal-sign-layout');
-      if (layout && layout.scrollHeight > layout.clientHeight && layout.scrollTop > 0) scrollToField(layout, 0, layout.scrollLeft);
+      const view = viewport.current;
+      if (layout && view && layout.scrollHeight > layout.clientHeight) {
+        // On small screens the form scrolls separately from the PDF. Reveal the
+        // reading viewport as well as the field inside it, below the fixed header.
+        const top = layout.scrollTop + view.getBoundingClientRect().top - layout.getBoundingClientRect().top
+          - Math.max(0, (layout.clientHeight - view.clientHeight) / 2);
+        scrollToField(layout, top, layout.scrollLeft);
+      }
     }
     if (renderedPages.has(field.page)) {
       const button = (Array.from(viewport.current?.querySelectorAll<HTMLButtonElement>('[data-signature-field-id]') || []) as HTMLButtonElement[]).find(value => value.dataset.signatureFieldId === field.id);

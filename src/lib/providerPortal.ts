@@ -78,6 +78,7 @@ export async function signPortalDocument(
     signatureImage?: string;
     fieldId?: string;
   },
+  onProgress?: (message: string) => void,
 ) {
   const actor = auth.currentUser;
   if (!actor) throw Error("Iniciá sesión.");
@@ -85,6 +86,7 @@ export async function signPortalDocument(
   const field = fields.find(f => f.id === input.fieldId);
   if (!doc.signed && !field)
     throw Error("Seleccioná un recuadro de firma asignado a tu cuenta.");
+  onProgress?.('Conectando con el servicio de firma…');
   const { config } = await portalRequest({ action: "signingSession" });
   const app =
     getApps().find((a) => a.name === "provider-portal-sign") ||
@@ -101,17 +103,22 @@ export async function signPortalDocument(
   // A second app retains the GOAT session. The short-lived exchange never appears in a URL or storage.
   await signInWithCustomToken(remoteAuth, session.customToken);
   try {
-    if (doc.signed)
+    if (doc.signed) {
+      onProgress?.('Completando el PDF firmado…');
       return (
         await httpsCallable(
           remote,
           "generateDocumentArtifacts",
+          { timeout: 150000 },
         )({ projectId: doc.projectId, docId: doc.documentId })
       ).data;
+    }
+    onProgress?.('Registrando tu firma y preparando el PDF…');
     return (
       await httpsCallable(
         remote,
         "signDocument",
+        { timeout: 150000 },
       )({
         projectId: doc.projectId,
         docId: doc.documentId,
@@ -134,10 +141,12 @@ export async function signPortalDocument(
   } catch (error: any) {
     // A previous attempt may have recorded the signature but failed generating its artifacts.
     if (error.code !== "functions/already-exists") throw error;
+    onProgress?.('Tu firma ya está guardada. Completando el PDF…');
     return (
       await httpsCallable(
         remote,
         "generateDocumentArtifacts",
+        { timeout: 150000 },
       )({ projectId: doc.projectId, docId: doc.documentId })
     ).data;
   } finally {

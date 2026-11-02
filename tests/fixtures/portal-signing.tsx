@@ -20,7 +20,7 @@ function samplePdf(count = 2) {
 const params = new URLSearchParams(location.search);
 const url = URL.createObjectURL(params.has("broken") ? new Blob(["invalid pdf"]) : samplePdf(params.has("long") ? 8 : 2));
 const email = "persona@example.com";
-const doc = { title: "Prueba local de firma — dos páginas", signatureFields: [
+const doc = { title: "Prueba local de firma — dos páginas", requiredDni: params.has('fixed-dni') ? '12.345.678' : undefined, signatureFields: [
   { id: "other", signerEmail: "otra@example.com", page: 1, x: .1, y: .7, w: .35, h: .1 },
   { id: "first", signerEmail: email, page: 1, x: .5, y: .8, w: .35, h: .1 },
   { id: "second", signerEmail: email, page: 2, x: .15, y: .75, w: .35, h: .12 },
@@ -28,10 +28,16 @@ const doc = { title: "Prueba local de firma — dos páginas", signatureFields: 
 (window as any).submissions = [];
 function Fixture() {
   const [closed, setClosed] = useState(false);
-  return closed ? <p>Prueba cerrada</p> : <PortalSigningRoom document={doc} signer={{ email, name: "Persona de prueba" }} url={url} loadError="" onRetry={() => location.reload()} onClose={() => setClosed(true)} onSubmit={async input => {
+  const [progress, setProgress] = useState('');
+  return closed ? <p>Prueba cerrada</p> : <PortalSigningRoom document={doc} signer={{ email, name: "Persona de prueba" }} url={params.has('loading') ? '' : url} progress={progress} loadError="" onRetry={() => location.replace(location.pathname)} onClose={() => setClosed(true)} onSubmit={async input => {
     (window as any).submissions.push(input);
     if (params.has("failure")) throw Error("Error de prueba: podés reintentar.");
-    await new Promise(resolve => setTimeout(resolve, 400));
+    if (params.has('timeout')) throw Object.assign(Error('Deadline exceeded'), { code: 'functions/deadline-exceeded' });
+    if (params.has('saved')) throw Object.assign(Error('Refresh failed'), { code: 'portal/signature-saved' });
+    setProgress('Registrando tu firma y preparando el PDF…');
+    if (params.has('slow')) await new Promise<void>(resolve => { (window as any).finishSubmission = resolve; });
+    else await new Promise(resolve => setTimeout(resolve, 400));
+    setProgress('');
   }} />;
 }
 createRoot(document.getElementById("root")!).render(<StrictMode><Fixture /></StrictMode>);

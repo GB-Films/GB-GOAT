@@ -2,36 +2,57 @@
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || "playwright");
+const base = process.env.PORTAL_TEST_BASE || "http://127.0.0.1:3000";
+if (new URL(base).hostname !== '127.0.0.1') throw Error('Only the isolated loopback fixture is allowed');
 const browser = await chromium.launch({ channel: "msedge", headless: true });
 await mkdir("test-results/portal-signing", { recursive: true });
-const base = process.env.PORTAL_TEST_BASE || "http://127.0.0.1:3000";
+const runtimeErrors = [];
+async function localPage(viewport) {
+  const page = await browser.newPage({ viewport });
+  page.on('pageerror', error => runtimeErrors.push(error.message));
+  page.setDefaultTimeout(15000);
+  await page.route('**/*', route => new URL(route.request().url()).origin === new URL(base).origin ? route.continue() : route.abort());
+  return page;
+}
 try {
   for (const viewport of [{ width: 1440, height: 1000 }, { width: 1366, height: 768 }, { width: 390, height: 844 }, { width: 320, height: 568 }]) {
-    const page = await browser.newPage({ viewport });
+    const page = await localPage(viewport);
     const errors = [];
     page.on("pageerror", error => errors.push(error.message));
     await page.goto(`${base}/tests/fixtures/portal-signing.html`);
     const viewer = page.getByTestId("pdf-viewport");
     await page.waitForFunction(() => document.querySelector('[data-testid="pdf-viewport"]')?.getAttribute("aria-busy") === "false");
-    assert.equal(await page.locator('[data-signature-field-id="other"]').count(), 0);
-    const geometry = await page.evaluate(() => {
+    await page.locator('.portal-sign-next').getByText(/Falta elegir dónde firmar/).waitFor();
+    assert.equal(await page.getByLabel('Ajuste del documento', { exact: true }).inputValue(), 'width', 'initial PDF fits reading width');
+    await page.getByLabel('Ajuste del documento', { exact: true }).selectOption('page');
+    const geometrySnapshot = await page.waitForFunction(() => {
+      const sheet = document.querySelector('.portal-pdf-sheet');
+      const canvas = sheet?.querySelector('canvas');
+      if (!canvas?.width || sheet.getAttribute('aria-busy') !== 'false') return false;
+      const viewport = document.querySelector('[data-testid="pdf-viewport"]');
+      const rect = sheet.getBoundingClientRect();
+      if (rect.height > viewport.clientHeight - 30 || Math.abs(canvas.width - Math.ceil(rect.width * Math.min(devicePixelRatio || 1, 2))) > 1) return false;
+      const painted = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data.some((n, i) => i % 4 !== 3 && n < 100);
+      if (!painted) return false;
       const box = selector => { const r = document.querySelector(selector).getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height, right: r.right }; };
-      const canvas = document.querySelector(".portal-pdf-sheet canvas");
-      const pixels = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data;
-      return { viewer: box(".portal-pdf-viewport"), sheet: box(".portal-pdf-sheet"), details: box(".portal-sign-details"), document: box(".portal-sign-document"), overflow: document.documentElement.scrollWidth > innerWidth, painted: pixels.some((n, i) => i % 4 !== 3 && n < 100) };
+      return { viewer: box(".portal-pdf-viewport"), sheet: box(".portal-pdf-sheet"), details: box(".portal-sign-details"), document: box(".portal-sign-document"), overflow: document.documentElement.scrollWidth > innerWidth, painted };
     });
+    const geometry = await geometrySnapshot.jsonValue();
+    assert.equal(await page.locator('[data-signature-field-id="other"]').count(), 0);
     assert.equal(geometry.overflow, false);
     assert.equal(geometry.painted, true, "PDF contains rendered text");
     assert.ok(geometry.sheet.width <= geometry.viewer.width - 30);
     assert.ok(geometry.sheet.height <= geometry.viewer.height - 30);
     if (viewport.width > 900) {
-      assert.ok(geometry.viewer.height > viewport.height * .65, "document uses most of the screen height");
+      assert.ok(geometry.viewer.height > viewport.height * .5, "PDF keeps at least half the desktop height for reading beside the form and guidance");
       assert.ok(geometry.details.x >= geometry.document.right - 1, "form is to the right");
     } else assert.ok(geometry.details.y >= geometry.document.y + geometry.document.height - 1, "form is below PDF on mobile");
     await page.screenshot({ path: `test-results/portal-signing/${viewport.width}-initial.png` });
     assert.equal(await page.locator("[data-pdf-page]").count(), 2, "all pages have continuous space in the viewer");
+    await viewer.scrollIntoViewIfNeeded();
     const viewerBox = await viewer.boundingBox();
-    await page.mouse.move(viewerBox.x + viewerBox.width / 2, viewerBox.y + viewerBox.height / 2);
+    const footerBox = await page.locator('.portal-sign-next').boundingBox();
+    await page.mouse.move(viewerBox.x + viewerBox.width / 2, Math.min(viewerBox.y + viewerBox.height / 2, footerBox.y - 20));
     await page.mouse.wheel(0, geometry.sheet.height + 20);
     await page.getByText("Página 2 de 2", { exact: true }).waitFor();
     await page.waitForFunction(() => document.querySelector('[data-pdf-page="2"]').getAttribute("aria-busy") === "false");
@@ -53,11 +74,20 @@ try {
     await page.getByLabel("Ajuste del documento", { exact: true }).selectOption("page");
     await page.waitForFunction(initial => Math.abs(document.querySelector(".portal-pdf-sheet").getBoundingClientRect().width - initial) < 1 && document.querySelector('[data-testid="pdf-viewport"]').getAttribute("aria-busy") === "false", initialWidth);
     const submit = page.getByRole("button", { name: "Firmar y confirmar" });
+    assert.match(await page.locator('.portal-sign-next').innerText(), /Falta elegir dónde firmar/);
+    await page.getByRole('button', { name: 'Mostrar recuadro', exact: true }).click();
+    await page.waitForFunction(() => {
+      const rect = document.querySelector('[data-signature-field-id="first"]').getBoundingClientRect();
+      return rect.top >= document.querySelector('.portal-sign-header').getBoundingClientRect().bottom
+        && rect.bottom <= document.querySelector('.portal-sign-next').getBoundingClientRect().top;
+    });
+    assert.equal(await submit.isDisabled(), true, 'guidance locates the field without selecting or signing');
     await page.getByLabel("DNI", { exact: true }).fill("12.345.678");
     await page.getByLabel("Confirmo que el DNI ingresado me corresponde.", { exact: true }).check();
     await page.getByRole("button", { name: "Usar mi nombre", exact: true }).click();
     await page.getByLabel("Leí el documento", { exact: false }).check();
     assert.equal(await submit.isDisabled(), true, "explicit field click is required");
+    assert.match(await page.locator('.portal-sign-next').innerText(), /Falta elegir dónde firmar/);
     await page.getByLabel("Ir a mi recuadro de firma", { exact: true }).selectOption("second");
     await page.waitForFunction(() => document.querySelector('[data-signature-field-id="second"]')?.getBoundingClientRect().width > 0);
     assert.equal(await submit.isDisabled(), true, "navigation does not select a field");
@@ -107,7 +137,7 @@ try {
     await page.close();
   }
   {
-    const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    const page = await localPage({ width: 1440, height: 1000 });
     const errors = [];
     page.on("pageerror", error => errors.push(error.message));
     await page.goto(`${base}/tests/fixtures/portal-signing.html?long`);
@@ -126,12 +156,89 @@ try {
     await page.close();
   }
   for (const query of ["broken", "foreign"]) {
-    const page = await browser.newPage();
+    const page = await localPage({ width: 390, height: 844 });
     await page.goto(`${base}/tests/fixtures/portal-signing.html?${query}`);
     await page.getByRole("alert").waitFor();
     assert.equal(await page.getByRole("button", { name: "Firmar y confirmar" }).isDisabled(), true);
     assert.equal(await page.evaluate(() => window.submissions.length), 0);
+    assert.match(await page.locator('.portal-sign-next').innerText(), query === 'broken' ? /No pudimos cargar/ : /No hay un recuadro válido/);
+    await page.locator('.portal-sign-next').getByRole('button').click();
+    if (query === 'broken') {
+      await page.waitForFunction(() => document.querySelector('[data-testid="pdf-viewport"]')?.getAttribute('aria-busy') === 'false');
+      assert.match(await page.locator('.portal-sign-next').innerText(), /Falta elegir dónde firmar/);
+    } else await page.getByText('Prueba cerrada', { exact: true }).waitFor();
     console.log(`PASS ${query}: signing blocked`);
     await page.close();
   }
+  for (const query of ['fixed-dni', 'failure', 'timeout', 'saved', 'slow']) {
+    const page = await localPage({ width: 390, height: 844 });
+    await page.goto(`${base}/tests/fixtures/portal-signing.html?${query}`);
+    await page.waitForFunction(() => document.querySelector('[data-testid="pdf-viewport"]')?.getAttribute('aria-busy') === 'false');
+    await page.locator('[data-signature-field-id="first"]').click();
+    const next = page.locator('.portal-sign-next');
+    const submit = page.getByRole('button', { name: 'Firmar y confirmar', exact: true });
+    if (query !== 'fixed-dni') {
+      assert.match(await next.innerText(), /Ingresá un DNI/);
+      await next.getByRole('button').click();
+      assert.equal(await page.getByLabel('DNI', { exact: true }).evaluate(el => el === document.activeElement), true);
+      await page.getByLabel('DNI', { exact: true }).fill('12345678');
+    } else assert.equal(await page.getByLabel('DNI', { exact: true }).getAttribute('readonly'), '');
+    assert.match(await next.innerText(), /Marcá la confirmación/);
+    await next.getByRole('button').click();
+    assert.equal(await page.getByLabel('Confirmo que el DNI ingresado me corresponde.', { exact: true }).evaluate(el => el === document.activeElement), true);
+    await page.getByLabel('Confirmo que el DNI ingresado me corresponde.', { exact: true }).check();
+    assert.match(await next.innerText(), /Falta tu firma/);
+    await next.getByRole('button').click();
+    assert.equal(await page.locator('.portal-sign-modes').evaluate(el => el === document.activeElement), true);
+    await page.getByRole('button', { name: 'Usar mi nombre', exact: true }).click();
+    assert.match(await next.innerText(), /Marcá que leíste/);
+    await next.getByRole('button').click();
+    await page.getByLabel('Leí el documento', { exact: false }).check();
+    assert.match(await next.innerText(), /Todo listo/);
+    await next.getByRole('button').click();
+    assert.equal(await submit.evaluate(el => el === document.activeElement), true);
+    if (query === 'slow') await page.clock.install();
+    await submit.click();
+    await page.waitForFunction(() => window.submissions.length === 1);
+    if (query === 'timeout' || query === 'saved') {
+      await next.getByRole('button', { name: 'Volver a Documentos', exact: true }).waitFor();
+      assert.equal(await submit.isDisabled(), true, 'do not resubmit an uncertain or already saved signature');
+      assert.match(await next.innerText(), query === 'timeout' ? /No pudimos confirmar el resultado/ : /quedó guardada/);
+      await next.getByRole('button').click();
+      await page.getByText('Prueba cerrada', { exact: true }).waitFor();
+    } else if (query === 'failure') {
+      await page.getByRole('alert').waitFor();
+      assert.match(await page.getByRole('alert').innerText(), /podés reintentar/);
+      assert.equal(await submit.isEnabled(), true);
+    } else if (query === 'slow') {
+      assert.match(await next.innerText(), /Registrando tu firma/);
+      assert.equal(await page.getByRole('button', { name: 'Cerrar', exact: true }).isDisabled(), true);
+      await page.keyboard.press('Escape');
+      assert.equal(await page.getByRole('dialog').count(), 1);
+      await page.clock.fastForward(16000);
+      assert.match(await next.innerText(), /Mantené esta ventana abierta/);
+      assert.equal(await page.locator('.portal-sign-submit').isDisabled(), true);
+      assert.equal(await page.evaluate(() => window.submissions.length), 1);
+      await page.evaluate(() => window.finishSubmission());
+      await page.waitForFunction(() => !document.querySelector('.portal-sign-submit').disabled);
+    }
+    assert.equal(await page.evaluate(() => window.submissions.length), 1);
+    console.log(`PASS ${query}: guided mobile completion and safe submission recovery`);
+    await page.screenshot({ path: `test-results/portal-signing/${query}-guided.png` });
+    await page.close();
+  }
+  {
+    const page = await localPage({ width: 390, height: 844 });
+    await page.clock.install();
+    await page.goto(`${base}/tests/fixtures/portal-signing.html?loading`);
+    assert.match(await page.locator('.portal-sign-next').innerText(), /Estamos cargando/);
+    await page.clock.fastForward(16000);
+    await page.locator('.portal-sign-next').getByRole('button', { name: 'Volver a cargar', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('[data-testid="pdf-viewport"]')?.getAttribute('aria-busy') === 'false');
+    assert.match(await page.locator('.portal-sign-next').innerText(), /Falta elegir dónde firmar/);
+    assert.equal(await page.evaluate(() => window.submissions.length), 0);
+    console.log('PASS slow loading: visible retry loads the PDF without signing');
+    await page.close();
+  }
+  assert.deepEqual(runtimeErrors, [], 'no uncaught browser errors across all signing scenarios');
 } finally { await browser.close(); }

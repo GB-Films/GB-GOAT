@@ -508,7 +508,7 @@ export default function ProviderPortal() {
       {signing && (
         <PortalSignDialog
           document={signing}
-          onClose={() => { preparationRevision.current++; setSigning(null); }}
+          onClose={() => { preparationRevision.current++; setSigning(null); void load(); void loadDocuments(); }}
           onSigned={finish}
         />
       )}
