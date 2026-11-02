@@ -1,4 +1,4 @@
-import { CheckCircle2, Clock3, Download, FileText, FolderOpen, PenLine, RefreshCw } from 'lucide-react';
+import { CheckCircle2, ChevronRight, Clock3, Download, FileText, FolderOpen, PenLine, RefreshCw } from 'lucide-react';
 import { ProviderDeclarationCard } from './ProviderDeclarationCard';
 import { declarationDocument, declarationPresentation, portalDeclarationCompletionInput, type DeclarationDocument } from '../lib/providerDeclarationUi';
 import { groupPortalDocumentsByProject, needsPortalSignature } from '../lib/providerPortalUi';
@@ -56,10 +56,10 @@ export function ProviderPortalDocuments({ documents, declarations, providerId, p
       {['active', 'pending_review'].includes(d.status) && <button disabled={busy} className="portal-button" onClick={() => onRevoke(d.id)}>Revocar autorización</button>}
     </div>}
   </ProviderDeclarationCard>;
-  const projects = (items: any[]) => groupPortalDocumentsByProject(items).map(group => <section key={group.key} aria-label={group.name} className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-3 sm:p-4">
-    <header className="flex items-start gap-2 px-1 py-1"><FolderOpen className="mt-0.5 h-4 w-4 shrink-0 text-slate-500" aria-hidden="true" /><div className="min-w-0 flex-1"><h4 className="break-words font-semibold text-slate-800">{group.name}</h4></div><span className="portal-status">{group.documents.length} {group.documents.length === 1 ? 'documento' : 'documentos'}</span></header>
-    {group.documents.map(card)}
-  </section>);
+  const projects = (items: any[]) => groupPortalDocumentsByProject(items).map(group => <details key={group.key} aria-label={group.name} open={group.documents.some(needsPortalSignature) || undefined} className="group rounded-2xl border border-slate-200 bg-slate-50/70 p-3 sm:p-4">
+    <summary className="flex min-h-11 list-none items-center gap-2 rounded-xl px-1 py-1 transition-colors hover:bg-slate-100 [&::-webkit-details-marker]:hidden"><ChevronRight className="h-4 w-4 shrink-0 text-slate-500 transition-transform group-open:rotate-90" aria-hidden="true" /><FolderOpen className="h-4 w-4 shrink-0 text-slate-500" aria-hidden="true" /><span className="min-w-0 flex-1 break-words font-semibold text-slate-800">{group.name}</span><span className="portal-status">{group.documents.length} {group.documents.length === 1 ? 'documento' : 'documentos'}</span></summary>
+    <div className="mt-3 space-y-3">{group.documents.map(card)}</div>
+  </details>);
   return <section className="space-y-5" aria-label="Tus documentos">
     <div className="flex items-center justify-between gap-3"><div><h2 className="text-lg font-semibold">Tus documentos</h2><p className="mt-1 text-sm text-slate-500">Firmá los pendientes y descargá tus constancias.</p></div>
       <button disabled={busy || loading} className="portal-button" onClick={onRefresh}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />Actualizar</button></div>
