@@ -43,6 +43,10 @@ test('una confirmación posterior aplicada evita volver a pedir la firma por un 
   const html = renderToStaticMarkup(createElement(ProviderProfileForm, { provider: { type: 'persona', dni: '87654321' }, declarations: [old, latest], labels: { dni: 'DNI' }, draft: {}, onChange() {}, onPrepare: async () => {}, busy: false }));
   assert.doesNotMatch(html, /firmá nuevamente|Revisar confirmación y firmar/);
 });
+test('una confirmación firmada sin cambios también permite completar su aplicación', () => {
+  const html = renderToStaticMarkup(createElement(ProviderProfileForm, { provider: { type: 'persona', dni: '12345678' }, declarations: [{ ...old, content: { confirmation: {}, changes: {} } }], labels: { dni: 'DNI' }, draft: {}, onChange() {}, onPrepare: async () => {}, onApplySigned: async () => {}, busy: false }));
+  assert.match(html, /Aplicar datos firmados/);
+});
 test('el conflicto tiene una indicación breve y los errores de conexión no filtran mensajes internos', () => {
   assert.equal(portalErrorMessage({ message: 'Los datos cambiaron mientras firmabas. Prepará una nueva declaración.' }), 'Tu ficha cambió. Revisá tus datos y firmá nuevamente.');
   assert.equal(portalErrorMessage({ code: 'functions/internal', message: 'INTERNAL PRIVATE STACK' }), 'No pudimos completar la acción. Intentá nuevamente.');

@@ -17,6 +17,7 @@ export function ProviderProfileForm({ provider, declarations, labels, draft, onC
   const outdated = declarations.filter(d => d.owned && (outdatedIds.includes(d.id) || outdatedProfileDeclaration(d, provider)));
   const needsNewSignature = outdated.some(d => !profileDeclarationSuperseded(d, declarations));
   const pendingDeclarations = declarations.filter(d => !outdated.some(old => old.id === d.id));
+  const pendingApplications = pendingDeclarations.filter(d => d.kind === 'profile' && d.owned && d.status === 'pending_review');
   const pending = pendingProfileFields(pendingDeclarations);
   const normalize = (email: string) => email.trim().toLowerCase();
   const pendingEmail = pending.email?.after;
@@ -35,8 +36,8 @@ export function ProviderProfileForm({ provider, declarations, labels, draft, onC
     {notice && <p role="status" className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800">{notice}</p>}
     {needsNewSignature && <p role="status" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">Tu ficha cambió después de una firma anterior. Revisá los datos actuales y firmá nuevamente.</p>}
     {applicationError && <p role="alert" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">{applicationError}</p>}
-    {!!Object.keys(pending).length && <div role="status" className="space-y-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-900"><p>Hay datos firmados por aplicar.</p>
-      {onApplySigned && pendingDeclarations.filter(d => d.kind === 'profile' && d.owned && d.status === 'pending_review').map(d => <button key={d.id} type="button" disabled={busy} className="portal-button" onClick={async () => {
+    {!!pendingApplications.length && <div role="status" className="space-y-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-900"><p>Hay datos firmados por aplicar.</p>
+      {onApplySigned && pendingApplications.map(d => <button key={d.id} type="button" disabled={busy} className="portal-button" onClick={async () => {
         setApplicationError('');
         try { await onApplySigned(d.id); }
         catch (error: any) { if (profileApplicationConflict(error)) setOutdatedIds(ids => [...ids, d.id]); else setApplicationError(portalErrorMessage(error)); }
