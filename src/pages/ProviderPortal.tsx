@@ -13,9 +13,11 @@ import { thirdPartyFormDefaults } from '../lib/thirdPartyDefaults';
 import { ProviderProfileForm } from '../components/ProviderProfileForm';
 import { ProviderConfirmationNotice } from '../components/ProviderConfirmationNotice';
 import { switchProviderGoogleAccount, verifyProviderGoogleAccount } from '../lib/providerGoogleAccount';
-import { ProviderDeclarationCard } from '../components/ProviderDeclarationCard';
-import { declarationCompletionMessage, declarationDocument, portalDeclarationCompletionInput } from '../lib/providerDeclarationUi';
+import { declarationCompletionMessage, portalDeclarationCompletionInput, type DeclarationDocument } from '../lib/providerDeclarationUi';
 import { ProviderSigningGuide } from '../components/ProviderSigningGuide';
+import { ProviderPortalDocuments } from '../components/ProviderPortalDocuments';
+import { pendingPortalSignatureCount, portalErrorMessage, representsAnotherProvider } from '../lib/providerPortalUi';
+import { BriefcaseBusiness, FileText, Wallet, FolderPen, UserRound } from 'lucide-react';
 
 const tabs = [
   "Trabajos",
@@ -38,25 +40,12 @@ const labels: Record<string, string> = {
   bankAccount_alias: "Tu alias propio",
   bankAccount_holder: "Titular de la cuenta",
 };
-const status: Record<string, string> = {
-  pending_signature: "Pendiente de firma",
-  pending_review: "Pendiente de revisión",
-  applied: "Aplicado",
-  active: "Vigente",
-  revoked: "Revocada",
-  rejected: "Rechazada",
-  preparing: "Preparando documento",
-  pending: "Pendiente de firma",
-  signed: "Firmado",
-  completed: "Firmado completo",
-  partially_signed: "Parcialmente firmado",
-  cancelled: "Anulado",
-};
 const money = (value: number, currency = "ARS") =>
   new Intl.NumberFormat("es-AR", { style: "currency", currency }).format(
     value || 0,
   );
-const box = "rounded-2xl border border-slate-200 bg-white p-4";
+const box = 'portal-panel';
+const tabIcons = [BriefcaseBusiness, FileText, Wallet, FolderPen, UserRound];
 export default function ProviderPortal() {
   const { user } = useAuth();
   const [searchParams] = useSearchParams();
@@ -79,6 +68,7 @@ export default function ProviderPortal() {
   const [party, setParty] = useState<any>(() => thirdPartyFormDefaults(null));
   const selectedProviderRef = useRef(providerId);
   const selected = members.find((m) => m.providerId === providerId);
+  const pendingCount = pendingPortalSignatureCount(docs);
   const intakePrefilled = useRef("");
   useEffect(() => {
     const key = `${user?.uid}/${providerId}`;
@@ -107,7 +97,7 @@ export default function ProviderPortal() {
       } else setView(null);
       return true;
     } catch (e: any) {
-      if (revision === loadRevision.current) setError(e.message);
+      if (revision === loadRevision.current) setError(portalErrorMessage(e));
       return false;
     }
   }, []);
@@ -115,7 +105,7 @@ export default function ProviderPortal() {
     const revision = ++documentRevision.current;
     setDocumentsLoading(true);
     try { const result = await portalRequest({ action: 'myDocuments' }); if (revision === documentRevision.current) { setDocs(result.documents); setDocumentsLoaded(true); } }
-    catch (error: any) { if (revision === documentRevision.current) setError(error.message); }
+    catch (error: any) { if (revision === documentRevision.current) setError(portalErrorMessage(error)); }
     finally { if (revision === documentRevision.current) setDocumentsLoading(false); }
   }, []);
   useEffect(() => {
@@ -123,17 +113,17 @@ export default function ProviderPortal() {
     setHasLoaded(false); setMembers([]); setView(null); setDocs([]); setDocumentsLoaded(false); setDraft({}); setSigning(null); intakePrefilled.current = '';
     if (!user?.uid) return;
     void load(); void loadDocuments();
-    const timer = window.setInterval(() => void load(), 30000);
+    const timer = window.setInterval(() => { if (!document.hidden) { void load(); void loadDocuments(); } }, 30000);
     return () => { window.clearInterval(timer); loadRevision.current++; };
   }, [load, loadDocuments, user?.uid, user?.email]);
-  useEffect(() => { if (tab !== 'Documentos' || !user?.uid) return; void loadDocuments(); const timer = window.setInterval(() => void loadDocuments(), 30000); return () => { window.clearInterval(timer); documentRevision.current++; }; }, [tab, loadDocuments, user?.uid]);
+  useEffect(() => { if (tab === 'Documentos' && user?.uid) void loadDocuments(); }, [tab, loadDocuments, user?.uid]);
   async function run(action: () => Promise<void>) {
     setBusy(true);
     setError("");
     try {
       await action();
     } catch (e: any) {
-      setError(e.message);
+      setError(portalErrorMessage(e));
     } finally {
       setBusy(false);
     }
@@ -186,18 +176,28 @@ export default function ProviderPortal() {
   }
   function reviewCompanyRepresentation() {
     setTab('Mis datos');
-    window.requestAnimationFrame(() => document.getElementById('company-representation-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    window.requestAnimationFrame(() => { const form = document.getElementById('company-representation-form'); form?.closest('details')?.setAttribute('open', ''); form?.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
+  }
+  async function applyDeclaration(id: string, kind: string, doc?: DeclarationDocument, recover = false) {
+    setBusy(true);
+    try {
+      if (recover && doc) await signPortalDocument(doc, { dni: '', typedName: '' });
+      const result = await portalRequest({ action: 'completeDeclaration', providerId: doc?.providerId || providerId, declarationId: id });
+      const message = declarationCompletionMessage(kind, result.status);
+      if (kind === 'profile') { setProfileNotice(message); if (result.status === 'applied') setDraft({}); }
+      return message;
+    } finally { await Promise.all([load(), loadDocuments()]); setBusy(false); }
   }
   return (
-    <div className="mx-auto max-w-6xl space-y-5 p-2 sm:p-5">
+    <div className="provider-portal mx-auto max-w-6xl space-y-5 p-2 sm:p-5">
       <header className={box}>
-        <h1 className="text-2xl font-bold">Mi proveedor</h1>
+        <h1 className="text-2xl font-bold tracking-tight">Mi proveedor</h1>
         <p className="mt-2 text-sm text-slate-600">
-          Ingresaste como {user?.displayName || user?.email} · {user?.email}
+          {user?.displayName && <span className="mr-2 font-medium text-slate-800">{user.displayName}</span>}<span className="break-all">{user?.email}</span>
         </p>
-        {members.length > 0 ? (
+        {members.length > 1 ? (
           <label className="mt-3 block text-sm">
-            Representás a
+            Ficha de proveedor
             <select
               className="mt-1 block w-full rounded-lg border p-2 font-semibold"
               disabled={busy}
@@ -209,6 +209,7 @@ export default function ProviderPortal() {
                 setSigning(null);
                 preparationRevision.current++;
                 setProfileNotice('');
+                setError('');
                 setUploadWork("");
                 setProviderId(e.target.value);
                 selectedProviderRef.current = e.target.value;
@@ -224,7 +225,7 @@ export default function ProviderPortal() {
               ))}
             </select>
           </label>
-        ) : (
+        ) : !members.length ? (
           <p className="mt-3 text-sm">
             {hasLoaded && !error
               ? "Tu cuenta no tiene una ficha de proveedor asociada. Podés consultar tus documentos asignados; para vincular una ficha, contactá a administración."
@@ -232,7 +233,8 @@ export default function ProviderPortal() {
                 ? "No pudimos comprobar tu representación."
                 : "Consultando tu cuenta…"}
           </p>
-        )}
+        ) : representsAnotherProvider(selected) ? <p className="mt-3 text-sm text-slate-600">Representás a <strong className="text-slate-900">{selected.name}</strong></p> : null}
+        {user?.email && <ProviderSigningGuide email={user.email} needsRepresentation={selected?.status === 'needs_confirmation' && selected?.type === 'empresa'} pendingCount={pendingCount} onDocuments={() => { setError(''); setTab('Documentos'); }} />}
       </header>
       {hasLoaded && !members.length && !error && <section className={box + ' space-y-3'}>
         <h2 className="font-semibold">¿Te registraste con otro correo?</h2>
@@ -241,47 +243,51 @@ export default function ProviderPortal() {
         <p className="text-xs text-slate-500">Si ya no tenés acceso a ese correo, pedí a administración que revise la vinculación de tu ficha.</p>
       </section>}
       {error && (
-        <div role="alert" className="rounded-xl bg-red-50 p-3 text-red-800">
+        <div role="alert" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">
           {error}
           <button
-            className="ml-3 underline"
+            className="portal-button ml-3"
             onClick={() => {
               setError("");
               void load();
+              void loadDocuments();
             }}
           >
             Actualizar
           </button>
         </div>
       )}
-      {user?.email && <ProviderSigningGuide email={user.email} needsRepresentation={selected?.status === 'needs_confirmation' && selected?.type === 'empresa'} pendingCount={docs.filter(d => !d.signed && !['cancelled', 'revoked', 'replaced', 'rejected'].includes(d.status)).length} onDocuments={() => setTab('Documentos')} />}
       {selected?.status === 'needs_confirmation' && selected?.type === 'empresa' && <div key={`${providerId}/${docs.filter(d => d.providerId === providerId && d.signed).length}`}><CompanyRepresentationForm providerId={providerId} email={user?.email || ''} busy={busy} onPrepare={input => prepare('prepareRepresentation', input)} /></div>}
       {selected?.status === 'needs_confirmation' && selected?.type !== 'empresa' && (
         <p role="status" className={box}>Administración debe revisar la clasificación de esta ficha para activar el acceso. No necesitás firmar una declaración de representación.</p>
       )}
-      {view && <ProviderConfirmationNotice status={view.profileConfirmation?.status} onReview={() => setTab('Mis datos')} />}
+      {view && tab !== 'Mis datos' && <ProviderConfirmationNotice status={view.profileConfirmation?.status} onReview={() => setTab('Mis datos')} />}
       <nav
         aria-label="Secciones del proveedor"
-        className="flex gap-2 overflow-x-auto"
+        className="flex gap-1 overflow-x-auto rounded-2xl border border-slate-200 bg-white p-1.5 shadow-sm shadow-slate-200/20"
       >
-        {tabs.map((t) => (
+        {tabs.map((t, index) => { const Icon = tabIcons[index]; const pending = t === 'Documentos' && pendingCount > 0; return (
           <button
             key={t}
-            onClick={() => setTab(t)}
-            className={`whitespace-nowrap rounded-xl px-4 py-2 text-sm ${tab === t ? "bg-slate-900 text-white" : "bg-white text-slate-700"}`}
+            type="button"
+            aria-current={tab === t ? 'page' : undefined}
+            aria-label={pending ? `Documentos: ${pendingCount} pendientes de tu firma` : t}
+            onClick={() => { setError(''); setTab(t); }}
+            className={`flex min-h-11 items-center gap-2 whitespace-nowrap rounded-xl px-3 py-2 text-sm font-medium transition-colors sm:px-4 ${pending ? `bg-amber-100 text-amber-950 hover:bg-amber-200 ${tab === t ? 'ring-2 ring-inset ring-amber-400' : ''}` : tab === t ? 'bg-slate-900 text-white hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'}`}
           >
-            {t}
+            <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />{t}{pending && <span className="flex min-w-5 items-center justify-center rounded-full bg-amber-400 px-1.5 text-xs font-bold leading-5 text-amber-950" aria-hidden="true">{pendingCount}</span>}
           </button>
-        ))}
+        ); })}
       </nav>
       {tab === "Trabajos" && (
         <section className="space-y-3">
+          <div><h2 className="text-lg font-semibold">Tus trabajos</h2><p className="mt-1 text-sm text-slate-500">Importes y pagos registrados de cada trabajo.</p></div>
           {view?.works.map((w: any) => (
             <article key={w.key} className={box}>
               <h2 className="font-bold">{w.projectName}</h2>
               <p className="text-sm text-slate-600">{w.description}</p>
-              <div className="mt-3 flex flex-wrap gap-5 text-sm">
-                <span>Trabajo: {money(w.total, w.currency)}</span>
+              <div className="mt-4 grid gap-3 rounded-xl bg-slate-50 p-3 text-sm sm:grid-cols-2">
+                <span><span className="mb-1 block text-xs text-slate-500">Importe del trabajo</span><strong className="text-lg">{money(w.total, w.currency)}</strong></span>
                 <span>
                   {w.markedPaidWithoutDetails ? (
                     "Marcado pagado; sin detalle cargado"
@@ -294,13 +300,15 @@ export default function ProviderPortal() {
           ))}
           {!view?.works.length && (
             <p className={box}>
-              {!hasLoaded || (selected?.status === 'active' && !view) ? 'Cargando tus datos…' : 'No hay trabajos para mostrar con esta representación.'}
+              {!hasLoaded || (selected?.status === 'active' && !view) ? 'Cargando tus datos…' : 'Todavía no tenés trabajos asignados.'}
             </p>
           )}
         </section>
       )}
       {tab === "Facturas" && (
         <section className="space-y-3">
+          <div><h2 className="text-lg font-semibold">Tus facturas</h2><p className="mt-1 text-sm text-slate-500">Adjuntá tu factura al trabajo correspondiente.</p></div>
+          {!view && <p className={box + ' text-sm text-slate-500'}>{!hasLoaded ? 'Cargando tus facturas…' : 'Tus facturas aparecerán al habilitar la ficha de proveedor.'}</p>}
           {view && (
             <div className={box}>
               <h2 className="font-bold">Cargar factura</h2>
@@ -328,7 +336,7 @@ export default function ProviderPortal() {
                   if (!file) return;
                   void run(async () => {
                     if (file.size > 2 * 1024 * 1024)
-                      throw Error("Usá un archivo de hasta2MB.");
+                      throw Error("Usá un archivo de hasta 2 MB.");
                     const reader = new FileReader();
                     const base64 = await new Promise<string>(
                       (resolve, reject) => {
@@ -354,10 +362,7 @@ export default function ProviderPortal() {
                   e.target.value = "";
                 }}
               />
-              <p className="mt-2 text-xs text-slate-500">
-                La carga agrega el documento al trabajo. No registra otro costo
-                ni un pago.
-              </p>
+              <p className="mt-2 text-xs text-slate-500">PDF, JPG o PNG · hasta 2 MB.</p>
             </div>
           )}
           {view?.works.map(
@@ -370,7 +375,7 @@ export default function ProviderPortal() {
                   {Array.from({ length: w.invoiceCount }, (_, index) => (
                     <button
                       disabled={busy}
-                      className="mr-3 mt-2 text-sm underline"
+                      className="portal-button mr-2 mt-2"
                       key={index}
                       onClick={() =>
                         download({ workKey: w.key, kind: "invoice", index })
@@ -394,7 +399,7 @@ export default function ProviderPortal() {
                 {r.hasFile && (
                   <button
                     disabled={busy}
-                    className="mt-2 underline"
+                    className="portal-button mr-2 mt-2"
                     onClick={() => download({ recordId: r.id })}
                   >
                     Descargar original
@@ -402,15 +407,19 @@ export default function ProviderPortal() {
                 )}
               </div>
             ))}
+          {view && !view.works.some((w: any) => w.invoiceCount > 0) && !view.financial.some((r: any) => r.kind === 'invoice') && <p className={box + ' text-sm text-slate-500'}>Todavía no hay facturas registradas.</p>}
         </section>
       )}
       {tab === "Pagos y retenciones" && (
         <section className="space-y-3">
-          {view?.works.map((w: any) => (
+          <div><h2 className="text-lg font-semibold">Pagos y retenciones</h2><p className="mt-1 text-sm text-slate-500">Consultá los movimientos y descargá sus comprobantes.</p></div>
+          {!view && <p className={box + ' text-sm text-slate-500'}>{!hasLoaded ? 'Cargando tus pagos…' : 'Tus pagos aparecerán al habilitar la ficha de proveedor.'}</p>}
+          {view?.works.filter((w: any) => w.payments.length || w.otherCount || w.markedPaidWithoutDetails).map((w: any) => (
             <div className={box} key={w.key}>
               <h2 className="font-semibold">
                 {w.projectName} · {w.description}
               </h2>
+              {w.markedPaidWithoutDetails && <p className="mt-2 text-sm text-slate-500">Marcado como pagado. Todavía no hay un comprobante cargado.</p>}
               {w.payments.map((p: any, index: number) => (
                 <div
                   key={p.id}
@@ -423,7 +432,7 @@ export default function ProviderPortal() {
                   {p.hasReceipt && (
                     <button
                       disabled={busy}
-                      className="underline"
+                      className="portal-button mr-2 mt-2"
                       onClick={() =>
                         download({ workKey: w.key, kind: "payment", index })
                       }
@@ -437,7 +446,7 @@ export default function ProviderPortal() {
                 <button
                   key={index}
                   disabled={busy}
-                  className="mr-3 mt-2 text-sm underline"
+                  className="portal-button mr-2 mt-2"
                   onClick={() =>
                     download({ workKey: w.key, kind: "other", index })
                   }
@@ -459,7 +468,7 @@ export default function ProviderPortal() {
                 {r.hasFile && (
                   <button
                     disabled={busy}
-                    className="mt-2 underline"
+                    className="portal-button mr-2 mt-2"
                     onClick={() => download({ recordId: r.id })}
                   >
                     Descargar original de la operación
@@ -467,199 +476,31 @@ export default function ProviderPortal() {
                 )}
               </div>
             ))}
-          <p className="text-xs text-slate-500">
-            Una aplicación distribuida y su comprobante corresponden al mismo
-            pago. Los registros mostrados no sustituyen la conciliación
-            administrativa.
-          </p>
+          {view && !view.works.some((w: any) => w.payments.length || w.otherCount || w.markedPaidWithoutDetails) && !view.financial.some((r: any) => r.kind !== 'invoice') && <p className={box + ' text-sm text-slate-500'}>Todavía no hay pagos ni retenciones registrados.</p>}
+          {view?.works.some((w: any) => w.payments.some((p: any) => p.sharedRecordId)) && <p className="text-xs text-slate-500">Las aplicaciones de un pago distribuido forman parte del mismo pago.</p>}
         </section>
       )}
-      {tab === "Documentos" && (
-        <section className="space-y-3">
-          <h2 className="font-bold">Contratos y documentos asignados a tu cuenta</h2>
-          <p className="text-sm text-slate-600">Buscá el título del documento y elegí Revisar y firmar. La firma se registra con {user?.email}. Los documentos aparecen aquí cuando Gran Berta prepara la solicitud de firma.</p>
-          {profileNotice && <p role="status" className="rounded-lg bg-green-50 p-3 text-sm text-green-900">{profileNotice}</p>}
-          {documentsLoading && <p role="status" className={box}>Consultando documentos…</p>}
-          {docs.filter(d => !view?.declarations.some((declaration: any) => declarationDocument(declaration, [d], providerId))).map((d) => (
-            <div className={box} key={d.id}>
-              <div className="flex flex-wrap justify-between gap-2">
-                <h2 className="font-semibold">{d.title}</h2>
-                <span className="text-sm">
-                  {d.signed
-                    ? d.status === 'partially_signed' ? 'Firmado por vos · faltan otras firmas' : !d.artifactsReady ? 'Firmado por vos · PDF en preparación' : 'Firmado por vos'
-                    : ['cancelled', 'revoked', 'replaced', 'rejected'].includes(d.status) ? status[d.status] || 'Solicitud sin vigencia' : "Pendiente de tu firma"}
-                </span>
-              </div>
-              <div className="mt-3 flex flex-wrap gap-4 text-sm">
-                <button
-                  disabled={busy}
-                  className="underline"
-                  onClick={() =>
-                    run(async () => {
-                      downloadPortalFile(
-                        await portalRequest({
-                          action: "signingFile",
-                          requestId: d.id,
-                          projectId: d.projectId,
-                          documentId: d.documentId,
-                          artifact: "original",
-                        }),
-                      );
-                    })
-                  }
-                >
-                  Original
-                </button>
-                {d.signed && !d.artifactsReady && (
-                  <button
-                    disabled={busy}
-                    className="underline"
-                    onClick={() =>
-                      run(async () => {
-                        await signPortalDocument(d, { dni: "", typedName: "" });
-                        const completion = portalDeclarationCompletionInput(d);
-                        if (completion) await portalRequest(completion);
-                        await load(); await loadDocuments();
-                      })
-                    }
-                  >
-                    Completar PDF de firma
-                  </button>
-                )}
-                {!d.signed && !['cancelled', 'revoked', 'replaced', 'rejected'].includes(d.status) && !(d.declarationKind === 'representation' && d.declarationVersion !== 'company-representation-v4') && (
-                  <button
-                    className="rounded bg-slate-900 px-3 py-2 text-white"
-                    onClick={() => setSigning(d)}
-                  >
-                    Revisar y firmar
-                  </button>
-                )}
-                {d.declarationKind === 'representation' && d.declarationVersion !== 'company-representation-v4' && selected?.type === 'empresa' && <div className="space-y-2 text-sm"><p>Presentación anterior. Completá la nueva declaración de responsabilidad para habilitarte; el poder es opcional.</p><button type="button" className="underline" onClick={reviewCompanyRepresentation}>Completar nueva declaración de representación</button></div>}
-                {d.signed && portalDeclarationCompletionInput(d) && !['applied', 'active', 'rejected', 'revoked'].includes(d.declarationStatus) && !(d.declarationKind === 'representation' && d.declarationVersion !== 'company-representation-v4') && (
-                  <button
-                    disabled={busy}
-                    className="underline"
-                    onClick={() =>
-                      run(async () => {
-                        const result = await portalRequest({
-                          action: "completeDeclaration",
-                          providerId: d.providerId || providerId,
-                          declarationId: d.documentId,
-                        });
-                        setProfileNotice(declarationCompletionMessage(d.declarationKind, result.status));
-                        await load(); await loadDocuments();
-                      })
-                    }
-                  >
-                    Aplicar declaración firmada
-                  </button>
-                )}
-                {d.artifactsReady &&
-                  ["signed", "certificate"].map((a) => (
-                    <button
-                      disabled={busy}
-                      key={a}
-                      className="underline"
-                      onClick={() =>
-                        run(async () => {
-                          downloadPortalFile(
-                            await portalRequest({
-                              action: "signingFile",
-                              requestId: d.id,
-                              projectId: d.projectId,
-                              documentId: d.documentId,
-                              artifact: a,
-                            }),
-                          );
-                        })
-                      }
-                    >
-                      {a === "signed"
-                        ? "PDF firmado"
-                        : "Certificado de evidencia"}
-                    </button>
-                  ))}
-              </div>
-            </div>
-          ))}
-          {!!view?.declarations.length && <div className="pt-3"><h2 className="font-bold">Declaraciones de esta ficha</h2><p className="text-sm text-slate-600">Cada constancia conserva su estado e historia. Los antecedentes no reemplazan los datos actuales de tu ficha.</p></div>}
-          {view?.declarations.map((d: any) => {
-            const document = declarationDocument(d, docs, providerId);
-            return <ProviderDeclarationCard key={`${providerId}/${d.id}`} declaration={d} document={document} providerType={view.provider.type} busy={busy}
-              onSign={() => { if (document) setSigning(document); }}
-              onReviewData={() => setTab('Mis datos')}
-              onDownload={async artifact => {
-                if (!document) throw Error('El documento no está disponible para esta cuenta.');
-                downloadPortalFile(await portalRequest({ action: 'signingFile', requestId: document.id, projectId: document.projectId, documentId: document.documentId, artifact }));
-              }}
-              onComplete={async recover => {
-                setBusy(true);
-                try {
-                  if (recover && document) await signPortalDocument(document, { dni: '', typedName: '' });
-                  const result = await portalRequest({ action: 'completeDeclaration', providerId, declarationId: d.id });
-                  return declarationCompletionMessage(d.kind, result.status);
-                } finally { await Promise.all([load(), loadDocuments()]); setBusy(false); }
-              }}>
-              {d.content.changes &&
-                Object.entries(d.content.changes).map(([key, c]: any) => (
-                  <p key={key} className="mt-1 text-sm">
-                    {labels[key] || key}: {c.before || "Sin dato"} →{" "}
-                    {c.after || "Sin dato"}{" "}
-                    {d.kind !== 'profile' && (c.critical ? '· Requiere revisión' : '· Aplicación tras firma')}
-                  </p>
-                ))}
-              {d.kind === "third_party" && (
-                <>
-                  <p className="text-sm">
-                    {d.content.party.name} · CUIT {d.content.party.cuit} · {d.content.validity === 'until_revoked' ? 'Hasta revocación · sólo estos trabajos' : `Hasta ${d.content.expiresOn}`}
-                  </p>
-                  {d.content.party.relationship && <p className="text-sm">Relación con el prestador: {d.content.party.relationship}</p>}
-                  {d.content.party.activity && <p className="text-sm">Actividad declarada del tercero: {d.content.party.activity}</p>}
-                  <p className="text-sm">Cuenta del titular de la factura: {d.content.party.cbu || d.content.party.alias}</p>
-                  {["active", "pending_review"].includes(d.status) && (
-                    <button
-                      disabled={busy}
-                      className="mt-2 text-sm underline"
-                      onClick={() =>
-                        run(async () => {
-                          if (
-                            !confirm(
-                              "¿Revocar para operaciones futuras? Se conserva la historia.",
-                            )
-                          )
-                            return;
-                          await portalRequest({
-                            action: "revokeThirdParty",
-                            providerId,
-                            declarationId: d.id,
-                          });
-                          await load();
-                        })
-                      }
-                    >
-                      Revocar autorización
-                    </button>
-                  )}
-                </>
-              )}
-            </ProviderDeclarationCard>;
-          })}
-          {documentsLoaded && !documentsLoading && !docs.length && !view?.declarations.length && (
-            <p className={box}>No tenés documentos asignados.</p>
-          )}
-        </section>
-      )}
+      {tab === "Documentos" && <ProviderPortalDocuments documents={docs} declarations={view?.declarations || []} providerId={providerId} providerType={selected?.type || ''} provider={view?.provider}
+        busy={busy} loading={documentsLoading} loaded={documentsLoaded} notice={profileNotice} labels={labels}
+        onRefresh={() => { void load(); void loadDocuments(); }} onSign={setSigning} onReviewData={() => setTab('Mis datos')} onReviewCompany={reviewCompanyRepresentation}
+        onDownload={(doc, artifact) => run(async () => { downloadPortalFile(await portalRequest({ action: 'signingFile', requestId: doc.id, projectId: doc.projectId, documentId: doc.documentId, artifact })); })}
+        onRecover={doc => run(async () => { await signPortalDocument(doc, { dni: '', typedName: '' }); const completion = portalDeclarationCompletionInput(doc); if (completion) await portalRequest(completion); await load(); await loadDocuments(); })}
+        onApply={applyDeclaration}
+        onApplyDocument={doc => run(async () => { setProfileNotice(await applyDeclaration(doc.documentId, doc.declarationKind, doc)); })}
+        onRevoke={id => { if (confirm('¿Revocar para operaciones futuras? Se conserva la historia.')) void run(async () => { await portalRequest({ action: 'revokeThirdParty', providerId, declarationId: id }); await load(); }); }}
+      />}
       {tab === "Mis datos" && view && (
         <>
-          {view.provider.type === 'empresa' && <div key={providerId}><CompanyRepresentationForm providerId={providerId} email={user?.email || ''} busy={busy} onPrepare={input => prepare('prepareRepresentation', input)} /></div>}
-          <div key={providerId}><ProviderProfileForm provider={view.provider} declarations={view.declarations} labels={labels} draft={draft} onChange={setDraft} busy={busy} notice={profileNotice} confirmationRequired={view.profileConfirmation?.status === 'required'} accessEmail={user?.email || ''} onVerifyAccount={email => verifyProviderGoogleAccount(providerId, email)} onPrepare={input => prepare('prepareProfile', input)} onApplySigned={id => run(async () => { await portalRequest({ action: 'completeDeclaration', providerId, declarationId: id }); setProfileNotice('Datos firmados y aplicados.'); if (await load()) setDraft({}); })} /></div>
-          {view.provider.type === 'persona' && <ThirdPartyAuthorizationForm provider={view.provider} works={view.works} party={party} onChange={setParty} busy={busy}
+          {view.provider.type === 'empresa' && <details className="portal-details portal-panel" key={`company/${providerId}`}><summary>Tu representación de la empresa</summary><div className="mt-4"><CompanyRepresentationForm providerId={providerId} email={user?.email || ''} busy={busy} onPrepare={input => prepare('prepareRepresentation', input)} /></div></details>}
+          <div key={providerId}><ProviderProfileForm provider={view.provider} declarations={view.declarations} labels={labels} draft={draft} onChange={setDraft} busy={busy} notice={profileNotice} confirmationRequired={view.profileConfirmation?.status === 'required'} accessEmail={user?.email || ''} onVerifyAccount={email => verifyProviderGoogleAccount(providerId, email)} onPrepare={input => prepare('prepareProfile', input)} onApplySigned={async id => { await applyDeclaration(id, 'profile'); }} /></div>
+          {view.provider.type === 'persona' && <details className="portal-details portal-panel"><summary>¿Otra persona factura o cobra por vos?</summary><div className="mt-4"><ThirdPartyAuthorizationForm provider={view.provider} works={view.works} party={party} onChange={setParty} busy={busy}
             recovered={!!view.thirdPartyDefaults || !!view.thirdPartyIntake}
             onSave={async input => { await portalRequest({ action: 'saveThirdPartyDetails', providerId, ...input }); await load(); }}
-            onPrepare={input => prepare('prepareThirdParty', input)} />}
+            onPrepare={input => prepare('prepareThirdParty', input)} /></div></details>}
 
         </>
       )}
+      {tab === 'Mis datos' && !view && <p className={box + ' text-sm text-slate-500'}>{!hasLoaded ? 'Cargando tus datos…' : 'Tus datos aparecerán al habilitar la ficha de proveedor.'}</p>}
       {signing && (
         <PortalSignDialog
           document={signing}

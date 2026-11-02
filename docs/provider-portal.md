@@ -8,6 +8,14 @@ Implementación en dos repositorios: GOAT y GB Sign. El código no activa usuari
 
 Las cinco secciones son Trabajos, Facturas, Pagos y retenciones, Documentos y Mis datos. Incluyen documentos cargados por otras personas, pagos simples y aplicaciones de pagos distribuidos. El comprobante original y sus aplicaciones se distinguen; no se suman otra vez. Un trabajo marcado pagado sin historial se identifica como tal y no se reconstruye un pago ficticio.
 
+### Revisión visual de Mi proveedor · preparada, sin publicar (02/11/2026)
+
+La ficha propia de una persona no muestra «Representás a». La aclaración se reserva a una empresa o representación expresamente asignada; si hay varias fichas, se conserva un selector neutral «Ficha de proveedor». Es sólo presentación: no modifica asociaciones ni permisos.
+
+La ayuda «Cómo firmar tus documentos» está plegada en el encabezado. Documentos muestra una insignia amarilla con la cantidad de firmas propias pendientes, sin contar firmas ajenas, solicitudes anuladas ni representaciones personales antiguas. Se actualiza al consultar documentos y durante el refresco del portal visible. Primero aparecen los documentos que requieren atención, luego contratos/constancias y un historial plegado de declaraciones. Original, PDF firmado y certificado conservan sus descargas verificadas; los botones tienen estados de hover, foco y deshabilitado.
+
+Mis datos separa contacto y cuenta propia. Las autorizaciones de terceros y la representación de empresa se consultan al desplegar sus secciones. Una declaración firmada que ya no coincide con la ficha actual se conserva como antecedente: no rellena el formulario con valores anteriores ni ofrece aplicar esos cambios incompatibles. Se propone revisar los datos actuales y firmar una nueva confirmación. Si hay una confirmación posterior ya aplicada, el antecedente no vuelve a exigir la firma. El rechazo transaccional del servidor no se modifica; no se reescriben declaraciones, datos, facturas ni pagos. Los errores de aplicación aparecen junto a la acción con un mensaje breve. Esta revisión sólo cambia frontend y pruebas locales, sin despliegues ni datos reales.
+
 El único inicio de sesión disponible es Google, tanto en GOAT como en GB Sign. GOAT no ofrece registro con contraseña propia ni vinculación de otros proveedores de identidad. Se exige correo verificado. Google puede pedir autenticar la cuenta cuando no hay una sesión vigente; no se crea otra contraseña para la aplicación. Ningún correo se envía al desplegar o preparar asociaciones.
 
 ### Qué correo cargar y cómo se habilita el acceso
