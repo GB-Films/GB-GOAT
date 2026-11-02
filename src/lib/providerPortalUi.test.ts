@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { needsPortalSignature, pendingPortalSignatureCount, portalErrorMessage, representsAnotherProvider } from './providerPortalUi';
+import { groupPortalDocumentsByProject, needsPortalSignature, pendingPortalSignatureCount, portalErrorMessage, representsAnotherProvider } from './providerPortalUi';
 import { outdatedProfileDeclaration, profileDeclarationSuperseded } from './providerProfileForm';
 import { ProviderSigningGuide } from '../components/ProviderSigningGuide';
 import { ProviderProfileForm } from '../components/ProviderProfileForm';
@@ -53,11 +53,38 @@ test('el conflicto tiene una indicación breve y los errores de conexión no fil
 });
 test('Documentos prioriza pendientes, conserva descargas y separa antecedentes sin duplicar declaraciones', () => {
   const html = renderToStaticMarkup(createElement(ProviderPortalDocuments, {
-    documents: [{ id: 'signed', title: 'Contrato firmado', signed: true, artifactsReady: true }, { id: 'pending', title: 'Contrato pendiente', signed: false, status: 'pending' }, { id: 'decl', title: 'DECLARACION DUPLICADA', documentId: old.id, providerId: 'person', portalManaged: true, signed: true }],
+    documents: [{ id: 'signed', title: 'Contrato firmado', projectId: 'film-b', projectName: 'Película B', signed: true, artifactsReady: true }, { id: 'pending', title: 'Contrato pendiente', projectId: 'film-a', projectName: 'Película A', signed: false, status: 'pending' }, { id: 'decl', title: 'DECLARACION DUPLICADA', documentId: old.id, providerId: 'person', portalManaged: true, signed: true }],
     declarations: [old], providerId: 'person', providerType: 'persona', provider: { dni: '87654321' }, busy: false, loading: false, loaded: true, notice: '', labels: { dni: 'DNI' },
     onRefresh() {}, onSign() {}, onReviewData() {}, onReviewCompany() {}, onRevoke() {}, onDownload: async () => {}, onRecover: async () => {}, onApplyDocument: async () => {}, onApply: async () => '',
   }));
   assert.ok(html.indexOf('Contrato pendiente') < html.indexOf('Contrato firmado'));
+  assert.match(html, /aria-label="Película A"/); assert.match(html, /aria-label="Película B"/);
   assert.match(html, /PDF firmado/); assert.match(html, /Certificado de evidencia/); assert.match(html, /Historial de declaraciones/);
   assert.match(html, /Datos anteriores/); assert.doesNotMatch(html, /DECLARACION DUPLICADA|Comprobar aplicación de la firma/);
+});
+
+test('agrupa contratos por ID real de proyecto, sin fusionar nombres iguales ni adivinar proyectos', () => {
+  const documents = [
+    { id: 'a', projectId: 'one', projectName: 'Rodaje' },
+    { id: 'b', projectId: 'two', projectName: 'Rodaje' },
+    { id: 'c', projectId: 'one', projectName: 'Rodaje' },
+    { id: 'unnamed', projectId: 'three' },
+    { id: 'no-project' },
+    { id: 'profile', projectId: 'declarations-folder', declarationKind: 'profile' },
+  ];
+  const groups = groupPortalDocumentsByProject(documents);
+  assert.equal(groups.length, 5);
+  assert.deepEqual(groups[0].documents.map(d => d.id), ['a', 'c']);
+  assert.equal(groups[1].name, 'Rodaje');
+  assert.equal(groups[2].name, 'Proyecto sin informar');
+  assert.equal(groups[4].name, 'Datos y autorizaciones');
+  assert.equal(groupPortalDocumentsByProject([{ id: 'a', projectId: 'p' }, { id: 'b', projectId: 'p', projectName: 'Proyecto confirmado' }])[0].name, 'Proyecto confirmado');
+});
+
+test('Mis datos se muestra plegado y mantiene el formulario dentro de su sección', () => {
+  const html = renderToStaticMarkup(createElement(ProviderProfileForm, { provider: { type: 'persona', dni: '12345678' }, declarations: [], labels: { dni: 'DNI' }, draft: {}, onChange() {}, onPrepare: async () => {}, busy: false }));
+  assert.match(html, /<details[^>]*id="provider-profile-details"[^>]*>/);
+  assert.doesNotMatch(html, /<details[^>]*\sopen/);
+  assert.ok(html.indexOf('<summary') < html.indexOf('<form'));
+  assert.ok(html.indexOf('</form>') < html.indexOf('</details>'));
 });

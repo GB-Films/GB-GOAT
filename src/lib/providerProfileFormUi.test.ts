@@ -27,7 +27,7 @@ test('el selector muestra Google actual, avisa la diferencia y exige verificar e
   const verified = renderToStaticMarkup(createElement(ProviderGoogleAccountChoice, { ...props, selection: { email: 'anterior@example.test', verificationId: 'v' } }));
   assert.match(verified, /Cuenta verificada con Google/);
   const pending = renderToStaticMarkup(createElement(ProviderGoogleAccountChoice, { ...props, pendingEmail: 'nueva@example.test' }));
-  assert.match(pending, /Correo solicitado/); assert.match(pending, /seguí ingresando con/); assert.match(pending, /fieldset disabled/);
+  assert.match(pending, /Correo solicitado/); assert.match(pending, /seguí ingresando con/); assert.match(pending, /fieldset[^>]*disabled/);
 });
 test('el aviso pide revisar una ficha previa y desaparece cuando está confirmada o es un alta nueva', () => {
   const html = (status: string) => renderToStaticMarkup(createElement(ProviderConfirmationNotice, { status, onReview: () => {} }));
