@@ -44,6 +44,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import { cn } from '../lib/utils';
 import { AreaBudgetSummary } from './project-detail/AreaBudgetSummary';
+import { expenseGroupCollapsed, searchedExpenseAreas } from '../lib/expenseSearchView';
 import { CategoryBudgetDialog } from './project-detail/CategoryBudgetDialog';
 import { categoryBudgetMap, directCategoryBudget, getCategoryBudget, getAssignedBudgetTotal, resolveCategoryBudget, renamedCategoryBudgets, categoryBudgetExportRows } from '../lib/categoryBudgets';
 import { saveCategoryBudget, validateCategoryBudgetReplacement } from '../lib/categoryBudgetStore';
@@ -3494,6 +3495,7 @@ export default function ProjectDetail() {
     return safeArray(userPermissions?.allowedCategories).includes(item.area);
   });
   const budgetSearchTerm = normalizeText(budgetSearch);
+  const areaExpenseSearchTerm = normalizeText(areaExpenseSearch);
   const filteredBudgetItems = visibleBudgetItems.filter(item => !budgetSearchTerm || normalizeText([
     item.providerName, item.description, item.area, item.unit, item.total, formatDate(item.paymentDate),
   ].filter(Boolean).join(' ')).includes(budgetSearchTerm));
@@ -3601,7 +3603,8 @@ export default function ProjectDetail() {
               : 0,
           };
         })
-        .filter((group) => group.expenses.length > 0 || !searchTerm);
+        .filter((group) => group.expenses.length > 0 || !searchTerm
+          || normalizeText(area).includes(searchTerm) || normalizeText(group.subcategory).includes(searchTerm));
       const visibleSubcategoryBudget = knownSubcategories.reduce((acc, subcategory) => acc + (subcategoryBudgetByName.get(subcategory)?.budget || 0), 0);
       const subcategoryGroups = [
         ...(unassignedExpenses.length > 0
@@ -3650,7 +3653,7 @@ export default function ProjectDetail() {
     })
   ), [areaExpenseSearch, areaExpenseSort, areaExpenseSubcategoriesByArea, areaExpenses, budgetItems, isProjectAdmin, project?.categoryBudgets, project?.areaExpenseSubcategories, project?.areaExpenseSubcategoryBudgets, userAllowedSubcategories, userPermissions, visibleCategoryKey]);
 
-  const selectedAreaDashboardRows = areaDashboardRows.filter((row) => selectedVisibleAreas.includes(row.area));
+  const selectedAreaDashboardRows = searchedExpenseAreas<(typeof areaDashboardRows)[number]>(areaDashboardRows, selectedVisibleAreas, areaExpenseSearchTerm);
   const areaDashboardTotals = selectedAreaDashboardRows.reduce((acc, row) => ({
     assigned: acc.assigned + row.assigned,
     spent: acc.spent + row.spent,
@@ -6091,7 +6094,7 @@ export default function ProjectDetail() {
                 const areaItems = filteredBudgetItems
                   .filter((item) => item.area === area)
                   .sort((a, b) => (a.order || 0) - (b.order || 0));
-                const isCollapsed = budgetSearchTerm ? false : collapsedCategories[area];
+                const isCollapsed = expenseGroupCollapsed(collapsedCategories[area], budgetSearchTerm);
                 const areaTotal = getCategoryBudget(project, budgetItems, area);
 
                 return (
@@ -6100,8 +6103,9 @@ export default function ProjectDetail() {
                       <button
                         type="button"
                         onClick={() => toggleCategory(area)}
+                        disabled={Boolean(budgetSearchTerm)} aria-expanded={!isCollapsed}
                         className="p-1 text-slate-300 hover:text-white"
-                        title={isCollapsed ? 'Expandir categoría' : 'Colapsar categoría'}
+                        title={budgetSearchTerm ? 'Resultados desplegados durante la búsqueda' : isCollapsed ? 'Expandir categoría' : 'Colapsar categoría'}
                       >
                         {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                       </button>
@@ -6183,7 +6187,7 @@ export default function ProjectDetail() {
                           const areaItems = filteredBudgetItems
                             .filter(i => i.area === area)
                             .sort((a, b) => (a.order || 0) - (b.order || 0));
-                          const isCollapsed = budgetSearchTerm ? false : collapsedCategories[area];
+                          const isCollapsed = expenseGroupCollapsed(collapsedCategories[area], budgetSearchTerm);
                           const areaTotal = getCategoryBudget(project, budgetItems, area);
 
                           const DraggableComponent = Draggable as any;
@@ -6203,6 +6207,8 @@ export default function ProjectDetail() {
                                       </div>
                                       <button 
                                         onClick={() => toggleCategory(area)}
+                                        disabled={Boolean(budgetSearchTerm)} aria-expanded={!isCollapsed}
+                                        title={budgetSearchTerm ? 'Resultados desplegados durante la búsqueda' : isCollapsed ? 'Expandir categoría' : 'Colapsar categoría'}
                                         className="p-1 text-slate-300 hover:text-white transition-colors"
                                       >
                                         {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
@@ -6470,6 +6476,7 @@ export default function ProjectDetail() {
                   <button
                     type="button"
                     onClick={() => saveSelectedAreaTabs(visibleCategories)}
+                    disabled={Boolean(areaExpenseSearchTerm)} title={areaExpenseSearchTerm ? 'Limpiá la búsqueda para filtrar áreas' : undefined}
                     className="shrink-0 px-3 py-2 text-[9px] uppercase font-black tracking-widest rounded-md bg-white border border-slate-200 text-slate-500 hover:border-black hover:text-black transition-colors"
                   >
                     Todas
@@ -6477,6 +6484,7 @@ export default function ProjectDetail() {
                   <button
                     type="button"
                     onClick={() => saveSelectedAreaTabs([])}
+                    disabled={Boolean(areaExpenseSearchTerm)} title={areaExpenseSearchTerm ? 'Limpiá la búsqueda para filtrar áreas' : undefined}
                     className="shrink-0 px-3 py-2 text-[9px] uppercase font-black tracking-widest rounded-md bg-white border border-slate-200 text-slate-500 hover:border-black hover:text-black transition-colors"
                   >
                     Limpiar
@@ -6487,6 +6495,7 @@ export default function ProjectDetail() {
               {visibleCategories.map((area) => (
                 <button
                   key={area}
+                  disabled={Boolean(areaExpenseSearchTerm)} title={areaExpenseSearchTerm ? 'Limpiá la búsqueda para filtrar áreas' : undefined}
                   onClick={() => saveSelectedAreaTabs(
                     selectedVisibleAreas.includes(area)
                       ? selectedVisibleAreas.filter((item) => item !== area)
@@ -6531,10 +6540,12 @@ export default function ProjectDetail() {
                   placeholder="Buscar gasto..."
                   className="min-w-0 w-full bg-transparent text-[10px] font-bold text-slate-700 placeholder:text-slate-300 focus:outline-none"
                 />
+                {areaExpenseSearch && <button type="button" onClick={() => setAreaExpenseSearch('')} aria-label="Limpiar búsqueda en Áreas" title="Limpiar búsqueda"><X className="h-3 w-3 text-slate-400" /></button>}
               </div>
             </div>
             </div>
 
+            {areaExpenseSearchTerm && <p role="status" className="text-[10px] text-slate-500">{areaDashboardTotals.records} gastos encontrados · búsqueda en todas las áreas habilitadas · resultados desplegados</p>}
             {selectedAreaDashboardRows.length > 0 && (
               <div className="space-y-4">
                 <AreaBudgetSummary
@@ -6611,9 +6622,10 @@ export default function ProjectDetail() {
                          type="button"
                          onClick={() => toggleCategory(areaRow.area)}
                          className="p-1 text-slate-300 hover:text-white transition-colors"
-                         title={collapsedCategories[areaRow.area] ? 'Expandir área' : 'Colapsar área'}
+                         disabled={Boolean(areaExpenseSearchTerm)} aria-expanded={!expenseGroupCollapsed(collapsedCategories[areaRow.area], areaExpenseSearchTerm)}
+                         title={areaExpenseSearchTerm ? 'Resultados desplegados durante la búsqueda' : collapsedCategories[areaRow.area] ? 'Expandir área' : 'Colapsar área'}
                        >
-                          {collapsedCategories[areaRow.area] || structureDragKind === 'area-category' ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                          {expenseGroupCollapsed(collapsedCategories[areaRow.area], areaExpenseSearchTerm) || structureDragKind === 'area-category' ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                        </button>
                       <h3 className="min-w-0 text-[10px] sm:text-[12px] font-black uppercase tracking-widest sm:tracking-[0.18em] text-white flex items-center gap-1.5 sm:gap-2">
                         <LayoutGrid className="w-3 h-3 shrink-0" />
@@ -6676,7 +6688,7 @@ export default function ProjectDetail() {
                   </div>
                     )}
                   </Droppable>
-                  {!collapsedCategories[areaRow.area] && structureDragKind !== 'area-category' && (
+                  {!expenseGroupCollapsed(collapsedCategories[areaRow.area], areaExpenseSearchTerm) && structureDragKind !== 'area-category' && (
                   <>
                   {isCompactAreas && (
                   <Droppable
@@ -6692,7 +6704,7 @@ export default function ProjectDetail() {
                   >
                     {areaRow.subcategoryGroups.map((subcategoryGroup, subcategoryIndex) => {
                       const subcategoryKey = `${areaRow.area}__${subcategoryGroup.subcategory}`;
-                      const isSubcategoryCollapsed = collapsedAreaSubcategories[subcategoryKey];
+                      const isSubcategoryCollapsed = expenseGroupCollapsed(collapsedAreaSubcategories[subcategoryKey], areaExpenseSearchTerm);
                       const hasNamedSubcategory = Boolean(subcategoryGroup.subcategory);
                       const hasSubcategoryBudget = subcategoryGroup.hasBudget;
                       const subcategoryLabel = subcategoryGroup.subcategory || DEFAULT_AREA_EXPENSE_SUBCATEGORY_LABEL;
@@ -6732,6 +6744,8 @@ export default function ProjectDetail() {
                                 ...current,
                                 [subcategoryKey]: !current[subcategoryKey],
                               }))}
+                              disabled={Boolean(areaExpenseSearchTerm)} aria-expanded={!isSubcategoryCollapsed}
+                              title={areaExpenseSearchTerm ? 'Resultados desplegados durante la búsqueda' : isSubcategoryCollapsed ? 'Expandir subcategoría' : 'Colapsar subcategoría'}
                               className="flex min-w-0 flex-1 flex-col gap-1.5 text-left"
                             >
                               <span className="min-w-0 pr-1">
@@ -6911,7 +6925,7 @@ export default function ProjectDetail() {
                     >
                       {areaRow.subcategoryGroups.map((subcategoryGroup, subcategoryIndex) => {
                         const subcategoryKey = `${areaRow.area}__${subcategoryGroup.subcategory}`;
-                        const isSubcategoryCollapsed = collapsedAreaSubcategories[subcategoryKey];
+                        const isSubcategoryCollapsed = expenseGroupCollapsed(collapsedAreaSubcategories[subcategoryKey], areaExpenseSearchTerm);
                         const hasNamedSubcategory = Boolean(subcategoryGroup.subcategory);
                         const hasSubcategoryBudget = subcategoryGroup.hasBudget;
                         const subcategoryLabel = subcategoryGroup.subcategory || DEFAULT_AREA_EXPENSE_SUBCATEGORY_LABEL;
@@ -6956,7 +6970,8 @@ export default function ProjectDetail() {
                                     "p-1 transition-colors",
                                      "text-slate-500 hover:text-slate-900"
                                   )}
-                                  title={isSubcategoryCollapsed ? 'Expandir subcategoria' : 'Colapsar subcategoria'}
+                                  disabled={Boolean(areaExpenseSearchTerm)} aria-expanded={!isSubcategoryCollapsed}
+                                  title={areaExpenseSearchTerm ? 'Resultados desplegados durante la búsqueda' : isSubcategoryCollapsed ? 'Expandir subcategoria' : 'Colapsar subcategoria'}
                                 >
                                   {isSubcategoryCollapsed || structureDragKind === 'area-subcategory' ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                                 </button>
@@ -7216,7 +7231,7 @@ export default function ProjectDetail() {
             )}
             {visibleCategories.length > 0 && selectedAreaDashboardRows.length === 0 && (
               <div className="bg-white border border-dashed border-slate-200 rounded-xl p-6 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
-                Seleccioná una o más áreas para ver gastos y presupuesto
+                {areaExpenseSearchTerm ? 'No hay gastos, categorías o subcategorías que coincidan con la búsqueda.' : 'Seleccioná una o más áreas para ver gastos y presupuesto'}
               </div>
             )}
           </div>
