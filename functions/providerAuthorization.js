@@ -32,13 +32,13 @@ function authorizedParty(record, declaration, now = new Date()) {
     role === "invoice" &&
     record.issuerCuit !== declaration.content.party.cuit
   )
-    fail("El emisor no coincide con la autorización revisada.");
+    fail("El emisor no coincide con la declaración firmada.");
   if (role === "payment" && record.payeeName !== declaration.content.party.name)
-    fail("El beneficiario no coincide con la autorización revisada.");
+    fail("El beneficiario no coincide con la declaración firmada.");
   if (declaration.content.party.holderCuit !== declaration.content.party.cuit) fail('El emisor y el titular de la cuenta deben corresponder al mismo CUIT.');
   if (role === 'payment' && (record.method !== 'transfer' || record.account !== (declaration.content.party.cbu || declaration.content.party.alias)
     || record.payeeCuit !== declaration.content.party.cuit || !declaration.effectiveRoles.includes('invoice')
-    || record.allocations.some(a => !a.invoiceId))) fail('El pago debe vincular la factura del emisor aprobado y utilizar su cuenta y CUIT autorizados.');
+    || record.allocations.some(a => !a.invoiceId))) fail('El pago debe vincular la factura del emisor declarado y utilizar su cuenta y CUIT autorizados.');
   return {
     declarationId: record.thirdPartyAuthorizationId,
     role,

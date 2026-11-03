@@ -78,7 +78,7 @@ test("authorization remains valid through its last day in Buenos Aires", () => {
   );
 });
 test('nuevas autorizaciones sin vencimiento siguen limitadas a trabajos y revocación; las anteriores conservan su fecha', () => {
-  const content = { ...declaration.content, termsVersion: 'third-party-v4', validity: 'until_revoked' };
+  const content = { ...declaration.content, termsVersion: 'third-party-v5', validity: 'until_revoked' };
   delete content.expiresOn;
   const indefinite = { ...declaration, content };
   assert.equal(authorizedParty(record, indefinite, new Date('2035-01-01')).validity, 'until_revoked');

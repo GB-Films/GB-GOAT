@@ -246,7 +246,7 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, ver
         const expense = rows[index].data(), project = projectMap.get(allocation.projectId);
         if (!expense || !project || expense.providerId !== record.providerId) fail('El proveedor o el gasto cambió. Volvé a cargar la ficha.');
         if (isInternalBudgetEstimate(expense)) fail('Esta fila es una estimación interna de presupuesto; no admite facturas ni pagos a proveedor.');
-        if (expense.thirdPartyPayoutRequired && ['invoice', 'payment'].includes(record.kind) && !authorization) fail('Este trabajo requiere la autorización revisada del tercero y su cuenta de cobro.');
+        if (expense.thirdPartyPayoutRequired && ['invoice', 'payment'].includes(record.kind) && !authorization) fail('Este trabajo requiere la declaración firmada y vigente del tercero y su cuenta de cobro.');
         const active = list(project.activeAreas).includes(expense.area);
         if ((allocation.collectionName === 'areaExpenses') !== active) fail('El gasto ya no pertenece a la gestión activa del proyecto.');
         if (allocation.amountCents > cents(expense.total)) fail('La aplicación supera el costo del gasto.');

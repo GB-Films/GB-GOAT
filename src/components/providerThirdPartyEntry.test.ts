@@ -10,7 +10,7 @@ test("only a person sees the billing exception and it never presents capture as 
   assert.match(renderToStaticMarkup(createElement(ProviderThirdPartyEntry, props)), /No puedo emitir factura/);
   assert.equal(renderToStaticMarkup(createElement(ProviderThirdPartyEntry, { ...props, providerType: "empresa", enabled: true })), "");
   const saved = renderToStaticMarkup(createElement(ProviderThirdPartyEntry, { ...props, enabled: true, name: "<img src=x>" }));
-  assert.match(saved, /pendiente de tu firma y de revisión administrativa/);
+  assert.match(saved, /Al completar tu firma, la declaración se aplica automáticamente/);
   assert.match(saved, /&lt;img src=x&gt;/);
 });
 test("the dialog presents the saved draft, relationship, activity and separate third-party bank data", () => {

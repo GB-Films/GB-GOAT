@@ -4,7 +4,8 @@ const { hasTeamWorkAccess } = require('./teamWorkAccess');
 const { checkCompanyReview } = require('./providerRepresentation');
 
 const { COMPANY_EVIDENCE, LEGACY_COMPANY_EVIDENCE } = require('./providerEvidence');
-const { checkThirdPartyReview, thirdPartyIsCurrent, THIRD_PARTY_VERSIONS } = require('./providerThirdPartyDeclaration');
+const { thirdPartyIsCurrent } = require('./providerThirdPartyDeclaration');
+const { createSignedThirdPartyService } = require('./signedThirdPartyDeclaration');
 const {
   expenseInvoices,
   dateKey,
@@ -23,6 +24,7 @@ function createProviderPortalAdminHandler({
   clock = () => new Date(),
   findAccount,
 }) {
+  const thirdParties = createSignedThirdPartyService({ db, timestamp, clock, sign });
   return async (request) => {
     if (!request.auth?.uid || request.auth.token?.email_verified !== true)
       throw new HttpsError("unauthenticated", "Iniciá sesión.");
@@ -111,9 +113,9 @@ function createProviderPortalAdminHandler({
         .limit(501)
         .get();
       if (rows.size > 500) fail("Paginar declaraciones.");
+      const declarations = await thirdParties.recover(rows.docs);
       return {
-        authorizations: rows.docs
-          .map((s) => ({ id: s.id, ...s.data() }))
+        authorizations: declarations
           .filter((d) => d.kind === "third_party" && d.proof?.complete)
           .map((d) => ({
             ...d,
@@ -204,19 +206,16 @@ function createProviderPortalAdminHandler({
     if (input.action === "reviews") {
       const records = await db
         .collection("providerPortalDeclarations")
-        .where("status", "in", ["pending_review", "active"])
+        .where("status", "==", "pending_review")
         .limit(201)
         .get();
       if (records.size > 200) fail("Paginar revisiones antes de continuar.");
+      const declarations = await thirdParties.recover(records.docs);
       return {
-        reviews: records.docs
-          .map((s) => ({ id: s.id, ...s.data() }))
-          .filter(
-            (r) =>
-              (r.kind !== 'profile' && r.status === "pending_review") ||
-              (r.kind === "third_party" &&
-                r.content.roles.some((role) => !r.decisions?.[role])),
-          ),
+        reviews: declarations.filter(r => r.kind === 'representation' && r.status === 'pending_review'
+          && r.content.version !== 'company-representation-v4'),
+        applicationIssues: declarations.filter(r => r.kind === 'third_party' && r.applicationIssue)
+          .map(r => ({ id: r.id, providerId: r.providerId, email: r.actor?.email || '', message: r.applicationIssue })),
       };
     }
     if (input.action === "setMembership") {
@@ -283,6 +282,7 @@ function createProviderPortalAdminHandler({
       if (!["approved", "rejected"].includes(input.decision))
         fail("Decisión inválida.");
       const preview = (await ref.get()).data();
+      if (preview?.kind === 'third_party') fail('La declaración de quién factura y cobra se aplica con la firma del proveedor, sin revisión administrativa.');
       if (preview?.kind === "profile") fail("Los datos firmados se aplican desde la cuenta del proveedor, sin revisión administrativa.");
       if (preview?.kind === 'representation' && preview.content.version === 'company-representation-v4') fail('La representación declarada se habilita al completar la firma desde la cuenta registrada, sin revisión administrativa.');
       let verifiedManifest = null;
@@ -314,45 +314,6 @@ function createProviderPortalAdminHandler({
           }
           tx.update(ref, { status: input.decision === 'approved' ? 'applied' : 'rejected', review: { actor, decision: input.decision, reason,
             checks: Object.fromEntries(['companyVerified','identityVerified','authorityVerified','scopeVerified'].map(key => [key, input.checks?.[key] === true])), approvedScope: text(input.approvedScope, 500), previousAccessEmail: p.portalAccessEmail || p.email || '', at: timestamp() } });
-        } else if (d.kind === "third_party") {
-          if (p?.type !== "persona" && input.decision === "approved")
-            fail("Esta alternativa requiere una ficha de persona física. Las empresas no pueden activar nuevas autorizaciones de terceros.");
-          if (!thirdPartyIsCurrent(d.content, clock()) && input.decision === 'approved')
-            fail("Autorización vencida.");
-          const roles = list(input.roles);
-          checkThirdPartyReview(d, roles, input);
-          if (
-            !roles.length ||
-            roles.some((r) => !d.content.roles.includes(r) || d.decisions?.[r])
-          )
-            fail("Elegí funciones pendientes.");
-          const payoutRefs = input.decision === 'approved' && THIRD_PARTY_VERSIONS.includes(d.content.termsVersion)
-            ? d.content.workKeys.map(key => db.doc(`projects/${key}`)) : [];
-          const payoutRows = await Promise.all(payoutRefs.map(ref => tx.get(ref)));
-          if (payoutRows.some(row => !row.exists || row.data().providerId !== d.providerId)) fail('Un trabajo cambió de proveedor; prepará una nueva autorización.');
-          const decisions = { ...(d.decisions || {}) };
-          for (const role of roles)
-            decisions[role] = {
-              decision: input.decision,
-              actor,
-              reason,
-              checks: Object.fromEntries(['fiscalFrameVerified','declaredPayeeChecked'].map(key => [key, input.checks?.[key] === true])),
-              at: timestamp(),
-            };
-          const effectiveRoles = d.content.roles.filter(
-            (r) => decisions[r]?.decision === "approved",
-          );
-          const pending = d.content.roles.some((r) => !decisions[r]);
-          tx.update(ref, {
-            decisions,
-            effectiveRoles,
-            status: effectiveRoles.length
-              ? "active"
-              : pending
-                ? "pending_review"
-                : "rejected",
-          });
-          payoutRefs.forEach(workRef => tx.update(workRef, { thirdPartyPayoutRequired: true }));
         } else fail("Tipo no revisable.");
         tx.create(audit, {
           declarationId: ref.id,

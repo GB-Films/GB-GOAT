@@ -14,6 +14,7 @@ const { companyRepresentation, assertCompanyAccount, DECLARED_COMPANY_VERSION } 
 const { applySignedCompanyRepresentation } = require('./signedCompanyRepresentation');
 const { thirdPartyDeclaration, thirdPartyDetails } = require('./providerThirdPartyDeclaration');
 const { applySignedProviderProfile } = require('./signedProviderProfile');
+const { createSignedThirdPartyService, needsThirdPartyApplication } = require('./signedThirdPartyDeclaration');
 const { fail, text, email, id, list, hash } = M;
 const internalRoles = [
   "admin",
@@ -54,6 +55,7 @@ function createProviderPortalHandler({
   findAccountByUid,
 }) {
   const accountChoices = createAccountChoiceService({ db, timestamp, clock, verifyGoogleToken });
+  const thirdParties = createSignedThirdPartyService({ db, timestamp, clock, sign });
   const teamOnboarding = createTeamOnboarding({ db, timestamp, clock });
   const registerThirdPartyIntake = createThirdPartyIntake({ db, timestamp, clock });
   const registerProvider = createProviderRegistration({ db, timestamp, clock });
@@ -153,6 +155,7 @@ function createProviderPortalHandler({
       });
       return syncDeclaration(ref, actor);
     }
+    if (decl.kind === 'third_party') return thirdParties.apply(ref);
     const applicable = value => value.status === 'pending_signature' || value.kind === 'profile' && value.status === 'pending_review';
     if (!applicable(decl)) return decl;
     const proof = await sign.verify(decl.signing, actor, decl.contentHash);
@@ -198,7 +201,6 @@ function createProviderPortalHandler({
         status = 'applied';
         tx.update(ref, application);
       }
-      if (decl.kind === "third_party") status = "pending_review";
       const result = { ...current, status, proof, signedAt: timestamp() };
       tx.update(ref, {
         status,
@@ -397,6 +399,7 @@ function createProviderPortalHandler({
       ]);
       if (financial.size > 500 || declarations.size > 500)
         fail("El historial requiere paginación.");
+      const declarationRows = await thirdParties.recover(declarations.docs);
       if (provider.registration?.status !== 'complete') await rememberSignedRegistration({db,timestamp,actor,providerId,
         declarations:declarations.docs.map(row=>({id:row.id,...row.data()}))});
       // Only this provider's scoped data leave the boundary, never arbitrary financial fields or file tokens.
@@ -410,7 +413,7 @@ function createProviderPortalHandler({
         thirdPartyIntake: intake?.data()?.providerId === providerId
           ? { party: intake.data().party, workKeys: intake.data().workKeys, roles: intake.data().roles }
           : null,
-        works: work,
+        works: declarationRows.some((d, i) => d.status === 'active' && needsThirdPartyApplication(declarations.docs[i].data())) ? await works(providerId) : work,
         financial: financial.docs.map((s) => {
           const r = s.data();
           return {
@@ -430,10 +433,9 @@ function createProviderPortalHandler({
             hasFile: Boolean(r.file),
           };
         }),
-        declarations: declarations.docs.map((s) => {
-          const r = s.data();
+        declarations: declarationRows.map((r) => {
           return {
-            id: s.id,
+            id: r.id,
             kind: r.kind,
             status: r.status,
             content: r.content,
@@ -443,6 +445,7 @@ function createProviderPortalHandler({
             commonApplied: r.commonApplied || [],
             owned: r.actor.uid === actor.uid,
             revocation: r.revocation || null,
+            applicationIssue: r.applicationIssue || '',
           };
         }),
       };
@@ -669,7 +672,7 @@ function createProviderPortalHandler({
       const current = (await ref.get()).data();
       if (current?.providerId !== providerId)
         throw new HttpsError("permission-denied", "Trabajo ajeno.");
-      if (current.thirdPartyPayoutRequired) fail('La factura del tercero debe registrarse con la autorización revisada desde la ficha completa de administración.');
+      if (current.thirdPartyPayoutRequired) fail('La factura del tercero debe registrarse con la declaración firmada desde la ficha completa de administración.');
       const result = await sign.storeInvoice({
         providerId,
         actor,
@@ -681,7 +684,7 @@ function createProviderPortalHandler({
         const e = (await tx.get(ref)).data();
         if (e?.providerId !== providerId)
           throw new HttpsError("permission-denied", "Trabajo ajeno.");
-        if (e.thirdPartyPayoutRequired) fail('Este trabajo requiere la factura y cuenta del tercero aprobadas por administración.');
+        if (e.thirdPartyPayoutRequired) fail('Este trabajo requiere la factura y cuenta del tercero declarado.');
         const uploadRef = db.doc(
           `providerPortalInvoiceUploads/${result.portalUploadId}`,
         );

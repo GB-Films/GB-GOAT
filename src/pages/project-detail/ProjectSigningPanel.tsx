@@ -11,7 +11,7 @@ export type ProjectSigningDocument = {
 };
 export type ProjectSigningState = { connected?: boolean; url?: string; documents: ProjectSigningDocument[] };
 const declarations: Record<string, string> = {
-  pending_review: 'Pendiente de aprobación', active: 'Vigente', revoked: 'Revocada', rejected: 'Rechazada', pending_signature: 'Pendiente de firma', preparing: 'Preparando documento',
+  pending_review: 'Firma guardada · falta aplicar', active: 'Vigente', revoked: 'Revocada', rejected: 'Rechazada', pending_signature: 'Pendiente de firma', preparing: 'Preparando documento',
 };
 
 export function ProjectSigningPanel({ state, documents, manualDocuments = [], search = '', providers = [], busy, downloading, error, notice, onRefresh, onDownload, onPrepare }: {

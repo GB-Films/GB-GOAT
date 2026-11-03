@@ -5,6 +5,7 @@ import { downloadPortalFile, portalAdminRequest } from "../lib/providerPortal";
 export default function ProviderPortalAdmin() {
   const [checks, setChecks] = useState<Record<string, Record<string, boolean>>>({});
   const [approvedScope, setApprovedScope] = useState<Record<string, string>>({});
+  const [applicationIssues, setApplicationIssues] = useState<any[]>([]);
   const [accessEmail, setAccessEmail] = useState("");
   const [reviews, setReviews] = useState<any[]>([]),
     [error, setError] = useState(""),
@@ -17,7 +18,8 @@ export default function ProviderPortalAdmin() {
     [reviewedFiles, setReviewedFiles] = useState<Record<number, string>>({});
   async function load() {
     const r = await portalAdminRequest({ action: "reviews" });
-    setReviews(r.reviews);
+    setReviews(r.reviews.filter((d: any) => d.kind === 'representation'));
+    setApplicationIssues(r.applicationIssues || []);
   }
   useEffect(() => {
     load().catch((e) => setError(e.message));
@@ -36,21 +38,21 @@ export default function ProviderPortalAdmin() {
       setBusy(false);
     }
   }
-  async function review(d: any, decision: string, roles?: string[]) {
+  async function review(d: any, decision: string) {
     await run(async () => {
       await portalAdminRequest({
         action: "review",
         declarationId: d.id,
         decision,
         reason: reason[d.id] || "",
-        roles, checks: checks[d.id] || {}, approvedScope: approvedScope[d.id] || "",
+        checks: checks[d.id] || {}, approvedScope: approvedScope[d.id] || "",
       });
       await load();
     });
   }
   return (
     <div className="mx-auto max-w-5xl space-y-5 p-4">
-      <h1 className="text-2xl font-bold">Revisiones de proveedores</h1>
+      <h1 className="text-2xl font-bold">Accesos de proveedores</h1>
       {error && (
         <p role="alert" className="rounded bg-red-50 p-3 text-red-700">
           {error}
@@ -116,66 +118,33 @@ export default function ProviderPortalAdmin() {
           </>
         )}
       </section>
-      <h2 className="text-lg font-bold">Declaraciones firmadas para revisar</h2>
+      <p className="rounded-xl bg-emerald-50 p-4 text-sm text-emerald-900">Las declaraciones de quién factura y cobra se aplican automáticamente con la firma del proveedor. No requieren revisión ni aprobación.</p>
+      {!!applicationIssues.length && <section className="rounded-xl bg-amber-50 p-4 text-sm text-amber-900"><h2 className="font-semibold">Declaraciones anteriores por actualizar</h2><p>El proveedor debe revisar sus datos y preparar una nueva declaración desde Mi proveedor.</p>{applicationIssues.map(issue => <p key={issue.id} className="mt-2">{issue.email || issue.providerId}</p>)}</section>}
+      {!!reviews.length && <h2 className="text-lg font-bold">Representaciones del circuito anterior</h2>}
       {reviews.map((d) => (
         <section
           key={d.id}
           className="space-y-3 rounded-2xl border bg-white p-4"
         >
           <h3 className="font-semibold">
-            {d.kind === "profile"
-              ? "Cambios de datos"
-              : d.kind === "representation" ? "Representación de empresa" : "Autorización de tercero"}{" "}
+            Representación de empresa{" "}
             · {d.actor.email}
           </h3>
           <p className="text-xs text-slate-500">
             Proveedor {d.providerId} · Firma {d.proof.signedAt}
           </p>
           <div className="flex flex-wrap gap-2">{(['signed', 'certificate'] as const).map(artifact => <button key={artifact} type="button" disabled={busy} className="rounded border px-3 py-2 text-xs text-blue-700" onClick={() => run(async () => { downloadPortalFile(await portalAdminRequest({ action: 'declarationFile', providerId: d.providerId, declarationId: d.id, artifact })); })}>{artifact === 'signed' ? 'Ver declaración firmada' : 'Ver certificado de firma'}</button>)}</div>
-          {d.kind === 'profile' && d.content.accountChoice && <div className="rounded-xl border border-blue-100 bg-blue-50 p-3 text-sm">
-            <p>Firmó con Google: <strong>{d.actor.email}</strong></p>
-            <p>Correo elegido y verificado: <strong>{d.content.accountChoice.selected.email}</strong></p>
-            {d.content.accountChoice.changesIdentity && <p className="mt-1 text-xs text-slate-600">Al aprobar, el acceso de esta ficha pasa a la cuenta elegida. Los permisos internos no se transfieren.{d.content.confirmation?.profile.type === 'empresa' ? ' La nueva cuenta debe confirmar su representación de la empresa.' : ''}</p>}
-          </div>}
-          {d.kind === "profile" ? (
-            Object.entries(d.content.changes).map(([key, c]: any) => (
-              <p className="text-sm" key={key}>
-                <strong>{key === 'email' ? 'Correo de la ficha' : key}:</strong> {c.before || "Sin dato"} →{" "}
-                {c.after || "Sin dato"} ·{" "}
-                {c.critical ? "Pendiente de aprobación" : "Aplicado al firmar"}
-              </p>
-            ))
-          ) : d.kind === 'representation' ? <div className="space-y-2 text-sm">
+          <div className="space-y-2 text-sm">
             <p><strong>{d.content.provider.name}</strong> · CUIT {d.content.provider.cuit}</p>
             <p>Representante: {d.content.representative?.name || d.content.profile?.name} · DNI {d.content.representative?.dni || 'No informado en esta versión'}</p>
             <p>Cargo o carácter: {d.content.representative?.role || 'No informado'}</p><p>Cuenta de representación: {d.actor.email}</p>
             <label className="block">Alcance de las facultades revisadas<textarea className="mt-1 block w-full rounded border p-2" maxLength={500} value={approvedScope[d.id] || ''} onChange={event => setApprovedScope({ ...approvedScope, [d.id]: event.target.value })} /></label>
-            {!['company-representation-v2', 'company-representation-v3'].includes(d.content.version) && <p className="text-amber-800">Antecedente anterior sin el paquete actual de documentación. Pedí una nueva presentación antes de habilitar la representación.</p>}
-          </div> : (
-            <>
-              <p>
-                {d.content.party.name} · CUIT {d.content.party.cuit} ·{" "}
-                {d.content.party.holder} ·{" "}
-                {d.content.party.cbu || d.content.party.alias}
-              </p>
-              {d.content.party.holderCuit && <p className="text-sm">CUIT del titular de la cuenta: {d.content.party.holderCuit}</p>}
-              {d.content.reason && <p className="text-sm">Motivo: {d.content.reason}</p>}
-              {!['third-party-v3', 'third-party-v4'].includes(d.content.termsVersion) && <p className="text-sm text-amber-800">Autorización anterior: para operaciones nuevas se requiere identificar al emisor, su CUIT y la cuenta del titular de la factura.</p>}
-              {d.content.party.relationship && <p className="text-sm">Relación con el prestador: {d.content.party.relationship}</p>}
-              {d.content.party.activity && <p className="text-sm">Actividad declarada del tercero: {d.content.party.activity}</p>}
-              <p className="text-xs text-slate-500">El servicio real del prestador figura en los trabajos alcanzados. Revisá por separado el encuadre fiscal y la cuenta del beneficiario.</p>
-              <p className="text-sm">{d.content.validity === 'until_revoked' ? 'Sin vencimiento · sólo trabajos seleccionados, hasta revocación' : `Hasta ${d.content.expiresOn}`}</p>
-              <ul className="text-sm">
-                {d.content.workKeys.map((k: string) => (
-                  <li key={k}>{k}</li>
-                ))}
-              </ul>
-            </>
-          )}
+            {!['company-representation-v2', 'company-representation-v3'].includes(d.content.version) && <p className="text-amber-800">Antecedente anterior. La persona puede preparar una nueva declaración desde Mi proveedor, sin esperar aprobación.</p>}
+          </div>
           {!!d.content.evidence?.length && <div className="flex flex-wrap gap-2">{d.content.evidence.map((file: any) => <button key={file.id} type="button" disabled={busy} className="rounded border px-3 py-2 text-xs text-blue-700" onClick={() => run(async () => { downloadPortalFile(await portalAdminRequest({ action: 'evidenceFile', providerId: d.providerId, evidenceId: file.id })); })}>Ver respaldo: {file.fileName}</button>)}</div>}
-          {d.kind !== 'profile' && <fieldset className="space-y-2 rounded-lg border p-3"><legend className="px-1 text-sm font-semibold">Comprobaciones de administración</legend>{Object.entries(d.kind === 'representation' ? {
+          <fieldset className="space-y-2 rounded-lg border p-3"><legend className="px-1 text-sm font-semibold">Comprobaciones de administración</legend>{Object.entries({
             companyVerified: 'Revisé la documentación y coincide la empresa y su CUIT.', identityVerified: 'Revisé el DNI y la identidad de quien firma, y confirmé el correo que usará para representar a esta empresa.', authorityVerified: 'La documentación acredita las facultades vigentes del representante.', scopeVerified: 'El alcance documentado permite las gestiones y firmas que se van a habilitar.',
-          } : { fiscalFrameVerified: 'Validé el encuadre fiscal y que el emisor corresponde a estos trabajos.', declaredPayeeChecked: 'Revisé el CUIT y la cuenta que el prestador declaró para el titular de la factura; el pago se registrará a ese destinatario.' }).map(([key, label]) => <label key={key} className="flex items-start gap-2 text-sm"><input type="checkbox" checked={!!checks[d.id]?.[key]} onChange={event => setChecks(current => ({ ...current, [d.id]: { ...current[d.id], [key]: event.target.checked } }))} /><span>{label}</span></label>)}</fieldset>}
+          }).map(([key, label]) => <label key={key} className="flex items-start gap-2 text-sm"><input type="checkbox" checked={!!checks[d.id]?.[key]} onChange={event => setChecks(current => ({ ...current, [d.id]: { ...current[d.id], [key]: event.target.checked } }))} /><span>{label}</span></label>)}</fieldset>
           <label className="block text-sm">
             Motivo / respaldo de la revisión
             <textarea
@@ -185,52 +154,11 @@ export default function ProviderPortalAdmin() {
             />
           </label>
           <div className="flex flex-wrap gap-2">
-            {(d.kind === "profile"
-              ? ["profile"] : d.kind === 'representation' ? ['representation']
-              : d.content.roles.filter((r: string) => !d.decisions?.[r])
-            ).map((role: string) => (
-              <div key={role} className="flex gap-2">
-                <button
-                  disabled={busy || !reason[d.id]?.trim()}
-                  className="rounded bg-emerald-700 px-3 py-2 text-sm text-white disabled:opacity-40"
-                  onClick={() =>
-                    review(
-                      d,
-                      "approved",
-                      ["profile", "representation"].includes(role) ? undefined : [role],
-                    )
-                  }
-                >
-                  Aprobar{" "}
-                  {role === "profile"
-                    ? "datos críticos" : role === 'representation' ? 'representación de empresa'
-                    : role === "invoice"
-                      ? "encuadre de facturación"
-                      : "beneficiario y cuenta"}
-                </button>
-                <button
-                  disabled={busy || !reason[d.id]?.trim()}
-                  className="rounded border px-3 py-2 text-sm disabled:opacity-40"
-                  onClick={() =>
-                    review(
-                      d,
-                      "rejected",
-                      ["profile", "representation"].includes(role) ? undefined : [role],
-                    )
-                  }
-                >
-                  Rechazar
-                </button>
-              </div>
-            ))}
+            <button disabled={busy || !reason[d.id]?.trim()} className="rounded bg-emerald-700 px-3 py-2 text-sm text-white disabled:opacity-40" onClick={() => review(d, 'approved')}>Aprobar representación de empresa</button>
+            <button disabled={busy || !reason[d.id]?.trim()} className="rounded border px-3 py-2 text-sm disabled:opacity-40" onClick={() => review(d, 'rejected')}>Rechazar</button>
           </div>
         </section>
       ))}
-      {!reviews.length && (
-        <p className="text-sm text-slate-600">
-          No hay declaraciones pendientes de revisión.
-        </p>
-      )}
       <section className="rounded-2xl border bg-white p-4 space-y-3">
         <h2 className="font-semibold">
           Asociaciones y publicación de comprobantes

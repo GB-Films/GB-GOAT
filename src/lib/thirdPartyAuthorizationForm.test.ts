@@ -14,4 +14,6 @@ test('la solicitud del tercero muestra emisor, CUIT y cuenta, sin requerir docum
   assert(html.includes('cuenta.propia'));
   assert(html.includes('cuenta debe corresponder al titular de la factura'));
   assert(html.includes('bajo mi responsabilidad'));
+  assert(html.includes('se aplica automáticamente'));
+  assert(html.includes('No necesita aprobación administrativa'));
 });

@@ -39,11 +39,11 @@ test('the document view has exactly three quick categories and a supplier search
   assert.doesNotMatch(html, /Familia|Finanzas|Locaciones|<select|Signature section/);
 });
 
-test('signature controls show progress and confirmation while preserving separate approval status and artifacts', () => {
+test('signature controls show progress, application status and artifacts without requesting approval', () => {
   const props = { state: { connected: true, documents: [] }, documents: [{ id: 'contract', title: 'Contrato', status: 'completed', declarationStatus: 'pending_review', artifactsReady: true, signatures: [{ email: 'signer@example.test', status: 'signed' }] }], busy: null, downloading: '', error: '', notice: 'Firmas actualizadas.', onRefresh() {}, onDownload() {} };
   const html = renderToStaticMarkup(createElement(ProjectSigningPanel, props));
   assert.doesNotMatch(html, /Abrir GB Sign/); assert.match(html, /Actualizar firmas/); assert.match(html, /Firmas actualizadas/);
-  assert.match(html, /PDF firmado/); assert.match(html, /Certificado/); assert.match(html, /Pendiente de aprobación/);
+  assert.match(html, /PDF firmado/); assert.match(html, /Certificado/); assert.match(html, /Firma guardada · falta aplicar/);
   assert.match(html, /title="Firmó"/);
   assert.match(html, /signer@example.test: Firmó/);
   assert.doesNotMatch(html, /Actualizar conexión|Actualizar estados/);
