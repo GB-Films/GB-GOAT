@@ -145,5 +145,32 @@ try {
   await assertFails(getDoc(doc(sdk,'providers',out.providerId)));await assertFails(getDocs(collection(sdk,'providers')));
   await assertFails(getDoc(doc(sdk,'providerRegistrationSubmissions','unknown')));
   await assertFails(setDoc(doc(sdk,'users','person'),{role:'admin',email:'person@example.test'}));pass('SDK bypass, identity/bank changes, catalog/receipt exposure and internal role escalation denied');
+  await db.doc('users/staff').set({role:'colaborador',email:'staff@example.test'});
+  const historicalRef=db.doc('providers/historical-supplier');
+  const historical={name:'Persona ficticia',source:'manual',bankAccount_alias:'fictional.own'};
+  await historicalRef.set(historical);
+  const declaration={kind:'profile',status:'applied',proof:{complete:true,privateFile:'must-not-leave-server'},actor:{email:'private@example.test'},content:{confirmation:{version:'profile-confirmation-v1'}}};
+  await db.doc('providerPortalDeclarations/historical-supplier').set({...declaration,providerId:'historical-supplier'});
+  for(const [id,changes] of [['pending',{status:'pending_signature'}],['incomplete',{proof:{complete:false}}],['representation',{kind:'representation'}],['unsupported',{content:{confirmation:{version:'unknown'}}}]]){
+    await db.doc(`providerPortalDeclarations/lookup-${id}`).set({...declaration,providerId:`lookup-${id}`,...changes});
+  }
+  await db.doc('providerPortalDeclarations/unrequested').set({...declaration,providerId:'unrequested'});
+  const lookup={action:'registrationStatuses',providerIds:['historical-supplier','historical-supplier','lookup-pending','lookup-incomplete','lookup-representation','lookup-unsupported','missing']};
+  const auditCount=(await db.collection('providerPortalAudit').get()).size;
+  assert.deepEqual(await submit(lookup,'staff'),{registeredProviderIds:['historical-supplier']});
+  assert.deepEqual((await historicalRef.get()).data(),historical,'status lookup never rewrites the supplier or invents registration metadata');
+  assert.equal((await db.collection('providerPortalAudit').get()).size,auditCount,'status lookup is read-only');
+  pass('staff recognizes legacy applied signature immediately, with minimal ID-only output and no provider/audit writes');
+  const bulk=Array.from({length:31},(_,i)=>`bulk-${i}`);
+  await db.doc('providerPortalDeclarations/last-batch').set({...declaration,providerId:bulk[30]});
+  assert.deepEqual(await submit({action:'registrationStatuses',providerIds:bulk},'staff'),{registeredProviderIds:[bulk[30]]});
+  pass('legacy lookup batches beyond 30 identifiers without dropping the last supplier');
+  await assert.rejects(submit(lookup),error=>error.code==='permission-denied');
+  await db.doc('teamAccessEmails/staff@example.test').set({status:'pending'});
+  await assert.rejects(submit(lookup,'staff'),error=>error.code==='permission-denied');
+  await db.doc('teamAccessEmails/staff@example.test').set({status:'ready'});
+  await assert.rejects(portal({...request(lookup,'staff'),auth:{...request(lookup,'staff').auth,token:{...request(lookup,'staff').auth.token,email_verified:false}}}));
+  await assertFails(getDoc(doc(sdk,'providerPortalDeclarations','historical-supplier')));
+  pass('external, unfinished and unverified identities cannot inspect history; SDK declarations remain private');
   console.log(`PASS ${passed} provider registration scenario groups; fictional data only.`);
 }finally{await env.cleanup();await app.delete();}

@@ -7,6 +7,7 @@ const { hasTeamWorkAccess } = require('./teamWorkAccess');
 const { createThirdPartyIntake } = require("./providerIntake");
 const { createProviderRegistration } = require('./providerRegistration');
 const { rememberSignedRegistration } = require('./providerRegistrationEvidence');
+const { createProviderRegistrationLookup } = require('./providerRegistrationLookup');
 const { activatePersonalMembership, attachVerifiedIntakeMembership } = require('./providerPortalAccess');
 const { DECLARED_COMPANY_EVIDENCE } = require('./providerEvidence');
 const { companyRepresentation, assertCompanyAccount, DECLARED_COMPANY_VERSION } = require('./providerRepresentation');
@@ -251,6 +252,7 @@ function createProviderPortalHandler({
       });
     }
     await config();
+    if (input.action === 'registrationStatuses') return createProviderRegistrationLookup({db})(actor, input);
     if (input.action === 'registerProvider') {
       identity(request, true);
       return registerProvider(actor, input);

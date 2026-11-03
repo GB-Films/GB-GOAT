@@ -5,7 +5,6 @@ import {
   Users, 
   BarChart3, 
   Settings, 
-  LogOut,
   Star
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -16,6 +15,7 @@ import { auth, db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { hasGlobalRole, PROVIDER_ACCESS_ROLES } from '../lib/roles';
 import { normalizeEmail } from '../lib/identity';
+import { AccountMenu } from './AccountMenu';
 
 const menuItems = [
   { icon: Truck, label: 'Mi proveedor', path: '/mi-proveedor', adminOnly: false },
@@ -38,7 +38,7 @@ const roleLabels: Record<string, string> = {
 };
 
 export default function Sidebar() {
-  const { profile } = useAuth();
+  const { profile, user } = useAuth();
   const [pinnedProjectIds, setPinnedProjectIds] = useState<string[]>([]);
   const [pinnedProjects, setPinnedProjects] = useState<any[]>([]);
   const logoSrc = `${(import.meta as any).env.BASE_URL}gb-films-logo.png`;
@@ -99,9 +99,9 @@ export default function Sidebar() {
 
   return (
     <>
-    <aside className="hidden w-52 bg-[#020817] text-white border-r border-white/10 lg:flex flex-col h-screen sticky top-0 shadow-2xl shadow-slate-950/30 overflow-hidden">
+    <aside className="sticky top-0 hidden h-dvh min-h-0 w-52 shrink-0 self-start flex-col overflow-hidden border-r border-white/10 bg-[#020817] text-white shadow-2xl shadow-slate-950/30 lg:flex">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_25%_0%,rgba(59,130,246,0.18),transparent_36%),linear-gradient(180deg,rgba(15,23,42,0.95),#020817)] pointer-events-none" />
-      <div className="relative p-4">
+      <div className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
         <div className="mb-5 flex justify-center border-b border-white/10 pb-5">
           <img
             src={logoSrc}
@@ -158,29 +158,11 @@ export default function Sidebar() {
         )}
       </div>
 
-      <div className="relative mt-auto p-3 border-t border-white/10">
-        <div className="mb-3 h-24 rounded-2xl bg-[radial-gradient(circle_at_center,rgba(30,64,175,0.25),transparent_55%)] opacity-70" />
-        <div className="flex items-center gap-2.5 p-2.5 bg-white/10 rounded-2xl border border-white/10 shadow-xl shadow-black/20">
-          <img 
-            src={profile?.photoURL || `https://ui-avatars.com/api/?name=${profile?.displayName || 'User'}&background=000&color=fff`} 
-            alt="Avatar" 
-            className="w-8 h-8 rounded-full border border-white/15"
-          />
-          <div className="overflow-hidden">
-            <p className="text-[10px] font-bold text-white truncate uppercase tracking-tight">{profile?.displayName || 'GB FILMS'}</p>
-            <p className="text-[10px] text-slate-400 truncate tracking-tighter">{roleLabels[profile?.role] || 'Colaborador'}</p>
-          </div>
-        </div>
-        <button 
-          onClick={() => auth.signOut()}
-          className="mt-2 flex items-center gap-2 w-full px-2 py-1.5 text-[10px] uppercase font-bold text-slate-400 hover:text-red-300 transition-colors"
-        >
-          <LogOut className="w-3 h-3" />
-          Cerrar sesión
-        </button>
-      </div>
+      <AccountMenu name={user?.displayName || profile?.displayName || 'GB FILMS'} email={user?.email || profile?.email || ''}
+        role={roleLabels[profile?.role] || 'Colaborador'} photoURL={user?.photoURL || profile?.photoURL} onSignOut={() => { void auth.signOut(); }} />
     </aside>
-    <nav className="fixed inset-x-0 bottom-0 z-[500] flex items-center gap-1 overflow-x-auto border-t border-slate-200 bg-white/95 px-2 py-1.5 shadow-[0_-10px_30px_rgba(15,23,42,0.12)] backdrop-blur lg:hidden">
+    <nav className="fixed inset-x-0 bottom-0 z-[500] flex items-center gap-1 border-t border-slate-200 bg-white/95 px-2 py-1.5 shadow-[0_-10px_30px_rgba(15,23,42,0.12)] backdrop-blur lg:hidden">
+      <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
       {filteredMenuItems.filter((item) => item.path !== '/').map((item) => (
         <NavLink
           key={item.path}
@@ -200,6 +182,9 @@ export default function Sidebar() {
           )}
         </NavLink>
       ))}
+      </div>
+      <AccountMenu compact name={user?.displayName || profile?.displayName || 'GB FILMS'} email={user?.email || profile?.email || ''}
+        role={roleLabels[profile?.role] || 'Colaborador'} photoURL={user?.photoURL || profile?.photoURL} onSignOut={() => { void auth.signOut(); }} />
     </nav>
     </>
   );

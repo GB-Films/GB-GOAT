@@ -5,8 +5,19 @@ export function hasProviderRegistration(provider: any): boolean {
     || ['provider_invite', 'team_onboarding'].includes(provider?.source));
 }
 
-export function expenseNeedsProviderRegistration(item: any, providers: any[]): boolean {
-  if (!item?.providerId && !item?.providerName) return false;
+export type RegistrationEvidence = {
+  status: 'loading' | 'ready' | 'error';
+  registeredIds: ReadonlySet<string>;
+};
+
+export function expenseRegistrationState(item: any, providers: any[], evidence?: RegistrationEvidence): 'unassigned' | 'registered' | 'provisional' | 'loading' | 'error' {
+  if (!item?.providerId && !item?.providerName) return 'unassigned';
   const provider = providers.find(row => row.id === item.providerId);
-  return !hasProviderRegistration(provider);
+  if (hasProviderRegistration(provider) || evidence?.registeredIds.has(item.providerId)) return 'registered';
+  if (evidence && evidence.status !== 'ready') return evidence.status;
+  return 'provisional';
+}
+
+export function expenseNeedsProviderRegistration(item: any, providers: any[], evidence?: RegistrationEvidence): boolean {
+  return expenseRegistrationState(item, providers, evidence) === 'provisional';
 }

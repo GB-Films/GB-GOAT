@@ -4,6 +4,12 @@ Implementación en dos repositorios: GOAT y GB Sign. El código no activa usuari
 
 ## Experiencia
 
+### Estado de alta en el listado de gastos
+
+El listado interno consulta `providerPortal.registrationStatuses` para las fichas que no tienen una marca de alta. Una confirmación histórica de perfil aplicada, con prueba completa y versión reconocida, acredita el alta sin exigir que la persona vuelva a entrar o repita el formulario. La respuesta sólo incluye los IDs registrados; no expone declaraciones, firmantes, archivos ni datos bancarios, y no escribe marcas ni cambia accesos. Está restringida a cuentas Google verificadas del equipo habilitado y mantiene el bloqueo del alta de equipo pendiente.
+
+El cliente separa los resultados por cuenta/proyecto y descarta respuestas de una vista anterior. Mientras consulta muestra «Verificando alta»; si falla, «Alta sin verificar». Ninguno de esos estados se presenta como ficha provisoria ni ofrece otro link de alta. La advertencia amarilla se reserva a los proveedores sin evidencia de alta después de la comprobación. Las reglas, el circuito de actualización firmada y los modelos fiscales/bancarios no se modifican. Este cambio requiere backend compatible antes de publicar su frontend.
+
 ### Fichas provisorias y alta sobre la misma identidad
 
 Una ficha manual/importada no acredita un alta propia, aunque tenga banco o correo de contacto. En Presu Ppal y Áreas se señala en amarillo **Alta pendiente · ficha provisoria** hasta que tenga evidencia de alta (`personalGoogleAccount`, origen de alta propia anterior o `registration.status: complete`). No se infiere un alta por tener CBU, un nombre o un correo escrito por producción.

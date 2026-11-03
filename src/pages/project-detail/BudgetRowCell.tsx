@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { Copy, Link2, Plus } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { isInternalBudgetEstimate } from '../../lib/internalBudgetEstimate';
-import { expenseNeedsProviderRegistration } from '../../lib/providerRegistration';
+import { expenseRegistrationState, type RegistrationEvidence } from '../../lib/providerRegistration';
 import { useParams } from 'react-router-dom';
 import {
   formatIdentifier,
@@ -26,9 +26,10 @@ interface BudgetRowCellProps {
   canCopyProviderInfo?: boolean;
   onCreateProviderInvite?: (item: any) => Promise<boolean | void> | boolean | void;
   creatingProviderInvite?: boolean;
+  registrationEvidence?: RegistrationEvidence;
 }
 
-export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment, disabledPayment, disabled, canCopyProviderInfo, onCreateProviderInvite, creatingProviderInvite }: BudgetRowCellProps) {
+export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment, disabledPayment, disabled, canCopyProviderInfo, onCreateProviderInvite, creatingProviderInvite, registrationEvidence }: BudgetRowCellProps) {
   const { id: projectId } = useParams();
   const [isEditingProvider, setIsEditingProvider] = useState(false);
   const [showProviderInfo, setShowProviderInfo] = useState(false);
@@ -107,7 +108,8 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
     return searchMatches.length === 1 ? searchMatches[0] : null;
   })();
   const providerIdentifiers = inferLegacyIdentifiers(provider);
-  const provisional = expenseNeedsProviderRegistration(item, providers || []);
+  const registrationState = expenseRegistrationState(item, providers || [], registrationEvidence);
+  const provisional = registrationState === 'provisional';
   const providerCuitRaw = normalizeDigits(provider?.cuit || providerIdentifiers.cuitNormalized);
   const providerCuit = formatIdentifier(providerCuitRaw) || '';
   const providerCbu = provider?.bankAccount_cbu || provider?.bankAccount || '';
@@ -143,6 +145,9 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
   if (type === 'provider') {
     return (
       <div ref={providerCellRef} className={cn('relative group/provider', provisional && 'rounded-lg border border-amber-200 bg-amber-50 p-2')}>
+        {(registrationState === 'loading' || registrationState === 'error') && <p className="mb-1 text-[10px] text-slate-500">
+          {registrationState === 'loading' ? 'Verificando alta…' : 'Alta sin verificar · actualizá la página'}
+        </p>}
         {provisional && <div className="mb-1 flex flex-wrap items-center gap-2 text-[10px] font-semibold text-amber-800">
           <span>Alta pendiente · ficha provisoria</span>
           {provider && item.providerId === provider.id && onCreateProviderInvite && !disabled && <button type="button"
