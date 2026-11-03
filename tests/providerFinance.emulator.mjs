@@ -174,8 +174,8 @@ try {
   const thirdParty = { ...simple('simple-authorized', [10], 'f'), thirdPartyAuthorizationId: 'simple-authority' };
   thirdParty.allocations[0].projectId = 'simple4';
   const party = { name: 'Emisor autorizado', cuit: '20333333334', holderCuit: '20333333334', cbu: '0000000000000000000000' };
-  await db.doc('providerPortalDeclarations/simple-authority').set({ providerId: 'simple', kind: 'third_party', status: 'active', proof: { complete: true, signedPdfSha256: 'test' }, contentHash: 'test', effectiveRoles: ['invoice', 'payment'], content: { termsVersion: 'third-party-v4', validity: 'until_revoked', party, workKeys: ['simple4/areaExpenses/work'] } });
-  await assert.rejects(call(request({ ...thirdParty, thirdPartyAuthorizationId: '' })), /requiere la autorización/);
+  await db.doc('providerPortalDeclarations/simple-authority').set({ providerId: 'simple', kind: 'third_party', status: 'active', proof: { complete: true, signedPdfSha256: 'test' }, contentHash: 'test', effectiveRoles: ['invoice', 'payment'], content: { termsVersion: 'third-party-v5', validity: 'until_revoked', party, workKeys: ['simple4/areaExpenses/work'] } });
+  await assert.rejects(call(request({ ...thirdParty, thirdPartyAuthorizationId: '' })), /requiere la declaración firmada y vigente/);
   await call(request(thirdParty));
   assert.deepEqual(await call(request(thirdParty)), { id: 'simple-authorized', status: 'active' });
   const thirdInvoice = (await db.doc('providerFinancialRecords/simple-authorized').get()).data();
