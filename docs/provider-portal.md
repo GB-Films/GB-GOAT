@@ -8,6 +8,34 @@ Implementación en dos repositorios: GOAT y GB Sign. El código no activa usuari
 
 Las cinco secciones son Trabajos, Facturas, Pagos y retenciones, Documentos y Mis datos. Incluyen documentos cargados por otras personas, pagos simples y aplicaciones de pagos distribuidos. El comprobante original y sus aplicaciones se distinguen; no se suman otra vez. Un trabajo marcado pagado sin historial se identifica como tal y no se reconstruye un pago ficticio.
 
+### Revisión visual de Mi proveedor · publicada en PR60 (02/11/2026)
+
+La ficha propia de una persona no muestra «Representás a». La aclaración se reserva a una empresa o representación expresamente asignada; si hay varias fichas, se conserva un selector neutral «Ficha de proveedor». Es sólo presentación: no modifica asociaciones ni permisos.
+
+La ayuda «Cómo firmar tus documentos» está plegada en el encabezado. Documentos muestra una insignia amarilla con la cantidad de firmas propias pendientes, sin contar firmas ajenas, solicitudes anuladas ni representaciones personales antiguas. Se actualiza al consultar documentos y durante el refresco del portal visible. Primero aparecen los documentos que requieren atención, luego contratos/constancias y un historial plegado de declaraciones. Original, PDF firmado y certificado conservan sus descargas verificadas; los botones tienen estados de hover, foco y deshabilitado.
+
+Mis datos separa contacto y cuenta propia. Las autorizaciones de terceros y la representación de empresa se consultan al desplegar sus secciones. Una declaración firmada que ya no coincide con la ficha actual se conserva como antecedente: no rellena el formulario con valores anteriores ni ofrece aplicar esos cambios incompatibles. Se propone revisar los datos actuales y firmar una nueva confirmación. Si hay una confirmación posterior ya aplicada, el antecedente no vuelve a exigir la firma. El rechazo transaccional del servidor no se modifica; no se reescriben declaraciones, datos, facturas ni pagos. Los errores de aplicación aparecen junto a la acción con un mensaje breve. Esta revisión de frontend se publicó en `534bb8d` sin cambiar backend ni datos reales.
+
+### Secciones desplegables y documentos por proyecto · publicada en PR61
+
+Mis datos empieza plegado, seguido por «Quién factura y cobra por mí» para personas o la representación para empresas como secciones independientes. Se conserva el formulario montado al plegarlo; los accesos directos a revisar datos lo despliegan. El título «Tu correo en GOAT» se alinea dentro de su bloque, sin cambiar selección ni verificación de cuentas.
+
+Tanto los pendientes como Contratos y constancias se agrupan por `projectId` de GB Sign, con el nombre del proyecto registrado en su solicitud de firma. Nombres iguales no fusionan proyectos distintos. Las declaraciones de datos no se presentan como contratos de un proyecto comercial. Una solicitud histórica sin nombre muestra «Proyecto sin informar», sin inferirlo del título o de otros trabajos.
+
+`providerPortal.myDocuments` ya incorporó en PR61 únicamente `projectName` saneado a su respuesta permitida, después de comprobar solicitud y firmante vigente. Reutiliza el dato existente en `signatureRequests`, sin consultas adicionales ni permisos nuevos. Se publicó `providerPortal` (revisión `providerportal-00010-wiz`) y después frontend `136718a`; no se modificaron solicitudes reales.
+
+#### Grupos de proyecto colapsables
+
+Los grupos de proyecto se pueden plegar de forma independiente con su encabezado. Los contratos y constancias guardados empiezan plegados; los grupos con firmas propias pendientes empiezan abiertos y también se pueden cerrar. El nombre y la cantidad de documentos permanecen visibles. Esta ampliación es sólo de frontend: no cambia solicitudes ni descargas y no requiere volver a publicar funciones, reglas o IAM.
+
+### Firma guiada · preparada, pendiente de publicación
+
+La ventana de firma mantiene visible una indicación del próximo paso: cargar el PDF, tocar el recuadro propio en la página indicada, ingresar/confirmar DNI, preparar la firma y aceptar el documento. El acceso directo ubica el recuadro sin seleccionarlo ni firmar por la persona; en pantallas pequeñas también desplaza la sección para dejarlo visible. Los demás accesos enfocan el dato o la confirmación pendiente. El botón de firma sólo se habilita cuando todos los requisitos están completos. Se conservan el consentimiento, la identidad, las coordenadas y el motor de GB Sign.
+
+Durante el envío se informa la conexión o generación del PDF. Si carga o envío superan quince segundos aparece una orientación adicional; una carga fallida o lenta permite reintentar. Las llamadas de firma/generación esperan hasta150 segundos, por encima de los120 segundos del servicio. Si el resultado es incierto por conexión/timeout, o la firma se guardó pero falló la actualización posterior, se bloquea otro envío desde esa ventana y se ofrece volver a Documentos para consultar el estado. Al cerrar se actualizan ficha y documentos. Esto no ejecuta otra firma ni cambia el circuito de recuperación de artefactos existentes.
+
+Las pruebas locales usan exclusivamente PDFs ficticios, navegador aislado sin sesión personal y solicitudes limitadas a127.0.0.1. Cubren escritorio y pantallas móviles, selección explícita, DNI, firma escrita/dibujada, cada orientación, carga fallida/lenta, envío lento y recuperación sin duplicar un intento incierto. La integración con emuladores comprueba las funciones reales de Sign, PDF firmado, certificado y denegaciones. No identifica la causa del incidente de un extra de Bancor sin conocer su cuenta/documento ni verifica OAuth/IAM de producción. Este lote no incluye publicación ni cambios de backend, reglas o IAM.
+
 El único inicio de sesión disponible es Google, tanto en GOAT como en GB Sign. GOAT no ofrece registro con contraseña propia ni vinculación de otros proveedores de identidad. Se exige correo verificado. Google puede pedir autenticar la cuenta cuando no hay una sesión vigente; no se crea otra contraseña para la aplicación. Ningún correo se envía al desplegar o preparar asociaciones.
 
 ### Qué correo cargar y cómo se habilita el acceso

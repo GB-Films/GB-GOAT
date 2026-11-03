@@ -1,0 +1,39 @@
+@layer components {
+  .provider-portal .portal-panel {
+    @apply rounded-2xl border border-slate-200 bg-white p-5 shadow-sm shadow-slate-200/30 sm:p-6;
+  }
+  .provider-portal .portal-button {
+    @apply inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 no-underline transition-colors hover:border-slate-300 hover:bg-slate-100 hover:text-slate-950 active:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-40;
+  }
+  .provider-portal .portal-button-primary {
+    @apply border-blue-700 bg-blue-700 text-white hover:border-blue-800 hover:bg-blue-800 hover:text-white active:bg-blue-900;
+  }
+  .provider-portal button:not(:disabled), .provider-portal summary {
+    @apply cursor-pointer;
+  }
+  .provider-portal button:not(.portal-button):not([aria-current]):not(:disabled):hover {
+    @apply ring-2 ring-slate-300 ring-offset-2;
+  }
+  .provider-portal button:focus-visible, .provider-portal summary:focus-visible,
+  .provider-portal input:focus-visible, .provider-portal select:focus-visible {
+    @apply outline-2 outline-offset-2 outline-blue-600;
+  }
+  .provider-portal input:not([type=checkbox]):not([type=radio]):not([type=file]), .provider-portal select {
+    @apply min-h-11 rounded-xl border-slate-300 bg-white px-3 text-slate-900;
+  }
+  .provider-portal input[type=file] {
+    @apply block w-full rounded-xl border border-slate-200 p-2 text-sm text-slate-600 file:mr-3 file:cursor-pointer file:rounded-lg file:border-0 file:bg-blue-50 file:px-3 file:py-2 file:font-medium file:text-blue-700 hover:file:bg-blue-100;
+  }
+  .provider-portal .portal-status {
+    @apply inline-flex h-fit shrink-0 items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600;
+  }
+  .provider-portal .portal-status-pending {
+    @apply bg-amber-100 text-amber-900;
+  }
+  .provider-portal .portal-status-signed {
+    @apply bg-emerald-50 text-emerald-800;
+  }
+  .provider-portal .portal-details > summary {
+    @apply rounded-lg text-sm font-medium text-slate-600 transition-colors hover:text-blue-700;
+  }
+}

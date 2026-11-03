@@ -50,8 +50,8 @@ test('solicitud firmada antigua conserva acción de aplicación y avisa sobre da
   const pending = { ...profile, status: 'pending_review' };
   assert.equal(declarationPresentation(pending, 'persona').action, 'apply');
   const rendered = html(pending);
-  assert.match(rendered, /circuito anterior que ya tiene firma/);
-  assert.match(rendered, /Si la ficha cambió/);
+  assert.match(rendered, /Tu firma está guardada/);
+  assert.match(rendered, /Falta aplicar los datos/);
   assert.match(rendered, /Comprobar aplicación de la firma/);
   assert.match(rendered, /Revisar mis datos actuales/);
 });

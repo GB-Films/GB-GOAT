@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { normalizeSigningDni, personalSignatureFields, type PortalSignatureInput } from "../lib/portalSigning";
+import { normalizeSigningDni, personalSignatureFields, signingFailure, signingNextStep, type PortalSignatureInput } from "../lib/portalSigning";
 import { PortalDocumentViewer } from "./PortalDocumentViewer";
 import { PortalSignatureCanvas } from "./PortalSignatureCanvas";
 import "./portalSigning.css";
@@ -11,12 +11,13 @@ type Props = {
   url: string;
   preparing?: boolean;
   loadError: string;
+  progress?: string;
   onRetry: () => void;
   onClose: () => void;
   onSubmit: (input: PortalSignatureInput) => Promise<void>;
 };
 
-export function PortalSigningRoom({ document: doc, signer, url, loadError, onRetry, onClose, onSubmit, preparing = false }: Props) {
+export function PortalSigningRoom({ document: doc, signer, url, loadError, progress = '', onRetry, onClose, onSubmit, preparing = false }: Props) {
   const [dni, setDni] = useState(doc.requiredDni || "");
   const [name, setName] = useState(signer.name);
   const [dniConfirmed, setDniConfirmed] = useState(false);
@@ -28,6 +29,9 @@ export function PortalSigningRoom({ document: doc, signer, url, loadError, onRet
   const [pageCount, setPageCount] = useState(0);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
+  const [viewerError, setViewerError] = useState('');
+  const [checkDocuments, setCheckDocuments] = useState(false);
+  const [slow, setSlow] = useState(false);
   const [focusFieldRequest, setFocusFieldRequest] = useState<{ id: string; revision: number }>();
   const dialog = useRef<HTMLDivElement>(null);
   const submitting = useRef(false);
@@ -37,9 +41,29 @@ export function PortalSigningRoom({ document: doc, signer, url, loadError, onRet
   const target = selected || fields[0];
   const showField = () => { if (target) setFocusFieldRequest(current => ({ id: target.id, revision: (current?.revision || 0) + 1 })); };
   const cleanDni = normalizeSigningDni(dni);
-  const validDni = /^\d{6,12}$/.test(cleanDni) && (!doc.requiredDni || cleanDni === doc.requiredDni);
-  const canSign = !preparing && ready && !loadError && !!selected && validDni && dniConfirmed && accepted &&
-    (mode === "drawn" ? !!image : !!name.trim());
+  const validDni = /^\d{6,12}$/.test(cleanDni) && (!doc.requiredDni || cleanDni === normalizeSigningDni(doc.requiredDni));
+  const next = signingNextStep({ preparing, hasUrl: !!url, loadError: loadError || viewerError, ready, fieldCount: fields.length,
+    selectedPage: selected?.page, targetPage: target?.page, validDni, dniConfirmed, hasSignature: mode === 'drawn' ? !!image : !!name.trim(), accepted });
+  const canSign = next.step === 'ready' && !checkDocuments;
+  const guidance = busy ? progress || 'Registrando tu firma y preparando el documento…' : checkDocuments || error && next.step === 'ready' ? error : next.message;
+
+  useEffect(() => {
+    setSlow(false);
+    if (!busy && next.step !== 'loading' && next.step !== 'preparing') return;
+    const timer = window.setTimeout(() => setSlow(true), 15000);
+    return () => window.clearTimeout(timer);
+  }, [busy, next.step, progress, url]);
+
+  function completeStep() {
+    if (checkDocuments || next.step === 'unassigned') { onClose(); return; }
+    if (next.step === 'load_error' || next.step === 'loading') { onRetry(); return; }
+    if (next.step === 'field') { showField(); return; }
+    const target = next.step === 'dni' ? 'input[placeholder="Ingresá tu DNI"]' : next.step === 'dni_confirmation' ? '#sign-confirm-dni'
+      : next.step === 'signature' ? '.portal-sign-modes' : next.step === 'consent' ? '#sign-consent' : '.portal-sign-submit';
+    const element = dialog.current?.querySelector<HTMLElement>(target);
+    element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    element?.focus({ preventScroll: true });
+  }
 
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
@@ -51,11 +75,11 @@ export function PortalSigningRoom({ document: doc, signer, url, loadError, onRet
 
   async function submit() {
     if (!canSign || submitting.current) return;
-    submitting.current = true; setBusy(true); setError("");
+    submitting.current = true; setBusy(true); setError(""); setCheckDocuments(false);
     try {
       await onSubmit({ fieldId: selected.id, dni: cleanDni, typedName: name.trim(), signatureType: mode, signatureImage: mode === "drawn" ? image : "" });
     } catch (e: any) {
-      setError(e.message || "No pudimos registrar tu firma. Intentá nuevamente.");
+      const failure = signingFailure(e); setError(failure.message); setCheckDocuments(failure.checkDocuments);
     } finally { submitting.current = false; setBusy(false); }
   }
 
@@ -77,7 +101,7 @@ export function PortalSigningRoom({ document: doc, signer, url, loadError, onRet
           {preparing && <p role="status" className="portal-sign-field-status">Preparando tu documento para revisar y firmar…</p>}
           {!!target && <div className={`portal-sign-location ${selected ? 'is-selected' : ''}`} role="status"><span>{selected ? `Recuadro seleccionado · página ${selected.page}` : `Tocá tu recuadro de firma en la página ${target.page}.`}</span><button type="button" onClick={showField}>Mostrar dónde firmar</button></div>}
           {loadError ? <div className="portal-sign-load-error"><p role="alert">{loadError}</p><button type="button" onClick={onRetry}>Volver a cargar</button></div> :
-            <PortalDocumentViewer url={url} fields={fields} selectedFieldId={selectedFieldId} focusFieldRequest={focusFieldRequest} signatureImage={mode === "drawn" ? image : ""} signatureName={mode === "typed" ? name : ""} onSelectField={id => { if (!submitting.current) setSelectedFieldId(id); }} onPageCount={setPageCount} onReady={setReady} onRetry={onRetry} />}
+            <PortalDocumentViewer url={url} fields={fields} selectedFieldId={selectedFieldId} focusFieldRequest={focusFieldRequest} signatureImage={mode === "drawn" ? image : ""} signatureName={mode === "typed" ? name : ""} onSelectField={id => { if (!submitting.current) setSelectedFieldId(id); }} onPageCount={setPageCount} onReady={setReady} onLoadError={setViewerError} onRetry={onRetry} />}
         </div>
         <aside className="portal-sign-details" aria-label="Tus datos y firma">
           <fieldset disabled={busy}>
@@ -85,11 +109,11 @@ export function PortalSigningRoom({ document: doc, signer, url, loadError, onRet
               <h3>2. Confirmá tus datos</h3>
               <p className="portal-sign-muted">Vas a firmar con esta cuenta de Google:</p><strong className="portal-sign-email">{signer.email}</strong>
               <label className="portal-sign-label">DNI<input autoComplete="off" inputMode="numeric" value={dni} readOnly={!!doc.requiredDni} placeholder="Ingresá tu DNI" onChange={e => { setDni(e.target.value); setDniConfirmed(false); }} /></label>
-              <label className="portal-sign-check"><input type="checkbox" checked={dniConfirmed} disabled={!validDni || busy} onChange={e => setDniConfirmed(e.target.checked)} /><span>Confirmo que el DNI ingresado me corresponde.</span></label>
+              <label className="portal-sign-check"><input id="sign-confirm-dni" type="checkbox" checked={dniConfirmed} disabled={!validDni || busy} onChange={e => setDniConfirmed(e.target.checked)} /><span>Confirmo que el DNI ingresado me corresponde.</span></label>
             </section>
             <section className="portal-sign-card">
               <h3>3. Prepará tu firma</h3>
-              <div className="portal-sign-modes" role="group" aria-label="Tipo de firma">
+              <div className="portal-sign-modes" role="group" aria-label="Tipo de firma" tabIndex={-1}>
                 <button type="button" aria-pressed={mode === "drawn"} onClick={() => setMode("drawn")}>Dibujar firma</button>
                 <button type="button" aria-pressed={mode === "typed"} onClick={() => setMode("typed")}>Usar mi nombre</button>
               </div>
@@ -101,14 +125,18 @@ export function PortalSigningRoom({ document: doc, signer, url, loadError, onRet
             </section>
             <section className="portal-sign-card">
               <h3>4. Firmá el documento</h3>
-              <label className="portal-sign-check"><input type="checkbox" checked={accepted} onChange={e => setAccepted(e.target.checked)} /><span>Leí el documento y acepto firmarlo electrónicamente con mi cuenta verificada y los datos declarados.</span></label>
+              <label className="portal-sign-check"><input id="sign-consent" type="checkbox" checked={accepted} onChange={e => setAccepted(e.target.checked)} /><span>Leí el documento y acepto firmarlo electrónicamente con mi cuenta verificada y los datos declarados.</span></label>
               {error && <p role="alert" className="portal-sign-error">{error}</p>}
               <button type="button" className="portal-sign-submit" disabled={busy || !canSign} onClick={submit}>{busy ? "Registrando firma…" : "Firmar y confirmar"}</button>
-              {!canSign && !busy && <p role="status" className="portal-sign-muted">{!selected && fields.length ? 'Falta seleccionar el recuadro de firma. Usá «Ir al recuadro» y tocá el recuadro resaltado en el documento.' : 'Para continuar, revisá el PDF y completá las confirmaciones.'}</p>}
+              {!canSign && !busy && !checkDocuments && <p className="portal-sign-muted">{next.message}</p>}
             </section>
           </fieldset>
         </aside>
       </div>
+      <footer className={`portal-sign-next ${next.step === 'ready' && !error ? 'is-ready' : ''}`}>
+        <div><p role="status" aria-live="polite">{guidance}</p>{slow && <p className="portal-sign-muted">{busy ? 'Está tardando más de lo habitual. Mantené esta ventana abierta para confirmar el resultado.' : preparing ? 'La preparación está tardando. Podés cerrar y volver a intentarlo desde Documentos.' : 'La carga está tardando. Podés volver a cargar el documento.'}</p>}</div>
+        {!busy && (next.step !== 'loading' && next.step !== 'preparing' || slow && next.step === 'loading') && <button type="button" onClick={completeStep}>{checkDocuments || next.step === 'unassigned' ? 'Volver a Documentos' : next.step === 'field' ? 'Mostrar recuadro' : next.step === 'load_error' || next.step === 'loading' ? 'Volver a cargar' : next.step === 'ready' ? 'Ir a confirmar' : 'Completar este paso'}</button>}
+      </footer>
     </div>
   </div>;
 }
