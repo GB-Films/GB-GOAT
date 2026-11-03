@@ -525,32 +525,16 @@ try {
     providerId: "supplier",
     declarationId: third.id,
   });
-  await adminCall({
-    action: "review",
-    declarationId: third.id,
-    decision: "approved",
-    roles: ["payment"],
-    reason: "Destinatario y cuenta declarados revisados",
-    checks: { declaredPayeeChecked: true },
-  });
-  assert.deepEqual(
-    (await db.doc(`providerPortalDeclarations/${third.id}`).get()).data()
-      .effectiveRoles,
-    ["payment"],
-  );
-  assert.equal(
-    (await db.doc("projects/project/areaExpenses/work").get()).data()
-      .paymentHistory.length,
-    1,
-  ); // A declaration never makes another payment.
-  await adminCall({
-    action: "review",
-    declarationId: third.id,
-    decision: "approved",
-    roles: ["invoice"],
-    reason: "Encuadre fiscal revisado",
-    checks: { fiscalFrameVerified: true },
-  });
+  const activeThird = (await db.doc(`providerPortalDeclarations/${third.id}`).get()).data();
+  assert.equal(activeThird.status, 'active');
+  assert.deepEqual(activeThird.effectiveRoles, ['invoice', 'payment']);
+  assert.equal(activeThird.activation.method, 'signed_declaration');
+  assert.equal(activeThird.decisions, undefined, 'no administrative approval is invented');
+  assert.equal((await db.doc('projects/project/areaExpenses/third-party-work').get()).data().thirdPartyPayoutRequired, true);
+  assert.equal((await db.doc('projects/project/areaExpenses/work').get()).data().paymentHistory.length, 1, 'a signature never creates a payment');
+  await assert.rejects(adminCall({ action: 'review', declarationId: third.id, decision: 'approved', roles: ['invoice'], reason: 'obsolete approval' }), /sin revisión administrativa/);
+  const { testSignedThirdParty } = await import('./signedThirdParty.flow.mjs');
+  await testSignedThirdParty({ db, deps, own, adminCall, signActual, third, admin });
   const finance = createProviderFinanceHandler({
     db,
     clock: () => new Date("2026-10-26T19:00Z"),
@@ -809,15 +793,15 @@ try {
   await assert.rejects(own({ action: "completeDeclaration", providerId: added.providerId, declarationId: newThird.id }), /Falta completar/);
   await signActual(newThird);
   await own({ action: "completeDeclaration", providerId: added.providerId, declarationId: newThird.id });
-  const newReview = (await adminCall({ action: "reviews" })).reviews.find(d => d.id === newThird.id);
+  assert.equal((await adminCall({ action: 'reviews' })).reviews.some(d => d.id === newThird.id), false);
+  const newReview = (await db.doc(`providerPortalDeclarations/${newThird.id}`).get()).data();
   assert.equal(newReview.content.party.cuit, '20333333334');
   assert.equal(newReview.content.party.activity, undefined);
   assert.equal(newReview.content.evidence, undefined);
   assert.equal(newReview.content.expiresOn, undefined);
   assert.equal(newReview.content.ownAccount.alias, 'own.new.alias');
-  assert.equal(newReview.status, "pending_review");
-  await adminCall({ action: "review", declarationId: newThird.id, roles: ["invoice"], decision: "approved", reason: "Revisión de prueba en emulador", checks: { fiscalFrameVerified: true } });
-  assert.deepEqual((await db.doc(`providerPortalDeclarations/${newThird.id}`).get()).data().effectiveRoles, ["invoice"]);
+  assert.equal(newReview.status, "active");
+  assert.deepEqual((await db.doc(`providerPortalDeclarations/${newThird.id}`).get()).data().effectiveRoles, ["invoice", "payment"]);
   const companyRef = db.doc("providers/company-no-third");
   await companyRef.set({ type: "empresa", businessName: "Empresa de prueba", cuit: "30111111112" });
   await assert.rejects(finance(request("admin", "admin@example.test", { ...actualPayment, id: "company-third-payment-blocked", providerId: "company-no-third", thirdPartyAuthorizationId: newThird.id })), /Sólo personas físicas/);
@@ -828,7 +812,7 @@ try {
   await db.doc("providerPortalUsers/own/memberships/unknown-type").set({ email: "own@example.test", status: "active" });
   await assert.rejects(own({ action: "prepareThirdParty", providerId: "unknown-type", attemptId: "unknown-third", ...intakeParty, roles: ["payment"], workKeys: ["project/areaExpenses/new-person-work"], expiresOn: "2026-12-31" }), /persona física/);
   await db.doc("providerPortalDeclarations/company-pending-history").set({ kind: "third_party", providerId: "company-no-third", status: "pending_review", proof: { complete: true }, content: { roles: ["payment"], expiresOn: "2026-12-31" } });
-  await assert.rejects(adminCall({ action: "review", declarationId: "company-pending-history", roles: ["payment"], decision: "approved", reason: "No permitida" }), /empresas/);
+  await assert.rejects(adminCall({ action: "review", declarationId: "company-pending-history", roles: ["payment"], decision: "approved", reason: "No permitida" }), /sin revisión administrativa/);
   assert.equal((await db.doc("providerPortalDeclarations/company-pending-history").get()).data().status, "pending_review");
   await db.doc("providerPortalDeclarations/company-active-history").set({ kind: "third_party", providerId: "company-no-third", status: "active", proof: { complete: true }, effectiveRoles: ["payment"], content: { roles: ["payment"], expiresOn: "2026-12-31" } });
   const companyHistory = (await adminCall({ action: "authorizations", providerId: "company-no-third" })).authorizations.find(d => d.id === "company-active-history");
@@ -878,7 +862,7 @@ try {
   await testProviderAccountChoice({ db, admin, deps, request, signActual, env, doc, getDoc, setDoc, assertFails, createProviderPortalHandler, createProviderPortalAdminHandler });
   console.log("PASS: own bank required at intake, personal signup without signature, company responsibility declaration with DNI and optional power activates without admin review, minimal third-party declaration, issuer-linked invoice and payout.");
   console.log(
-    "PASS: real GB Sign PDF/signature/artifacts → immediate signed profile application; scoped third-party decisions, no duplicate payment; external isolation and producer access.",
+    "PASS: real GB Sign PDF/signature/artifacts → immediate signed profile application; automatic scoped third-party application without admin review, no duplicate payment; external isolation and producer access.",
   );
 } finally {
   await env.cleanup();

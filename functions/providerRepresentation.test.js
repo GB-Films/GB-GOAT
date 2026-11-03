@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { companyRepresentation, checkCompanyReview, assertCompanyAccount, assertDeclaredCompany, companySigningAuthority } = require('./providerRepresentation');
 const { hash } = require('./providerPortalModel');
-const { thirdPartyDeclaration, checkThirdPartyReview } = require('./providerThirdPartyDeclaration');
+const { thirdPartyDeclaration } = require('./providerThirdPartyDeclaration');
 const { COMPANY_EVIDENCE } = require('./providerEvidence');
 const company = { type: 'empresa', businessName: 'Empresa de Ejemplo SRL', cuit: '30111111112' };
 const actor = { uid: 'person', email: 'administracion@example.test' };
@@ -80,15 +80,8 @@ test('tercero sólo requiere nombre, CUIT y cuenta: no documentos, ni doble capt
   assert.equal(content.expiresOn, undefined);
   assert.equal(content.validity, 'until_revoked');
   assert.equal(JSON.stringify(person), before);
-  for (const value of [thirdInput.name, thirdInput.cuit, thirdInput.alias, 'bajo mi responsabilidad', 'no constituye una verificación bancaria automática']) assert.ok(content.terms.includes(value));
+  for (const value of [thirdInput.name, thirdInput.cuit, thirdInput.alias, 'bajo mi responsabilidad', 'no constituye una verificación bancaria automática', 'se aplica automáticamente', 'sin aprobación administrativa posterior']) assert.ok(content.terms.includes(value));
   assert.throws(() => thirdPartyDeclaration(person, actor, { ...thirdInput, alias: '', cbu: '' }, thirdInput.workKeys));
   assert.throws(() => thirdPartyDeclaration(person, actor, { ...thirdInput, holderCuit: '20333333335' }, thirdInput.workKeys));
   assert.throws(() => thirdPartyDeclaration(person, actor, { ...thirdInput, responsibilityConfirmed: false }, thirdInput.workKeys));
-});
-test('revisión del tercero no exige constancias; sí conserva la validación fiscal y el destinatario declarado', () => {
-  const declaration = { content: thirdPartyDeclaration(person, actor, thirdInput, thirdInput.workKeys) };
-  const input = { decision: 'approved', checks: { fiscalFrameVerified: true, declaredPayeeChecked: true } };
-  checkThirdPartyReview(declaration, ['invoice', 'payment'], input);
-  assert.throws(() => checkThirdPartyReview(declaration, ['payment'], { ...input, checks: {} }));
-  assert.throws(() => checkThirdPartyReview({ content: { termsVersion: 'third-party-v2' } }, ['payment'], input));
 });

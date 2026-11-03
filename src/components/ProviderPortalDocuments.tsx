@@ -14,7 +14,7 @@ export function ProviderPortalDocuments({ documents, declarations, providerId, p
   const contracts = documents.filter(doc => !declarations.some(d => declarationDocument(d, [doc], providerId)));
   const pending = contracts.filter(needsPortalSignature), remaining = contracts.filter(doc => !needsPortalSignature(doc));
   const declarationCards = declarations.map(d => ({ d, doc: declarationDocument(d, documents, providerId) }));
-  const activeDeclarations = declarationCards.filter(({ d, doc }) => !(provider && outdatedProfileDeclaration(d, provider)) && declarationPresentation(d, providerType, doc).action);
+  const activeDeclarations = declarationCards.filter(({ d, doc }) => !(provider && outdatedProfileDeclaration(d, provider)) && (declarationPresentation(d, providerType, doc).action || d.applicationIssue));
   const history = declarationCards.filter(item => !activeDeclarations.includes(item));
   const card = (doc: any) => {
     const pending = needsPortalSignature(doc);

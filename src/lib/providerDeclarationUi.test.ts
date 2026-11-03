@@ -105,3 +105,22 @@ test('firmar un contrato con proveedor asociado no intenta aplicarlo como declar
   assert.equal(portalDeclarationCompletionInput({ ...doc, declarationKind: 'contract' }), null);
   assert.equal(portalDeclarationCompletionInput({ ...doc, declarationKind: 'representation', portalManaged: false }), null);
 });
+
+test('el tercero se aplica con la firma y la constancia vigente no pide aprobación', () => {
+  const third = { ...profile, kind: 'third_party', status: 'active' };
+  const rendered = html(third, 'persona', { ...doc, signed: true, artifactsReady: true });
+  assert.match(rendered, /habilitan automáticamente la facturación y el cobro/);
+  assert.match(rendered, /bajo tu responsabilidad/);
+  assert.match(rendered, /PDF firmado/);
+  assert.doesNotMatch(rendered, /pendiente de revisión|Comprobar aplicación de la firma|Revisar y firmar/);
+  assert.match(declarationCompletionMessage('third_party', 'active'), /Declaración aplicada/);
+  assert.equal(declarationPresentation({ ...third, status: 'pending_review' }, 'persona').action, 'apply');
+});
+
+test('una declaración incompatible pide actualizar desde la cuenta del proveedor', () => {
+  const third = { ...profile, kind: 'third_party', status: 'pending_review', applicationIssue: 'Revisá tus datos y prepará una nueva declaración.' };
+  const rendered = html(third, 'persona', { ...doc, signed: true, artifactsReady: true });
+  assert.match(rendered, /Falta actualizar la declaración/);
+  assert.match(rendered, /Actualizar declaración desde Mis datos/);
+  assert.doesNotMatch(rendered, /Comprobar aplicación de la firma|No encontramos un documento|pendiente de revisión/);
+});

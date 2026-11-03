@@ -136,7 +136,8 @@ export default function ProviderPortal() {
         ? 'Datos confirmados, firma guardada y cambios aplicados.' : 'Cambios firmados y aplicados.'); }
       if (signing.declarationKind === 'representation') { setTab('Documentos'); setProfileNotice(result.status === 'applied'
         ? 'Declaración firmada. Tu representación quedó habilitada; los contratos asignados aparecen en Documentos.'
-        : 'La firma de esta presentación anterior quedó guardada. Completá la nueva declaración de representación para habilitarte sin esperar una revisión.'); } }
+        : 'La firma de esta presentación anterior quedó guardada. Completá la nueva declaración de representación para habilitarte sin esperar una revisión.'); }
+      if (signing.declarationKind === 'third_party') { setTab('Documentos'); setProfileNotice(declarationCompletionMessage('third_party', result.status)); } }
     else { setTab('Documentos'); setProfileNotice('Tu firma quedó guardada. Consultá el estado del contrato y sus constancias aquí. Si faltan otras firmas, se indicará en el documento.'); }
     if (await load()) setDraft({});
     await loadDocuments();
@@ -316,7 +317,7 @@ export default function ProviderPortal() {
           {view && (
             <div className={box}>
               <h2 className="font-bold">Cargar factura</h2>
-              {view.works.some((w: any) => w.thirdPartyPayoutRequired) && <p className="mt-2 text-sm text-slate-600">Las facturas de trabajos con un tercero autorizado se registran por administración contra el CUIT y la cuenta revisados, desde la ficha completa.</p>}
+              {view.works.some((w: any) => w.thirdPartyPayoutRequired) && <p className="mt-2 text-sm text-slate-600">Las facturas de estos trabajos se registran por administración contra el CUIT y la cuenta declarados, desde la ficha completa.</p>}
               <select
                 aria-label="Trabajo de la factura"
                 className="my-2 w-full rounded border p-2"

@@ -48,7 +48,7 @@ export function ProviderFinancePanel({ provider, lines, onChanged }: { provider:
         const required = kind === 'invoice' && expenses.some(line => line.item?.thirdPartyPayoutRequired
           && allocations.some(row => expenseAllocationKey(row) === expenseAllocationKey(line)));
         if (candidates.length > 1) throw Error('Estos trabajos tienen más de un emisor autorizado. Revisá su autorización antes de cargar la factura.');
-        if (required && !candidates.length) throw Error('Falta una autorización revisada del tercero que incluya estos trabajos.');
+        if (required && !candidates.length) throw Error('Falta una declaración firmada y vigente del tercero que incluya estos trabajos.');
         const net = allocations.reduce((sum, row) => sum + moneyCents(row.amount), 0) / 100;
         attempt.current.payload = { action: 'create', id: attempt.current.id, kind, providerId: provider.id, documentOnly: true,
           date: localToday(), net, allocations, ...(candidates.length === 1 ? { thirdPartyAuthorizationId: candidates[0].id } : {}) };
