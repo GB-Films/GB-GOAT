@@ -35,9 +35,9 @@ export default function Layout() {
   const currentProjectId = projectMatch ? decodeURIComponent(projectMatch[1]) : null;
 
   return (
-    <div className="flex min-h-screen bg-[#e9edf4]">
+    <div className="flex min-h-dvh bg-[#e9edf4]">
       <Sidebar />
-      <main className="flex-1 bg-[radial-gradient(circle_at_top_left,#ffffff_0,#f5f7fb_34%,#e9edf4_100%)] p-2 pb-20 sm:p-3 lg:p-4 lg:pb-4 overflow-auto">
+      <main className="min-w-0 flex-1 bg-[radial-gradient(circle_at_top_left,#ffffff_0,#f5f7fb_34%,#e9edf4_100%)] p-2 pb-20 sm:p-3 lg:p-4 lg:pb-4 overflow-auto">
         <Outlet />
       </main>
       {profile?.role !== 'portal' && !needsTeamOnboarding(profile) && <AssistantChat

@@ -105,6 +105,7 @@ import { PROJECT_STATUSES } from '../lib/projects';
 import { getExpenseInvoices, getInvoiceDocumentKey, type ExpenseInvoiceDocument } from '../lib/invoices';
 import { buildPaymentCashBoxOptions, calculateCashBalances, calculateGeneralCashSummary, GENERAL_CASH_ACCOUNT } from '../lib/cashBoxes';
 import { expenseNeedsProviderRegistration } from '../lib/providerRegistration';
+import { useProviderRegistrationEvidence } from '../hooks/useProviderRegistrationEvidence';
 import { buildLinkedProviderInviteExpiration } from '../lib/providerInvites';
 import { resolveCashMovementTarget } from '../lib/cashMovementTargets';
 import { resolveCashReturnRecipientEmail } from '../lib/cashReturnRecipient';
@@ -739,6 +740,7 @@ export default function ProjectDetail() {
   const [areaExpenses, setAreaExpenses] = useState<AreaExpense[]>([]);
   const [manualProjectDocuments, setManualProjectDocuments] = useState<any[]>([]);
   const [providers, setProviders] = useState<any[]>([]);
+  const registrationEvidence = useProviderRegistrationEvidence(providers, loadScope, user?.uid);
   const [clients, setClients] = useState<any[]>([]);
   const [categories, setCategories] = useState<string[]>(BUDGET_AREAS);
   const [categoryBudgetDraft, setCategoryBudgetDraft] = useState<{ create: boolean; area: string; amount: number | null } | null>(null);
@@ -2617,7 +2619,7 @@ export default function ProjectDetail() {
       alert('No tenés permisos para generar un link de alta de proveedor en esta fila.');
       return false;
     }
-    const provisional = !!currentItem.providerId && expenseNeedsProviderRegistration(currentItem, providers);
+    const provisional = !!currentItem.providerId && expenseNeedsProviderRegistration(currentItem, providers, registrationEvidence);
     if ((currentItem.providerId || currentItem.providerName) && !provisional) {
       alert('Esta fila ya tiene un proveedor asignado.');
       return false;
@@ -4028,7 +4030,7 @@ export default function ProjectDetail() {
       }}
       className={cn(
         'relative rounded-lg border bg-white p-2 shadow-sm transition-colors',
-        expenseNeedsProviderRegistration(item, providers) && '!border-amber-200 !bg-amber-50/60',
+        expenseNeedsProviderRegistration(item, providers, registrationEvidence) && '!border-amber-200 !bg-amber-50/60',
         dragOverExpenseId === item.id
           ? 'border-emerald-400 bg-emerald-50 ring-2 ring-emerald-300'
           : 'border-slate-300',
@@ -4039,7 +4041,7 @@ export default function ProjectDetail() {
         <div className="min-w-0 flex-1">
           <BudgetRowCell
             item={item}
-            providers={providers}
+            providers={providers} registrationEvidence={registrationEvidence}
             onUpdate={onUpdate}
             onDelete={onDelete}
             type="provider"
@@ -6287,7 +6289,7 @@ export default function ProjectDetail() {
                                                       "group relative flex items-center border-b border-slate-50 px-6 py-3 transition-colors last:border-0",
                                                       dragOverExpenseId === item.id
                                                         ? "bg-emerald-50 ring-2 ring-inset ring-emerald-400"
-                                                        : expenseNeedsProviderRegistration(item, providers) ? "bg-amber-50 hover:bg-amber-100/70" : "bg-white hover:bg-slate-50",
+                                                        : expenseNeedsProviderRegistration(item, providers, registrationEvidence) ? "bg-amber-50 hover:bg-amber-100/70" : "bg-white hover:bg-slate-50",
                                                       snapshot.isDragging && DRAGGING_EXPENSE_ROW_CLASS
                                                     )}
                                                   >
@@ -6302,7 +6304,7 @@ export default function ProjectDetail() {
                                                         <div>
                                                           <BudgetRowCell 
                                                             item={item} 
-                                                            providers={providers} 
+                                                            providers={providers} registrationEvidence={registrationEvidence}
                                                             onUpdate={updateBudgetItem} 
                                                             onDelete={deleteBudgetItem} 
                                                             type="provider"
@@ -6801,12 +6803,12 @@ export default function ProjectDetail() {
                           {!isSubcategoryCollapsed && structureDragKind !== 'area-subcategory' && (
                             <div className="space-y-2 bg-slate-100/80 p-2">
                               {subcategoryGroup.expenses.map((item) => (
-                                <div key={`mobile-${item.id}`} className={cn("rounded-lg border border-slate-300 bg-white p-2 shadow-sm", expenseNeedsProviderRegistration(item, providers) && "!border-amber-200 !bg-amber-50/60")}>
+                                <div key={`mobile-${item.id}`} className={cn("rounded-lg border border-slate-300 bg-white p-2 shadow-sm", expenseNeedsProviderRegistration(item, providers, registrationEvidence) && "!border-amber-200 !bg-amber-50/60")}>
                                   <div className="flex items-start justify-between gap-1.5">
                                     <div className="min-w-0 flex-1">
                                       <BudgetRowCell
                                         item={item}
-                                        providers={providers}
+                                        providers={providers} registrationEvidence={registrationEvidence}
                                         onUpdate={updateAreaExpense}
                                         onDelete={deleteAreaExpense}
                                         type="provider"
@@ -7080,7 +7082,7 @@ export default function ProjectDetail() {
                               "relative grid min-w-[1360px] grid-cols-[minmax(160px,1.45fr)_minmax(180px,1.6fr)_78px_100px_76px_92px_96px_104px_150px_78px] px-6 py-3 items-center gap-2 transition-colors group",
                               dragOverExpenseId === item.id
                                 ? "bg-emerald-50 ring-2 ring-inset ring-emerald-400"
-                                : expenseNeedsProviderRegistration(item, providers) ? "bg-amber-50 hover:bg-amber-100/70" : "bg-white hover:bg-slate-50",
+                                : expenseNeedsProviderRegistration(item, providers, registrationEvidence) ? "bg-amber-50 hover:bg-amber-100/70" : "bg-white hover:bg-slate-50",
                               rowSnapshot.isDragging && DRAGGING_EXPENSE_ROW_CLASS
                             )}
                           >
@@ -7094,7 +7096,7 @@ export default function ProjectDetail() {
                                 />
                                 <BudgetRowCell
                                   item={item}
-                                  providers={providers}
+                                  providers={providers} registrationEvidence={registrationEvidence}
                                   onUpdate={updateAreaExpense}
                                   onDelete={deleteAreaExpense}
                                   type="provider"

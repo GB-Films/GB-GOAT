@@ -28,6 +28,8 @@ Cuando un área está activa, los reportes financieros toman sus gastos desde `a
 
 ## Consistencia de UI/UX
 
+- La barra lateral ocupa la altura dinámica visible. Menú y pineados se desplazan en su propio espacio; la cuenta actual y «Cerrar sesión» no se comprimen ni salen del borde inferior. Bajo el umbral de escritorio se ofrece «Cuenta» fuera del desplazamiento horizontal del menú móvil.
+
 - Las páginas principales usan `PageHeader` para jerarquía y espaciado consistentes.
 - Presu Ppal y Áreas usan las mismas celdas de factura/comprobantes y el mismo modal de pagos.
 - Las diferencias entre ambas vistas deben provenir del dominio: Presu Ppal es la referencia administrativa; Áreas es la ejecución delegable.
