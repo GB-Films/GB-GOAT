@@ -98,7 +98,8 @@ import { resolveResultIncidences } from '../lib/resultIncidences';
 import { filterProviderBalances } from '../lib/providerPaymentStatus';
 import { getSubcategoryBudgetCapacity } from '../lib/subcategoryBudget';
 import { moveAreaSubcategory, reorderDisplayedCategories } from '../lib/areaStructureOrder';
-import { readAreaSelectionPreference, resolveAreaSelection, writeAreaSelectionPreference } from '../lib/areaSelectionPreference';
+import { resolveAreaSelection } from '../lib/areaSelectionPreference';
+import { useProjectWorkingView } from '../hooks/useProjectWorkingView';
 import { getReimbursementBalanceCents, getReimbursedCents, isThirdPartyPayment } from '../lib/reimbursements';
 import { getFileExtension, sanitizeFileName, validateSpreadsheetImport } from '../lib/files';
 import { PROJECT_STATUSES } from '../lib/projects';
@@ -127,14 +128,6 @@ const tabs = [
   { id: 'permisos', label: 'Permisos', icon: Settings },
 ];
 
-
-const areaSelectionStorage = (): Storage | null => {
-  try {
-    return typeof window === 'undefined' ? null : window.localStorage;
-  } catch {
-    return null;
-  }
-};
 
 const RESULT_INCIDENCES = [
   { id: 'imprevistos', label: 'Imprevistos' },
@@ -728,11 +721,15 @@ export default function ProjectDetail() {
   const retryProjectLoad = () => setReloadAttempt(attempt => attempt + 1);
   const [showMobileProjectDetails, setShowMobileProjectDetails] = useState(false);
   const [searchParams] = useSearchParams();
-  const [activeTab, setActiveTab] = useState(() => {
+  const [activeTab, setActiveTab] = useProjectWorkingView(user?.uid, id, 'activeTab', () => {
     const requestedTab = searchParams.get('tab') || '';
     return tabs.some((tab) => tab.id === requestedTab) ? requestedTab : 'resumen';
   });
-  const [selectedAreaTabs, setSelectedAreaTabs] = useState<string[]>([]);
+  const requestedTab = searchParams.get('tab') || '';
+  useEffect(() => {
+    if (tabs.some(tab => tab.id === requestedTab)) setActiveTab(requestedTab);
+  }, [id, user?.uid, requestedTab, setActiveTab]);
+  const [selectedAreaTabs, setSelectedAreaTabs] = useProjectWorkingView<string[] | null>(user?.uid, id, 'areas.selection', null);
   
   // Data for specific tabs
   const [budgetItems, setBudgetItems] = useState<BudgetItem[]>([]);
@@ -743,17 +740,20 @@ export default function ProjectDetail() {
   const [categories, setCategories] = useState<string[]>(BUDGET_AREAS);
   const [categoryBudgetDraft, setCategoryBudgetDraft] = useState<{ create: boolean; area: string; amount: number | null } | null>(null);
   const [activeAreas, setActiveAreas] = useState<string[]>([]);
-  const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>({});
-  const [collapsedAreaSubcategories, setCollapsedAreaSubcategories] = useState<Record<string, boolean>>({});
+  const [collapsedBudgetCategories, setCollapsedBudgetCategories] = useProjectWorkingView<Record<string, boolean>>(user?.uid, id, 'budget.collapsed', {});
+  const [collapsedAreas, setCollapsedAreas] = useProjectWorkingView<Record<string, boolean>>(user?.uid, id, 'areas.collapsed', {});
+  const collapsedCategories = activeTab === 'areas' ? collapsedAreas : collapsedBudgetCategories;
+  const setCollapsedCategories = activeTab === 'areas' ? setCollapsedAreas : setCollapsedBudgetCategories;
+  const [collapsedAreaSubcategories, setCollapsedAreaSubcategories] = useProjectWorkingView<Record<string, boolean>>(user?.uid, id, 'areas.subcategories.collapsed', {});
   const [structureDragKind, setStructureDragKind] = useState<'area-category' | 'area-subcategory' | null>(null);
   const [structureDragLayout, setStructureDragLayout] = useState<StructureDragLayout | null>(null);
   const [isSavingAreaStructure, setIsSavingAreaStructure] = useState(false);
   const [isCompactAreas, setIsCompactAreas] = useState(() => (
     typeof window !== 'undefined' && Boolean(window.matchMedia?.('(max-width: 767px)').matches)
   ));
-  const [areaExpenseSort, setAreaExpenseSort] = useState<AreaExpenseSortKey>('manual');
-  const [areaExpenseSearch, setAreaExpenseSearch] = useState('');
-  const [budgetSearch, setBudgetSearch] = useState('');
+  const [areaExpenseSort, setAreaExpenseSort] = useProjectWorkingView<AreaExpenseSortKey>(user?.uid, id, 'areas.sort', 'manual');
+  const [areaExpenseSearch, setAreaExpenseSearch] = useProjectWorkingView(user?.uid, id, 'areas.search', '');
+  const [budgetSearch, setBudgetSearch] = useProjectWorkingView(user?.uid, id, 'budget.search', '');
   const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
   const [cashMovements, setCashMovements] = useState<CashMovement[]>([]);
   const [cashRecipientEmail, setCashRecipientEmail] = useState('');
@@ -1568,13 +1568,7 @@ export default function ProjectDetail() {
       });
 
       setActiveAreas(newActiveAreas);
-      setSelectedAreaTabs((current) => Array.from(new Set([...current, areaName])));
-      if (id && user?.uid) {
-        const preference = readAreaSelectionPreference(areaSelectionStorage(), user.uid, id);
-        if (preference !== null) {
-          writeAreaSelectionPreference(areaSelectionStorage(), user.uid, id, [...preference, areaName]);
-        }
-      }
+      setSelectedAreaTabs((current) => current === null ? null : Array.from(new Set([...current, areaName])));
       if (migratedExpenses.length > 0) {
         setAreaExpenses((current) => [...current, ...migratedExpenses.map((expense) => ({
           ...expense,
@@ -1605,7 +1599,7 @@ export default function ProjectDetail() {
       if (!id) return;
       await updateDoc(doc(db, 'projects', id), { activeAreas: newActiveAreas });
       setActiveAreas(newActiveAreas);
-      setSelectedAreaTabs((current) => current.filter((area) => area !== areaName));
+      setSelectedAreaTabs((current) => current === null ? null : current.filter((area) => area !== areaName));
     } catch { alert('No se pudo desactivar. Revisá si el área tiene documentos o pagos compartidos y actualizá el proyecto.'); }
   };
 
@@ -1735,7 +1729,7 @@ export default function ProjectDetail() {
         budgetRevision: nextRevision,
       } : current);
       setActiveAreas(nextActiveAreas);
-      setSelectedAreaTabs((current) => current.filter((area) => area !== areaName));
+      setSelectedAreaTabs((current) => current === null ? null : current.filter((area) => area !== areaName));
       setAreaExpenses((current) => current.filter((expense) => expense.area !== areaName));
       setBudgetItems((current) => current.filter((item) => item.area !== areaName));
       setCollaborators(nextCollaborators);
@@ -2986,13 +2980,13 @@ export default function ProjectDetail() {
       const subcategoryKey = `${expense.area}__${cleanAreaExpenseSubcategory(expense.subcategory)}`;
       setAreaExpenseSearch('');
       setSelectedAreaTabs([expense.area]);
-      setCollapsedCategories((current) => ({ ...current, [expense.area]: false }));
+      setCollapsedAreas((current) => ({ ...current, [expense.area]: false }));
       setCollapsedAreaSubcategories((current) => ({ ...current, [subcategoryKey]: false }));
       setActiveTab('areas');
     } else {
       const item = target.item as BudgetItem;
       setBudgetSearch('');
-      setCollapsedCategories((current) => ({ ...current, [item.area]: false }));
+      setCollapsedBudgetCategories((current) => ({ ...current, [item.area]: false }));
       setActiveTab('presupuesto');
     }
 
@@ -3429,7 +3423,7 @@ export default function ProjectDetail() {
 
       setCategories(newCategories);
       setActiveAreas(newActiveAreas);
-      setSelectedAreaTabs(current => current.filter(tab => tab !== area));
+      setSelectedAreaTabs(current => current === null ? null : current.filter(tab => tab !== area));
       setBudgetItems(prev => prev.filter(i => i.area !== area));
       setCollaborators(prev => prev.map(col => ({
         ...col,
@@ -3456,10 +3450,10 @@ export default function ProjectDetail() {
   });
 
   useEffect(() => {
-    if (!loading && visibleTabs.length > 0 && !visibleTabs.some(tab => tab.id === activeTab)) {
+    if (loadedProjectScope === loadScope && !loading && visibleTabs.length > 0 && !visibleTabs.some(tab => tab.id === activeTab)) {
       setActiveTab(visibleTabs[0].id);
     }
-  }, [activeTab, loading, visibleTabs]);
+  }, [activeTab, loading, visibleTabs, loadedProjectScope, loadScope, setActiveTab]);
 
   const userAllowedSubcategories = safeArray(userPermissions?.allowedSubcategories);
   const canSeeAssignedSubcategoryInArea = (area?: string | null) => (
@@ -3498,7 +3492,7 @@ export default function ProjectDetail() {
   const filteredBudgetCategories = visibleCategories.filter(area => !budgetSearchTerm || normalizeText(area).includes(budgetSearchTerm) || filteredBudgetItems.some(item => item.area === area));
 
   const visibleCategoryKey = visibleCategories.join('|');
-  const selectedVisibleAreas = selectedAreaTabs.filter((area) => visibleCategories.includes(area));
+  const selectedVisibleAreas = resolveAreaSelection(visibleCategories, selectedAreaTabs);
   const areaExpenseSubcategoriesByArea = React.useMemo(() => {
     const map: Record<string, string[]> = {};
     const stored = project?.areaExpenseSubcategories && typeof project.areaExpenseSubcategories === 'object'
@@ -3532,16 +3526,9 @@ export default function ProjectDetail() {
     return map;
   }, [areaExpenses, project?.areaExpenseSubcategories, project?.areaExpenseSubcategoryBudgets, visibleCategoryKey]);
 
-  useEffect(() => {
-    if (activeTab !== 'areas' || loadedProjectScope !== loadScope || !id || !user?.uid) return;
-    const preference = readAreaSelectionPreference(areaSelectionStorage(), user.uid, id);
-    setSelectedAreaTabs(resolveAreaSelection(visibleCategories, preference));
-  }, [activeTab, visibleCategoryKey, loadedProjectScope, loadScope, id, user?.uid]);
-
   const saveSelectedAreaTabs = (areas: string[]) => {
     const selection = visibleCategories.filter((area) => areas.includes(area));
     setSelectedAreaTabs(selection);
-    if (id && user?.uid) writeAreaSelectionPreference(areaSelectionStorage(), user.uid, id, selection);
   };
 
   const areaDashboardRows = React.useMemo(() => (
