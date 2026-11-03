@@ -22,6 +22,7 @@ export async function portalRequest(
       "prepareThirdParty",
       "saveThirdPartyDetails",
       "registerThirdPartyIntake",
+      "registerProvider",
       "revokeThirdParty",
       "uploadInvoice",
     ].includes(String(input.action))

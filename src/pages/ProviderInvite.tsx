@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { GoogleAuthProvider, onAuthStateChanged, signInWithPopup, User } from 'firebase/auth';
-import { collection, doc, getDoc, runTransaction, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 import { useParams } from 'react-router-dom';
 import { CheckCircle2, Loader2, UserRound, Building2, AlertTriangle, CalendarDays } from 'lucide-react';
 import { auth, db } from '../lib/firebase';
@@ -14,7 +14,6 @@ import { emptyThirdParty, providerFiscalErrors } from '../lib/providerThirdParty
 import { portalRequest } from '../lib/providerPortal';
 
 type ProviderType = 'persona' | 'empresa';
-type DuplicateState = { dni?: boolean; cuit?: boolean };
 
 const emptyForm = {
   type: '' as ProviderType | '',
@@ -126,7 +125,7 @@ const getInviteTargetIssueFromSnapshot = (snapshot: { exists: () => boolean; dat
 // exactamente por qué el alta ya no puede completarse.
 const readInviteTargetIssue = async (inviteData: any) => {
   const targetRef = getInviteTargetRef(inviteData);
-  if (!targetRef) return '';
+  if (!targetRef || inviteData.provisionalProviderId) return '';
   try {
     const targetIssue = getInviteTargetIssueFromSnapshot(await getDoc(targetRef));
     return targetIssue ? PROVIDER_INVITE_MESSAGES[targetIssue] || '' : '';
@@ -338,11 +337,10 @@ export default function ProviderInvite({teamOnboarding}: {teamOnboarding?: {init
   const [invite, setInvite] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitLoading, setSubmitLoading] = useState(false);
-  const [checkingDuplicates, setCheckingDuplicates] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [registeredProviderId, setRegisteredProviderId] = useState('');
+  const [attemptId] = useState(() => crypto.randomUUID());
   const [error, setError] = useState('');
-  const [duplicates, setDuplicates] = useState<DuplicateState>({});
   const [form, setForm] = useState(()=>teamOnboarding ? {...emptyForm,...teamOnboarding.initialForm,type:'persona' as const,email:auth.currentUser?.email?.trim().toLowerCase() || ''} : emptyForm);
   const [ownAccountConfirmed,setOwnAccountConfirmed] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<FormErrors>({});
@@ -372,15 +370,9 @@ export default function ProviderInvite({teamOnboarding}: {teamOnboarding?: {init
     }
   };
 
-  const dniNormalized = useMemo(() => normalizeDigits(form.dni), [form.dni]);
-  const cuitNormalized = useMemo(() => normalizeDigits(form.cuit), [form.cuit]);
   const categories = form.type === 'empresa' ? COMPANY_PROVIDER_CATEGORIES : PRODUCTION_AREA_CATEGORIES;
-  const dniError = duplicates.dni ? 'Ya existe una persona registrada con este DNI.' : fieldErrors.dni;
-  const cuitError = duplicates.cuit
-    ? form.type === 'empresa'
-      ? 'Ya existe una empresa/proveedor registrado con este CUIT.'
-      : 'Ya existe un proveedor registrado con este CUIT/CUIL.'
-    : fieldErrors.cuit;
+  const dniError = fieldErrors.dni;
+  const cuitError = fieldErrors.cuit;
 
   useEffect(() => {
     const loadInvite = async () => {
@@ -428,50 +420,7 @@ export default function ProviderInvite({teamOnboarding}: {teamOnboarding?: {init
     if (token || teamOnboarding) loadInvite();
   }, [token]);
 
-  useEffect(() => {
-    if(teamOnboarding) return; // Server checks canonical identifiers without exposing another supplier's record.
-    let cancelled = false;
-
-    const checkDuplicates = async () => {
-      const checks: Promise<void>[] = [];
-      const next: DuplicateState = {};
-
-      if (form.type === 'persona' && dniNormalized.length >= 7) {
-        checks.push(getDoc(doc(db, 'providerIdentifiers', `dni_${dniNormalized}`)).then((snap) => {
-          next.dni = snap.exists();
-        }));
-      }
-
-      if (cuitNormalized.length >= 10) {
-        checks.push(getDoc(doc(db, 'providerIdentifiers', `cuit_${cuitNormalized}`)).then((snap) => {
-          next.cuit = snap.exists();
-        }));
-      }
-
-      if (checks.length === 0) {
-        setDuplicates({});
-        return;
-      }
-
-      setCheckingDuplicates(true);
-      try {
-        await Promise.all(checks);
-        if (!cancelled) setDuplicates(next);
-      } catch (err) {
-        console.error('Error checking provider duplicates:', err);
-      } finally {
-        if (!cancelled) setCheckingDuplicates(false);
-      }
-    };
-
-    const timer = window.setTimeout(checkDuplicates, 350);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [form.type, dniNormalized, cuitNormalized]);
-
-  function validateForm(values: ProviderForm = form, duplicateState: DuplicateState = duplicates): FormErrors {
+  function validateForm(values: ProviderForm = form): FormErrors {
     const nextErrors: FormErrors = {};
     const requiredMessage = 'Falta completar este campo obligatorio.';
     const normalizedDni = normalizeDigits(values.dni);
@@ -482,11 +431,10 @@ export default function ProviderInvite({teamOnboarding}: {teamOnboarding?: {init
       if (!values.lastName.trim()) nextErrors.lastName = requiredMessage;
       if (!normalizedDni) nextErrors.dni = requiredMessage;
       else if (normalizedDni.length < 7 || normalizedDni.length > 9) nextErrors.dni = 'Ingresá un DNI válido de 7 a 9 números.';
-      else if (duplicateState.dni) nextErrors.dni = 'Ya existe una persona registrada con este DNI.';
     }
     if (values.type === 'empresa' && !values.businessName.trim()) nextErrors.businessName = requiredMessage;
 
-    Object.assign(nextErrors, providerFiscalErrors(values, false, emptyThirdParty, duplicateState.cuit));
+    Object.assign(nextErrors, providerFiscalErrors(values, false, emptyThirdParty, false));
 
     if (!values.email.trim()) nextErrors.email = requiredMessage;
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(values.email.trim())) nextErrors.email = 'Ingresá un email válido.';
@@ -501,8 +449,7 @@ export default function ProviderInvite({teamOnboarding}: {teamOnboarding?: {init
   const updateField = (field: keyof ProviderForm, value: string) => {
     const nextForm = { ...form, [field]: value };
     setForm(nextForm);
-    if (field === 'dni') setDuplicates((current) => ({ ...current, dni: undefined }));
-    if (field === 'cuit') setDuplicates((current) => ({ ...current, cuit: undefined }));
+    setOwnAccountConfirmed(false);
     if (showFieldErrors) setFieldErrors(validateForm(nextForm));
     setError('');
   };
@@ -510,15 +457,11 @@ export default function ProviderInvite({teamOnboarding}: {teamOnboarding?: {init
   const selectType = (type: ProviderType) => {
     setPersonalAccountAccepted(false);
     setForm({ ...emptyForm, type, email: googleUser?.email?.trim().toLowerCase() || '' });
-    setDuplicates({});
+    setOwnAccountConfirmed(false);
     setFieldErrors({});
     setShowFieldErrors(false);
     setError('');
   };
-
-  useEffect(() => {
-    if (showFieldErrors) setFieldErrors(validateForm(form, duplicates));
-  }, [duplicates, showFieldErrors]);
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -560,124 +503,8 @@ export default function ProviderInvite({teamOnboarding}: {teamOnboarding?: {init
         await teamOnboarding.onComplete();
         return;
       }
-      const newProviderId = await runTransaction(db, async (transaction) => {
-        const inviteRef = doc(db, 'providerInvites', token);
-        const inviteSnap = await transaction.get(inviteRef);
-        if (!inviteSnap.exists()) throw new Error('INVITE_NOT_FOUND');
-
-        const inviteData = inviteSnap.data();
-        if (inviteData.used || inviteData.status === 'used') throw new Error('INVITE_USED');
-        if (inviteData.status === 'cancelled') throw new Error('INVITE_CANCELLED');
-        if (isInviteExpired(inviteData)) throw new Error('INVITE_EXPIRED');
-
-        const identifierRefs = [] as Array<{ ref: ReturnType<typeof doc>; kind: 'dni' | 'cuit'; value: string }>;
-        if (form.type === 'persona') {
-          identifierRefs.push({ ref: doc(db, 'providerIdentifiers', `dni_${dniNormalized}`), kind: 'dni', value: dniNormalized });
-        }
-        identifierRefs.push({ ref: doc(db, 'providerIdentifiers', `cuit_${cuitNormalized}`), kind: 'cuit', value: cuitNormalized });
-
-        for (const item of identifierRefs) {
-          const snap = await transaction.get(item.ref);
-          if (snap.exists()) throw new Error(item.kind === 'dni' ? 'DNI_EXISTS' : 'CUIT_EXISTS');
-        }
-
-        const providerRef = doc(collection(db, 'providers'));
-        const commonData = {
-          type: form.type,
-          cuit: form.cuit.trim(),
-          cuitNormalized,
-          email: form.email.trim(),
-          personalGoogleAccount: {
-            version: 'personal-google-v1',
-            uid: account.uid,
-            email: form.email.trim(),
-            personalUse: true,
-            acceptedAt: serverTimestamp(),
-          },
-          phone: form.phone.trim(),
-          address: form.address.trim(),
-          category: form.category,
-          categoryOther: form.category === 'Otra' ? form.categoryOther.trim() : '',
-          bankAccount_cbu: normalizeDigits(form.bankAccount_cbu),
-          bankAccount_alias: form.bankAccount_alias.trim(),
-          source: 'provider_invite',
-          inviteToken: token,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        };
-
-        const providerData = form.type === 'persona'
-          ? {
-              ...commonData,
-              name: form.name.trim(),
-              lastName: form.lastName.trim(),
-              fullName: `${form.name.trim()} ${form.lastName.trim()}`.trim(),
-              dni: form.dni.trim(),
-              dniNormalized,
-              birthDate: form.birthDate || '',
-              dietaryRestriction: form.dietaryRestriction.trim(),
-            }
-          : {
-              ...commonData,
-              name: form.businessName.trim(),
-              lastName: '',
-              businessName: form.businessName.trim(),
-            };
-
-        // Se relee el gasto dentro de la transacción: si cambió mientras el
-        // proveedor completaba el formulario, se explica el motivo exacto.
-        const targetExpenseRef = getInviteTargetRef(inviteData);
-        if (targetExpenseRef) {
-          const targetIssue = getInviteTargetIssueFromSnapshot(await transaction.get(targetExpenseRef));
-          if (targetIssue) throw new Error(targetIssue);
-        }
-
-        transaction.set(providerRef, providerData);
-        for (const item of identifierRefs) {
-          transaction.set(item.ref, {
-            providerId: providerRef.id,
-            providerType: form.type,
-            inviteToken: token,
-            identifierType: item.kind,
-            value: item.value,
-            createdAt: serverTimestamp(),
-          });
-        }
-        if (targetExpenseRef) {
-          const providerName = form.type === 'persona'
-            ? `${form.name.trim()} ${form.lastName.trim()}`.trim()
-            : form.businessName.trim();
-          transaction.update(targetExpenseRef, {
-            providerId: providerRef.id,
-            providerName,
-            providerInviteAssignment: {
-              token,
-              providerId: providerRef.id,
-              assignedAt: serverTimestamp(),
-            },
-            updatedAt: serverTimestamp(),
-          });
-        }
-        if (inviteData.mode === 'multi_use') {
-          transaction.update(inviteRef, {
-            usageCount: (Number(inviteData.usageCount) || 0) + 1,
-            lastUsedAt: serverTimestamp(),
-            lastProviderId: providerRef.id,
-            lastProviderType: form.type,
-            updatedAt: serverTimestamp(),
-          });
-        } else {
-          transaction.update(inviteRef, {
-            used: true,
-            status: 'used',
-            usedAt: serverTimestamp(),
-            providerId: providerRef.id,
-            providerType: form.type,
-          });
-        }
-        return providerRef.id;
-      });
-      setRegisteredProviderId(newProviderId);
+      const result = await portalRequest({ action:'registerProvider', inviteToken:token, attemptId, form, personalAccountAccepted, ownAccountConfirmed });
+      setRegisteredProviderId(result.providerId);
       setSubmitted(true);
     } catch (err: any) {
       console.error('Error submitting provider invite:', err);
@@ -691,10 +518,11 @@ export default function ProviderInvite({teamOnboarding}: {teamOnboarding?: {init
         'not-found': 'La fila de gasto asociada a este link ya no existe. Pedí un link nuevo.',
         'firestore/not-found': 'La fila de gasto asociada a este link ya no existe. Pedí un link nuevo.',
       };
-      const rawDetail = err?.code || err?.message || 'sin detalle';
-      const submitError = PROVIDER_INVITE_MESSAGES[err?.message]
+      const callableMessage = ['functions/failed-precondition','functions/permission-denied','functions/unauthenticated','functions/invalid-argument'].includes(err?.code) ? err.message : '';
+      const submitError = callableMessage
+        || PROVIDER_INVITE_MESSAGES[err?.message]
         || firebaseMessageByCode[err?.code]
-        || `Ocurrió un error inesperado al enviar (${rawDetail}). Los datos siguen cargados: recargá la página o pedí un link nuevo.`;
+        || 'No pudimos confirmar el alta. Tus datos siguen cargados; volvé a intentar con esta misma ventana.';
       if (err?.message === 'DNI_EXISTS' || err?.message === 'CUIT_EXISTS') {
         const field = err.message === 'DNI_EXISTS' ? 'dni' : 'cuit';
         setShowFieldErrors(true);
@@ -903,7 +731,7 @@ export default function ProviderInvite({teamOnboarding}: {teamOnboarding?: {init
                 )}
               </div>
 
-              {checkingDuplicates && <p className="text-xs text-slate-400 font-bold uppercase tracking-widest">Revisando duplicados...</p>}
+
               {error && (
                 <div
                   ref={submitErrorRef}
@@ -915,13 +743,13 @@ export default function ProviderInvite({teamOnboarding}: {teamOnboarding?: {init
                 </div>
               )}
 
-              {teamOnboarding && <div className="space-y-3 rounded-xl bg-blue-50 p-4 text-sm">
-                <label className="flex gap-2"><input type="checkbox" checked={ownAccountConfirmed} onChange={e=>setOwnAccountConfirmed(e.target.checked)} />Soy titular de la cuenta bancaria provista.</label>
-                <p>Administración revisará tu CUIT y cuenta bancaria. Podrás comenzar a trabajar con los permisos asignados al enviar esta ficha.</p>
-              </div>}
+              <div className="space-y-3 rounded-xl bg-blue-50 p-4 text-sm">
+                <label className="flex gap-2"><input type="checkbox" checked={ownAccountConfirmed} onChange={e=>setOwnAccountConfirmed(e.target.checked)} />{teamOnboarding ? 'Soy titular de la cuenta bancaria provista.' : 'Declaro que los datos son correctos y que la cuenta bancaria corresponde a este proveedor.'}</label>
+                <p>{teamOnboarding ? 'Administración revisará tu CUIT y cuenta bancaria. Podrás comenzar a trabajar con los permisos asignados al enviar esta ficha.' : 'Si Gran Berta ya cargó una ficha provisoria con tu DNI o CUIT, completaremos esa misma ficha y conservaremos tus trabajos.'}</p>
+              </div>
               <button
                 type="submit"
-                disabled={submitLoading || checkingDuplicates || duplicates.dni || duplicates.cuit}
+                disabled={submitLoading || !ownAccountConfirmed}
                 className="w-full px-5 py-4 rounded-xl bg-black text-white text-xs font-bold uppercase tracking-widest disabled:bg-slate-300 disabled:cursor-not-allowed hover:bg-slate-800 transition-colors flex items-center justify-center gap-2"
               >
                 {submitLoading && <Loader2 className="w-4 h-4 animate-spin" />}

@@ -781,7 +781,7 @@ try {
   assert.deepEqual((await db.doc("projects/project/areaExpenses/new-person-work").get()).data().paymentHistory, []);
   await assert.rejects(register({ attemptId: "new-person-again" }), /enlace no está disponible/);
   await db.doc("providerInvites/intake-duplicate").set({ status: "pending", used: false });
-  await assert.rejects(register({ inviteToken: "intake-duplicate" }), /DNI/);
+  await assert.rejects(register({ inviteToken: "intake-duplicate" }), /ya tiene un alta/);
   const general = await register({ inviteToken: "intake-duplicate", attemptId: "general-legacy", form: { ...intakeForm, dni: "34567890" } });
   assert.deepEqual((await db.doc(`providerPortalIntakeRequests/${general.providerId}`).get()).data().workKeys, [], "a general legacy invitation never grants a global authorization");
   await db.doc("providerInvites/intake-multi").set({ status: "pending", used: false, mode: "multi_use", usageCount: 0 });
@@ -854,8 +854,11 @@ try {
   await signActual(confirmation);
   const confirmationBefore = (await confirmationProvider.get()).data();
   await own({ action: 'completeDeclaration', providerId: 'legacy-confirmation', declarationId: confirmation.id });
-  assert.deepEqual((await confirmationProvider.get()).data(), confirmationBefore, 'confirmar no modifica la ficha ni las cuentas');
+  const {registration:confirmedRegistration,...confirmedProfile}=(await confirmationProvider.get()).data();
+  assert.deepEqual(confirmedProfile, confirmationBefore, 'confirmar no modifica los datos, las cuentas ni su revisión; sólo registra que el alta quedó completa');
+  assert.equal(confirmedRegistration.status,'complete');
   assert.equal((await confirmationOverview()).profileConfirmation.status, 'confirmed');
+  assert.equal((await db.doc('providers/legacy-confirmation').get()).data().registration.status, 'complete');
   await own({ action: 'completeDeclaration', providerId: 'legacy-confirmation', declarationId: confirmation.id });
   assert.equal((await confirmationOverview()).profileConfirmation.status, 'confirmed', 'reintentar no duplica ni vuelve a pedir la firma');
   const correction = await own({ ...confirmationInput, attemptId: 'confirm-with-correction', changes: { address: 'Nuevo domicilio', bankAccount_alias: 'cuenta.corregida' } });

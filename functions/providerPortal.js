@@ -5,6 +5,8 @@ const { createAccountChoiceService } = require('./providerAccountChoice');
 const { createTeamOnboarding } = require('./teamOnboarding');
 const { hasTeamWorkAccess } = require('./teamWorkAccess');
 const { createThirdPartyIntake } = require("./providerIntake");
+const { createProviderRegistration } = require('./providerRegistration');
+const { rememberSignedRegistration } = require('./providerRegistrationEvidence');
 const { activatePersonalMembership, attachVerifiedIntakeMembership } = require('./providerPortalAccess');
 const { DECLARED_COMPANY_EVIDENCE } = require('./providerEvidence');
 const { companyRepresentation, assertCompanyAccount, DECLARED_COMPANY_VERSION } = require('./providerRepresentation');
@@ -53,6 +55,7 @@ function createProviderPortalHandler({
   const accountChoices = createAccountChoiceService({ db, timestamp, clock, verifyGoogleToken });
   const teamOnboarding = createTeamOnboarding({ db, timestamp, clock });
   const registerThirdPartyIntake = createThirdPartyIntake({ db, timestamp, clock });
+  const registerProvider = createProviderRegistration({ db, timestamp, clock });
   const preferencesRef = (providerId, actor) => db.doc(`providerPortalPreferences/${hash({ providerId, uid: actor.uid })}`);
   async function saveThirdPartyDetails(providerId, actor, input) {
     const party = thirdPartyDetails(input);
@@ -248,6 +251,10 @@ function createProviderPortalHandler({
       });
     }
     await config();
+    if (input.action === 'registerProvider') {
+      identity(request, true);
+      return registerProvider(actor, input);
+    }
     if (input.action === 'teamBootstrap') return teamOnboarding.bootstrap(actor, input);
     if (input.action === 'teamComplete') return teamOnboarding.submit(actor, input);
     if (input.action === "registerThirdPartyIntake") {
@@ -388,6 +395,8 @@ function createProviderPortalHandler({
       ]);
       if (financial.size > 500 || declarations.size > 500)
         fail("El historial requiere paginación.");
+      if (provider.registration?.status !== 'complete') await rememberSignedRegistration({db,timestamp,actor,providerId,
+        declarations:declarations.docs.map(row=>({id:row.id,...row.data()}))});
       // Only this provider's scoped data leave the boundary, never arbitrary financial fields or file tokens.
       return {
         provider: M.publicProfile(provider),

@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { Copy, Link2, Plus } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { isInternalBudgetEstimate } from '../../lib/internalBudgetEstimate';
+import { expenseNeedsProviderRegistration } from '../../lib/providerRegistration';
 import { useParams } from 'react-router-dom';
 import {
   formatIdentifier,
@@ -106,6 +107,7 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
     return searchMatches.length === 1 ? searchMatches[0] : null;
   })();
   const providerIdentifiers = inferLegacyIdentifiers(provider);
+  const provisional = expenseNeedsProviderRegistration(item, providers || []);
   const providerCuitRaw = normalizeDigits(provider?.cuit || providerIdentifiers.cuitNormalized);
   const providerCuit = formatIdentifier(providerCuitRaw) || '';
   const providerCbu = provider?.bankAccount_cbu || provider?.bankAccount || '';
@@ -140,12 +142,20 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
 
   if (type === 'provider') {
     return (
-      <div ref={providerCellRef} className="relative group/provider">
+      <div ref={providerCellRef} className={cn('relative group/provider', provisional && 'rounded-lg border border-amber-200 bg-amber-50 p-2')}>
+        {provisional && <div className="mb-1 flex flex-wrap items-center gap-2 text-[10px] font-semibold text-amber-800">
+          <span>Alta pendiente · ficha provisoria</span>
+          {provider && item.providerId === provider.id && onCreateProviderInvite && !disabled && <button type="button"
+            disabled={creatingProviderInvite} onClick={() => onCreateProviderInvite(item)}
+            className="rounded border border-amber-300 bg-white px-2 py-1 transition-colors hover:bg-amber-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-500 disabled:opacity-50">
+            {creatingProviderInvite ? 'Generando…' : 'Copiar link de alta'}
+          </button>}
+        </div>}
         {item.providerId || item.providerName ? (
           <div className="flex items-center gap-2">
             <div className={cn(
               "w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-black shrink-0",
-              isInvalidProvider ? "bg-red-500 text-white animate-pulse" : "bg-slate-900 text-white"
+              provisional ? "bg-amber-200 text-amber-950" : isInvalidProvider ? "bg-red-500 text-white animate-pulse" : "bg-slate-900 text-white"
             )}>
               {item.providerName?.[0] || '?'}
             </div>
@@ -160,7 +170,7 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
               className={cn(
                 "min-w-0 font-bold uppercase truncate text-[10px] text-left",
                 canShowProviderInfo && "hover:underline decoration-dotted cursor-pointer",
-                isInvalidProvider ? "text-red-500 underline decoration-dotted" : "text-slate-900",
+                provisional ? "text-amber-950" : isInvalidProvider ? "text-red-500 underline decoration-dotted" : "text-slate-900",
                 !canShowProviderInfo && "cursor-default"
               )}
               title={canShowProviderInfo ? "Ver CUIT / CBU / Alias" : undefined}

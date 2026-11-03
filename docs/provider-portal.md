@@ -4,6 +4,22 @@ Implementación en dos repositorios: GOAT y GB Sign. El código no activa usuari
 
 ## Experiencia
 
+### Fichas provisorias y alta sobre la misma identidad
+
+Una ficha manual/importada no acredita un alta propia, aunque tenga banco o correo de contacto. En Presu Ppal y Áreas se señala en amarillo **Alta pendiente · ficha provisoria** hasta que tenga evidencia de alta (`personalGoogleAccount`, origen de alta propia anterior o `registration.status: complete`). No se infiere un alta por tener CBU, un nombre o un correo escrito por producción.
+
+El formulario público usa `providerPortal.registerProvider`, con Google verificado, sesión reciente, conformidad de cuenta personal y responsabilidad por datos/cuenta bancaria. El servidor resuelve DNI/CUIT en índices y catálogo histórico (incluido `dni_cuit` con separadores, DNI de 7–9 números y CUIT de 11). Una coincidencia única provisoria completa **el mismo ID**, preservando `createdAt`, creador, demás campos y todos los vínculos; guarda una auditoría privada del estado anterior. El SDK público ya no puede crear proveedores directamente. No se agrega revisión administrativa al alta ordinaria ni se modifican las declaraciones firmadas de actualización de datos.
+
+Cada gasto con proveedor provisorio permite copiar un link personal de alta, también si tiene pagos. Ese link fija proveedor y trabajo; únicamente completa la ficha y no escribe la fila del gasto. El link general también reutiliza una ficha provisoria si coincide el DNI/CUIT. Una ficha sin identificadores puede completarse con el link específico de su gasto; un nombre igual por sí solo nunca fusiona registros. Si el gasto tiene sólo texto y ningún ID, producción debe asociar primero la ficha correcta; el alta no reasigna un gasto pagado por semejanza de nombre.
+
+Si ya existe un acceso preparado, sólo el mismo correo Google puede completarlo. Una membresía propia activa/pendiente es compatible; membresías ajenas o revocadas se conservan y bloquean el alta. Las fichas con alta propia anterior se actualizan desde Mi proveedor, no mediante otra alta. DNI/CUIT que apuntan a registros distintos, índices huérfanos/malformados y tipos incompatibles se detienen sin consumir el link ni sobrescribir datos; requieren corregir la identidad, no aprobar los datos nuevos. No se fusionan automáticamente dos fichas distintas con historial.
+
+Una confirmación antigua de datos aplicada con prueba de firma completa también acredita el alta. El formulario público la detecta y exige que los cambios posteriores sigan el circuito firmado. Al consultarla su titular desde Mi proveedor se guarda únicamente la marca de alta, revalidando declaración y membresía; no se reescriben sus datos, pagos ni originales. Las nuevas confirmaciones firmadas guardan esa marca al aplicarse.
+
+La transacción conserva el consumo único del link y una constancia por intento: reintentar el mismo envío devuelve el resultado anterior; cambiar sus datos no reescribe un alta ya guardada. Dos cuentas simultáneas no pueden reclamar la misma ficha. La empresa queda pendiente de su declaración de representación, con poder opcional, antes de firmar contratos. El alta no crea usuarios internos ni permisos de producción. El camino antiguo de borradores de tercero reutiliza la misma resolución, conserva el banco propio obligatorio y guarda esos datos de tercero en su colección privada.
+
+Pruebas: `tests/providerIntake.emulator.mjs` comprueba las transacciones reales y las denegaciones del SDK con datos ficticios. El catálogo y la lectura de membresías se limitan a 10.000 documentos cada uno, sin exigir un nuevo índice de colección agrupada; superar el límite detiene el alta y exige paginación, nunca supone que una lectura truncada está completa. Para activar este cambio se necesita una publicación expresamente autorizada de backend, frontend y reglas; el código local no modifica fichas reales ni activa el flujo.
+
 `#/mi-proveedor` muestra la cuenta autenticada y el proveedor representado. Una cuenta puede tener varias representaciones expresamente asignadas. Su selector no concede permisos. El perfil externo nunca se guarda en `users` como un colaborador interno.
 
 Las cinco secciones son Trabajos, Facturas, Pagos y retenciones, Documentos y Mis datos. Incluyen documentos cargados por otras personas, pagos simples y aplicaciones de pagos distribuidos. El comprobante original y sus aplicaciones se distinguen; no se suman otra vez. Un trabajo marcado pagado sin historial se identifica como tal y no se reconstruye un pago ficticio.
