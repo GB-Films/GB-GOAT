@@ -645,7 +645,7 @@ export function PaymentModal({
             </div>
           </div>
 
-          {item.thirdPartyPayoutRequired && <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"><p className="mb-2">Este trabajo utiliza una autorización de facturación y cobro por un tercero. El pago debe registrarse con su factura y cuenta aprobadas desde la ficha completa.</p><ProviderProfileButton providerId={item.providerId}>Gestionar factura y pago del tercero</ProviderProfileButton></div>}
+          {item.thirdPartyPayoutRequired && <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"><p className="mb-2">Este trabajo tiene una declaración firmada de facturación y cobro por un tercero. Registrá el pago con su factura y la cuenta declarada desde la ficha completa.</p><ProviderProfileButton providerId={item.providerId}>Gestionar factura y pago del tercero</ProviderProfileButton></div>}
           {canManagePayments && !item.thirdPartyPayoutRequired && (
             <form onSubmit={async (e) => {
               e.preventDefault();
