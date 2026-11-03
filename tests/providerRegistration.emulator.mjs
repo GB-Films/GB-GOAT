@@ -80,7 +80,7 @@ try {
   const signedData=input('already-signed');await seed('already-signed');
   await db.doc('providers/already-signed').set({type:'persona',dni:signedData.form.dni});
   await db.doc('providerPortalUsers/person/memberships/already-signed').set({providerId:'already-signed',email:'person@example.test',status:'active'});
-  await db.doc('providerPortalDeclarations/already-signed').set({providerId:'already-signed',kind:'profile',status:'applied',proof:{complete:true},actor:{uid:'person',email:'person@example.test'},content:{confirmation:{version:'profile-confirmation-v1'}}});
+  await db.doc('providerPortalDeclarations/already-signed').set({providerId:'already-signed',kind:'profile',status:'applied',proof:{complete:true},actor:{uid:'person',email:'person@example.test'},content:{confirmation:{version:'profile-confirmation-v1',accessEmail:'person@example.test'}}});
   await denied(signedData,/confirmados con firma/);
   const {rememberSignedRegistration}=require('../functions/providerRegistrationEvidence');
   await rememberSignedRegistration({db,timestamp:()=>admin.firestore.FieldValue.serverTimestamp(),actor:{uid:'person',email:'person@example.test'},providerId:'already-signed',declarations:[{id:'already-signed',...(await db.doc('providerPortalDeclarations/already-signed').get()).data()}]});

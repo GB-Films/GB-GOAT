@@ -3,9 +3,10 @@ function signedProfileRegistration(declaration, actor) {
   if (declaration?.kind !== 'profile' || declaration.status !== 'applied' || declaration.proof?.complete !== true
     || declaration.content?.confirmation?.version !== VERSION) return false;
   if (!actor) return true;
-  return declaration.actor?.uid === actor.uid && declaration.actor?.email === actor.email
-    || declaration.accountChoiceApplied?.authority === 'signed_verified_accounts'
-      && declaration.accountChoiceApplied.selected?.uid === actor.uid && declaration.accountChoiceApplied.selected?.email === actor.email;
+  return declaration.actor?.uid === actor.uid && declaration.actor?.email === actor.email && declaration.content.confirmation.accessEmail === actor.email
+    || (declaration.accountChoiceApplied?.authority === 'signed_verified_accounts' || declaration.review?.decision === 'approved')
+      && declaration.accountChoiceApplied?.selected?.uid === actor.uid && declaration.accountChoiceApplied.selected?.email === actor.email
+      && declaration.content.accountChoice?.selected?.uid === actor.uid && declaration.content.accountChoice.selected?.email === actor.email;
 }
 // An already signed legacy confirmation is an intake, never a provisional record
 // that can be overwritten through an unsigned signup. Only add its lifecycle marker.

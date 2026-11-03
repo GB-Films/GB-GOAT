@@ -916,6 +916,7 @@ export default function ProjectDetail() {
     if (!id || !user) return;
     let cancelled = false;
     let stopProviders = () => {};
+    let providerWatchFailed = false;
     setAuxiliaryLoad({ scope: loadScope, ready: false, error: '' });
     setProviders([]); setCollaborators([]); setManualProjectDocuments([]);
     void Promise.all([
@@ -926,12 +927,13 @@ export default function ProjectDetail() {
           if (!cancelled) setProviders(snapshot.docs.map(d => ({ id:d.id, ...d.data() })));
           resolve(snapshot);
         }, error => {
+          providerWatchFailed = true;
           if (!cancelled) setAuxiliaryLoad({ scope:loadScope,ready:false,error:'No se pudieron actualizar los proveedores. Volvé a intentar.' });
           reject(error);
         });
       }),
     ]).then(([colSnap, dSnap]) => {
-      if (cancelled) return;
+      if (cancelled || providerWatchFailed) return;
       setManualProjectDocuments(dSnap.docs.map(d => ({ id: d.id, ...d.data() })));
       setCollaborators(colSnap.docs.map(d => {
         const data = d.data() as any;
@@ -2632,7 +2634,7 @@ export default function ProjectDetail() {
       }
     };
 
-    const existingInvite = getPendingProviderInviteLink(currentItem);
+    const existingInvite = provisional ? null : getPendingProviderInviteLink(currentItem);
     if (existingInvite?.link || existingInvite?.token) {
       const existingLink = existingInvite.link || getPublicProviderInviteLink(existingInvite.token);
       const copied = await copyInviteLink(existingLink);
