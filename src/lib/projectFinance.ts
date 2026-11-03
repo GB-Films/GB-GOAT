@@ -1,6 +1,7 @@
 import { resolveResultIncidences } from './resultIncidences';
 import { getCompanyPaid, getItemReimbursementBalance } from './reimbursements';
-import { isInternalBudgetEstimate, effectiveBudgetEstimates } from './internalBudgetEstimate';
+import { isInternalBudgetEstimate } from './internalBudgetEstimate';
+import { categoryBudgetMap, getCategoryBudget, getAssignedBudgetTotal } from './categoryBudgets';
 
 export type ProjectExpenseCollection = 'budgetItems' | 'areaExpenses';
 export type ProjectExpenseSource = 'budget' | 'area';
@@ -43,12 +44,11 @@ export const calculateProjectResult = (project: any, budgetItems: any[], areaExp
     ...configuredCategories,
     ...budgetItems.map((item) => item?.area).filter(Boolean),
     ...areaExpenses.map((item) => item?.area).filter(Boolean),
+    ...Object.keys(categoryBudgetMap(project)),
   ]));
   const categoryTotals = categories
     .map((area) => {
-      const assigned = effectiveBudgetEstimates(budgetItems)
-        .filter((item) => item?.area === area)
-        .reduce((total, item) => total + getItemTotal(item), 0);
+      const assigned = getCategoryBudget(project, budgetItems, area);
       const actual = areaExpenses
         .filter(item => !isInternalBudgetEstimate(item))
         .filter((item) => item?.area === area)
@@ -87,7 +87,7 @@ export const calculateProjectResult = (project: any, budgetItems: any[], areaExp
   };
 };
 export const calculateProjectFinance = (project: any, budgetItems: any[], areaExpenses: any[]) => {
-  const committedBudget = effectiveBudgetEstimates(budgetItems).reduce((total, item) => total + getItemTotal(item), 0);
+  const committedBudget = getAssignedBudgetTotal(project, budgetItems);
   const pendingUsdBudget = project?.controlTotalContractCurrency === 'USD' && Number(project?.budgetTotal) === 0;
   const budgetTotal = pendingUsdBudget || Number(project?.crmProjectImportVersion) > 0 ? Number(project?.budgetTotal) || 0 : Number(project?.budgetTotal) || committedBudget;
   const entries = getProjectExpenseEntries(project, budgetItems, areaExpenses);

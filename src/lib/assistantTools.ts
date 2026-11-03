@@ -22,8 +22,9 @@ import { storage } from './firebase';
 import { getExpenseInvoices } from './invoices';
 import { sanitizeFileName } from './files';
 import { validateMaxUploadSize } from './uploadLimits';
-import { calculateProjectResult } from './projectFinance';
+import { calculateProjectResult, calculateProjectFinance } from './projectFinance';
 import { getSubcategoryBudgetCapacity } from './subcategoryBudget';
+import { getCategoryBudget, getAssignedBudgetTotal, resolveCategoryBudget, renamedCategoryBudgets, removedCategoryBudgets } from './categoryBudgets';
 import { collection, doc, getDocs, runTransaction, serverTimestamp } from 'firebase/firestore';
 import { db } from './firebase';
 import { cleanAreaExpenseSubcategory } from './projectAccess';
@@ -115,6 +116,7 @@ export type AssistantProjectContext = {
     status?: string;
     budgetTotal?: number;
     budgetRevision?: number;
+    categoryBudgets?: Record<string, number>;
     shootingStartDate?: string;
     shootingEndDate?: string;
     location?: string;
@@ -351,9 +353,10 @@ export const buildAssistantTools = ({
         const context = resolved.context;
         const budgetItems = visibleBudgetItems(context);
         const areaExpenses = visibleAreaExpenses(context);
-        const budgetTotal = budgetItems.reduce((total, item) => total + (Number(item.total) || 0), 0);
+        const budgetTotal = getAssignedBudgetTotal(context.meta, budgetItems, context.capabilities.isProjectAdmin ? undefined : context.capabilities.access.allowedCategories);
         const expenseTotal = areaExpenses.reduce((total, item) => total + (Number(item.total) || 0), 0);
-        const paidTotal = [...budgetItems, ...areaExpenses].reduce((total, item) => total + paidAmount(item), 0);
+        const finance = calculateProjectFinance({ ...context.meta, activeAreas: context.activeAreas }, budgetItems, areaExpenses);
+        const paidTotal = finance.paid;
         return {
           proyecto: context.projectName || context.projectId,
           presupuestoPrincipal: round2(budgetTotal),
@@ -361,7 +364,7 @@ export const buildAssistantTools = ({
           gastosDeAreas: round2(expenseTotal),
           gastosCargados: areaExpenses.length,
           pagosRegistrados: round2(paidTotal),
-          saldoPendiente: round2(budgetTotal + expenseTotal - paidTotal),
+          saldoPendiente: round2(finance.debt),
           areasActivas: context.activeAreas,
           areasVisibles: context.capabilities.areas.map((scope) => scope.area),
         };
@@ -458,7 +461,7 @@ export const buildAssistantTools = ({
           current.gastos += 1;
           groups.set(key, current);
         });
-        const assignedTotal = assigned.reduce((total, item) => total + (Number(item.total) || 0), 0);
+        const assignedTotal = context.capabilities.isProjectAdmin || context.capabilities.access.allowedCategories.includes(scope.area) ? getCategoryBudget(context.meta, assigned, scope.area) : 0;
         const spentTotal = expenses.reduce((total, item) => total + (Number(item.total) || 0), 0);
         return {
           proyecto: context.projectName || context.projectId,
@@ -1212,7 +1215,7 @@ export const buildAssistantTools = ({
               .filter((row) => row.area === item.area)
               .reduce((total, row) => total + (row.id === item.id ? updates.total : (Number(row.total) || 0)), 0);
             const capacity = getSubcategoryBudgetCapacity(
-              nextCategoryBudget,
+              resolveCategoryBudget(projectSnapshot.data(), item.area, nextCategoryBudget),
               projectSnapshot.data().areaExpenseSubcategoryBudgets || {},
               item.area,
             );
@@ -1284,7 +1287,7 @@ export const buildAssistantTools = ({
               .filter((row) => row.area === item.area && row.id !== item.id)
               .reduce((total, row) => total + (Number(row.total) || 0), 0);
             const capacity = getSubcategoryBudgetCapacity(
-              remainingSourceBudget,
+              resolveCategoryBudget(projectSnapshot.data(), item.area, remainingSourceBudget),
               projectSnapshot.data().areaExpenseSubcategoryBudgets || {},
               item.area,
             );
@@ -1350,7 +1353,7 @@ export const buildAssistantTools = ({
               .filter((row) => row.area === item.area && row.id !== item.id)
               .reduce((total, row) => total + (Number(row.total) || 0), 0);
             const capacity = getSubcategoryBudgetCapacity(
-              remainingCategoryBudget,
+              resolveCategoryBudget(projectSnapshot.data(), item.area, remainingCategoryBudget),
               projectSnapshot.data().areaExpenseSubcategoryBudgets || {},
               item.area,
             );
@@ -1567,17 +1570,20 @@ export const buildAssistantTools = ({
       rows: Array<{ id: string; area?: string; total?: number }>,
       collectionName: 'budgetItems' | 'areaExpenses',
       reason: string,
+      removedCategory?: string,
     ) => {
       const projectRef = doc(db, 'projects', context.projectId);
       await runTransaction(db, async (transaction) => {
         const projectSnapshot = await transaction.get(projectRef);
         if (!projectSnapshot.exists()) throw new Error('El proyecto ya no existe.');
+        if (collectionName === 'budgetItems' && (Number(projectSnapshot.data().budgetRevision) || 0) !== (context.meta.budgetRevision || 0)) throw Error('El presupuesto cambió. Volvé a consultar el proyecto.');
         rows.forEach((row) => {
           transaction.delete(doc(db, 'projects', context.projectId, collectionName, row.id));
         });
         writeAudit(transaction, context, rows, collectionName, reason);
         if (collectionName === 'budgetItems') {
           transaction.update(projectRef, {
+            ...(removedCategory ? { categoryBudgets: removedCategoryBudgets(projectSnapshot.data(), removedCategory) } : {}),
             budgetRevision: (Number(projectSnapshot.data().budgetRevision) || 0) + 1,
             updatedAt: serverTimestamp(),
           });
@@ -1645,6 +1651,7 @@ export const buildAssistantTools = ({
           if ((Array.isArray(projectSnapshot.data().activeAreas) ? projectSnapshot.data().activeAreas : []).includes(current)) {
             throw new Error('El área quedó activa mientras se renombraba.');
           }
+          if ((Number(projectSnapshot.data().budgetRevision) || 0) !== (context.meta.budgetRevision || 0)) throw Error('El presupuesto cambió. Volvé a consultar el proyecto.');
           items.forEach((item) => {
             transaction.update(doc(db, 'projects', context.projectId, 'budgetItems', item.id), {
               area: nextName,
@@ -1653,7 +1660,8 @@ export const buildAssistantTools = ({
           });
           transaction.update(projectRef, {
             categories: context.categories.map((category) => (category === current ? nextName : category)),
-            budgetRevision: (Number(projectSnapshot.data().budgetRevision) || 0) + (items.length > 0 ? 1 : 0),
+            categoryBudgets: renamedCategoryBudgets(projectSnapshot.data(), current, nextName),
+            budgetRevision: (Number(projectSnapshot.data().budgetRevision) || 0) + 1,
             updatedAt: serverTimestamp(),
           });
           collaboratorsToUpdate.forEach((collaborator) => {
@@ -1693,7 +1701,7 @@ export const buildAssistantTools = ({
         }
         if (items.length > 400) return { error: 'La categoría tiene demasiadas partidas para borrarla desde el asistente; hacelo desde la app.' };
 
-        await deleteRowsInTransaction(context, items, 'budgetItems', 'category_deleted');
+        await deleteRowsInTransaction(context, items, 'budgetItems', 'category_deleted', current);
         await updateDoc(doc(db, 'projects', context.projectId), {
           categories: context.categories.filter((category) => category !== current),
           updatedAt: serverTimestamp(),
@@ -1772,9 +1780,7 @@ export const buildAssistantTools = ({
         const budget = args?.presupuesto !== undefined && args?.presupuesto !== null
           ? Math.max(0, Number(args.presupuesto) || 0)
           : budgetAssigned ? Math.max(0, Number(typeof previousBudget === 'object' ? previousBudget?.budget : previousBudget) || 0) : 0;
-        const categoryBudget = context.budgetItems
-          .filter((item) => item.area === area)
-          .reduce((total, item) => total + (Number(item.total) || 0), 0);
+        const categoryBudget = getCategoryBudget(context.meta, context.budgetItems, area);
         const capacity = getSubcategoryBudgetCapacity(
           categoryBudget,
           currentBudgets,
@@ -1813,6 +1819,10 @@ export const buildAssistantTools = ({
         await runTransaction(db, async (transaction) => {
           const projectSnapshot = await transaction.get(projectRef);
           if (!projectSnapshot.exists()) throw new Error('El proyecto ya no existe.');
+          if ((Number(projectSnapshot.data().budgetRevision) || 0) !== (context.meta.budgetRevision || 0)
+            || JSON.stringify(projectSnapshot.data().areaExpenseSubcategoryBudgets || {}) !== JSON.stringify(context.meta.areaExpenseSubcategoryBudgets || {})) throw Error('El presupuesto cambió. Volvé a consultar el proyecto.');
+          const currentCapacity = getSubcategoryBudgetCapacity(getCategoryBudget(projectSnapshot.data(), context.budgetItems, area), projectSnapshot.data().areaExpenseSubcategoryBudgets || {}, area, original ? subcategoryKeyOf(area, original) : '');
+          if (budgetAssigned && currentCapacity.exceeds(budget)) throw Error('El presupuesto de las subcategorías supera el de la categoría.');
           affectedExpenses.forEach((expense) => {
             transaction.update(doc(db, 'projects', context.projectId, 'areaExpenses', expense.id), {
               subcategory: name,
