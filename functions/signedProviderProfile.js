@@ -49,6 +49,9 @@ async function applySignedProviderProfile({ db, tx, ref, declaration, providerRe
       status: provider.type === 'empresa' && !authorized ? 'needs_confirmation' : 'active', representation: provider.type === 'empresa' ? authorized ? 'authorized_representative' : '' : 'own',
       source: 'verified_account_change', accountChangeDeclarationId: ref.id, accountVerifiedAt: timestamp() });
   }
+  if (declaration.content.confirmation && provider.registration?.status !== 'complete') changes.registration = {
+    status:'complete',method:'signed_profile_confirmation',declarationId:ref.id,completedByUid:choice?.selected?.uid || actor.uid,completedAt:timestamp(),
+  };
   if (Object.keys(changes).length) tx.update(providerRef, { ...changes, updatedAt: timestamp(), portalRevision: Number(provider.portalRevision || 0) + 1 });
   tx.create(db.collection('providerPortalAudit').doc(), { action: 'signed_profile_applied', providerId: declaration.providerId, declarationId: ref.id,
     actor, before: M.publicProfile(provider), after: M.publicProfile({ ...provider, ...changes }), at: timestamp() });

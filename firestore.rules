@@ -1792,7 +1792,10 @@ service cloud.firestore {
 
     match /providers/{providerId} {
       allow read: if isInternalUser();
-      allow create: if (canCreateGlobalProvider() && !request.resource.data.keys().hasAny(['personalGoogleAccount'])) || publicProviderCreateIsValid(providerId);
+      // Public intake now runs in providerPortal.registerProvider. The server
+      // resolves legacy/provisional identities before committing atomically.
+      // Old clients must not bypass that resolution by creating a second ficha.
+      allow create: if canCreateGlobalProvider() && !request.resource.data.keys().hasAny(['personalGoogleAccount']);
       allow update: if canEditGlobalProvider()
         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['personalGoogleAccount'])
         && (!resource.data.keys().hasAny(['personalGoogleAccount']) || request.resource.data.email == resource.data.email);
