@@ -15,6 +15,7 @@ const { applySignedCompanyRepresentation } = require('./signedCompanyRepresentat
 const { thirdPartyDeclaration, thirdPartyDetails } = require('./providerThirdPartyDeclaration');
 const { applySignedProviderProfile } = require('./signedProviderProfile');
 const { createSignedThirdPartyService, needsThirdPartyApplication } = require('./signedThirdPartyDeclaration');
+const { administrativeRecordRef, isAdministrativeRecord, assertProviderPortalAllowed } = require('./providerAdministrativeRecords');
 const { fail, text, email, id, list, hash } = M;
 const internalRoles = [
   "admin",
@@ -93,6 +94,7 @@ function createProviderPortalHandler({
         "permission-denied",
         "No representás a este proveedor.",
       );
+    await assertProviderPortalAllowed(db, providerId);
     return row;
   };
   async function works(providerId) {
@@ -288,10 +290,10 @@ function createProviderPortalHandler({
         );
         const prior = await tx.get(ref);
         if (prior.exists) return;
-        const [providerRow, preparationRow] = await Promise.all([tx.get(db.doc(`providers/${providerId}`)), tx.get(db.doc("providerPortalConfig/accessPreparation"))]);
+        const [providerRow, preparationRow, administrativeRow] = await Promise.all([tx.get(db.doc(`providers/${providerId}`)), tx.get(db.doc("providerPortalConfig/accessPreparation")), tx.get(administrativeRecordRef(db, providerId))]);
         const provider = providerRow.data(), preparation = preparationRow.data();
         if (
-          !provider ||
+          !provider || isAdministrativeRecord(administrativeRow.data(), providerId) ||
           candidate.generation !== preparation?.generation ||
           email(provider.portalAccessEmail) !== actor.email
         )
@@ -319,6 +321,7 @@ function createProviderPortalHandler({
           return null;
         const p = (await db.doc(`providers/${row.id}`).get()).data();
         if (!p) return null;
+        if (isAdministrativeRecord((await administrativeRecordRef(db, row.id).get()).data(), row.id)) return null;
         if (m.status === 'needs_confirmation' && p.type === 'persona') {
           m = await activatePersonalMembership({ db, actor, providerId: row.id, timestamp });
           if (!m || !['active', 'needs_confirmation'].includes(m.status) || m.email !== actor.email) return null;

@@ -13,5 +13,5 @@ test('unbounded and malformed supplier lookups fail before reading private histo
   for(const providerIds of [null,'legacy',Array(501).fill('legacy'),['../private'],[12],['x'.repeat(161)]]){
     await assert.rejects(lookup(actor,{providerIds}),error=>error.code==='invalid-argument');
   }
-  assert.deepEqual(await lookup(actor,{providerIds:[]}),{registeredProviderIds:[]});
+  assert.deepEqual(await lookup(actor,{providerIds:[]}),{registeredProviderIds:[],administrativeProviderIds:[]});
 });

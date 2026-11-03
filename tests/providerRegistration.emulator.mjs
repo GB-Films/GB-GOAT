@@ -157,13 +157,13 @@ try {
   await db.doc('providerPortalDeclarations/unrequested').set({...declaration,providerId:'unrequested'});
   const lookup={action:'registrationStatuses',providerIds:['historical-supplier','historical-supplier','lookup-pending','lookup-incomplete','lookup-representation','lookup-unsupported','missing']};
   const auditCount=(await db.collection('providerPortalAudit').get()).size;
-  assert.deepEqual(await submit(lookup,'staff'),{registeredProviderIds:['historical-supplier']});
+  assert.deepEqual(await submit(lookup,'staff'),{registeredProviderIds:['historical-supplier'],administrativeProviderIds:[]});
   assert.deepEqual((await historicalRef.get()).data(),historical,'status lookup never rewrites the supplier or invents registration metadata');
   assert.equal((await db.collection('providerPortalAudit').get()).size,auditCount,'status lookup is read-only');
   pass('staff recognizes legacy applied signature immediately, with minimal ID-only output and no provider/audit writes');
   const bulk=Array.from({length:31},(_,i)=>`bulk-${i}`);
   await db.doc('providerPortalDeclarations/last-batch').set({...declaration,providerId:bulk[30]});
-  assert.deepEqual(await submit({action:'registrationStatuses',providerIds:bulk},'staff'),{registeredProviderIds:[bulk[30]]});
+  assert.deepEqual(await submit({action:'registrationStatuses',providerIds:bulk},'staff'),{registeredProviderIds:[bulk[30]],administrativeProviderIds:[]});
   pass('legacy lookup batches beyond 30 identifiers without dropping the last supplier');
   await assert.rejects(submit(lookup),error=>error.code==='permission-denied');
   await db.doc('teamAccessEmails/staff@example.test').set({status:'pending'});
@@ -172,5 +172,7 @@ try {
   await assert.rejects(portal({...request(lookup,'staff'),auth:{...request(lookup,'staff').auth,token:{...request(lookup,'staff').auth.token,email_verified:false}}}));
   await assertFails(getDoc(doc(sdk,'providerPortalDeclarations','historical-supplier')));
   pass('external, unfinished and unverified identities cannot inspect history; SDK declarations remain private');
+  const { testProviderAdministrativeRecords } = await import('./providerAdministrativeRecords.flow.mjs');
+  await testProviderAdministrativeRecords({ db, admin, portal, env });
   console.log(`PASS ${passed} provider registration scenario groups; fictional data only.`);
 }finally{await env.cleanup();await app.delete();}

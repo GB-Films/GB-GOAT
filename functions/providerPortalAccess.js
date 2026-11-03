@@ -1,3 +1,4 @@
+const { administrativeRecordRef, isAdministrativeRecord } = require('./providerAdministrativeRecords');
 // Called only after the portal has verified the Google identity. It can activate
 // an existing association; it cannot create one or restore a revoked association.
 async function activatePersonalMembership({ db, actor, providerId, timestamp }) {
@@ -7,6 +8,7 @@ async function activatePersonalMembership({ db, actor, providerId, timestamp }) 
   return db.runTransaction(async tx => {
     const membership = (await tx.get(membershipRef)).data();
     const provider = (await tx.get(providerRef)).data();
+    if (isAdministrativeRecord((await tx.get(administrativeRecordRef(db, providerId))).data(), providerId)) return null;
     if (!membership || membership.status !== 'needs_confirmation'
       || membership.email !== actor.email || provider?.type !== 'persona') return membership;
     const activation = { status: 'active', representation: 'own', activationMethod: 'verified_google_no_signature', activatedAt: timestamp() };
@@ -24,6 +26,7 @@ async function attachVerifiedIntakeMembership({ db, actor, providerId, timestamp
     const prior = (await tx.get(membershipRef)).data();
     if (prior) return prior;
     const provider = (await tx.get(providerRef)).data();
+    if (isAdministrativeRecord((await tx.get(administrativeRecordRef(db, providerId))).data(), providerId)) return prior;
     const account = provider?.personalGoogleAccount;
     if (provider?.source !== 'provider_invite' || !['persona', 'empresa'].includes(provider.type)
       || account?.uid !== actor.uid || account.email !== actor.email || account.version !== 'personal-google-v1' || account.personalUse !== true) return prior;

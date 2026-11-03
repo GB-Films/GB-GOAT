@@ -156,6 +156,7 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
             {creatingProviderInvite ? 'Generando…' : 'Copiar link de alta'}
           </button>}
         </div>}
+        {registrationState === 'administrative' && <p className="mb-1 text-[10px] font-medium text-slate-500">Ficha administrativa · no requiere alta</p>}
         {item.providerId || item.providerName ? (
           <div className="flex items-center gap-2">
             <div className={cn(
