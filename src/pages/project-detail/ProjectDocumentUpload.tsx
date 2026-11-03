@@ -15,7 +15,7 @@ export function ProjectDocumentUpload({ initialCategory, providers, areas, busy,
       <label className={label}>Categoría<select value={category} onChange={event => setCategory(event.target.value as DocumentCategory)} className={input}>
         {DOCUMENT_CATEGORIES.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
       </select></label>
-      <input type="hidden" name="family" value={category === 'comprobantes' ? 'finanzas' : category} />
+      <input type="hidden" name="family" value={category} />
       <label className={label}>Tipo<select name="subtype" key={category} className={input}>
         {DOCUMENT_UPLOAD_TYPES[category].map(item => <option key={item} value={item}>{item}</option>)}
       </select></label>

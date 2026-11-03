@@ -32,6 +32,7 @@ Cuando un área está activa, los reportes financieros toman sus gastos desde `a
 
 - Las páginas principales usan `PageHeader` para jerarquía y espaciado consistentes.
 - Presu Ppal y Áreas usan las mismas celdas de factura/comprobantes y el mismo modal de pagos.
+- La pestaña Documentos del proyecto reúne Contratos (vista inicial, con su firma) y Seguros. La carga ofrece sólo esas dos categorías. Facturas, pagos, retenciones y otros comprobantes se consultan desde los gastos y la ficha del proveedor; los archivos históricos conservan sus rutas y metadatos.
 - Durante la búsqueda, las categorías y subcategorías con coincidencias se muestran desplegadas. En Áreas se incluyen también las áreas ocultas por el filtro de vista, dentro del alcance permitido. Limpiar la búsqueda recupera la selección y los pliegues anteriores, sin guardar cambios en esas preferencias.
 - Las diferencias entre ambas vistas deben provenir del dominio: Presu Ppal es la referencia administrativa; Áreas es la ejecución delegable.
 - Una acción no debe mostrarse si el rol no puede completarla según las reglas.

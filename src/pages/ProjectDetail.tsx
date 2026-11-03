@@ -807,7 +807,7 @@ export default function ProjectDetail() {
   const [selectedPaymentBucketKey, setSelectedPaymentBucketKey] = useState<string | null>(null);
   const [expandedPaymentLineId, setExpandedPaymentLineId] = useState<string | null>(null);
   const [copiedPaymentLineId, setCopiedPaymentLineId] = useState<string | null>(null);
-  const [documentCategoryFilter, setDocumentCategoryFilter] = useState<DocumentCategory>('comprobantes');
+  const [documentCategoryFilter, setDocumentCategoryFilter] = useState<DocumentCategory>('contratos');
   const [documentSearch, setDocumentSearch] = useState('');
   const [showDocumentUploadModal, setShowDocumentUploadModal] = useState(false);
   const [isUploadingProjectDocument, setIsUploadingProjectDocument] = useState(false);
@@ -2823,6 +2823,10 @@ export default function ProjectDetail() {
     }
 
     const family = String(formData.get('family') || 'contratos');
+    if (family !== 'contratos' && family !== 'seguros') {
+      alert('Elegí Contratos o Seguros para cargar el documento.');
+      return;
+    }
     const subtype = String(formData.get('subtype') || 'Otro');
     const providerId = String(formData.get('providerId') || '');
     const provider = providers.find((item) => item.id === providerId);
@@ -2873,7 +2877,7 @@ export default function ProjectDetail() {
 
       await setDoc(docRef, payload);
       setManualProjectDocuments((current) => [{ id: docRef.id, ...payload, createdAt: new Date(), updatedAt: new Date() }, ...current]);
-      setDocumentCategoryFilter(documentCategory({ family, type: subtype }));
+      setDocumentCategoryFilter(family);
       setDocumentSearch('');
       setShowDocumentUploadModal(false);
     } catch (error) {
@@ -4533,7 +4537,7 @@ export default function ProjectDetail() {
   const projectDocuments = React.useMemo(() => {
     const docs: Array<{
       id: string;
-      family: 'finanzas' | 'contratos' | 'seguros' | 'locaciones';
+      family: 'contratos' | 'seguros' | 'locaciones';
       type: string;
       area: string;
       providerName: string;
@@ -4550,68 +4554,8 @@ export default function ProjectDetail() {
       contentType?: string;
     }> = [];
 
-    providerSaldosByArea.forEach((group) => {
-      group.rows.forEach((saldo) => {
-        saldo.entries.forEach((entry) => {
-          entry.invoices.forEach((invoice, invoiceIndex) => {
-            docs.push({
-              id: `invoice-${entry.collectionName}-${entry.id}-${getInvoiceDocumentKey(invoice) || invoiceIndex}`,
-              family: 'finanzas',
-              type: 'factura',
-              area: saldo.area,
-              providerName: saldo.name,
-              providerId: entry.item?.providerId || '',
-              description: entry.description,
-              fileName: invoice.fileName || invoice.originalFileName || 'Factura',
-              url: invoice.url || '',
-              amount: entry.total,
-              source: entry.collectionName === 'areaExpenses' ? 'Gestion por Areas' : 'Presupuesto Principal',
-              uploadedAt: invoice.uploadedAt,
-            });
-          });
-
-          safeArray(entry.item?.paymentHistory).forEach((payment: any, index) => {
-            if (!payment.receipt?.url) return;
-            docs.push({
-              id: `receipt-${entry.collectionName}-${entry.id}-${payment.id || index}`,
-              family: 'finanzas',
-              type: 'comprobante',
-              area: saldo.area,
-              providerName: saldo.name,
-              providerId: entry.item?.providerId || '',
-              description: entry.description,
-              fileName: payment.receipt.originalFileName || payment.receipt.fileName || 'Comprobante',
-              url: payment.receipt.url,
-              amount: Number(payment.amount) || 0,
-              source: 'Pago registrado',
-              uploadedAt: payment.receipt.uploadedAt,
-              paymentDate: payment.date,
-            });
-          });
-
-          (Array.isArray(entry.otherReceipts) ? entry.otherReceipts : []).forEach((receipt: any, index: number) => {
-            if (!receipt?.url) return;
-            docs.push({
-              id: `other-receipt-${entry.collectionName}-${entry.id}-${receipt.id || index}`,
-              family: 'finanzas',
-              type: 'comprobante',
-              area: saldo.area,
-              providerName: saldo.name,
-              providerId: entry.item?.providerId || '',
-              description: entry.description,
-              fileName: receipt.originalFileName || receipt.fileName || 'Comprobante',
-              url: receipt.url,
-              amount: entry.total,
-              source: 'Rendicion / otros comprobantes',
-              uploadedAt: receipt.uploadedAt,
-              paymentDate: entry.item?.paymentDate,
-            });
-          });
-        });
-      });
-    });
-
     manualProjectDocuments.forEach((document) => {
+      if (documentCategory(document) === null) return;
       docs.push({
         id: `manual-${document.id}`,
         sourceDocumentId: document.id,
@@ -4636,7 +4580,7 @@ export default function ProjectDetail() {
       if (typeDiff !== 0) return typeDiff;
       return a.providerName.localeCompare(b.providerName, 'es');
     });
-  }, [manualProjectDocuments, providerSaldosByArea]);
+  }, [manualProjectDocuments]);
 
   const allProjectAreaProviderRows = React.useMemo(() => {
     const byProvider = new Map<string, { provider: any; areas: Set<string>; concepts: Set<string> }>();

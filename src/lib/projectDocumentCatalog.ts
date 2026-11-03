@@ -1,7 +1,6 @@
 import { matchesSmartSearch, normalizeSearch } from './smartSearch';
 
 export const DOCUMENT_CATEGORIES = [
-  { id: 'comprobantes', label: 'Comprobantes' },
   { id: 'contratos', label: 'Contratos' },
   { id: 'seguros', label: 'Seguros' },
 ] as const;
@@ -14,13 +13,13 @@ export type CatalogDocument = {
 };
 
 // Display mapping only: existing documents, paths and metadata stay in place.
-export function documentCategory(document: { family?: string; type?: string; subtype?: string }): DocumentCategory {
-  if (document.family === 'finanzas' || document.family === 'comprobantes') return 'comprobantes';
+export function documentCategory(document: { family?: string; type?: string; subtype?: string }): DocumentCategory | null {
+  if (document.family === 'finanzas' || document.family === 'comprobantes') return null;
   if (document.family === 'seguros') return 'seguros';
   if (document.family === 'contratos') return 'contratos';
   const kind = normalizeSearch(`${document.type || ''} ${document.subtype || ''}`);
+  if (/\b(?:facturas?|comprobantes?|pagos?|retencion|retenciones)\b/.test(kind)) return null;
   if (/seguro|poliza|\bart\b|accidentes|responsabilidad civil/.test(kind)) return 'seguros';
-  if (/factura|comprobante|pago|retencion/.test(kind)) return 'comprobantes';
   return 'contratos';
 }
 
@@ -29,7 +28,6 @@ export function filterProjectDocuments<T extends { family?: string; type?: strin
 }
 
 export const DOCUMENT_UPLOAD_TYPES: Record<DocumentCategory, string[]> = {
-  comprobantes: ['Factura', 'Comprobante de pago', 'Retención', 'Otro comprobante'],
   contratos: ['Contrato proveedor', 'Contrato talento / crew', 'Prestación de servicios', 'Cesión de derechos', 'Release', 'Permiso de filmación', 'Autorización de locación', 'Condiciones de uso', 'Otro'],
   seguros: ['Seguro técnico / equipos', 'ART / accidentes personales', 'Responsabilidad civil', 'Seguro de locación', 'Póliza / certificado', 'Otro'],
 };
