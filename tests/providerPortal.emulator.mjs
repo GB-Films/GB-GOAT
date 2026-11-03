@@ -854,7 +854,9 @@ try {
   await signActual(confirmation);
   const confirmationBefore = (await confirmationProvider.get()).data();
   await own({ action: 'completeDeclaration', providerId: 'legacy-confirmation', declarationId: confirmation.id });
-  assert.deepEqual((await confirmationProvider.get()).data(), confirmationBefore, 'confirmar no modifica la ficha ni las cuentas');
+  const {registration:confirmedRegistration,...confirmedProfile}=(await confirmationProvider.get()).data();
+  assert.deepEqual(confirmedProfile, confirmationBefore, 'confirmar no modifica los datos, las cuentas ni su revisión; sólo registra que el alta quedó completa');
+  assert.equal(confirmedRegistration.status,'complete');
   assert.equal((await confirmationOverview()).profileConfirmation.status, 'confirmed');
   assert.equal((await db.doc('providers/legacy-confirmation').get()).data().registration.status, 'complete');
   await own({ action: 'completeDeclaration', providerId: 'legacy-confirmation', declarationId: confirmation.id });

@@ -49,10 +49,11 @@ async function applySignedProviderProfile({ db, tx, ref, declaration, providerRe
       status: provider.type === 'empresa' && !authorized ? 'needs_confirmation' : 'active', representation: provider.type === 'empresa' ? authorized ? 'authorized_representative' : '' : 'own',
       source: 'verified_account_change', accountChangeDeclarationId: ref.id, accountVerifiedAt: timestamp() });
   }
-  if (declaration.content.confirmation && provider.registration?.status !== 'complete') changes.registration = {
+  const registration = declaration.content.confirmation && provider.registration?.status !== 'complete' ? {
     status:'complete',method:'signed_profile_confirmation',declarationId:ref.id,completedByUid:choice?.selected?.uid || actor.uid,completedAt:timestamp(),
-  };
-  if (Object.keys(changes).length) tx.update(providerRef, { ...changes, updatedAt: timestamp(), portalRevision: Number(provider.portalRevision || 0) + 1 });
+  } : null;
+  if (Object.keys(changes).length) tx.update(providerRef, { ...changes, ...(registration ? {registration} : {}), updatedAt: timestamp(), portalRevision: Number(provider.portalRevision || 0) + 1 });
+  else if (registration) tx.update(providerRef,{registration});
   tx.create(db.collection('providerPortalAudit').doc(), { action: 'signed_profile_applied', providerId: declaration.providerId, declarationId: ref.id,
     actor, before: M.publicProfile(provider), after: M.publicProfile({ ...provider, ...changes }), at: timestamp() });
   return { commonApplied: Object.keys(declaration.content.changes), ...(choice?.changesIdentity ? { accountChoiceApplied: { selected: choice.selected, at: timestamp(), authority: 'signed_verified_accounts' } } : {}) };
