@@ -5,7 +5,7 @@ import {
   Users, 
   BarChart3, 
   Settings, 
-  Star
+  Star, X
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
@@ -36,10 +36,11 @@ const roleLabels: Record<string, string> = {
   colaborador: 'Colaborador',
   portal: 'Proveedor',
 };
+const EMPTY_PINNED_PROJECT_IDS: string[] = [];
 
 export default function Sidebar() {
-  const { profile, user } = useAuth();
-  const [pinnedProjectIds, setPinnedProjectIds] = useState<string[]>([]);
+  const { profile, user, setProjectPinned, pinningProjectId } = useAuth();
+  const pinnedProjectIds: string[] = Array.isArray(profile?.pinnedProjectIds) ? profile.pinnedProjectIds : EMPTY_PINNED_PROJECT_IDS;
   const [pinnedProjects, setPinnedProjects] = useState<any[]>([]);
   const logoSrc = `${(import.meta as any).env.BASE_URL}gb-films-logo.png`;
 
@@ -50,20 +51,7 @@ export default function Sidebar() {
   ));
 
   useEffect(() => {
-    setPinnedProjectIds(Array.isArray(profile?.pinnedProjectIds) ? profile.pinnedProjectIds : []);
-  }, [profile?.pinnedProjectIds]);
-
-  useEffect(() => {
-    const handlePinnedProjectsUpdated = (event: Event) => {
-      const detail = (event as CustomEvent<string[]>).detail;
-      if (Array.isArray(detail)) setPinnedProjectIds(detail);
-    };
-
-    window.addEventListener('gb:pinned-projects-updated', handlePinnedProjectsUpdated);
-    return () => window.removeEventListener('gb:pinned-projects-updated', handlePinnedProjectsUpdated);
-  }, []);
-
-  useEffect(() => {
+    let active = true;
     const fetchPinnedProjects = async () => {
       if (!profile?.uid || !profile?.email || pinnedProjectIds.length === 0) {
         setPinnedProjects([]);
@@ -83,7 +71,7 @@ export default function Sidebar() {
             );
         const snapshot = await getDocs(projectsQuery);
         const projectById = new Map(snapshot.docs.map((item) => [item.id, { id: item.id, ...item.data() }]));
-        setPinnedProjects(
+        if (active) setPinnedProjects(
           pinnedProjectIds
             .map((projectId) => projectById.get(projectId))
             .filter(Boolean)
@@ -95,6 +83,7 @@ export default function Sidebar() {
     };
 
     void fetchPinnedProjects();
+    return () => { active = false; };
   }, [pinnedProjectIds, profile]);
 
   return (
@@ -137,12 +126,12 @@ export default function Sidebar() {
           <div className="mt-5 border-t border-white/10 pt-4">
             <div className="text-[9px] font-bold text-slate-500 uppercase tracking-[0.22em] mb-2 px-2.5">Pineados</div>
             <div className="space-y-1">
-              {pinnedProjects.map((project) => (
+              {pinnedProjects.filter(project => pinnedProjectIds.includes(project.id)).map((project) => (
+                <div key={project.id} className="flex items-center gap-1">
                 <NavLink
-                  key={project.id}
                   to={`/proyectos/${project.id}`}
                   className={({ isActive }) => cn(
-                    "flex items-center gap-2 px-3 py-2 rounded-lg text-[11px] font-semibold transition-all group",
+                    "flex min-w-0 flex-1 items-center gap-2 px-3 py-2 rounded-lg text-[11px] font-semibold transition-all group",
                     isActive
                       ? "bg-white/15 text-white"
                       : "text-slate-300 hover:text-white hover:bg-white/10"
@@ -152,6 +141,13 @@ export default function Sidebar() {
                   <Star className="w-3.5 h-3.5 text-amber-400 fill-current shrink-0" />
                   <span className="truncate">{project.name || 'Proyecto sin nombre'}</span>
                 </NavLink>
+                <button type="button" disabled={Boolean(pinningProjectId)}
+                  title="Quitar de favoritos" aria-label={`Quitar de favoritos: ${project.name}`}
+                  onClick={() => { void setProjectPinned(project.id, false).catch(error => { console.error('Error removing favorite:', error); alert('No se pudo guardar el favorito. Reintentá.'); }); }}
+                  className="shrink-0 rounded-md p-2 text-slate-400 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-blue-400 disabled:cursor-wait disabled:opacity-50">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+                </div>
               ))}
             </div>
           </div>

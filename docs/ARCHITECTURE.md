@@ -29,6 +29,7 @@ Cuando un área está activa, los reportes financieros toman sus gastos desde `a
 ## Consistencia de UI/UX
 
 - La barra lateral ocupa la altura dinámica visible. Menú y pineados se desplazan en su propio espacio; la cuenta actual y «Cerrar sesión» no se comprimen ni salen del borde inferior. Bajo el umbral de escritorio se ofrece «Cuenta» fuera del desplazamiento horizontal del menú móvil.
+- Los favoritos usan el perfil compartido de la cuenta para sincronizar lista y menú lateral. Agregar o quitar actualiza sólo `pinnedProjectIds` con operaciones atómicas; si falla, ambas vistas recuperan el estado anterior. Se pueden quitar desde la estrella del proyecto o desde la cruz de Pineados.
 
 - Las páginas principales usan `PageHeader` para jerarquía y espaciado consistentes.
 - Presu Ppal y Áreas usan las mismas celdas de factura/comprobantes y el mismo modal de pagos.
