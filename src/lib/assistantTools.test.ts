@@ -98,6 +98,20 @@ test('sin proyecto indicado usa el que está abierto en pantalla', async () => {
   assert.equal(summary.gastosCargados, 2);
 });
 
+test('el asistente muestra la asignación global sin convertirla en deuda ni revelar categorías fuera del alcance', async () => {
+  const context = buildContext();
+  context.meta.categoryBudgets = { Arte: 1500, Vestuario: 9000 };
+  context.budgetItems = []; context.areaExpenses = [];
+  const tools = buildTools({ loadProject: async () => context });
+  const summary = await runTool(tools, 'resumen_proyecto');
+  assert.equal(summary.presupuestoPrincipal, 1500);
+  assert.equal(summary.saldoPendiente, 0);
+  assert.equal(summary.pagosRegistrados, 0);
+  const area = await runTool(tools, 'resumen_area', { area: 'Arte' });
+  assert.equal(area.asignado, 1500);
+  assert.equal(area.gastado, 0);
+});
+
 test('un proyecto por nombre se resuelve y respeta el acceso', async () => {
   const denied = await runTool(buildTools(), 'resumen_proyecto', { proyecto: 'Spot' });
   assert.match(denied.error, /No tenés acceso/);

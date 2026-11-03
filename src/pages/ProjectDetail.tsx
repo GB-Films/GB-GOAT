@@ -44,6 +44,9 @@ import { motion, AnimatePresence } from 'motion/react';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import { cn } from '../lib/utils';
 import { AreaBudgetSummary } from './project-detail/AreaBudgetSummary';
+import { CategoryBudgetDialog } from './project-detail/CategoryBudgetDialog';
+import { categoryBudgetMap, directCategoryBudget, getCategoryBudget, getAssignedBudgetTotal, resolveCategoryBudget, renamedCategoryBudgets, categoryBudgetExportRows } from '../lib/categoryBudgets';
+import { saveCategoryBudget, validateCategoryBudgetReplacement } from '../lib/categoryBudgetStore';
 import { MobileExpenseAmount } from './project-detail/MobileExpenseAmount';
 import { MobileExpenseDocuments } from './project-detail/MobileExpenseDocuments';
 import { ShootingDateInput } from './project-detail/ShootingDateInput';
@@ -90,7 +93,7 @@ import {
   normalizeProjectRole,
 } from '../lib/projectAccess';
 import { calculateProjectResult, getPaymentTotal } from '../lib/projectFinance';
-import { isInternalBudgetEstimate, effectiveBudgetEstimates } from '../lib/internalBudgetEstimate';
+import { isInternalBudgetEstimate } from '../lib/internalBudgetEstimate';
 import { resolveResultIncidences } from '../lib/resultIncidences';
 import { filterProviderBalances } from '../lib/providerPaymentStatus';
 import { getSubcategoryBudgetCapacity } from '../lib/subcategoryBudget';
@@ -499,12 +502,13 @@ const downloadCsv = async (rows: Record<string, any>[], fileName: string) => {
   }
 };
 
-const downloadXlsx = async (rows: Record<string, any>[], sheetName: string, fileName: string) => {
+const downloadXlsx = async (rows: Record<string, any>[], sheetName: string, fileName: string, extraSheets: Array<{ name: string; rows: Record<string, any>[] }> = []) => {
   try {
     const XLSX = await import('xlsx');
     const worksheet = XLSX.utils.json_to_sheet(rows);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+    extraSheets.forEach(sheet => XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(sheet.rows), sheet.name));
     XLSX.writeFile(workbook, fileName);
   } catch (error) {
     console.error('Error exporting Excel:', error);
@@ -736,6 +740,7 @@ export default function ProjectDetail() {
   const [providers, setProviders] = useState<any[]>([]);
   const [clients, setClients] = useState<any[]>([]);
   const [categories, setCategories] = useState<string[]>(BUDGET_AREAS);
+  const [categoryBudgetDraft, setCategoryBudgetDraft] = useState<{ create: boolean; area: string; amount: number | null } | null>(null);
   const [activeAreas, setActiveAreas] = useState<string[]>([]);
   const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>({});
   const [collapsedAreaSubcategories, setCollapsedAreaSubcategories] = useState<Record<string, boolean>>({});
@@ -1162,7 +1167,7 @@ export default function ProjectDetail() {
         affectedAreas.forEach((area) => {
           const remaining = budgetItems.filter((item) => item.area === area && !items.some((deleted) => deleted.id === item.id))
             .reduce((total, item) => total + (Number(item.total) || 0), 0);
-          const capacity = getSubcategoryBudgetCapacity(remaining, projectSnapshot.data().areaExpenseSubcategoryBudgets || {}, area);
+          const capacity = getSubcategoryBudgetCapacity(resolveCategoryBudget(projectSnapshot.data(), area, remaining), projectSnapshot.data().areaExpenseSubcategoryBudgets || {}, area);
           if (capacity.assignedElsewhere > capacity.categoryBudget) throw new Error('SUBCATEGORY_BUDGET_EXCEEDED');
         });
       }
@@ -1209,7 +1214,7 @@ export default function ProjectDetail() {
             .reduce((total, item) => total + (Number(item.total) || 0), 0)
             + (nextArea === originalArea ? nextTotal : 0);
           const capacity = getSubcategoryBudgetCapacity(
-            remainingOriginalBudget,
+            resolveCategoryBudget(projectSnapshot.data(), originalArea, remainingOriginalBudget),
             projectSnapshot.data().areaExpenseSubcategoryBudgets || {},
             originalArea,
           );
@@ -1400,7 +1405,7 @@ export default function ProjectDetail() {
       const movedItem = { ...originalItem, area: destArea };
       const remainingSourceBudget = sourceItems.reduce((total, item) => total + (Number(item.total) || 0), 0);
       const sourceCapacity = getSubcategoryBudgetCapacity(
-        remainingSourceBudget,
+        resolveCategoryBudget(project, sourceArea, remainingSourceBudget),
         project?.areaExpenseSubcategoryBudgets || {},
         sourceArea,
       );
@@ -1437,7 +1442,7 @@ export default function ProjectDetail() {
             throw new Error('EXPENSE_CHANGED');
           }
           const currentSourceCapacity = getSubcategoryBudgetCapacity(
-            remainingSourceBudget,
+            resolveCategoryBudget(projectSnapshot.data(), sourceArea, remainingSourceBudget),
             projectSnapshot.data().areaExpenseSubcategoryBudgets || {},
             sourceArea,
           );
@@ -1637,6 +1642,7 @@ export default function ProjectDetail() {
         `- ${subcategories.length} subcategorías con sus presupuestos\n` +
         '- Los permisos de colaboradores sobre esas subcategorías\n\n' +
         'El área dejará de aparecer en Gestión por Áreas y vas a poder activarla otra vez cuando quieras. ' +
+        (directCategoryBudget(baselineData, areaName) !== null ? 'El presupuesto global de la categoría se conserva en Presu Ppal. ' : '') +
         'Esta acción no se puede deshacer.'
       );
       if (!firstConfirmation) return;
@@ -1737,9 +1743,7 @@ export default function ProjectDetail() {
   };
 
   const getAreaBudget = (area: string) => {
-    return effectiveBudgetEstimates(budgetItems)
-      .filter(item => item.area === area)
-      .reduce((acc, item) => acc + (Number(item.total) || 0), 0);
+    return getCategoryBudget(project, budgetItems, area);
   };
 
   const getAreaSpent = (area: string, excludeExpenseId?: string) => {
@@ -1989,9 +1993,7 @@ export default function ProjectDetail() {
       ? Math.max(0, Number(subcategoryBudgetDraft.budget) || 0)
       : 0;
     const currentBudgetKey = original ? areaSubcategoryKey(area, original) : '';
-    const categoryBudget = effectiveBudgetEstimates(budgetItems)
-      .filter((item) => item.area === area)
-      .reduce((total, item) => total + (Number(item.total) || 0), 0);
+    const categoryBudget = getCategoryBudget(project, budgetItems, area);
     const capacity = getSubcategoryBudgetCapacity(
       categoryBudget,
       project?.areaExpenseSubcategoryBudgets || {},
@@ -2036,9 +2038,7 @@ export default function ProjectDetail() {
         getDocsFromServer(collection(db, 'projects', id, 'budgetItems')),
       ]);
       if (!serverProject.exists()) throw new Error('PROJECT_MISSING');
-      const serverCategoryBudget = serverBudgetItems.docs
-        .filter((item) => item.data().area === area)
-        .reduce((total, item) => total + (Number(item.data().total) || 0), 0);
+      const serverCategoryBudget = getCategoryBudget(serverProject.data(), serverBudgetItems.docs.map(item => item.data()), area);
       const serverCapacity = getSubcategoryBudgetCapacity(
         serverCategoryBudget,
         serverProject.data().areaExpenseSubcategoryBudgets || {},
@@ -2906,6 +2906,8 @@ export default function ProjectDetail() {
       }
       const baselineCategories = safeArray(baselineProject.data().categories);
       const newCategories = resolveBudgetCategories(baselineProject.data()).map((category) => category === oldName ? newName : category);
+      if (resolveBudgetCategories(baselineProject.data()).some(category => category !== oldName && normalizeText(category) === normalizeText(newName))) throw Error('CATEGORY_EXISTS');
+      const nextCategoryBudgets = renamedCategoryBudgets(baselineProject.data(), oldName, newName);
       const budgetSnapshot = await getDocsFromServer(collection(db, 'projects', id, 'budgetItems'));
       const itemsInArea = budgetSnapshot.docs
         .map((entry) => ({ id: entry.id, ...entry.data() } as BudgetItem))
@@ -2927,17 +2929,18 @@ export default function ProjectDetail() {
             || !sameExpenseVersion(snapshot.data().updatedAt, itemsInArea[index].updatedAt)
             || !samePaymentTarget(snapshot.data(), itemsInArea[index])) throw new Error('EXPENSE_CHANGED');
         });
-        const revision = (Number(projectSnapshot.data().budgetRevision) || 0) + (itemsInArea.length > 0 ? 1 : 0);
+        const revision = (Number(projectSnapshot.data().budgetRevision) || 0) + 1;
         transaction.update(projectRef, {
           categories: newCategories,
+          categoryBudgets: nextCategoryBudgets,
           executiveCategoryDefaultApplied: true,
-          ...(itemsInArea.length > 0 ? { budgetRevision: revision } : {}),
+          budgetRevision: revision,
           updatedAt: serverTimestamp(),
         });
         refs.forEach((budgetRef) => transaction.update(budgetRef, { area: newName, updatedAt: serverTimestamp() }));
         return revision;
       });
-      setProject((current: any) => current ? { ...current, categories: newCategories, executiveCategoryDefaultApplied: true, budgetRevision: nextRevision } : current);
+      setProject((current: any) => current ? { ...current, categories: newCategories, categoryBudgets: nextCategoryBudgets, executiveCategoryDefaultApplied: true, budgetRevision: nextRevision } : current);
       setCategories(newCategories);
       setBudgetItems((current) => current.map((item) => item.area === oldName ? { ...item, area: newName } : item));
     } catch (e) {
@@ -3100,16 +3103,19 @@ export default function ProjectDetail() {
 
   const addCategory = async () => {
     if (!canEditMainBudget) return;
-    const name = prompt('Nombre de la nueva categoría:');
-    if (!name || !id) return;
-    const newCategories = [...categories, name];
-    try {
-      await updateDoc(doc(db, 'projects', id), { categories: newCategories, executiveCategoryDefaultApplied: true });
-      setCategories(newCategories);
-    } catch (e) {
-      console.error("Error adding category:", e);
-      alert('No se pudo agregar la categoría. El presupuesto no fue modificado.');
-    }
+    setCategoryBudgetDraft({ create: true, area: '', amount: null });
+  };
+
+  const editCategoryBudget = (area: string) => {
+    if (canEditMainBudget) setCategoryBudgetDraft({ create: false, area, amount: directCategoryBudget(project, area) });
+  };
+
+  const saveMainCategoryBudget = async (area: string, amount: number | null) => {
+    if (!id || !canEditMainBudget || !categoryBudgetDraft) throw Error('No tenés permiso para asignar este presupuesto.');
+    const saved = await saveCategoryBudget(db, id, { area, create: categoryBudgetDraft.create, amount, expectedAmount: categoryBudgetDraft.amount }, currentUserEmail);
+    setProject((current: any) => current ? { ...current, ...saved } : current);
+    setCategories(saved.categories);
+    showExpenseConfirmation(categoryBudgetDraft.create ? 'Categoría creada' : `Presupuesto de ${area} actualizado`);
   };
 
   const downloadTemplate = async () => {
@@ -3157,11 +3163,20 @@ export default function ProjectDetail() {
         } else {
           const XLSX = await import('xlsx');
           const workbook = XLSX.read(data, { type: 'binary' });
+          const globalSheet = workbook.Sheets['Asignaciones globales'];
+          if (globalSheet && XLSX.utils.sheet_to_json(globalSheet).length) {
+            alert('Para traer asignaciones globales, usá Copiar presupuesto desde el proyecto de origen. La importación de archivos carga partidas.');
+            return;
+          }
           const sheetName = workbook.SheetNames[0];
           const worksheet = workbook.Sheets[sheetName];
           jsonData = XLSX.utils.sheet_to_json(worksheet);
         }
 
+        if (jsonData.some(row => row.Tipo === 'Asignación global')) {
+          alert('Para traer asignaciones globales, usá Copiar presupuesto desde el proyecto de origen. La importación de archivos carga partidas.');
+          return;
+        }
         if (jsonData.length === 0) {
           alert('El archivo parece estar vacío.');
           return;
@@ -3235,15 +3250,19 @@ export default function ProjectDetail() {
     const sourceProject = sourceProjects.find((item) => item.id === selectedSourceProjectId);
     if (!sourceProject) return;
 
-    const shouldReplace = budgetItems.length > 0
-      ? window.confirm('Este proyecto ya tiene partidas en el presupuesto principal. ¿Querés reemplazarlas por el presupuesto copiado?')
+    const shouldReplace = budgetItems.length > 0 || Object.keys(categoryBudgetMap(project)).length > 0
+      ? window.confirm('Este proyecto ya tiene partidas o asignaciones en el presupuesto principal. ¿Querés reemplazarlas por el presupuesto copiado?')
       : true;
     if (!shouldReplace) return;
 
     setIsCopyingBudget(true);
     try {
-      const sourceItemsSnap = await getDocs(collection(db, 'projects', selectedSourceProjectId, 'budgetItems'));
-      const sourceCategories = safeArray(sourceProject.categories);
+      const sourceRef = doc(db, 'projects', selectedSourceProjectId);
+      const sourceSnapshot = await getDocFromServer(sourceRef);
+      if (!sourceSnapshot.exists()) throw Error('PROJECT_MISSING');
+      const sourceItemsSnap = await getDocsFromServer(collection(db, 'projects', selectedSourceProjectId, 'budgetItems'));
+      const sourceCategories = resolveBudgetCategories(sourceSnapshot.data());
+      const copiedCategoryBudgets = categoryBudgetMap(sourceSnapshot.data());
       const sourceItems = sourceItemsSnap.docs
         .map((itemDoc) => ({ id: itemDoc.id, ...itemDoc.data() } as any))
         .sort((a, b) => {
@@ -3252,8 +3271,8 @@ export default function ProjectDetail() {
           return (a.order || 0) - (b.order || 0);
         });
 
-      if (sourceItems.length === 0) {
-        alert('El proyecto elegido no tiene partidas en el presupuesto principal.');
+      if (sourceItems.length === 0 && !Object.keys(copiedCategoryBudgets).length) {
+        alert('El proyecto elegido no tiene partidas ni presupuestos asignados.');
         return;
       }
 
@@ -3300,12 +3319,15 @@ export default function ProjectDetail() {
       const nextCategories = copiedCategories.length > 0 ? copiedCategories : BUDGET_AREAS;
       const nextRevision = await runTransaction(db, async (transaction) => {
         const projectSnapshot = await transaction.get(projectRef);
+        const currentSource = await transaction.get(sourceRef);
+        if (!currentSource.exists() || (Number(currentSource.data().budgetRevision) || 0) !== (Number(sourceSnapshot.data().budgetRevision) || 0)) throw Error('AREA_CHANGED');
         if (!projectSnapshot.exists()
           || (Number(projectSnapshot.data().budgetRevision) || 0) !== (Number(baselineProject.data().budgetRevision) || 0)
           || JSON.stringify(safeArray(projectSnapshot.data().categories)) !== JSON.stringify(baselineCategories)
           || copiedItems.some(({ payload }) => safeArray(projectSnapshot.data().activeAreas).includes(payload.area))) {
           throw new Error('AREA_CHANGED');
         }
+        validateCategoryBudgetReplacement(projectSnapshot.data(), copiedItems.map(item => item.payload), copiedCategoryBudgets);
         const revision = (Number(projectSnapshot.data().budgetRevision) || 0) + 1;
         if (targetItems.length > 0) {
           await queueExpenseRowsDeletion(transaction, targetItems, 'budgetItems', 'budget_replaced');
@@ -3313,19 +3335,20 @@ export default function ProjectDetail() {
         copiedItems.forEach(({ ref, payload }) => transaction.set(ref, payload));
         transaction.update(projectRef, {
           categories: nextCategories,
+          categoryBudgets: copiedCategoryBudgets,
           executiveCategoryDefaultApplied: true,
           budgetRevision: revision,
           updatedAt: serverTimestamp(),
         });
         return revision;
       });
-      setProject((current: any) => current ? { ...current, budgetRevision: nextRevision } : current);
+      setProject((current: any) => current ? { ...current, categoryBudgets: copiedCategoryBudgets, budgetRevision: nextRevision } : current);
       setBudgetItems(copiedItems.map(({ ref, payload }) => ({ id: ref.id, ...payload })) as BudgetItem[]);
       setCategories(nextCategories);
       setShowCopyBudgetModal(false);
       setSelectedSourceProjectId('');
       setCopyBudgetSearch('');
-      alert(`${copiedItems.length} partidas copiadas desde ${sourceProject.name || 'otro proyecto'}.`);
+      alert(`Presupuesto copiado desde ${sourceProject.name || 'otro proyecto'}: ${copiedItems.length} partidas y ${Object.keys(copiedCategoryBudgets).length} asignaciones globales.`);
     } catch (error) {
       console.error('Error copying budget:', error);
       alert('No se pudo copiar el presupuesto. Revisá permisos o conexión.');
@@ -3372,11 +3395,11 @@ export default function ProjectDetail() {
         if (itemsToDelete.length > 0) {
           await queueExpenseRowsDeletion(transaction, itemsToDelete, 'budgetItems', 'category_deleted');
         }
-        const revision = (Number(projectSnapshot.data().budgetRevision) || 0) + (itemsToDelete.length > 0 ? 1 : 0);
+        const revision = (Number(projectSnapshot.data().budgetRevision) || 0) + 1;
         transaction.update(projectRef, {
           ...deletionPlan,
           activeAreas: newActiveAreas,
-          ...(itemsToDelete.length > 0 ? { budgetRevision: revision } : {}),
+          budgetRevision: revision,
           updatedAt: serverTimestamp(),
         });
         currentCollaborators.forEach(entry => {
@@ -3459,7 +3482,7 @@ export default function ProjectDetail() {
   const filteredBudgetItems = visibleBudgetItems.filter(item => !budgetSearchTerm || normalizeText([
     item.providerName, item.description, item.area, item.unit, item.total, formatDate(item.paymentDate),
   ].filter(Boolean).join(' ')).includes(budgetSearchTerm));
-  const filteredBudgetCategories = visibleCategories.filter(area => !budgetSearchTerm || filteredBudgetItems.some(item => item.area === area));
+  const filteredBudgetCategories = visibleCategories.filter(area => !budgetSearchTerm || normalizeText(area).includes(budgetSearchTerm) || filteredBudgetItems.some(item => item.area === area));
 
   const visibleCategoryKey = visibleCategories.join('|');
   const selectedVisibleAreas = selectedAreaTabs.filter((area) => visibleCategories.includes(area));
@@ -3524,9 +3547,7 @@ export default function ProjectDetail() {
           formatDate(item.paymentDate),
         ].filter(Boolean).join(' ')).includes(searchTerm);
       };
-      const assigned = effectiveBudgetEstimates(budgetItems)
-        .filter((item) => item.area === area)
-        .reduce((acc, item) => acc + (Number(item.total) || 0), 0);
+      const assigned = getCategoryBudget(project, budgetItems, area);
       const allExpenses = areaExpenses
         .filter((item) => item.area === area)
         .filter((item) => hasFullAreaAccess || canSeeAreaSubcategory(item.area, item.subcategory))
@@ -3612,7 +3633,7 @@ export default function ProjectDetail() {
         hasSubcategories: knownSubcategories.length > 0,
       };
     })
-  ), [areaExpenseSearch, areaExpenseSort, areaExpenseSubcategoriesByArea, areaExpenses, budgetItems, isProjectAdmin, project?.areaExpenseSubcategories, project?.areaExpenseSubcategoryBudgets, userAllowedSubcategories, userPermissions, visibleCategoryKey]);
+  ), [areaExpenseSearch, areaExpenseSort, areaExpenseSubcategoriesByArea, areaExpenses, budgetItems, isProjectAdmin, project?.categoryBudgets, project?.areaExpenseSubcategories, project?.areaExpenseSubcategoryBudgets, userAllowedSubcategories, userPermissions, visibleCategoryKey]);
 
   const selectedAreaDashboardRows = areaDashboardRows.filter((row) => selectedVisibleAreas.includes(row.area));
   const areaDashboardTotals = selectedAreaDashboardRows.reduce((acc, row) => ({
@@ -3623,9 +3644,7 @@ export default function ProjectDetail() {
   }), { assigned: 0, spent: 0, balance: 0, records: 0 });
   const subcategoryBudgetCapacity = subcategoryBudgetDraft
     ? getSubcategoryBudgetCapacity(
-        effectiveBudgetEstimates(budgetItems)
-          .filter((item) => item.area === subcategoryBudgetDraft.area)
-          .reduce((total, item) => total + (Number(item.total) || 0), 0),
+        getCategoryBudget(project, budgetItems, subcategoryBudgetDraft.area),
         project?.areaExpenseSubcategoryBudgets || {},
         subcategoryBudgetDraft.area,
         subcategoryBudgetDraft.originalSubcategory === DEFAULT_AREA_EXPENSE_SUBCATEGORY
@@ -3742,9 +3761,7 @@ export default function ProjectDetail() {
       ]);
       if (!baselineProject.exists()) throw new Error('PROJECT_MISSING');
       if (sourceArea !== targetArea && assignedBudget > 0) {
-        const targetCategoryBudget = serverBudgetItems!.docs
-          .filter((item) => item.data().area === targetArea)
-          .reduce((total, item) => total + (Number(item.data().total) || 0), 0);
+        const targetCategoryBudget = getCategoryBudget(baselineProject.data(), serverBudgetItems!.docs.map(item => item.data()), targetArea);
         const capacity = getSubcategoryBudgetCapacity(
           targetCategoryBudget,
           baselineProject.data().areaExpenseSubcategoryBudgets || {},
@@ -4674,11 +4691,13 @@ export default function ProjectDetail() {
   };
 
   const exportMainBudget = (format: 'xlsx' | 'csv') => {
-    const rows = budgetItems.map(item => {
+    const rows: Record<string, any>[] = budgetItems.map(item => {
       const providerPaid = getPaymentTotal(item);
       const reimbursementDebt = (Array.isArray(item.paymentHistory) ? item.paymentHistory : [])
         .reduce((sum: number, payment: Payment) => sum + getReimbursementBalanceCents(payment) / 100, 0);
       return {
+      Tipo: 'Partida',
+      'Presupuesto asignado': '',
       Area: item.area || '',
       Proveedor: item.providerName || '',
       Descripcion: item.description || '',
@@ -4697,10 +4716,12 @@ export default function ProjectDetail() {
       };
     });
 
+    const allocations = categoryBudgetExportRows(project);
     if (format === 'csv') {
-      downloadCsv(rows, `presupuesto_principal_${project?.name || 'proyecto'}.csv`);
+      const emptyDetail = Object.fromEntries(Object.keys(rows[0] || { Area: '', Total: '', Descripcion: '' }).map(key => [key, '']));
+      downloadCsv([...rows, ...allocations.map(row => ({ ...emptyDetail, ...row }))], `presupuesto_principal_${project?.name || 'proyecto'}.csv`);
     } else {
-      downloadXlsx(rows, 'Presupuesto Principal', `presupuesto_principal_${project?.name || 'proyecto'}.xlsx`);
+      downloadXlsx(rows, 'Presupuesto Principal', `presupuesto_principal_${project?.name || 'proyecto'}.xlsx`, allocations.length ? [{ name: 'Asignaciones globales', rows: allocations }] : []);
     }
   };
 
@@ -4825,9 +4846,7 @@ export default function ProjectDetail() {
     return targetAreas
       .map((area) => {
         const canReadWholeArea = isProjectAdmin || safeArray(userPermissions?.allowedCategories).includes(area);
-        const areaAssigned = effectiveBudgetEstimates(budgetItems)
-          .filter((item) => canReadWholeArea && item.area === area)
-          .reduce((acc, item) => acc + (Number(item.total) || 0), 0);
+        const areaAssigned = canReadWholeArea ? getCategoryBudget(project, budgetItems, area) : 0;
         const subcategoryAssigned = canReadWholeArea
           ? 0
           : userAllowedSubcategories
@@ -4852,7 +4871,7 @@ export default function ProjectDetail() {
         return { area, assigned, spent, balance, usedPercent, actualCost: isProjectAdmin && spent === 0 ? assigned : spent };
       })
       .filter((row) => row.assigned > 0 || row.spent > 0 || !isProjectAdmin);
-  }, [areaExpenses, budgetItems, categories, isProjectAdmin, project?.areaExpenseSubcategoryBudgets, userAllowedSubcategories, userPermissions]);
+  }, [areaExpenses, budgetItems, categories, isProjectAdmin, project?.categoryBudgets, project?.areaExpenseSubcategoryBudgets, userAllowedSubcategories, userPermissions]);
 
   const areaSummaryTotals = React.useMemo(() => {
     const totals = areaSummaryRows.reduce((acc, row) => ({
@@ -5903,7 +5922,7 @@ export default function ProjectDetail() {
                       <>
                         <div className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-500">Presupuesto Asignado (Mis Áreas)</div>
                         <div className="text-3xl font-black mt-1 tracking-[-0.04em] text-slate-950">
-                          ${visibleBudgetItems.reduce((acc, curr) => acc + (curr.total || 0), 0).toLocaleString()}
+                          ${getAssignedBudgetTotal(project, visibleBudgetItems, isProjectAdmin ? undefined : visibleCategories).toLocaleString()}
                         </div>
                         <div className="mt-3 text-[10px] font-semibold text-slate-500 truncate">
                           {userPermissions?.allowedCategories?.length
@@ -6050,14 +6069,14 @@ export default function ProjectDetail() {
               </div>
               {budgetSearchTerm && <span className="text-[10px] text-slate-500">{filteredBudgetItems.length} de {visibleBudgetItems.length} gastos · los totales del proyecto se conservan</span>}
             </div>
-            {budgetSearchTerm && !filteredBudgetItems.length && <p className="rounded-lg border border-slate-200 bg-white p-4 text-xs text-slate-500">No hay gastos que coincidan con la búsqueda.</p>}
+            {budgetSearchTerm && !filteredBudgetCategories.length && <p className="rounded-lg border border-slate-200 bg-white p-4 text-xs text-slate-500">No hay categorías o gastos que coincidan con la búsqueda.</p>}
             <div className="space-y-3 md:hidden">
               {filteredBudgetCategories.map((area) => {
                 const areaItems = filteredBudgetItems
                   .filter((item) => item.area === area)
                   .sort((a, b) => (a.order || 0) - (b.order || 0));
                 const isCollapsed = budgetSearchTerm ? false : collapsedCategories[area];
-                const areaTotal = areaItems.reduce((total, item) => total + (item.total || 0), 0);
+                const areaTotal = getCategoryBudget(project, budgetItems, area);
 
                 return (
                   <section key={`mobile-budget-${area}`} className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
@@ -6075,10 +6094,11 @@ export default function ProjectDetail() {
                         <div className="text-[8px] font-bold uppercase tracking-widest text-slate-400">{areaItems.length} gastos</div>
                       </div>
                       <div className="text-right">
-                        <div className="text-[7px] font-black uppercase tracking-widest text-slate-400">Subtotal</div>
+                        <div className="text-[7px] font-black uppercase tracking-widest text-slate-400">Presupuesto</div>
                         <div className="font-mono text-[11px] font-black text-emerald-300">${areaTotal.toLocaleString()}</div>
                       </div>
-                      {canEditMainBudget && (
+                      {canEditMainBudget && <button type="button" onClick={() => editCategoryBudget(area)} aria-label={`Asignar presupuesto de ${area}`} title="Asignar presupuesto" className="rounded border border-white/20 bg-white p-2 text-slate-800 hover:bg-indigo-50"><Pencil className="h-3.5 w-3.5" /></button>}
+                      {canEditMainBudget && !activeAreas.includes(area) && (
                         <button
                           type="button"
                           onClick={() => addEmptyRow(area)}
@@ -6091,6 +6111,7 @@ export default function ProjectDetail() {
                     </div>
                     {!isCollapsed && (
                       <div className="space-y-2 bg-slate-100/80 p-2">
+                        {!areaItems.length && directCategoryBudget(project, area) !== null && <p className="p-3 text-xs text-slate-500">Presupuesto global asignado. Cargá el detalle de los gastos en Áreas.</p>}
                         {areaItems.map((item) => renderMobileExpenseCard({
                           item,
                           collectionName: 'budgetItems',
@@ -6100,7 +6121,7 @@ export default function ProjectDetail() {
                           canDelete: canEditMainBudget,
                           canCopyProviderInfo: isProjectAdmin || isProductionLead,
                         }))}
-                        {canEditMainBudget && (
+                        {canEditMainBudget && !activeAreas.includes(area) && (
                           <button
                             type="button"
                             onClick={() => addEmptyRow(area)}
@@ -6117,7 +6138,7 @@ export default function ProjectDetail() {
               })}
               <div className="rounded-xl bg-slate-900 px-4 py-3 text-right text-white">
                 <div className="text-[8px] font-bold uppercase tracking-widest text-slate-400">Total presupuesto del proyecto</div>
-                <div className="font-mono text-lg font-black">${visibleBudgetItems.reduce((total, item) => total + (item.total || 0), 0).toLocaleString()}</div>
+                <div className="font-mono text-lg font-black">${getAssignedBudgetTotal(project, visibleBudgetItems, isProjectAdmin ? undefined : visibleCategories).toLocaleString()}</div>
               </div>
             </div>
 
@@ -6147,7 +6168,7 @@ export default function ProjectDetail() {
                             .filter(i => i.area === area)
                             .sort((a, b) => (a.order || 0) - (b.order || 0));
                           const isCollapsed = budgetSearchTerm ? false : collapsedCategories[area];
-                          const areaTotal = areaItems.reduce((acc, curr) => acc + (curr.total || 0), 0);
+                          const areaTotal = getCategoryBudget(project, budgetItems, area);
 
                           const DraggableComponent = Draggable as any;
                           return (
@@ -6185,10 +6206,11 @@ export default function ProjectDetail() {
                                     
                                     <div className="flex items-center gap-6">
                                       <div className="text-[10px] font-black tracking-widest text-emerald-300">
-                                        SUBTOTAL: ${areaTotal.toLocaleString()}
+                                        PRESUPUESTO: ${areaTotal.toLocaleString()}
                                       </div>
                                       <div className="flex items-center gap-1">
-                                        {canEditMainBudget && (
+                                        {canEditMainBudget && <button type="button" onClick={() => editCategoryBudget(area)} aria-label={`Asignar presupuesto de ${area}`} title="Asignar presupuesto" className="rounded border border-slate-200 bg-white p-2 text-slate-700 hover:bg-indigo-50"><Pencil className="h-3.5 w-3.5" /></button>}
+                                        {canEditMainBudget && !activeAreas.includes(area) && (
                                         <button 
                                           onClick={() => addEmptyRow(area)}
                                           className="p-1.5 text-slate-400 hover:text-black transition-colors bg-white border border-slate-200 rounded"
@@ -6219,6 +6241,7 @@ export default function ProjectDetail() {
                                           ref={provided.innerRef}
                                           className="min-h-[10px]"
                                         >
+                                          {!areaItems.length && directCategoryBudget(project, area) !== null && <p className="px-6 py-4 text-xs text-slate-500">Presupuesto global asignado. Cargá el detalle de los gastos en Áreas.</p>}
                                           {areaItems.map((item, index) => {
                                             const DraggableComponent = Draggable as any;
                                             return (
@@ -6338,7 +6361,7 @@ export default function ProjectDetail() {
                                             );
                                           })}
                                           {provided.placeholder}
-                                          {canEditMainBudget && (
+                                          {canEditMainBudget && !activeAreas.includes(area) && (
                                             <button
                                               type="button"
                                               onClick={() => addEmptyRow(area)}
@@ -6370,7 +6393,7 @@ export default function ProjectDetail() {
                 <div className="grid grid-cols-12 bg-slate-900 text-white px-4 py-5 items-center">
                   <div className="col-span-10 text-right text-[11px] font-bold uppercase tracking-widest text-slate-400">Total presupuesto del proyecto</div>
                   <div className="col-span-1 text-right text-xl font-bold font-mono">
-                    ${visibleBudgetItems.reduce((acc, curr) => acc + (curr.total || 0), 0).toLocaleString()}
+                    ${getAssignedBudgetTotal(project, visibleBudgetItems, isProjectAdmin ? undefined : visibleCategories).toLocaleString()}
                   </div>
                   <div className="col-span-1"></div>
                 </div>
@@ -8225,9 +8248,9 @@ export default function ProjectDetail() {
                   )}
                 </div>
 
-                {budgetItems.length > 0 && (
+                {(budgetItems.length > 0 || Object.keys(categoryBudgetMap(project)).length > 0) && (
                   <div className="p-4 bg-amber-50 border border-amber-100 rounded-xl text-xs text-amber-800">
-                    Este proyecto ya tiene {budgetItems.length} partidas. Al copiar, se reemplazará el presupuesto principal actual.
+                    Al copiar, se reemplazarán las partidas y las asignaciones globales del presupuesto principal actual.
                   </div>
                 )}
 
@@ -8252,6 +8275,10 @@ export default function ProjectDetail() {
             </motion.div>
           </div>
         )}
+        {categoryBudgetDraft && <CategoryBudgetDialog create={categoryBudgetDraft.create} area={categoryBudgetDraft.area} amount={categoryBudgetDraft.amount}
+          detailedBudget={getCategoryBudget({}, budgetItems, categoryBudgetDraft.area)}
+          minimum={getSubcategoryBudgetCapacity(0, project?.areaExpenseSubcategoryBudgets || {}, categoryBudgetDraft.area).assignedElsewhere}
+          onClose={() => setCategoryBudgetDraft(null)} onSave={saveMainCategoryBudget} />}
         {subcategoryBudgetDraft && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[270] flex items-center justify-center p-4">
             <motion.div

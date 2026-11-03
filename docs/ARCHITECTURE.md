@@ -8,6 +8,7 @@ GB GOAT organiza el ciclo completo de una producción audiovisual: cliente y pro
 
 - `projects/{projectId}` contiene identidad, estado, fechas, cliente, presupuesto global, áreas activas y miembros visibles.
 - `projects/{projectId}/budgetItems` contiene las líneas de Presu Ppal. Su edición financiera es administrativa.
+- `projects/{projectId}.categoryBudgets` contiene las asignaciones globales opcionales por categoría, en ARS. Reemplazan el presupuesto estimado de sus partidas; los gastos y pagos conservan sus documentos propios.
 - `projects/{projectId}/areaExpenses` contiene la ejecución operativa por área y subcategoría.
 - `projects/{projectId}/collaborators` contiene roles y alcances exclusivos de ese proyecto.
 - `projects/{projectId}/cashMovements` registra entregas, devoluciones, transferencias y movimientos asociados a pagos.

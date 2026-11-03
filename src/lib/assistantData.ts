@@ -178,6 +178,7 @@ export const loadAssistantProjectContext = async ({
         areaExpenseSubcategories: project.areaExpenseSubcategories && typeof project.areaExpenseSubcategories === 'object'
           ? project.areaExpenseSubcategories
           : {},
+        categoryBudgets: project.categoryBudgets || {},
         areaExpenseSubcategoryBudgets: project.areaExpenseSubcategoryBudgets && typeof project.areaExpenseSubcategoryBudgets === 'object'
           ? project.areaExpenseSubcategoryBudgets
           : {},

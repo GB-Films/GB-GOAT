@@ -56,6 +56,8 @@ export const ASSISTANT_HELP_SECTIONS: AssistantHelpSection[] = [
       'Presu Ppal es donde se carga el presupuesto del proyecto, organizado en categorías (por ejemplo Arte, Vestuario, Locaciones).',
       'Cómo cargar:',
       'Si la categoría no existe, se crea con el botón "Nueva Categoría".',
+      'Se puede activar "Asignar presupuesto sin detalle" al crearla, o usar el lápiz "Asignar presupuesto" de su encabezado. Funciona también con la gestión del área activa. El importe global es el presupuesto de referencia y el detalle de gastos se carga en Áreas.',
+      'La asignación global reemplaza la suma estimada de partidas de esa categoría. No genera gastos, proveedores, deuda ni pagos; tampoco puede quedar por debajo de lo asignado a sus subcategorías.',
       'Se agrega una fila con el botón "+" del encabezado de la categoría o con "Nuevo Gasto" al final de la lista.',
       'En cada fila se completa proveedor, descripción, precio unitario y cantidad; el total se calcula solo (cantidad por precio unitario).',
       'Orden: las filas se reordenan arrastrando desde el ícono de puntitos (grip) a la izquierda de cada fila; las categorías también se pueden reordenar, y una fila se puede arrastrar a otra categoría.',
