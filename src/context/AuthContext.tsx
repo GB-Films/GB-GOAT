@@ -1,9 +1,10 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { User, onAuthStateChanged, signOut } from 'firebase/auth';
 import { doc, getDoc, runTransaction, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
 import { normalizeEmail } from '../lib/identity';
 import { portalRequest } from '../lib/providerPortal';
+import { saveProjectPin } from '../lib/projectPins';
 
 interface AuthContextType {
   user: User | null;
@@ -13,6 +14,8 @@ interface AuthContextType {
   isOwner: boolean;
   isAdmin: boolean;
   refreshProfile: () => Promise<void>;
+  setProjectPinned: (projectId: string, pinned: boolean) => Promise<void>;
+  pinningProjectId: string | null;
 }
 
 export const APP_OWNER_EMAIL = 'info@granbertafilms.com';
@@ -26,6 +29,8 @@ const AuthContext = createContext<AuthContextType>({
   isOwner: false,
   isAdmin: false,
   refreshProfile: async () => {},
+  setProjectPinned: async () => {},
+  pinningProjectId: null,
 });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -33,6 +38,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [authError, setAuthError] = useState('');
+  const [pinningProjectId, setPinningProjectId] = useState<string | null>(null);
+  const pinPending = useRef(false);
 
   const clearInviteToken = () => {
     window.localStorage.removeItem(USER_INVITE_TOKEN_KEY);
@@ -144,8 +151,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (snapshot.exists()) setProfile(snapshot.data());
   };
 
+  const setProjectPinned = async (projectId: string, pinned: boolean) => {
+    const uid = auth.currentUser?.uid;
+    if (!uid || profile?.uid !== uid || !projectId || pinPending.current) return;
+    const previous = Array.isArray(profile.pinnedProjectIds) ? profile.pinnedProjectIds : [];
+    const next = pinned ? [...new Set([...previous, projectId])] : previous.filter((id: string) => id !== projectId);
+    pinPending.current = true;
+    setPinningProjectId(projectId);
+    setProfile(current => current && auth.currentUser?.uid === uid ? { ...current, pinnedProjectIds: next } : current);
+    try {
+      await saveProjectPin(db, uid, projectId, pinned);
+    } catch (error) {
+      setProfile(current => current && auth.currentUser?.uid === uid ? { ...current, pinnedProjectIds: previous } : current);
+      throw error;
+    } finally {
+      pinPending.current = false;
+      setPinningProjectId(null);
+    }
+  };
+
   return (
-    <AuthContext.Provider value={{ user, profile, loading, authError, isOwner, isAdmin, refreshProfile }}>
+    <AuthContext.Provider value={{ user, profile, loading, authError, isOwner, isAdmin, refreshProfile, setProjectPinned, pinningProjectId }}>
       {children}
     </AuthContext.Provider>
   );

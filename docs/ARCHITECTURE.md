@@ -29,9 +29,11 @@ Cuando un área está activa, los reportes financieros toman sus gastos desde `a
 ## Consistencia de UI/UX
 
 - La barra lateral ocupa la altura dinámica visible. Menú y pineados se desplazan en su propio espacio; la cuenta actual y «Cerrar sesión» no se comprimen ni salen del borde inferior. Bajo el umbral de escritorio se ofrece «Cuenta» fuera del desplazamiento horizontal del menú móvil.
+- Los favoritos usan el perfil compartido de la cuenta para sincronizar lista y menú lateral. Agregar o quitar actualiza sólo `pinnedProjectIds` con operaciones atómicas; si falla, ambas vistas recuperan el estado anterior. Se pueden quitar desde la estrella del proyecto o desde la cruz de Pineados.
 
 - Las páginas principales usan `PageHeader` para jerarquía y espaciado consistentes.
 - Presu Ppal y Áreas usan las mismas celdas de factura/comprobantes y el mismo modal de pagos.
+- La pestaña Documentos del proyecto reúne Contratos (vista inicial, con su firma) y Seguros. La carga ofrece sólo esas dos categorías. Facturas, pagos, retenciones y otros comprobantes se consultan desde los gastos y la ficha del proveedor; los archivos históricos conservan sus rutas y metadatos.
 - Durante la búsqueda, las categorías y subcategorías con coincidencias se muestran desplegadas. En Áreas se incluyen también las áreas ocultas por el filtro de vista, dentro del alcance permitido. Limpiar la búsqueda recupera la selección y los pliegues anteriores, sin guardar cambios en esas preferencias.
 - Las diferencias entre ambas vistas deben provenir del dominio: Presu Ppal es la referencia administrativa; Áreas es la ejecución delegable.
 - Una acción no debe mostrarse si el rol no puede completarla según las reglas.

@@ -1,6 +1,6 @@
 import { DEFAULT_RESULT_INCIDENCES } from '../lib/resultIncidences';
 import React, { useState, useEffect } from 'react';
-import { collection, query, getDocs, getDoc, setDoc, addDoc, serverTimestamp, where, or, doc, updateDoc, runTransaction, onSnapshot } from 'firebase/firestore';
+import { collection, query, getDocs, getDoc, setDoc, addDoc, serverTimestamp, where, or, doc, runTransaction, onSnapshot } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { handleFirestoreError } from '../lib/firestoreUtils';
 import { useAuth } from '../context/AuthContext';
@@ -44,15 +44,10 @@ export default function Projects() {
   const [creating, setCreating] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [projectScope, setProjectScope] = useState<ProjectScope>('current');
-  const [localPinnedProjectIds, setLocalPinnedProjectIds] = useState<string[]>([]);
-  const { profile, user } = useAuth();
+  const { profile, user, setProjectPinned, pinningProjectId } = useAuth();
   const isAppAdmin = profile?.role === 'admin';
   const canRefreshCatalog = ['info@granbertafilms.com', 'tomas@granberta.com'].includes(normalizeEmail(user?.email || '')) && isAppAdmin;
-  const pinnedProjectIds = localPinnedProjectIds;
-
-  useEffect(() => {
-    setLocalPinnedProjectIds(Array.isArray(profile?.pinnedProjectIds) ? profile.pinnedProjectIds : []);
-  }, [profile?.pinnedProjectIds]);
+  const pinnedProjectIds: string[] = Array.isArray(profile?.pinnedProjectIds) ? profile.pinnedProjectIds : [];
 
   const filteredProjects = projects
     .filter(project => matchesProjectScope(project, projectScope))
@@ -69,22 +64,11 @@ export default function Projects() {
     });
 
   const togglePinnedProject = async (projectId: string) => {
-    if (!profile?.uid) return;
-    const nextPinnedProjectIds = pinnedProjectIds.includes(projectId)
-      ? pinnedProjectIds.filter((id: string) => id !== projectId)
-      : [...pinnedProjectIds, projectId];
-
-    setLocalPinnedProjectIds(nextPinnedProjectIds);
-    window.dispatchEvent(new CustomEvent('gb:pinned-projects-updated', { detail: nextPinnedProjectIds }));
     try {
-      await updateDoc(doc(db, 'users', profile.uid), {
-        pinnedProjectIds: nextPinnedProjectIds,
-        updatedAt: serverTimestamp(),
-      });
+      await setProjectPinned(projectId, !pinnedProjectIds.includes(projectId));
     } catch (error) {
-      setLocalPinnedProjectIds(pinnedProjectIds);
       console.error('Error updating pinned projects:', error);
-      alert('No se pudo actualizar el pin del proyecto.');
+      alert('No se pudo guardar el favorito. Reintentá.');
     }
   };
 
@@ -356,18 +340,21 @@ export default function Projects() {
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
+                      disabled={Boolean(pinningProjectId)}
+                      aria-pressed={pinnedProjectIds.includes(project.id)}
                       onClick={(event) => {
                         event.preventDefault();
                         event.stopPropagation();
                         void togglePinnedProject(project.id);
                       }}
                       className={cn(
-                        "p-1 rounded transition-colors",
+                        "p-1 rounded transition-colors disabled:cursor-wait disabled:opacity-60",
                         pinnedProjectIds.includes(project.id)
                           ? "text-amber-500 bg-amber-50"
                           : "text-slate-200 hover:text-amber-500 hover:bg-amber-50"
                       )}
-                      title={pinnedProjectIds.includes(project.id) ? 'Despinear proyecto' : 'Pinear proyecto'}
+                      title={pinnedProjectIds.includes(project.id) ? 'Quitar de favoritos' : 'Agregar a favoritos'}
+                      aria-label={`${pinnedProjectIds.includes(project.id) ? 'Quitar de favoritos' : 'Agregar a favoritos'}: ${project.name}`}
                     >
                       <Star className={cn("w-4 h-4", pinnedProjectIds.includes(project.id) && "fill-current")} />
                     </button>

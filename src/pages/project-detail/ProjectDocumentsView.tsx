@@ -1,10 +1,10 @@
 import type { ReactNode } from 'react';
-import { FileText, FileSignature, ShieldCheck, Search, Upload, ExternalLink, X } from 'lucide-react';
+import { FileSignature, ShieldCheck, Search, Upload, ExternalLink, X } from 'lucide-react';
 import { DOCUMENT_CATEGORIES, filterProjectDocuments, type CatalogDocument, type DocumentCategory } from '../../lib/projectDocumentCatalog';
 import { cashMovementDate } from '../../lib/cashLedgerView';
 import { cn } from '../../lib/utils';
 
-const icons = { comprobantes: FileText, contratos: FileSignature, seguros: ShieldCheck };
+const icons = { contratos: FileSignature, seguros: ShieldCheck };
 
 export function ProjectDocumentsView({ documents, category, onCategoryChange, search, onSearchChange, onUpload, signingSection }: {
   documents: CatalogDocument[]; category: DocumentCategory; onCategoryChange: (category: DocumentCategory) => void;
@@ -16,7 +16,7 @@ export function ProjectDocumentsView({ documents, category, onCategoryChange, se
       <h2 className="text-base font-bold text-slate-900">Documentos</h2>
       {onUpload && <button type="button" onClick={onUpload}
         className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700">
-        <Upload className="h-4 w-4" />{category === 'contratos' ? 'Cargar contrato' : 'Subir documento'}
+        <Upload className="h-4 w-4" />{category === 'contratos' ? 'Cargar contrato' : 'Cargar seguro'}
       </button>}
     </header>
     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -42,19 +42,18 @@ export function ProjectDocumentsView({ documents, category, onCategoryChange, se
     {(category !== 'contratos' || !signingSection) && <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
       <table className="w-full text-left text-sm">
         <thead className="border-b border-slate-200 bg-slate-50 text-xs text-slate-500"><tr>
-          {['Documento', 'Proveedor', 'Fecha', 'Monto', ''].map(label => <th key={label} scope="col" className={cn('px-4 py-3 font-medium', (label === 'Monto' || !label) && 'text-right')}>{label || <span className="sr-only">Archivo</span>}</th>)}
+          {['Documento', 'Proveedor', 'Fecha', ''].map(label => <th key={label} scope="col" className={cn('px-4 py-3 font-medium', !label && 'text-right')}>{label || <span className="sr-only">Archivo</span>}</th>)}
         </tr></thead>
         <tbody className="divide-y divide-slate-100">{filtered.map(document => <tr key={document.id} className="align-middle hover:bg-slate-50/50">
           <td className="min-w-56 px-4 py-2.5">
             <div className="flex max-w-lg items-center gap-2">
-              <span title={document.type} className="max-w-40 shrink-0 truncate rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{document.type === 'factura' ? 'Factura' : document.type === 'comprobante' ? 'Comprobante' : document.type || 'Documento'}</span>
+              <span title={document.type} className="max-w-40 shrink-0 truncate rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{document.type || 'Documento'}</span>
               <p title={[document.fileName, document.description].filter(Boolean).join(' · ')} className="min-w-0 truncate font-semibold text-slate-900">{document.fileName}</p>
             </div>
             {document.expirationDate && <p className="mt-1 text-xs text-slate-500">Vence {cashMovementDate(document.expirationDate)?.toLocaleDateString('es-AR') || document.expirationDate}</p>}
           </td>
           <td className="px-4 py-2.5 font-medium text-slate-700">{document.providerName}</td>
           <td className="whitespace-nowrap px-4 py-2.5 text-xs text-slate-500">{(cashMovementDate(document.paymentDate) || cashMovementDate(document.uploadedAt))?.toLocaleDateString('es-AR') || '—'}</td>
-          <td className="whitespace-nowrap px-4 py-2.5 text-right font-mono text-slate-700">{document.amount > 0 ? `$${document.amount.toLocaleString('es-AR')}` : '—'}</td>
           <td className="px-4 py-2.5 text-right">{document.url ? <a href={document.url} target="_blank" rel="noreferrer"
             className="inline-flex items-center gap-2 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-100">Abrir<ExternalLink className="h-3.5 w-3.5" /></a>
             : <span className="text-xs text-slate-400">Sin archivo</span>}</td>

@@ -2,25 +2,30 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { documentCategory, filterProjectDocuments, signingDocumentMatchesProvider, type CatalogDocument } from './projectDocumentCatalog';
+import { DOCUMENT_CATEGORIES, documentCategory, filterProjectDocuments, signingDocumentMatchesProvider, type CatalogDocument } from './projectDocumentCatalog';
 import { ProjectDocumentsView } from '../pages/project-detail/ProjectDocumentsView';
+import { ProjectDocumentUpload } from '../pages/project-detail/ProjectDocumentUpload';
 import { ProjectSigningPanel } from '../pages/project-detail/ProjectSigningPanel';
 
-test('invoices, payment receipts and withholdings share Comprobantes; legacy locations remain visible in three categories', () => {
+test('project documents exclude financial records without modifying them; legacy contracts and insurance remain visible', () => {
   const documents = [
     { family: 'finanzas', type: 'factura' }, { family: 'finanzas', type: 'comprobante' }, { family: 'finanzas', type: 'Retención' },
     { family: 'locaciones', type: 'Permiso de filmacion' }, { family: 'locaciones', type: 'Seguro de locacion' }, { family: 'seguros', type: 'Poliza' },
+    { type: 'Comprobante de pago' }, { subtype: 'Retenciones' }, { family: 'comprobantes', type: 'Otro' },
+    { family: 'finanzas', type: 'Seguro técnico' },
   ].map((item, index) => ({ ...item, id: String(index), providerName: 'Proveedor' }));
   const original = structuredClone(documents);
-  assert.deepEqual(documents.map(documentCategory), ['comprobantes', 'comprobantes', 'comprobantes', 'contratos', 'seguros', 'seguros']);
-  assert.equal(['comprobantes', 'contratos', 'seguros'].flatMap(category => filterProjectDocuments(documents, category as any, '')).length, documents.length);
+  assert.deepEqual(documents.map(documentCategory), [null, null, null, 'contratos', 'seguros', 'seguros', null, null, null, null]);
+  assert.deepEqual(DOCUMENT_CATEGORIES.flatMap(category => filterProjectDocuments(documents, category.id, '')), documents.slice(3, 6));
   assert.deepEqual(documents, original);
+  assert.equal(documentCategory({ family: 'contratos', type: 'Acuerdo de pago' }), 'contratos', 'an explicit contract remains a contract, independently of its title');
 });
 
 test('search matches only the supplier, ignoring accents and name order, inside the selected category', () => {
-  const documents = [{ family: 'finanzas', type: 'factura', providerName: 'María García', description: 'Ana' }, { family: 'seguros', providerName: 'Ana López' }];
-  assert.deepEqual(filterProjectDocuments(documents, 'comprobantes', 'garcia maria'), [documents[0]]);
-  assert.deepEqual(filterProjectDocuments(documents, 'comprobantes', 'ana'), []);
+  const documents = [{ family: 'contratos', type: 'Contrato proveedor', providerName: 'María García', description: 'Ana' }, { family: 'seguros', providerName: 'Ana López' }];
+  assert.deepEqual(filterProjectDocuments(documents, 'contratos', 'garcia maria'), [documents[0]]);
+  assert.deepEqual(filterProjectDocuments(documents, 'contratos', 'ana'), []);
+  assert.deepEqual(filterProjectDocuments(documents, 'seguros', 'ana'), [documents[1]]);
 });
 
 test('signing documents can be found by provider id or a matching signer account, including company business names', () => {
@@ -30,13 +35,30 @@ test('signing documents can be found by provider id or a matching signer account
   assert.equal(signingDocumentMatchesProvider({ signatures: [{ email: 'other@example.com' }] }, 'catering', providers), false);
 });
 
-test('the document view has exactly three quick categories and a supplier search without repeated filter dropdowns', () => {
-  const documents: CatalogDocument[] = [{ id: 'ret', family: 'finanzas', type: 'Retención', providerName: 'María', fileName: 'retencion.pdf', description: '', amount: 0, url: 'https://example.test/ret' }];
-  const html = renderToStaticMarkup(createElement(ProjectDocumentsView, { documents, category: 'comprobantes', onCategoryChange() {}, search: '', onSearchChange() {}, signingSection: 'Signature section' }));
-  assert.equal(html.match(/aria-pressed=/g)?.length, 3);
-  assert.match(html, /Comprobantes/); assert.match(html, /Contratos/); assert.match(html, /Seguros/); assert.match(html, /Buscar por proveedor/);
-  assert.match(html, /retencion.pdf/);
-  assert.doesNotMatch(html, /Familia|Finanzas|Locaciones|<select|Signature section/);
+test('the view exposes only contracts and insurance, retains signing, and hides financial rows', () => {
+  const documents: CatalogDocument[] = [
+    { id: 'ret', family: 'finanzas', type: 'Retención', providerName: 'María', fileName: 'retencion.pdf', description: '', amount: 100, url: 'https://example.test/ret' },
+    { id: 'policy', family: 'seguros', type: 'Póliza', providerName: 'María', fileName: 'poliza.pdf', description: '', amount: 0, url: 'https://example.test/policy' },
+  ];
+  const props = { documents, onCategoryChange() {}, search: '', onSearchChange() {}, onUpload() {}, signingSection: 'Signature section' };
+  const html = renderToStaticMarkup(createElement(ProjectDocumentsView, { ...props, category: 'seguros' }));
+  assert.equal(html.match(/aria-pressed=/g)?.length, 2);
+  assert.match(html, /Contratos/); assert.match(html, /Seguros/); assert.match(html, /Buscar por proveedor/);
+  assert.match(html, /poliza.pdf/); assert.match(html, /Cargar seguro/);
+  assert.doesNotMatch(html, /Comprobantes|retencion.pdf|Retención|Monto|Familia|Finanzas|Locaciones|<select|Signature section/);
+  const contracts = renderToStaticMarkup(createElement(ProjectDocumentsView, { ...props, category: 'contratos' }));
+  assert.match(contracts, /Signature section/); assert.match(contracts, /Cargar contrato/);
+  assert.doesNotMatch(contracts, /retencion.pdf|poliza.pdf/);
+});
+
+test('upload offers only contract and insurance categories, with no financial document types', () => {
+  for (const category of DOCUMENT_CATEGORIES) {
+    const html = renderToStaticMarkup(createElement(ProjectDocumentUpload, { initialCategory: category.id, providers: [], areas: [], busy: false, onClose() {}, onSubmit() {} }));
+    assert.match(html, /value="contratos"/); assert.match(html, /value="seguros"/);
+    assert.match(html, new RegExp(`name="family" value="${category.id}"`));
+    assert.doesNotMatch(html, /comprobantes|finanzas|Factura|Comprobante de pago|Retención|Otro comprobante/);
+    assert.match(html, category.id === 'contratos' ? /Contrato proveedor/ : /Seguro técnico/);
+  }
 });
 
 test('signature controls show progress, application status and artifacts without requesting approval', () => {

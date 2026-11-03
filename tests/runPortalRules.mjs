@@ -13,6 +13,7 @@ const cli =
       ));
 const cases = [
   ["categoryBudgets", "demo-goat-category-budgets", "firestore"],
+  ["projectPins", "demo-goat-project-pins", "firestore"],
   ["providerIntake", "demo-goat-provider-intake", "firestore"],
   ["projectCommercialRules", "demo-gb-goat-commercial", "firestore"],
   ["projectAdministrationRules", "demo-gb-goat-administration", "firestore"],
@@ -46,7 +47,7 @@ for (const [name, project, services] of cases) {
       services,
       "--project",
       project,
-      `node ${name === 'categoryBudgets' ? '--import tsx ' : ''}tests/${name}.emulator.mjs`,
+      `node ${['categoryBudgets', 'projectPins'].includes(name) ? '--import tsx ' : ''}tests/${name}.emulator.mjs`,
     ],
     { encoding: "utf8", timeout: 240000, env: process.env, maxBuffer: 8e6 },
   );
