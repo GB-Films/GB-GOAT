@@ -15,7 +15,10 @@ const roleName = `projects/${project}/roles/crmProjectImport`;
 const pool = `projects/${number}/locations/global/workloadIdentityPools/crm-goat`;
 const provider = `${pool}/providers/github`;
 const service = `projects/${project}/locations/us-central1/services/importcrmproject`;
-const permissions = ['datastore.databases.get', 'datastore.entities.get', 'datastore.entities.list', 'datastore.entities.create'];
+const createOnly = ['datastore.databases.get', 'datastore.entities.get', 'datastore.entities.list', 'datastore.entities.create'];
+// Corrections (importMode 'correction') update the CRM reference of a project the
+// CRM created and its receipt; the code never deletes or touches budgets.
+const permissions = [...createOnly, 'datastore.entities.update'];
 const condition = `assertion.repository_id == '${repositoryId}' && assertion.repository_owner_id == '${ownerId}' && assertion.ref == 'refs/heads/main' && assertion.workflow_ref == 'Klausstin/gran-crm/.github/workflows/code-generator.yml@refs/heads/main'`;
 const principal = `principalSet://iam.googleapis.com/${pool}/attribute.repository_id/${repositoryId}`;
 
@@ -101,13 +104,20 @@ async function main() {
   await ensureAccount('crm-goat-caller', 'CRM code generator: invoke GOAT importer only');
   const role = await getOrNull('iam', 'v1', roleName);
   if (role) {
-    if (role.deleted || JSON.stringify([...role.includedPermissions].sort()) !== JSON.stringify([...permissions].sort())) {
-      throw new Error('El rol existente no coincide con lectura/creación sin update/delete. Revisar antes de cambiar permisos.');
+    const current = JSON.stringify([...role.includedPermissions].sort());
+    if (role.deleted || ![createOnly, permissions].some(set => JSON.stringify([...set].sort()) === current)) {
+      throw new Error('El rol existente no coincide con lectura/creación/actualización sin delete. Revisar antes de cambiar permisos.');
+    }
+    if (current !== JSON.stringify([...permissions].sort())) {
+      console.log(`${apply ? 'Agregar' : 'Se agregaría'} datastore.entities.update al rol ${roleName} (correcciones del CRM)`);
+      if (apply) await request('iam', 'v1', 'PATCH', `${roleName}?updateMask=includedPermissions,description`, {
+        includedPermissions: permissions, description: 'Read, create and correct GOAT projects/receipts from the CRM; no delete or Auth access.',
+      });
     }
   } else {
     console.log(`${apply ? 'Crear' : 'Se crearía'} rol ${roleName}: ${permissions.join(', ')}`);
     if (apply) await request('iam', 'v1', 'POST', `projects/${project}/roles`, {
-      roleId: 'crmProjectImport', role: { title: 'CRM project importer', description: 'Read and create GOAT projects/receipts; no update/delete or Auth access.', includedPermissions: permissions, stage: 'GA' },
+      roleId: 'crmProjectImport', role: { title: 'CRM project importer', description: 'Read, create and correct GOAT projects/receipts from the CRM; no delete or Auth access.', includedPermissions: permissions, stage: 'GA' },
     });
   }
   await addBinding('cloudresourcemanager', 'v1', `projects/${project}`, roleName, `serviceAccount:${runtime}`, {

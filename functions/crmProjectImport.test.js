@@ -12,7 +12,7 @@ const fixture = overrides => ({
   internalProviderUnit: '', condition: 'Externo', status: 'Activo', ...overrides,
 });
 
-// Transaction double: rejects reads after writes and records only create calls.
+// Transaction double: rejects reads after writes and records create and update calls.
 function database(seed = {}) {
   const records = new Map(Object.entries(seed));
   const writes = [];
@@ -37,6 +37,10 @@ function database(seed = {}) {
         create(ref, value) {
           assert.equal(records.has(ref.path), false, 'create must not overwrite');
           pending.push([ref.path, value]);
+        },
+        update(ref, value) {
+          assert.equal(records.has(ref.path), true, 'update needs an existing document');
+          pending.push([ref.path, { ...records.get(ref.path), ...value }]);
         },
       });
       pending.forEach(([path, value]) => { records.set(path, value); writes.push(path); });
@@ -276,6 +280,79 @@ for (const [title, seed] of [
   test(`conflict ${title} creates nothing`, async () => {
     const db = database(seed);
     await assert.rejects(importProject({ db, payload: fixture(), timestamp: () => 123 }), { status: 409 });
+    assert.equal(db.writes.length, 0);
+  });
+}
+
+// A code the CRM corrected after the alta: another sale, its name and its price.
+const correction = overrides => fixture({ schemaVersion: 2, importMode: 'correction', projectStatus: 'Presupuesto', contractConfirmed: true,
+  sourceEvidence: evidence, saleId: 'VE-CORREGIDA', name: 'Prueba Local', sourceProjectId: 'G ZZZ 0001 Prueba Local',
+  contractAmount: 450000, ...overrides });
+async function imported(seed) {
+  const db = database(seed);
+  await importProject({ db, payload: fixture(), timestamp: () => 123, clock });
+  db.writes.length = 0;
+  return db;
+}
+
+test('a correction moves the sale link, the contract and the untouched name; budgets stay; repeating it writes nothing', async () => {
+  const db = await imported();
+  const budget = db.records.get('projectCommercial/ct-G-ZZZ-0001').budgetTotal;
+  const options = { db, payload: correction(), timestamp: () => 456, clock };
+  assert.deepEqual(await importProject(options), { schemaVersion: 1, projectCode: 'G ZZZ 0001', projectId: 'ct-G-ZZZ-0001', outcome: 'corrected' });
+  const commercial = db.records.get('projectCommercial/ct-G-ZZZ-0001');
+  assert.equal(commercial.crmSaleId, 'VE-CORREGIDA');
+  assert.equal(commercial.crmSaleUrl, 'https://gran-crm.granberta.workers.dev/?ir=venta/VE-CORREGIDA');
+  assert.equal(commercial.controlTotalProjectId, 'G ZZZ 0001 Prueba Local');
+  assert.equal(commercial.controlTotalContractAmount, 450000);
+  assert.equal(commercial.controlTotalContractArs, 450000);
+  assert.equal(commercial.budgetTotal, budget);
+  assert.equal(db.records.get('projects/ct-G-ZZZ-0001').name, 'Prueba Local');
+  const receipt = db.records.get('crmProjectImports/ct-G-ZZZ-0001');
+  assert.equal(receipt.saleId, 'VE-CORREGIDA');
+  assert.equal(receipt.corrections.length, 1);
+  assert.deepEqual(receipt.corrections[0].from, { saleId: 'VE-TESTLOCAL', sourceProjectId: 'G ZZZ 0001 Prueba local', name: 'Prueba local', contractCurrency: 'ARS', contractAmount: 500000 });
+  assert.deepEqual(db.writes.sort(), ['crmProjectImports/ct-G-ZZZ-0001', 'projectCommercial/ct-G-ZZZ-0001', 'projects/ct-G-ZZZ-0001']);
+  db.writes.length = 0;
+  assert.equal((await importProject(options)).outcome, 'already_corrected');
+  assert.equal(db.writes.length, 0);
+  // A retry of the original alta with the corrected sale is the same receipt, not a conflict.
+  const { importMode, projectStatus, contractConfirmed, sourceEvidence, ...v1 } = correction();
+  assert.equal((await importProject({ db, payload: { ...v1, schemaVersion: 1 }, timestamp: () => 789 })).outcome, 'already_processed');
+});
+
+test('a correction keeps a name or a contract an administrator edited, and says so', async () => {
+  const db = await imported();
+  db.records.set('projects/ct-G-ZZZ-0001', { ...db.records.get('projects/ct-G-ZZZ-0001'), name: 'Nombre de producción' });
+  db.records.set('projectCommercial/ct-G-ZZZ-0001', { ...db.records.get('projectCommercial/ct-G-ZZZ-0001'), controlTotalContractAmount: 480000 });
+  const result = await importProject({ db, payload: correction(), timestamp: () => 456, clock });
+  assert.equal(result.outcome, 'corrected');
+  assert.deepEqual(result.kept, ['contract', 'name']);
+  assert.equal(db.records.get('projects/ct-G-ZZZ-0001').name, 'Nombre de producción');
+  assert.equal(db.records.get('projectCommercial/ct-G-ZZZ-0001').controlTotalContractAmount, 480000);
+  assert.equal(db.records.get('projectCommercial/ct-G-ZZZ-0001').crmSaleId, 'VE-CORREGIDA');
+});
+
+test('a correction already made by hand only updates the receipt', async () => {
+  const db = await imported();
+  db.records.set('projects/ct-G-ZZZ-0001', { ...db.records.get('projects/ct-G-ZZZ-0001'), name: 'Prueba Local' });
+  db.records.set('projectCommercial/ct-G-ZZZ-0001', { ...db.records.get('projectCommercial/ct-G-ZZZ-0001'), controlTotalContractAmount: 450000, controlTotalContractArs: 450000 });
+  assert.equal((await importProject({ db, payload: correction(), timestamp: () => 456, clock })).outcome, 'corrected');
+  assert.equal(db.records.get('projectCommercial/ct-G-ZZZ-0001').crmSaleId, 'VE-CORREGIDA');
+  assert.equal(db.records.get('crmProjectImports/ct-G-ZZZ-0001').saleId, 'VE-CORREGIDA');
+});
+
+for (const [title, prepare, status, override] of [
+  ['without a CRM receipt', db => db.records.delete('crmProjectImports/ct-G-ZZZ-0001'), 409],
+  ['of a deleted project', db => db.records.delete('projects/ct-G-ZZZ-0001'), 409],
+  ['of a sale linked by hand in GOAT', db => db.records.set('projectCommercial/ct-G-ZZZ-0001', { ...db.records.get('projectCommercial/ct-G-ZZZ-0001'), crmSaleId: 'VE-MANUAL' }), 409],
+  ['with stale evidence', () => {}, 400, { sourceEvidence: { ...evidence, verifiedAt: '2026-10-20T19:00:00Z' } }],
+  ['of another code', () => {}, 409, { projectCode: 'G ZZZ 0002', sourceProjectId: 'G ZZZ 0002 Prueba Local' }],
+]) {
+  test(`a correction ${title} writes nothing`, async () => {
+    const db = await imported();
+    prepare(db);
+    await assert.rejects(importProject({ db, payload: correction(override), timestamp: () => 456, clock }), { status });
     assert.equal(db.writes.length, 0);
   });
 }
