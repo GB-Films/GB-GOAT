@@ -10,7 +10,19 @@ El listado interno consulta `providerPortal.registrationStatuses` para las ficha
 
 El cliente separa los resultados por cuenta/proyecto y descarta respuestas de una vista anterior. Mientras consulta muestra «Verificando alta»; si falla, «Alta sin verificar». Ninguno de esos estados se presenta como ficha provisoria ni ofrece otro link de alta. La advertencia amarilla se reserva a los proveedores sin evidencia de alta después de la comprobación. Las reglas, el circuito de actualización firmada y los modelos fiscales/bancarios no se modifican. Este cambio requiere backend compatible antes de publicar su frontend.
 
-### Fichas provisorias y alta sobre la misma identidad
+### Empresas institucionales gestionadas por administración
+
+Administración puede elegir **Usar ficha administrativa** en la ficha completa de una empresa institucional (por ejemplo, una aseguradora que sólo figura en gastos/documentos). Es una selección explícita por proveedor: no se deduce del nombre, del rubro ni del tipo empresa. En Presu Ppal y Áreas se muestra **Ficha administrativa · no requiere alta**, sin amarillo ni enlace de alta. No se marca una inscripción ficticia ni se cambian los estados de los demás proveedores.
+
+`manageProviderPortal.administrativeProviderState/setAdministrativeProvider` consulta y guarda la clasificación privada `providerAdministrativeRecords/{providerId}` (`version: administrative-provider-v1`, estado, contacto interno, actor y fecha). Sólo administración global o su ayudante pueden usar estas acciones; el SDK no puede leer/escribir esta colección, incluidas las cuentas administrativas. Se aprovecha la denegación por defecto: no hay cambios de reglas ni IAM. Los IDs clasificados se devuelven por separado en `registrationStatuses`, sin contacto, auditoría ni identidad del firmante. La UI vuelve a consultar al cambiar una clasificación.
+
+La clasificación exige empresa sin alta propia, confirmación histórica aplicada, membresía no revocada ni representación preparada/firmada. Conserva datos fiscales, banco, documentos, gastos y pagos; sólo retira el correo/preparación de acceso antiguos y registra el contacto como interno. No crea, cambia ni reactiva membresías. Preparar accesos excluye estas fichas; un candidato o link de alta anterior no puede asociar al contacto como representante. El portal y la preparación de contratos también comprueban la clasificación en servidor.
+
+**Volver a alta por proveedor** desactiva la clasificación con auditoría. No restaura el correo de acceso anterior ni asigna cuentas: una inscripción posterior conserva la misma ficha/identidad y exige el circuito habitual; para una empresa la representación se confirma por separado. Una empresa que ya tiene un alta/acceso no se transforma silenciosamente en ficha administrativa. Las pruebas de emulador cubren concurrencia con el alta, archivos/pagos intactos, SDK privado y bloqueo de candidatos/links anteriores.
+
+Publicación de este lote: `providerPortal` y `manageProviderPortal` compatibles antes del frontend. Luego clasificar explícitamente el proveedor institucional mediante la acción administrativa validada; no se migran empresas en masa ni se prueba con datos reales. La PR69 ya fue publicada y verificada en `d4eaa5ba306370506f96873541716e7699a646d0`; este lote no vuelve a desplegarla.
+
+### Completar una ficha provisoria existente
 
 Una ficha manual/importada no acredita un alta propia, aunque tenga banco o correo de contacto. En Presu Ppal y Áreas se señala en amarillo **Alta pendiente · ficha provisoria** hasta que tenga evidencia de alta (`personalGoogleAccount`, origen de alta propia anterior o `registration.status: complete`). No se infiere un alta por tener CBU, un nombre o un correo escrito por producción.
 

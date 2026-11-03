@@ -8,11 +8,13 @@ export function hasProviderRegistration(provider: any): boolean {
 export type RegistrationEvidence = {
   status: 'loading' | 'ready' | 'error';
   registeredIds: ReadonlySet<string>;
+  administrativeIds?: ReadonlySet<string>;
 };
 
-export function expenseRegistrationState(item: any, providers: any[], evidence?: RegistrationEvidence): 'unassigned' | 'registered' | 'provisional' | 'loading' | 'error' {
+export function expenseRegistrationState(item: any, providers: any[], evidence?: RegistrationEvidence): 'unassigned' | 'registered' | 'administrative' | 'provisional' | 'loading' | 'error' {
   if (!item?.providerId && !item?.providerName) return 'unassigned';
   const provider = providers.find(row => row.id === item.providerId);
+  if (provider && evidence?.status === 'ready' && evidence.administrativeIds?.has(provider.id)) return 'administrative';
   if (hasProviderRegistration(provider) || evidence?.registeredIds.has(item.providerId)) return 'registered';
   if (evidence && evidence.status !== 'ready') return evidence.status;
   return 'provisional';

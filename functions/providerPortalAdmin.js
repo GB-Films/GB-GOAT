@@ -6,6 +6,7 @@ const { checkCompanyReview } = require('./providerRepresentation');
 const { COMPANY_EVIDENCE, LEGACY_COMPANY_EVIDENCE } = require('./providerEvidence');
 const { thirdPartyIsCurrent } = require('./providerThirdPartyDeclaration');
 const { createSignedThirdPartyService } = require('./signedThirdPartyDeclaration');
+const { createProviderAdministrativeRecords, assertProviderPortalAllowed, isAdministrativeRecord } = require('./providerAdministrativeRecords');
 const {
   expenseInvoices,
   dateKey,
@@ -25,6 +26,7 @@ function createProviderPortalAdminHandler({
   findAccount,
 }) {
   const thirdParties = createSignedThirdPartyService({ db, timestamp, clock, sign });
+  const administrative = createProviderAdministrativeRecords({ db, timestamp });
   return async (request) => {
     if (!request.auth?.uid || request.auth.token?.email_verified !== true)
       throw new HttpsError("unauthenticated", "Iniciá sesión.");
@@ -73,6 +75,8 @@ function createProviderPortalAdminHandler({
           "No administrás documentos de este proyecto.",
         );
     }
+    if (input.action === 'administrativeProviderState') return administrative.state(input.providerId);
+    if (input.action === 'setAdministrativeProvider') return administrative.set(actor, input);
     if (['projectContractSource', 'prepareProjectContract'].includes(input.action)) {
       const projectId = id(input.projectId);
       if (!global) {
@@ -147,8 +151,11 @@ function createProviderPortalAdminHandler({
     if (input.action === "prepareAccess") {
       const providers = await db.collection("providers").limit(10001).get();
       if (providers.size > 10000) fail("Prepará la migración por lotes.");
+      const records = await db.collection('providerAdministrativeRecords').limit(10001).get();
+      if (records.size > 10000) fail('La clasificación de proveedores requiere paginación.');
+      const administrativeIds = new Set(records.docs.filter(row => isAdministrativeRecord(row.data(), row.id)).map(row => row.id));
       const plan = accessCandidates(
-        providers.docs.map((s) => ({ id: s.id, ...s.data() })),
+        providers.docs.filter(row => !administrativeIds.has(row.id)).map((s) => ({ id: s.id, ...s.data() })),
       );
       if (input.apply === true) {
         if (user?.role !== "admin" && actor.email !== "info@granbertafilms.com")
@@ -163,6 +170,7 @@ function createProviderPortalAdminHandler({
           const providerRef = db.doc(`providers/${candidate.providerIds[0]}`);
           await db.runTransaction(async (tx) => {
             const p = (await tx.get(providerRef)).data();
+            await assertProviderPortalAllowed(db, providerRef.id, tx);
             if (!p || email(p.portalAccessEmail || p.email) !== candidate.email)
               fail(
                 "Cambió un correo mientras preparabas los accesos. Volvé a revisar.",
@@ -253,6 +261,7 @@ function createProviderPortalAdminHandler({
       );
       await db.runTransaction(async (tx) => {
         const prior = (await tx.get(membershipRef)).data();
+        if (input.status !== 'revoked') await assertProviderPortalAllowed(db, providerId, tx);
         const audit = db.collection("providerPortalAudit").doc();
         tx.set(membershipRef, {
           providerId,

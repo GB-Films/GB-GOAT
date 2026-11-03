@@ -31,3 +31,16 @@ test('expense warning follows exact provider ID and disappears after the same re
   assert.equal(expenseNeedsProviderRegistration({providerName:'Persona'},[]),true);
   assert.equal(expenseNeedsProviderRegistration({},[]),false);
 });
+
+test('administrative management is explicit server evidence, separate from registration, never inferred from company/name/contact', () => {
+  const provider={id:'institution',type:'empresa',name:'Institución ficticia',email:'staff@example.test',administrative:true};
+  const row={providerId:'institution'};
+  assert.equal(hasProviderRegistration(provider),false);
+  assert.equal(expenseRegistrationState(row,[provider]),'provisional');
+  const evidence={status:'ready' as const,registeredIds:new Set<string>(),administrativeIds:new Set(['institution'])};
+  assert.equal(expenseRegistrationState(row,[provider],evidence),'administrative');
+  assert.equal(expenseNeedsProviderRegistration(row,[provider],evidence),false);
+  assert.equal(expenseRegistrationState({providerId:'other'},[provider],evidence),'provisional');
+  assert.equal(expenseRegistrationState(row,[provider],{...evidence,status:'error'}),'error');
+  assert.equal(hasProviderRegistration(provider),false,'classification never invents an intake');
+});

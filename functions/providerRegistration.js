@@ -1,6 +1,7 @@
 const { HttpsError } = require('firebase-functions/v2/https');
 const { hash, id, thirdPartyIdentity } = require('./providerPortalModel');
 const { signedProfileRegistration } = require('./providerRegistrationEvidence');
+const { assertProviderPortalAllowed } = require('./providerAdministrativeRecords');
 const fail = message => { throw new HttpsError('failed-precondition', message); };
 const digits = value => String(value || '').replace(/\D/g, '');
 const fields = { name:160, lastName:160, businessName:160, dni:20, cuit:30, email:300, phone:60, address:300,
@@ -80,6 +81,7 @@ function createProviderRegistration({ db, timestamp, clock = () => new Date(), l
       const providerRef = previous?.ref || newRef, providerId = providerRef.id;
       const membershipRef = db.doc(`providerPortalUsers/${actor.uid}/memberships/${providerId}`);
       if (previous) {
+        await assertProviderPortalAllowed(db, providerId, tx);
         assertProvisional(previous.data(), form, actor);
         const declarations = await tx.get(db.collection('providerPortalDeclarations').where('providerId','==',providerId).limit(501));
         if (declarations.size > 500) fail('Gran Berta debe revisar el historial antes de completar el alta.');

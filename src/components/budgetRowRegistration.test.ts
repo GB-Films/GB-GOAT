@@ -31,3 +31,10 @@ test('read-only expense and unbound name keep status but cannot create a provide
   const nameOnly=render({id:'different',name:'Persona de prueba'},false,'');
   assert.match(nameOnly,/Alta pendiente/);assert.doesNotMatch(nameOnly,/Copiar link de alta/);
 });
+
+test('an explicitly classified administrative company has a neutral label and no intake link', () => {
+  const html=render({id:'legacy',type:'empresa'},false,'legacy',{status:'ready',registeredIds:new Set(),administrativeIds:new Set(['legacy'])});
+  assert.match(html,/Ficha administrativa · no requiere alta/);
+  assert.doesNotMatch(html,/bg-amber-50|Alta pendiente|Copiar link de alta/);
+  assert.match(render({id:'legacy',type:'empresa',name:'Institución'}),/Alta pendiente/,'other companies are not automatically exempt');
+});

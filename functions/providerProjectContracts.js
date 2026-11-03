@@ -2,6 +2,7 @@ const { createHash, randomUUID } = require('node:crypto');
 const { PDFDocument } = require('pdf-lib');
 const { fail, id, email, text, hash } = require('./providerPortalModel');
 const { companySigningAuthority, DECLARED_COMPANY_VERSION } = require('./providerRepresentation');
+const { assertProviderPortalAllowed } = require('./providerAdministrativeRecords');
 
 function contractFields(input, signers, pages) {
   if (!Array.isArray(input) || input.length !== signers.length || input.length > 10) fail('Marcá un recuadro de firma por persona.');
@@ -64,6 +65,7 @@ function createProjectContractBridge({ db, store, bucket, readLocalFile, timesta
         if (bindings.some(binding => binding.email === signerEmail)) fail('Dos proveedores comparten el correo. Elegí una sola ficha para esa cuenta.');
         let companyAuthority = null;
         if (provider.type === 'empresa') {
+          await assertProviderPortalAllowed(db, providerId);
           const approval = (await db.doc(`providerPortalCompanyApprovals/${providerId}`).get()).data();
           const membership = approval?.uid ? (await db.doc(`providerPortalUsers/${approval.uid}/memberships/${providerId}`).get()).data() : null;
           const declaration = approval?.version === DECLARED_COMPANY_VERSION ? (await db.doc(`providerPortalDeclarations/${id(approval.declarationId)}`).get()).data() : null;
