@@ -6,6 +6,8 @@ import {
   portalRequest,
   signPortalDocument,
 } from "../lib/providerPortal";
+import { ProviderInvoiceList } from "../components/ProviderInvoiceList";
+import { ProviderReimbursements } from "../components/ProviderReimbursements";
 import { ProviderInvoiceUpload } from "../components/ProviderInvoiceUpload";
 import PortalSignDialog from "../components/PortalSignDialog";
 import { ThirdPartyAuthorizationForm } from "../components/ThirdPartyAuthorizationForm";
@@ -56,6 +58,7 @@ export default function ProviderPortal() {
   const preparationRevision = useRef(0), documentRevision = useRef(0);
   const [documentsLoading, setDocumentsLoading] = useState(false), [documentsLoaded, setDocumentsLoaded] = useState(false);
   const [profileNotice, setProfileNotice] = useState('');
+  const [invoiceNotice, setInvoiceNotice] = useState('');
   const [members, setMembers] = useState<any[]>([]),
     [providerId, setProviderId] = useState(() => searchParams.get("provider") || ""),
     [view, setView] = useState<any>(null),
@@ -110,7 +113,7 @@ export default function ProviderPortal() {
   }, []);
   useEffect(() => {
     loadRevision.current++; documentRevision.current++; preparationRevision.current++;
-    setHasLoaded(false); setMembers([]); setView(null); setDocs([]); setDocumentsLoaded(false); setDraft({}); setSigning(null); intakePrefilled.current = '';
+    setInvoiceNotice(''); setHasLoaded(false); setMembers([]); setView(null); setDocs([]); setDocumentsLoaded(false); setDraft({}); setSigning(null); intakePrefilled.current = '';
     if (!user?.uid) return;
     void load(); void loadDocuments();
     const timer = window.setInterval(() => { if (!document.hidden) { void load(); void loadDocuments(); } }, 30000);
@@ -194,7 +197,7 @@ export default function ProviderPortal() {
     } finally { await Promise.all([load(), loadDocuments()]); setBusy(false); }
   }
   return (
-    <div className="provider-portal mx-auto max-w-6xl space-y-5 p-2 sm:p-5">
+    <div className="provider-portal mx-auto min-w-0 max-w-6xl space-y-3 p-1 sm:space-y-5 sm:p-5">
       <header className={box}>
         <h1 className="text-2xl font-bold tracking-tight">Mi proveedor</h1>
         <p className="mt-2 text-sm text-slate-600">
@@ -213,7 +216,7 @@ export default function ProviderPortal() {
                 setView(null);
                 setSigning(null);
                 preparationRevision.current++;
-                setProfileNotice('');
+                setProfileNotice(''); setInvoiceNotice('');
                 setError('');
                 setProviderId(e.target.value);
                 selectedProviderRef.current = e.target.value;
@@ -268,7 +271,7 @@ export default function ProviderPortal() {
       {view && tab !== 'Mis datos' && <ProviderConfirmationNotice status={view.profileConfirmation?.status} onReview={reviewProfileData} />}
       <nav
         aria-label="Secciones del proveedor"
-        className="flex gap-1 overflow-x-auto rounded-2xl border border-slate-200 bg-white p-1.5 shadow-sm shadow-slate-200/20"
+        className="portal-tabs grid grid-cols-3 gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-sm shadow-slate-200/20 sm:flex sm:overflow-x-auto sm:rounded-2xl sm:p-1.5"
       >
         {tabs.map((t, index) => { const Icon = tabIcons[index]; const pending = t === 'Documentos' && pendingCount > 0; return (
           <button
@@ -277,9 +280,9 @@ export default function ProviderPortal() {
             aria-current={tab === t ? 'page' : undefined}
             aria-label={pending ? `Documentos: ${pendingCount} pendientes de tu firma` : t}
             onClick={() => { setError(''); setTab(t); }}
-            className={`flex min-h-11 items-center gap-2 whitespace-nowrap rounded-xl px-3 py-2 text-sm font-medium transition-colors sm:px-4 ${pending ? `bg-amber-100 text-amber-950 hover:bg-amber-200 ${tab === t ? 'ring-2 ring-inset ring-amber-400' : ''}` : tab === t ? 'bg-slate-900 text-white hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'}`}
+            className={`flex min-h-10 min-w-0 items-center justify-center gap-1 whitespace-nowrap rounded-lg px-2 py-1.5 text-xs sm:min-h-11 sm:gap-2 sm:rounded-xl sm:py-2 sm:text-sm font-medium transition-colors sm:px-4 ${pending ? `bg-amber-100 text-amber-950 hover:bg-amber-200 ${tab === t ? 'ring-2 ring-inset ring-amber-400' : ''}` : tab === t ? 'bg-slate-900 text-white hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'}`}
           >
-            <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />{t}{pending && <span className="flex min-w-5 items-center justify-center rounded-full bg-amber-400 px-1.5 text-xs font-bold leading-5 text-amber-950" aria-hidden="true">{pendingCount}</span>}
+            <Icon className="h-4 w-4 shrink-0" aria-hidden="true" /><span className="sm:hidden">{t === "Pagos y retenciones" ? "Pagos" : t}</span><span className="hidden sm:inline">{t}</span>{pending && <span className="flex min-w-5 items-center justify-center rounded-full bg-amber-400 px-1.5 text-xs font-bold leading-5 text-amber-950" aria-hidden="true">{pendingCount}</span>}
           </button>
         ); })}
       </nav>
@@ -290,7 +293,7 @@ export default function ProviderPortal() {
             <article key={w.key} className={box}>
               <h2 className="font-bold">{w.projectName}</h2>
               <p className="text-sm text-slate-600">{w.description}</p>
-              <div className="mt-4 grid gap-3 rounded-xl bg-slate-50 p-3 text-sm sm:grid-cols-2">
+              <div className="portal-money-grid mt-3 grid grid-cols-2 gap-2 rounded-xl bg-slate-50 p-2 text-sm sm:mt-4 sm:gap-3 sm:p-3">
                 <span><span className="mb-1 block text-xs text-slate-500">Importe del trabajo</span><strong className="text-lg">{money(w.total, w.currency)}</strong></span>
                 <span>
                   {w.markedPaidWithoutDetails ? (
@@ -312,30 +315,12 @@ export default function ProviderPortal() {
       {tab === "Facturas" && (
         <section className="space-y-3">
           <div><h2 className="text-lg font-semibold">Tus facturas</h2><p className="mt-1 text-sm text-slate-500">Adjuntá tu factura al trabajo correspondiente.</p></div>
+          {invoiceNotice && <p role="status" className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-900">{invoiceNotice}</p>}
           {!view && <p className={box + ' text-sm text-slate-500'}>{!hasLoaded ? 'Cargando tus facturas…' : 'Tus facturas aparecerán al habilitar la ficha de proveedor.'}</p>}
-          {view && <div key={`${user?.uid}/${providerId}`}><ProviderInvoiceUpload providerId={providerId} works={view.works} onUploaded={load} /></div>}
-          {view?.works.map(
-            (w: any) =>
-              w.invoiceCount > 0 && (
-                <div key={w.key} className={box}>
-                  <h2 className="font-semibold">
-                    {w.projectName} · {w.description}
-                  </h2>
-                  {Array.from({ length: w.invoiceCount }, (_, index) => (
-                    <button
-                      disabled={busy}
-                      className="portal-button mr-2 mt-2"
-                      key={index}
-                      onClick={() =>
-                        download({ workKey: w.key, kind: "invoice", index })
-                      }
-                    >
-                      Factura {index + 1}
-                    </button>
-                  ))}
-                </div>
-              ),
-          )}
+          {view && <div key={`${user?.uid}/${providerId}`}><ProviderInvoiceUpload providerId={providerId} works={view.works} onUploaded={async () => { setInvoiceNotice(''); return load(); }} /></div>}
+          {view?.works.filter((w: any) => w.invoiceCount > 0).map((w: any) => <div key={w.key}>
+            <ProviderInvoiceList providerId={providerId} work={w} busy={busy} onChanged={async () => { setInvoiceNotice('Factura eliminada. Ya podés cargar la correcta.'); return load(); }} onDownload={index => void download({ workKey: w.key, kind: 'invoice', index })} />
+          </div>)}
           {view?.financial
             .filter((r: any) => r.kind === "invoice")
             .map((r: any) => (
@@ -426,6 +411,7 @@ export default function ProviderPortal() {
               </div>
             ))}
           {view && !view.works.some((w: any) => w.payments.length || w.otherCount || w.markedPaidWithoutDetails) && !view.financial.some((r: any) => r.kind !== 'invoice') && <p className={box + ' text-sm text-slate-500'}>Todavía no hay pagos ni retenciones registrados.</p>}
+          {view && <div key={`${user?.uid}/${providerId}`}><ProviderReimbursements providerId={providerId} busy={busy} onDownload={input => void download(input)} /></div>}
           {view?.works.some((w: any) => w.payments.some((p: any) => p.sharedRecordId)) && <p className="text-xs text-slate-500">Las aplicaciones de un pago distribuido forman parte del mismo pago.</p>}
         </section>
       )}

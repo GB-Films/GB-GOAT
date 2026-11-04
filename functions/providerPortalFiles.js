@@ -11,6 +11,7 @@ function createPortalFileReader({ db, readLocalFile }) {
           .get()
       ).data();
       trustedUpload =
+        upload?.status !== 'removed' &&
         upload?.providerId === context.providerId &&
         upload.workKey === context.workKey &&
         upload.path === original.path &&
@@ -27,7 +28,11 @@ function createPortalFileReader({ db, readLocalFile }) {
       context.kind === "invoice" &&
       sameExpense &&
       original.path.startsWith(`projects/${parts[0]}/`);
-    if (!trustedUpload && !ownedInvoice) {
+    const ownedAdvance = ['advance', 'reimbursement'].includes(context.kind) && sameExpense
+      && original.path.startsWith(`projects/${parts[0]}/`) && context.paymentId
+      && metadata.paymentId === context.paymentId
+      && (context.kind === 'advance' || context.reimbursementId && metadata.reimbursementId === context.reimbursementId);
+    if (!trustedUpload && !ownedInvoice && !ownedAdvance) {
       const grant = (
         await db
           .doc(

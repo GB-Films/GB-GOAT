@@ -232,6 +232,7 @@ function ownExpense(item, project, path) {
     currency: text(item.currency || "ARS", 3),
     paid: payments.reduce((s, p) => s + p.amount, 0),
     payments,
+    invoiceRevision: item.portalInvoiceRevision || 0,
     invoiceCount: expenseInvoices(item).length,
     hasInvoice: expenseInvoices(item).length > 0 || list(item.sharedInvoices).length > 0,
     markedPaidWithoutDetails: item.paid === true && payments.length === 0,

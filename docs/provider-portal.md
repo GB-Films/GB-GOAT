@@ -10,9 +10,23 @@ En **Facturas**, el proveedor elige proyecto y trabajo, selecciona PDF/JPG/PNG d
 
 Si la sesión necesita renovarse, se conserva el archivo elegido y se ofrece **Verificar con Google** desde un clic explícito, antes de volver a cargar. No se abre una ventana de Google automáticamente después de leer el archivo. Los errores distinguen sesión, ventana bloqueada, formato/tamaño, lectura, conexión y factura existente. Se informa éxito sólo con confirmación del servidor.
 
-El servidor valida bytes y formato, comprueba pertenencia y gestión vigente del trabajo y relee proyecto, membresía, clasificación administrativa, portal y facturas en una transacción al guardar. Una carga concurrente de producción o de otro proveedor impide agregar otra. Reintentar el mismo archivo por el mismo autor recupera la carga confirmada, sin duplicar; otro autor no puede usar ese reintento. No se alteran importes, pagos ni documentos existentes. El portal no ofrece borrar o sustituir facturas y las reglas mantienen denegadas las escrituras directas del proveedor.
+El servidor valida bytes y formato, comprueba pertenencia y gestión vigente del trabajo y relee proyecto, membresía, clasificación administrativa, portal y facturas en una transacción al guardar. Una carga concurrente de producción o de otro proveedor impide agregar otra. Reintentar el mismo archivo por el mismo autor recupera la carga confirmada, sin duplicar; otro autor no puede usar ese reintento. No se alteran importes, pagos ni documentos existentes. El proveedor puede eliminar exclusivamente una factura que él mismo cargó desde el portal: el servidor comprueba el manifiesto privado, UID, correo, proveedor, trabajo y versión. El botón no aparece para facturas de producción, administración o de otro representante. Las escrituras directas del SDK siguen denegadas.
 
 Publicación: `providerPortal` compatible antes del frontend. Sin cambios de reglas, IAM ni configuración de Auth. Las pruebas usan datos ficticios en emuladores y no acreditan el consentimiento OAuth real ni una prueba manual en Safari. Referencias: [transacciones](https://firebase.google.com/docs/firestore/manage-data/transactions) y [sesión de usuario](https://firebase.google.com/docs/auth/web/manage-users).
+
+La eliminación retira la asociación del trabajo en una transacción, conserva los originales privados y una auditoría inmutable, y permite cargar después la factura correcta. No elimina objetos de Storage que pueden compartir otros trabajos. La revisión del trabajo y del manifiesto evita que un envío antiguo restaure una factura eliminada o que un reintento de eliminación borre una carga posterior. La cuenta necesita verificación reciente; Google se abre sólo desde el botón explícito de verificación.
+
+### Adelantos y reintegros
+
+En **Pagos → Adelantos y reintegros** se consultan los gastos que pagó el proveedor de su bolsillo (`method: tercero`, `thirdPartyPayerId` igual al proveedor), aunque el servicio pertenezca a otra ficha o no tenga honorarios en ese proyecto. Se muestran proyecto, concepto, adelanto, devoluciones efectivas, pendiente e historial colapsado. Los totales se mantienen separados del servicio y no se crean ni modifican pagos o cajas. Se omiten los espejos de áreas inactivas y estimaciones internas.
+
+Los adelantos históricos están dentro de arrays sin un índice de acreedor. La consulta explícita usa una proyección mínima y acotada de `budgetItems` y `areaExpenses`, con tope de 10.000 documentos por colección y 500 adelantos propios. Si se excede, solicita paginación sin devolver una lista truncada. Esta consulta sólo se hace al abrir la sección o pulsar Actualizar, nunca en el refresco automático global de 30 segundos. No requiere migración ni índices nuevos.
+
+La respuesta no contiene otras personas, bancos, facturas ni rutas/URLs de los archivos. Las descargas vuelven a comprobar el acreedor y la versión del pago; sólo seleccionan su comprobante o el de su reintegro. La lectura automática requiere metadata exacta de proyecto, trabajo y pago (y reintegro cuando corresponde); originales antiguos sin ese vínculo conservan la publicación segura por administración. No se habilita la lectura de las facturas o los pagos ajenos del gasto.
+
+### Mi proveedor en celular
+
+Tarjetas, texto y espacios más compactos; pestañas visibles en dos filas sin scroll lateral; resúmenes de importes en columnas; documentos y formularios con cortes de línea seguros. Se conserva el tamaño de escritura de 16px para evitar zoom automático en iOS y los botones mantienen 40px de alto. El escritorio conserva su distribución. La verificación usa renderizado estático, tipos, build y emuladores; no se automatiza un navegador ni se prueba con sesiones reales.
 
 ### Recuperación del alta
 
