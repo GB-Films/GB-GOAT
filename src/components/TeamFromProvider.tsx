@@ -92,7 +92,8 @@ export function TeamFromProvider({ isOwner, onAssigned, request = portalAdminReq
     </li>)}</ul>}
     {busy === 'preview' && <p role="status" className="mt-3 text-sm text-slate-500">Comprobando cuenta y permisos…</p>}
     {preview && <TeamProviderSelection preview={preview} isOwner={isOwner} role={role} confirmProjects={confirmProjects} busy={busy === 'assign'}
-      onRole={value => { setRole(value); requestId.current = crypto.randomUUID(); }} onConfirm={setConfirmProjects} onAssign={() => void assign()} onExisting={() => void onAssigned(preview.email)} />}
+      onRole={value => { setRole(value); requestId.current = crypto.randomUUID(); }} onConfirm={setConfirmProjects} onAssign={() => void assign()}
+      onExisting={() => { void onAssigned(preview.email).catch(() => setError('No pudimos actualizar la lista del equipo. Recargá la página.')); }} />}
     {error && <p role="alert" className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">{error}</p>}
     {notice && <p role="status" className="mt-3 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-900">{notice}</p>}
   </section>;

@@ -1,6 +1,6 @@
 # Alta de equipo vinculada a proveedor
 
-Implementación preparada en `codex/team-provider-onboarding`. No está publicada.
+El alta mediante enlace y ficha vinculada ya está publicada. La incorporación directa desde una ficha registrada, descrita debajo, se prepara en `codex/team-from-provider` y todavía requiere su publicación.
 
 Administración genera un enlace desde Equipo para un correo concreto. El enlace no envía un correo por sí mismo. Al ingresar con Google verificado, el backend comprueba la invitación y busca una ficha personal por correo/identidad verificada. Una coincidencia segura y completa se vincula sin reescribir los datos existentes. Coincidencias múltiples, identidad distinta, una empresa o un acceso revocado requieren revisión; no se vinculan por nombre ni por coincidencia fiscal sola.
 
