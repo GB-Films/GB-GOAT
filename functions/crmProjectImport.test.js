@@ -298,8 +298,14 @@ async function imported(seed) {
 test('a correction moves the sale link, the contract and the untouched name; budgets stay; repeating it writes nothing', async () => {
   const db = await imported();
   const budget = db.records.get('projectCommercial/ct-G-ZZZ-0001').budgetTotal;
-  const options = { db, payload: correction(), timestamp: () => 456, clock };
+  // Like serverTimestamp(): valid in a field, never inside an array.
+  const serverTime = { serverTimestamp: true };
+  const options = { db, payload: correction(), timestamp: () => serverTime, clock };
   assert.deepEqual(await importProject(options), { schemaVersion: 1, projectCode: 'G ZZZ 0001', projectId: 'ct-G-ZZZ-0001', outcome: 'corrected' });
+  const inArrays = value => Array.isArray(value) ? value.some(item => item === serverTime || JSON.stringify(item).includes('serverTimestamp'))
+    : value && typeof value === 'object' && Object.values(value).some(inArrays);
+  for (const path of db.writes) assert.equal(inArrays(db.records.get(path)), false, `${path} has a server timestamp inside an array`);
+  assert.equal(db.records.get('crmProjectImports/ct-G-ZZZ-0001').corrections[0].receivedAt, '2026-10-28T20:00:00.000Z');
   const commercial = db.records.get('projectCommercial/ct-G-ZZZ-0001');
   assert.equal(commercial.crmSaleId, 'VE-CORREGIDA');
   assert.equal(commercial.crmSaleUrl, 'https://gran-crm.granberta.workers.dev/?ir=venta/VE-CORREGIDA');

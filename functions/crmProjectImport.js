@@ -193,8 +193,9 @@ async function correctProject({ db, data, timestamp, clock }) {
     const { baniPost, ...source } = data;
     transaction.update(markerRef, {
       saleId: data.saleId, source,
+      // Firestore rejects serverTimestamp() inside an array: the history keeps the request time.
       corrections: [...(receipt.corrections || []), {
-        receivedAt: now, kept, evidence: data.sourceEvidence,
+        receivedAt: clock().toISOString(), kept, evidence: data.sourceEvidence,
         from: Object.fromEntries(IDENTITY.map(key => [key, sent[key]])),
         to: Object.fromEntries(IDENTITY.map(key => [key, data[key]])),
       }],
