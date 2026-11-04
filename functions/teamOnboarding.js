@@ -59,6 +59,11 @@ function createTeamOnboarding({ db, timestamp, clock = () => new Date(), findAcc
     const userRef=users(actor.uid), user=(await tx.get(userRef)).data();
     // Compatibility is explicit: no backfill, no rewrite or new condition on legacy users.
     if (user && !user.teamOnboarding) return { legacy:true, profile:user };
+    if (user?.teamOnboarding?.version === 1 && user.teamOnboarding.status === 'ready'
+      && user.teamOnboarding.source === 'registered_provider_assignment' && user.teamOnboarding.providerId) {
+      if (email(user.email) !== actor.email) deny('La cuenta no coincide con el perfil del equipo.');
+      return { finished: true, profile: user };
+    }
     const token=id(user?.teamOnboarding?.inviteToken || input.inviteToken);
     const inviteRef=db.doc(`userInvites/${token}`), invite=(await tx.get(inviteRef)).data();
     if (!invite || email(invite.email)!==actor.email || (user && email(user.email)!==actor.email)) deny('La invitación corresponde a otra cuenta o ya no está disponible.');
