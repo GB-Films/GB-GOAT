@@ -23,6 +23,7 @@ export function ProjectTeam({ members, canAdd, canManage, onAdd, onManage }: {
         <div className="space-y-1 text-xs leading-5 text-slate-600">
           {member.role === 'admin' || member.globalAdmin ? <p>Acceso completo al proyecto</p> : <>
             <p><span className="font-bold text-slate-700">Áreas:</span> {member.allowedCategories?.join(', ') || 'Sin áreas asignadas'}</p>
+            {!!member.excludedSubcategories?.length && <p className="text-amber-800"><span className="font-bold">Sin acceso:</span> {member.excludedSubcategories.map(key => key.replace('||', ' / ')).join(', ')}</p>}
             {!!member.allowedSubcategories?.length && <p><span className="font-bold text-slate-700">Subcategorías delegadas:</span> {member.allowedSubcategories.map(key => key.replace('||', ' / ')).join(', ')}</p>}
             <p><span className="font-bold text-slate-700">Acceso:</span> {normalizeAllowedTabs(member.allowedTabs, member.role).map(tab => tabs[tab] || tab).join(' · ')}</p>
             <p>{member.canEditBudgetAreas === true && normalizeAllowedTabs(member.allowedTabs, member.role).includes('areas') && (member.allowedCategories?.length || member.allowedSubcategories?.length) ? 'Carga y edición en su alcance' : 'Sin edición de gastos de áreas'} · {member.canViewBudgetTotals ? 'Ve totales' : 'Totales restringidos'}</p>

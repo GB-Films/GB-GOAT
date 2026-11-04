@@ -153,11 +153,29 @@ service cloud.firestore {
       return area + '||' + subcategory;
     }
 
+    // Optional collaborator.excludedSubcategories: up to 500 Area||Subcategory keys.
+    // Explicit exclusions override parent and individual grants; absent means legacy full access.
+    function validSubcategoryExclusions(data) {
+      return data.get('excludedSubcategories', []) is list && data.get('excludedSubcategories', []).size() <= 500;
+    }
+    function canDelegateSubcategories(projectId, previous) {
+      let access = collaboratorDoc(projectId);
+      let added = request.resource.data.get('allowedSubcategories', []).removeAll(previous).removeAll(access.get('allowedSubcategories', []));
+      return added.size() == 0 || (added.size() == 1 && added[0] is string
+        && added[0].split('[|][|]').size() == 2
+        && added[0].split('[|][|]')[0] in access.allowedCategories
+        && !(added[0] in access.get('excludedSubcategories', [])));
+    }
+    function preservesDelegatedExclusions(projectId) {
+      return collaboratorDoc(projectId).get('excludedSubcategories', []).hasOnly(request.resource.data.get('excludedSubcategories', []));
+    }
+
     function canWriteAssignedAreaExpense(projectId, area, subcategory) {
       let access = collaboratorDoc(projectId);
       return hasCollaboratorDoc(projectId)
         && access.canEditBudgetAreas == true
         && 'areas' in access.allowedTabs
+        && !(areaSubcategoryKey(area, subcategory) in access.get('excludedSubcategories', []))
         && (
           area in access.allowedCategories
           || (
@@ -178,18 +196,11 @@ service cloud.firestore {
       return isProjectProductionLead(projectId)
         && resource.data.role in ['jefe_produccion', 'jefe_area']
         && request.resource.data.role == resource.data.role
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['allowedCategories', 'allowedSubcategories', 'updatedAt'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['allowedCategories', 'allowedSubcategories', 'excludedSubcategories', 'updatedAt'])
         && request.resource.data.allowedCategories is list
         && request.resource.data.allowedCategories.hasOnly(collaboratorDoc(projectId).allowedCategories)
-        && (
-          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['allowedSubcategories'])
-          || (
-            request.resource.data.allowedSubcategories is list
-            && 'allowedSubcategories' in collaboratorDoc(projectId)
-            && collaboratorDoc(projectId).allowedSubcategories is list
-            && request.resource.data.allowedSubcategories.hasOnly(collaboratorDoc(projectId).allowedSubcategories)
-          )
-        );
+        && canDelegateSubcategories(projectId, resource.data.get('allowedSubcategories', []))
+        && preservesDelegatedExclusions(projectId);
     }
 
     function canAppendCollaboratorEmailAsProductionLead(projectId) {
@@ -236,15 +247,8 @@ service cloud.firestore {
         && request.resource.data.role in ['jefe_produccion', 'jefe_area']
         && request.resource.data.allowedCategories is list
         && request.resource.data.allowedCategories.hasOnly(collaboratorDoc(projectId).allowedCategories)
-        && (
-          !request.resource.data.keys().hasAny(['allowedSubcategories'])
-          || (
-            request.resource.data.allowedSubcategories is list
-            && 'allowedSubcategories' in collaboratorDoc(projectId)
-            && collaboratorDoc(projectId).allowedSubcategories is list
-            && request.resource.data.allowedSubcategories.hasOnly(collaboratorDoc(projectId).allowedSubcategories)
-          )
-        );
+        && canDelegateSubcategories(projectId, [])
+        && preservesDelegatedExclusions(projectId);
     }
 
     function collaboratorIdentityIsValid(email) {
@@ -1647,10 +1651,10 @@ service cloud.firestore {
 
       match /collaborators/{email} {
         allow read: if hasProjectAccess(projectId);
-        allow create: if collaboratorIdentityIsValid(email)
+        allow create: if validSubcategoryExclusions(request.resource.data) && collaboratorIdentityIsValid(email)
           && (isProjectAdmin(projectId) || canCreateCollaboratorAsProductionLead(projectId)) && teamTargetReady(email)
           && !request.resource.data.keys().hasAny(['teamOnboardingBlockedEmail']);
-        allow update: if (isProjectAdmin(projectId) || canAssignAreasAsProductionLead(projectId)) && teamTargetReady(email)
+        allow update: if validSubcategoryExclusions(request.resource.data) && (isProjectAdmin(projectId) || canAssignAreasAsProductionLead(projectId)) && teamTargetReady(email)
           && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['teamOnboardingBlockedEmail']);
         allow delete: if isProjectAdmin(projectId) && teamTargetReady(email);
       }

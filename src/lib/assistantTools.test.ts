@@ -132,6 +132,29 @@ test('los listados respetan área y subcategoría delegadas', async () => {
   assert.deepEqual(foreign.gastos, []);
 });
 
+test('una exclusión prevalece sobre el área y una delegación explícita en listados y totales del asistente', async () => {
+  const context = buildContext();
+  context.capabilities = { ...context.capabilities, access: { ...context.capabilities.access, excludedSubcategories: ['Arte||Utilería', 'Vestuario||Zapatos'] } };
+  context.meta.areaExpenseSubcategoryBudgets = { 'Arte||Utilería': 5000, 'Arte||Asistencia': 1200 };
+  const tools = buildTools({ loadProject: async () => context });
+  const result = await runTool(tools, 'listar_gastos_area');
+  assert.deepEqual(result.gastos, []);
+  const summary = await runTool(tools, 'resumen_proyecto');
+  assert.equal(summary.presupuestoPrincipal, 1200);
+  assert.equal(summary.gastosDeAreas, 0);
+  const area = await runTool(tools, 'resumen_area', { area: 'Arte' });
+  assert.equal(area.asignado, 1200);
+  assert.deepEqual(area.subcategorias, []);
+});
+
+test('el resumen administrativo conserva asignaciones históricas fuera del listado actual de categorías', async () => {
+  const context = buildContext();
+  context.capabilities = buildAssistantCapabilities({ ...baseProject, userId: 'owner-uid' });
+  context.meta.categoryBudgets = { 'Categoría histórica': 500 };
+  const summary = await runTool(buildTools({ loadProject: async () => context }), 'resumen_proyecto');
+  assert.equal(summary.presupuestoPrincipal, 6500);
+});
+
 test('el detalle del proyecto muestra el alcance real', async () => {
   const detail = await runTool(buildTools(), 'detalle_proyecto');
 

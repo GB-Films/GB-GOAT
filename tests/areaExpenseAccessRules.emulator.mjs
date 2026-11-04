@@ -85,7 +85,33 @@ try {
   await assertSucceeds(updateDoc(doc(ownerDb, expensePath('legacy', 'new')), {
     quantity: 1, unitPrice: 3000, total: 3000, updatedAt: serverTimestamp(),
   }));
-  console.log('Area expense access: imported/legacy edits allowed; scope, payments and privilege boundaries denied');
+  // A whole area inherits existing/future children, with explicit exclusions.
+  const scopeRef = `projects/imported/collaborators/${leadEmail}`;
+  const targetRef = 'projects/imported/collaborators/target@example.test';
+  await env.withSecurityRulesDisabled(async context => {
+    const db = context.firestore();
+    await updateDoc(doc(db, scopeRef), { excludedSubcategories: ['Producción||Seguros'] });
+    await setDoc(doc(db, 'users/target'), { email: 'target@example.test', role: 'colaborador' });
+    await setDoc(doc(db, expensePath('imported', 'excluded')), expense('imported', { subcategory: 'Seguros' }));
+  });
+  await assertSucceeds(setDoc(doc(leadDb, expensePath('imported', 'inherited')), expense('imported', { subcategory: 'Nueva' })));
+  await assertFails(setDoc(doc(leadDb, expensePath('imported', 'blocked')), expense('imported', { subcategory: 'Seguros' })));
+  await assertFails(updateDoc(doc(leadDb, expensePath('imported', 'excluded')), { description: 'Fuera de alcance' }));
+  await assertFails(updateDoc(doc(leadDb, expensePath('imported', 'excluded')), { subcategory: 'Nueva' }));
+  await assertFails(updateDoc(doc(leadDb, expensePath('imported', 'inherited')), { subcategory: 'Seguros' }));
+  await assertFails(updateDoc(doc(leadDb, scopeRef), { excludedSubcategories: [] }));
+  const target = { uid: 'target', email: 'target@example.test', role: 'jefe_area', allowedTabs: ['areas'], canEditBudgetAreas: true, allowedCategories: ['Producción'], allowedSubcategories: [] };
+  await assertFails(setDoc(doc(leadDb, targetRef), target));
+  await assertSucceeds(setDoc(doc(leadDb, targetRef), { ...target, excludedSubcategories: ['Producción||Seguros'] }));
+  await assertFails(updateDoc(doc(leadDb, targetRef), { excludedSubcategories: [] }));
+  await assertSucceeds(updateDoc(doc(leadDb, targetRef), { allowedCategories: [], allowedSubcategories: ['Producción||Nueva'] }));
+  await assertFails(updateDoc(doc(leadDb, targetRef), { allowedSubcategories: ['Producción||Seguros'] }));
+  await assertFails(updateDoc(doc(leadDb, targetRef), { allowedSubcategories: ['Arte||Utilería'] }));
+  await assertFails(updateDoc(doc(leadDb, targetRef), { excludedSubcategories: 'invalid' }));
+  const targetDb = env.authenticatedContext('target', { email_verified: true, email: 'target@example.test' }).firestore();
+  await assertSucceeds(setDoc(doc(targetDb, expensePath('imported', 'target-included')), expense('imported', { subcategory: 'Nueva', createdBy: 'target', createdByEmail: 'target@example.test' })));
+  await assertFails(setDoc(doc(targetDb, expensePath('imported', 'target-excluded')), expense('imported', { subcategory: 'Seguros', createdBy: 'target', createdByEmail: 'target@example.test' })));
+  console.log('Area expense access: legacy/inherited scopes, explicit exclusions, delegation and privilege boundaries verified');
 } finally {
   await env.cleanup();
 }

@@ -31,7 +31,8 @@ function createOwnPaymentCorrection({ db, timestamp, verifyPaymentReceipt }) {
       const [expenseSnap, priorAudit] = await Promise.all([tx.get(expenseRef), tx.get(auditRef)]);
       const expense = expenseSnap.data(), collaborator = access.collaborator;
       if (!expense || isInternalBudgetEstimate(expense) || (!access.admin && !(collaborator?.canEditBudgetAreas === true
-        && list(collaborator.allowedTabs).includes('areas') && (list(collaborator.allowedCategories).includes(expense.area)
+        && list(collaborator.allowedTabs).includes('areas')
+        && !list(collaborator.excludedSubcategories).includes(`${expense.area}||${expense.subcategory || ''}`) && (list(collaborator.allowedCategories).includes(expense.area)
           || !!expense.subcategory && list(collaborator.allowedSubcategories).includes(`${expense.area}||${expense.subcategory}`)))))
         throw new HttpsError('permission-denied', 'No podés corregir pagos de esta área.');
       const history = list(expense.paymentHistory), index = history.findIndex(payment => payment.id === paymentId), payment = history[index];

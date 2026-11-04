@@ -1,3 +1,4 @@
+import { ProjectScopePermissions } from '../components/ProjectScopePermissions';
 import React, { useState, useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
 import { getFunctions, httpsCallable } from 'firebase/functions';
@@ -88,6 +89,7 @@ import {
   PROJECT_TAB_IDS,
   canEditExistingPayment,
   canEditProjectArea,
+  canViewProjectSubcategory, hasFullProjectAreaAccess,
   canEditProjectSubcategory,
   getDefaultCollaboratorPermissions,
   normalizeAllowedTabs,
@@ -872,6 +874,7 @@ export default function ProjectDetail() {
               allowedTabs: normalizeAllowedTabs(rawPerms.allowedTabs, role),
               allowedCategories: safeArray(rawPerms.allowedCategories),
               allowedSubcategories: safeArray(rawPerms.allowedSubcategories),
+              excludedSubcategories: safeArray(rawPerms.excludedSubcategories),
               canEditBudgetAreas: rawPerms.canEditBudgetAreas ?? true,
               canViewBudgetTotals: rawPerms.canViewBudgetTotals ?? role === 'admin',
             };
@@ -943,7 +946,7 @@ export default function ProjectDetail() {
         const role = normalizeProjectRole(data.role);
         return { ...data, email: normalizeEmail(data.email || d.id), role,
           allowedTabs: normalizeAllowedTabs(data.allowedTabs, role),
-          allowedCategories: safeArray(data.allowedCategories), allowedSubcategories: safeArray(data.allowedSubcategories),
+          allowedCategories: safeArray(data.allowedCategories), allowedSubcategories: safeArray(data.allowedSubcategories), excludedSubcategories: safeArray(data.excludedSubcategories),
           canEditBudgetAreas: data.canEditBudgetAreas ?? true,
           canViewBudgetTotals: data.canViewBudgetTotals ?? role === 'admin' } as Collaborator;
       }));
@@ -1670,13 +1673,14 @@ export default function ProjectDetail() {
         if (areaFromSubcategoryKey(key) === areaName) delete nextSubcategoryBudgets[key];
       });
       const collaboratorsToUpdate = collaborators.filter((collaborator) => (
-        safeArray(collaborator.allowedSubcategories).some((key) => areaFromSubcategoryKey(key) === areaName)
+        (safeArray(collaborator.allowedSubcategories).some((key) => areaFromSubcategoryKey(key) === areaName) || safeArray(collaborator.excludedSubcategories).some((key) => areaFromSubcategoryKey(key) === areaName))
       ));
       const nextCollaborators = collaborators.map((collaborator) => (
         collaboratorsToUpdate.some((entry) => entry.email === collaborator.email)
           ? {
               ...collaborator,
               allowedSubcategories: safeArray(collaborator.allowedSubcategories).filter((key) => areaFromSubcategoryKey(key) !== areaName),
+              excludedSubcategories: safeArray(collaborator.excludedSubcategories).filter((key) => areaFromSubcategoryKey(key) !== areaName),
             }
           : collaborator
       ));
@@ -1723,6 +1727,7 @@ export default function ProjectDetail() {
             doc(db, 'projects', id, 'collaborators', normalizeEmail(collaborator.email)),
             {
               allowedSubcategories: safeArray(collaborator.allowedSubcategories).filter((key) => areaFromSubcategoryKey(key) !== areaName),
+              excludedSubcategories: safeArray(collaborator.excludedSubcategories).filter((key) => areaFromSubcategoryKey(key) !== areaName),
               updatedAt: serverTimestamp(),
             },
           );
@@ -2077,7 +2082,7 @@ export default function ProjectDetail() {
         : [];
       if (expenseUpdates.length > 450) throw new Error('TOO_MANY_EXPENSES');
       const collaboratorsToUpdate = isRename && oldPermissionKey
-        ? collaborators.filter((col) => safeArray(col.allowedSubcategories).includes(oldPermissionKey)) : [];
+        ? collaborators.filter((col) => (safeArray(col.allowedSubcategories).includes(oldPermissionKey) || safeArray(col.excludedSubcategories).includes(oldPermissionKey))) : [];
       await runTransaction(db, async (transaction) => {
         const currentProject = await transaction.get(projectRef);
         if (!currentProject.exists()
@@ -2103,6 +2108,7 @@ export default function ProjectDetail() {
           doc(db, 'projects', id, 'collaborators', normalizeEmail(col.email)),
           {
             allowedSubcategories: Array.from(new Set(safeArray(col.allowedSubcategories).map((key) => key === oldPermissionKey ? nextPermissionKey : key))),
+            excludedSubcategories: Array.from(new Set(safeArray(col.excludedSubcategories).map((key) => key === oldPermissionKey ? nextPermissionKey : key))),
             updatedAt: serverTimestamp(),
           },
         ));
@@ -2110,11 +2116,14 @@ export default function ProjectDetail() {
       if (isRename && oldPermissionKey) {
         if (collaboratorsToUpdate.length > 0) {
           setCollaborators((current) => current.map((col) => (
-            safeArray(col.allowedSubcategories).includes(oldPermissionKey)
+            (safeArray(col.allowedSubcategories).includes(oldPermissionKey) || safeArray(col.excludedSubcategories).includes(oldPermissionKey))
               ? {
                   ...col,
                   allowedSubcategories: Array.from(new Set(
                     safeArray(col.allowedSubcategories).map((key) => key === oldPermissionKey ? nextPermissionKey : key)
+                  )),
+                  excludedSubcategories: Array.from(new Set(
+                    safeArray(col.excludedSubcategories).map((key) => key === oldPermissionKey ? nextPermissionKey : key)
                   )),
                   updatedAt: new Date(),
                 }
@@ -2181,7 +2190,7 @@ export default function ProjectDetail() {
       : {};
     delete currentBudgetMap[areaSubcategoryKey(area, subcategory)];
     const permissionKey = areaSubcategoryKey(area, subcategory);
-    const collaboratorsToUpdate = collaborators.filter((col) => safeArray(col.allowedSubcategories).includes(permissionKey));
+    const collaboratorsToUpdate = collaborators.filter((col) => (safeArray(col.allowedSubcategories).includes(permissionKey) || safeArray(col.excludedSubcategories).includes(permissionKey)));
 
     setIsSavingSubcategoryBudget(true);
     try {
@@ -2204,6 +2213,7 @@ export default function ProjectDetail() {
           doc(db, 'projects', id, 'collaborators', normalizeEmail(col.email)),
           {
             allowedSubcategories: safeArray(col.allowedSubcategories).filter((key) => key !== permissionKey),
+            excludedSubcategories: safeArray(col.excludedSubcategories).filter((key) => key !== permissionKey),
             updatedAt: serverTimestamp(),
           },
         ));
@@ -2226,10 +2236,11 @@ export default function ProjectDetail() {
       }
       if (collaboratorsToUpdate.length > 0) {
         setCollaborators((current) => current.map((col) => (
-          safeArray(col.allowedSubcategories).includes(permissionKey)
+          (safeArray(col.allowedSubcategories).includes(permissionKey) || safeArray(col.excludedSubcategories).includes(permissionKey))
             ? {
                 ...col,
                 allowedSubcategories: safeArray(col.allowedSubcategories).filter((key) => key !== permissionKey),
+                excludedSubcategories: safeArray(col.excludedSubcategories).filter((key) => key !== permissionKey),
                 updatedAt: new Date(),
               }
             : col
@@ -3399,7 +3410,8 @@ export default function ProjectDetail() {
         .filter((item) => item.area === area);
       const collaboratorSnapshot = await getDocsFromServer(collection(db, 'projects', id, 'collaborators'));
       const collaboratorsToUpdate = collaboratorSnapshot.docs.filter(entry => safeArray(entry.data().allowedCategories).includes(area)
-        || safeArray(entry.data().allowedSubcategories).some(key => areaFromSubcategoryKey(key) === area));
+        || safeArray(entry.data().allowedSubcategories).some(key => areaFromSubcategoryKey(key) === area)
+        || safeArray(entry.data().excludedSubcategories).some(key => areaFromSubcategoryKey(key) === area));
       await assertNoLinkedCashMovements(itemsToDelete, 'budgetItems');
       const nextRevision = await runTransaction(db, async (transaction) => {
         const projectSnapshot = await transaction.get(projectRef);
@@ -3427,6 +3439,7 @@ export default function ProjectDetail() {
           transaction.update(entry.ref, {
             allowedCategories: safeArray(entry.data().allowedCategories).filter(cat => cat !== area),
             allowedSubcategories: safeArray(entry.data().allowedSubcategories).filter(key => areaFromSubcategoryKey(key) !== area),
+            excludedSubcategories: safeArray(entry.data().excludedSubcategories).filter(key => areaFromSubcategoryKey(key) !== area),
             updatedAt: serverTimestamp(),
           });
         });
@@ -3442,6 +3455,7 @@ export default function ProjectDetail() {
         ...col,
         allowedCategories: safeArray(col.allowedCategories).filter(cat => cat !== area),
         allowedSubcategories: safeArray(col.allowedSubcategories).filter(key => areaFromSubcategoryKey(key) !== area),
+        excludedSubcategories: safeArray(col.excludedSubcategories).filter(key => areaFromSubcategoryKey(key) !== area),
       })));
     } catch (e) {
       console.error("Error deleting category:", e);
@@ -3471,19 +3485,11 @@ export default function ProjectDetail() {
   const userAllowedSubcategories = safeArray(userPermissions?.allowedSubcategories);
   const canSeeAssignedSubcategoryInArea = (area?: string | null) => (
     Boolean(area)
-    && userAllowedSubcategories.some((key) => areaFromSubcategoryKey(key) === area)
+    && userAllowedSubcategories.some((key) => areaFromSubcategoryKey(key) === area && canViewProjectSubcategory(false, userPermissions, area, key.split('||')[1]))
     && safeArray(userPermissions?.allowedTabs).includes('areas')
   );
-  const canSeeFullArea = (area?: string | null) => (
-    Boolean(area)
-    && (isProjectAdmin || safeArray(userPermissions?.allowedCategories).includes(area || ''))
-  );
-  const canSeeAreaSubcategory = (area?: string | null, subcategory?: string | null) => {
-    if (!area) return false;
-    if (canSeeFullArea(area)) return true;
-    const normalizedSubcategory = cleanAreaExpenseSubcategory(subcategory);
-    return Boolean(normalizedSubcategory && userAllowedSubcategories.includes(areaSubcategoryKey(area, normalizedSubcategory)));
-  };
+  const canSeeFullArea = (area?: string | null) => hasFullProjectAreaAccess(isProjectAdmin, userPermissions, area);
+  const canSeeAreaSubcategory = (area?: string | null, subcategory?: string | null) => canViewProjectSubcategory(isProjectAdmin, userPermissions, area, subcategory);
 
   const visibleCategories = categories.filter(cat => {
     if (activeTab === 'areas') {
@@ -3585,7 +3591,7 @@ export default function ProjectDetail() {
         getAreaSubcategoryBudgetEntry(area, subcategory),
       ]));
       const unassignedExpenses = sortAreaExpenses(
-        hasFullAreaAccess ? expenses.filter((expense) => !hasAreaExpenseSubcategory(expense.subcategory)) : [],
+        canSeeAreaSubcategory(area, '') ? expenses.filter((expense) => !hasAreaExpenseSubcategory(expense.subcategory)) : [],
         areaExpenseSort
       );
       const namedSubcategoryGroups = knownSubcategories
@@ -3757,7 +3763,7 @@ export default function ProjectDetail() {
       return;
     }
     const collaboratorsToUpdate = sourceArea === targetArea ? [] : collaborators.filter((person) => (
-      safeArray(person.allowedSubcategories).includes(oldKey)
+      (safeArray(person.allowedSubcategories).includes(oldKey) || safeArray(person.excludedSubcategories).includes(oldKey))
     ));
     if (movedExpenses.length + collaboratorsToUpdate.length > 450) {
       alert('Hay demasiados gastos o permisos para mover esta subcategoria de una vez.');
@@ -3830,7 +3836,7 @@ export default function ProjectDetail() {
             || !samePaymentTarget(snapshot.data(), original)) throw new Error('EXPENSE_CHANGED');
         });
         collaboratorSnapshots.forEach((snapshot) => {
-          if (!snapshot.exists() || !safeArray(snapshot.data().allowedSubcategories).includes(oldKey)) {
+          if (!snapshot.exists() || !(safeArray(snapshot.data().allowedSubcategories).includes(oldKey) || safeArray(snapshot.data().excludedSubcategories).includes(oldKey))) {
             throw new Error('PERMISSIONS_CHANGED');
           }
         });
@@ -3843,6 +3849,9 @@ export default function ProjectDetail() {
         collaboratorRefs.forEach((ref, index) => transaction.update(ref, {
           allowedSubcategories: Array.from(new Set(
             safeArray(collaboratorSnapshots[index].data()?.allowedSubcategories).map((key) => key === oldKey ? newKey : key),
+          )),
+          excludedSubcategories: Array.from(new Set(
+            safeArray(collaboratorSnapshots[index].data()?.excludedSubcategories).map((key) => key === oldKey ? newKey : key),
           )),
           updatedAt: serverTimestamp(),
         }));
@@ -3871,8 +3880,8 @@ export default function ProjectDetail() {
             : expense
         )));
         setCollaborators((current) => current.map((person) => (
-          safeArray(person.allowedSubcategories).includes(oldKey)
-            ? { ...person, allowedSubcategories: safeArray(person.allowedSubcategories).map((key) => key === oldKey ? newKey : key) }
+          (safeArray(person.allowedSubcategories).includes(oldKey) || safeArray(person.excludedSubcategories).includes(oldKey))
+            ? { ...person, allowedSubcategories: safeArray(person.allowedSubcategories).map((key) => key === oldKey ? newKey : key), excludedSubcategories: safeArray(person.excludedSubcategories).map((key) => key === oldKey ? newKey : key) }
             : person
         )));
         setCollapsedAreaSubcategories((current) => {
@@ -4127,7 +4136,7 @@ export default function ProjectDetail() {
       .filter((item: any) => (
         isProjectAdmin
           ? allowedParentAreas.includes(item.area)
-          : delegatedSubcategories.includes(item.key)
+          : canViewProjectSubcategory(false, userPermissions, item.area, item.subcategory)
       ))
       .sort((a: any, b: any) => `${a.area} ${a.subcategory}`.localeCompare(`${b.area} ${b.subcategory}`, 'es'));
   }, [activeAreas, areaExpenseSubcategoriesByArea, categories, isProjectAdmin, project?.areaExpenseSubcategoryBudgets, userPermissions]);
@@ -4383,7 +4392,7 @@ export default function ProjectDetail() {
     });
 
     areaExpenses.forEach(item => {
-      if (!canSeeArea(item.area)) return;
+      if (!canSeeAreaSubcategory(item.area, item.subcategory)) return;
       const s = ensureSaldo(item.area || 'Sin area', item.providerId, item.providerName);
       s.spent += item.total || 0;
       
@@ -4430,7 +4439,7 @@ export default function ProjectDetail() {
     const allowedCategories = isProjectAdmin ? categories : safeArray(userPermissions?.allowedCategories);
     const rows: Array<{ key: string; name: string; area: string; description: string; amount: number; reimbursed: number; debt: number; item: any; collectionName: PaymentCollection }> = [];
     const collect = (item: any, collectionName: PaymentCollection) => {
-      if (!isProjectAdmin && !allowedCategories.includes(item.area || '')) return;
+      if (collectionName === 'areaExpenses' ? !canSeeAreaSubcategory(item.area, item.subcategory) : !isProjectAdmin && !allowedCategories.includes(item.area || '')) return;
       (Array.isArray(item.paymentHistory) ? item.paymentHistory : []).forEach((payment: Payment, index: number) => {
         if (!isThirdPartyPayment(payment)) return;
         rows.push({
@@ -4604,7 +4613,7 @@ export default function ProjectDetail() {
     });
 
     areaExpenses.forEach((expense) => {
-      if (!expense.providerId) return;
+      if (!canSeeAreaSubcategory(expense.area, expense.subcategory) || !expense.providerId) return;
       const provider = providers.find(item => item.id === expense.providerId);
       if (!provider) return;
 
@@ -4628,7 +4637,7 @@ export default function ProjectDetail() {
         concepts: Array.from(row.concepts).sort(),
       }))
       .sort((a, b) => providerDisplayName(a.provider).localeCompare(providerDisplayName(b.provider), 'es'));
-  }, [areaExpenses, budgetItems, providers]);
+  }, [areaExpenses, budgetItems, providers, isProjectAdmin, userPermissions]);
 
   const canExportPayroll = canSeeFullPayroll || safeArray(userPermissions?.allowedCategories).some(isProductionArea);
   const hasExportOptions = isProjectAdmin || canExportPayroll;
@@ -4689,7 +4698,7 @@ export default function ProjectDetail() {
   };
 
   const exportAreaBudget = (format: 'xlsx' | 'csv') => {
-    const rows = areaExpenses.map(item => {
+    const rows = areaExpenses.filter(item => canSeeAreaSubcategory(item.area, item.subcategory)).map(item => {
       const paid = getPaymentTotal(item);
       const reimbursementDebt = (Array.isArray(item.paymentHistory) ? item.paymentHistory : [])
         .reduce((sum: number, payment: Payment) => sum + getReimbursementBalanceCents(payment) / 100, 0);
@@ -4803,16 +4812,16 @@ export default function ProjectDetail() {
       ? categories
       : categories.filter((area) => (
           safeArray(userPermissions?.allowedCategories).includes(area)
-          || userAllowedSubcategories.some((key) => areaFromSubcategoryKey(key) === area)
+          || userAllowedSubcategories.some((key) => areaFromSubcategoryKey(key) === area && canViewProjectSubcategory(false, userPermissions, area, key.split('||')[1]))
         ));
 
     return targetAreas
       .map((area) => {
-        const canReadWholeArea = isProjectAdmin || safeArray(userPermissions?.allowedCategories).includes(area);
+        const canReadWholeArea = canSeeFullArea(area);
         const areaAssigned = canReadWholeArea ? getCategoryBudget(project, budgetItems, area) : 0;
         const subcategoryAssigned = canReadWholeArea
           ? 0
-          : userAllowedSubcategories
+          : (areaExpenseSubcategoriesByArea[area] || []).filter(sub => canSeeAreaSubcategory(area, sub)).map(sub => areaSubcategoryKey(area, sub))
               .filter((key) => areaFromSubcategoryKey(key) === area)
               .reduce((acc, key) => {
                 const subcategory = key.split('||')[1] || '';
@@ -4824,7 +4833,7 @@ export default function ProjectDetail() {
             item.area === area
             && (
               canReadWholeArea
-              || userAllowedSubcategories.includes(areaSubcategoryKey(item.area, cleanAreaExpenseSubcategory(item.subcategory)))
+              || canSeeAreaSubcategory(item.area, item.subcategory)
             )
           ))
           .reduce((acc, item) => acc + (Number(item.total) || 0), 0);
@@ -4834,7 +4843,7 @@ export default function ProjectDetail() {
         return { area, assigned, spent, balance, usedPercent, actualCost: isProjectAdmin && spent === 0 ? assigned : spent };
       })
       .filter((row) => row.assigned > 0 || row.spent > 0 || !isProjectAdmin);
-  }, [areaExpenses, budgetItems, categories, isProjectAdmin, project?.categoryBudgets, project?.areaExpenseSubcategoryBudgets, userAllowedSubcategories, userPermissions]);
+  }, [areaExpenses, areaExpenseSubcategoriesByArea, budgetItems, categories, isProjectAdmin, project?.categoryBudgets, project?.areaExpenseSubcategoryBudgets, userAllowedSubcategories, userPermissions]);
 
   const areaSummaryTotals = React.useMemo(() => {
     const totals = areaSummaryRows.reduce((acc, row) => ({
@@ -4867,8 +4876,7 @@ export default function ProjectDetail() {
   const summaryAreaExpenseCount = isProjectAdmin
     ? areaExpenses.length
     : areaExpenses.filter((item) => (
-        safeArray(userPermissions?.allowedCategories).includes(item.area)
-        || userAllowedSubcategories.includes(areaSubcategoryKey(item.area, cleanAreaExpenseSubcategory(item.subcategory)))
+        canSeeAreaSubcategory(item.area, item.subcategory)
       )).length;
   const locationValue = locationDraft || project?.location || '';
   const mapsSearchUrl = buildGoogleMapsLink(locationValue);
@@ -5190,6 +5198,7 @@ export default function ProjectDetail() {
       photoURL: selectedUser.photoURL || '',
       role: newCollaboratorRole,
       ...defaults,
+      excludedSubcategories: isProjectAdmin ? [] : safeArray(userPermissions?.excludedSubcategories),
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     };
@@ -5234,6 +5243,7 @@ export default function ProjectDetail() {
       role,
       ...defaults,
       allowedSubcategories: role === 'admin' ? [] : safeArray(col.allowedSubcategories),
+      excludedSubcategories: role === 'admin' ? [] : safeArray(col.excludedSubcategories),
       updatedAt: serverTimestamp(),
     };
 
@@ -5251,7 +5261,8 @@ export default function ProjectDetail() {
     if (!isProjectAdmin) {
       if (col.role !== 'jefe_area' && col.role !== 'jefe_produccion') return;
       const updateKeys = Object.keys(updates);
-      if (updateKeys.some((key) => key !== 'allowedCategories' && key !== 'allowedSubcategories')) return;
+      if (updateKeys.some((key) => key !== 'allowedCategories' && key !== 'allowedSubcategories' && key !== 'excludedSubcategories')) return;
+      updates = { ...updates, excludedSubcategories: Array.from(new Set([...safeArray(updates.excludedSubcategories === undefined ? col.excludedSubcategories : updates.excludedSubcategories), ...safeArray(userPermissions?.excludedSubcategories)])) };
       const nextCategories = safeArray(updates.allowedCategories);
       const ownCategories = safeArray(userPermissions?.allowedCategories);
       if (updates.allowedCategories && nextCategories.some((category) => !ownCategories.includes(category))) return;
@@ -5885,7 +5896,7 @@ export default function ProjectDetail() {
                       <>
                         <div className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-500">Presupuesto Asignado (Mis Áreas)</div>
                         <div className="text-3xl font-black mt-1 tracking-[-0.04em] text-slate-950">
-                          ${getAssignedBudgetTotal(project, visibleBudgetItems, isProjectAdmin ? undefined : visibleCategories).toLocaleString()}
+                          ${(isProjectAdmin ? getAssignedBudgetTotal(project, visibleBudgetItems) : areaSummaryTotals.assigned).toLocaleString()}
                         </div>
                         <div className="mt-3 text-[10px] font-semibold text-slate-500 truncate">
                           {userPermissions?.allowedCategories?.length
@@ -7840,63 +7851,8 @@ export default function ProjectDetail() {
                             </div>
                             )}
 
-                            <div>
-                              <div className="mb-1.5 text-[9px] font-bold uppercase tracking-widest text-slate-500">Áreas</div>
-                              <div className="flex flex-wrap gap-1.5">
-                                {(isProjectAdmin ? categories : safeArray(userPermissions?.allowedCategories)).map(cat => {
-                                  const enabled = safeArray(col.allowedCategories).includes(cat);
-                                  return (
-                                    <button
-                                      key={cat}
-                                      onClick={() => {
-                                        const next = enabled
-                                          ? safeArray(col.allowedCategories).filter(item => item !== cat)
-                                          : [...safeArray(col.allowedCategories), cat];
-                                        updateCollaboratorPermissions(col, { allowedCategories: next });
-                                      }}
-                                      className={cn(
-                                        "px-3 py-1.5 rounded text-[10px] font-bold uppercase transition-all tracking-tight",
-                                        enabled ? "bg-emerald-500 text-white" : "bg-white border border-slate-200 text-slate-400 hover:border-emerald-500 hover:text-emerald-500"
-                                      )}
-                                    >
-                                      {cat}
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                            </div>
-
-                            {assignableSubcategoryOptions.length > 0 && (
-                              <div className="lg:col-span-2">
-                                <div className="mb-1.5 text-[9px] font-bold uppercase tracking-widest text-slate-500">Subcategorías</div>
-                                <div className="flex flex-wrap gap-1.5">
-                                  {assignableSubcategoryOptions.map((option) => {
-                                    const enabled = safeArray(col.allowedSubcategories).includes(option.key);
-                                    return (
-                                      <button
-                                        key={`${col.email}-${option.key}`}
-                                        type="button"
-                                        onClick={() => {
-                                          const current = safeArray(col.allowedSubcategories);
-                                          const next = enabled
-                                            ? current.filter((item) => item !== option.key)
-                                            : [...current, option.key];
-                                          updateCollaboratorPermissions(col, { allowedSubcategories: next });
-                                        }}
-                                        className={cn(
-                                          "px-3 py-1.5 rounded text-[10px] font-bold uppercase transition-all tracking-tight",
-                                          enabled ? "bg-rose-500 text-white" : "bg-white border border-slate-200 text-slate-400 hover:border-rose-500 hover:text-rose-500"
-                                        )}
-                                        title={`${option.area} / ${option.subcategory}`}
-                                      >
-                                        {option.area} / {option.subcategory}
-                                        {option.budget > 0 ? ` · $${option.budget.toLocaleString()}` : ''}
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            )}
+                            <ProjectScopePermissions access={col} areas={isProjectAdmin ? categories : safeArray(userPermissions?.allowedCategories)}
+                              subcategories={assignableSubcategoryOptions} onChange={updates => void updateCollaboratorPermissions(col, updates)} />
 
                             {canManageProjectRoles && (
                             <div className="flex flex-wrap gap-1.5 lg:col-span-2">

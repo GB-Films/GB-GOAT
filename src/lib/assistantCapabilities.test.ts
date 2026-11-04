@@ -169,3 +169,15 @@ test('el alcance descripto menciona áreas, pestañas y límites', () => {
   assert.match(scope, /No puede ver Resultado/);
   assert.doesNotMatch(scope, /editar el presupuesto principal/);
 });
+
+test('el asistente describe el área heredada con exclusiones y bloquea sus operaciones', () => {
+  const capabilities = buildAssistantCapabilities({ ...project, userId: 'area-uid', collaborator: {
+    role: 'jefe_area', allowedTabs: ['areas'], allowedCategories: ['Arte'], allowedSubcategories: ['Arte||Utilería'],
+    excludedSubcategories: ['Arte||Utilería'], canEditBudgetAreas: true,
+  } });
+  assert.match(describeAssistantScope(capabilities), /Arte \(todas excepto: Utilería\)/);
+  assert.equal(canAssistantEditSubcategory(capabilities, 'Arte', 'Utilería'), false);
+  assert.equal(canAssistantEditSubcategory(capabilities, 'Arte', 'Asistencia'), true);
+  assert.equal(canAssistantDeleteAreaExpense(capabilities, { area: 'Arte', subcategory: 'Utilería' }), false);
+  assert.equal(canAssistantCreateProviderInvite(capabilities, 'areaExpenses', { area: 'Arte', subcategory: 'Utilería' }), false);
+});

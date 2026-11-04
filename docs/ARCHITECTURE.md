@@ -26,6 +26,16 @@ Cuando un área está activa, los reportes financieros toman sus gastos desde `a
 - `src/lib/files.ts` normaliza nombres de archivos.
 - Las reglas de Firestore y Storage son la autoridad final de permisos.
 
+## Alcance por área y subcategoría
+
+Seleccionar un área en Permisos incluye todas sus subcategorías actuales y futuras. No se materializa esa herencia en `allowedSubcategories`: ese campo conserva las delegaciones individuales sin el área padre. El campo opcional `excludedSubcategories` contiene claves `Área||Subcategoría` que prevalecen sobre ambos tipos de concesión; si falta, se mantiene el comportamiento anterior. Al quitar y volver a seleccionar un área se vuelve a la selección completa.
+
+Las exclusiones aparecen en amarillo y el área padre se marca «Parcial». Áreas, sus resúmenes, saldos, reintegros, exportación y herramientas del asistente filtran sus gastos según ese alcance. Firestore y Storage rechazan la edición/carga de gastos y adjuntos excluidos; el backend de corrección de pagos propios vuelve a comprobarlo. Las operaciones de estructura trasladan o limpian las exclusiones junto con las delegaciones individuales. Un jefe de producción debe conservar sus propias exclusiones al delegar acceso y no puede ampliar su alcance.
+
+Este alcance por subcategoría organiza las vistas y autoriza escrituras de `areaExpenses`. No modifica el modelo de lectura existente: las consultas y archivos de un proyecto siguen autorizándose por pertenencia al proyecto. Las pestañas y documentos generales, el presupuesto principal sin subcategoría y el historial de caja propio conservan sus permisos independientes. No debe interpretarse la exclusión como una política de confidencialidad por documento frente al acceso directo al SDK.
+
+Publicar este cambio requiere las nuevas reglas de Firestore/Storage, la función `manageProviderFinance` (correcciones de pagos) y el frontend, en ese orden. No necesita cambios de IAM, Auth ni migración de registros existentes.
+
 ## Consistencia de UI/UX
 
 - La barra lateral ocupa la altura dinámica visible. Menú y pineados se desplazan en su propio espacio; la cuenta actual y «Cerrar sesión» no se comprimen ni salen del borde inferior. Bajo el umbral de escritorio se ofrece «Cuenta» fuera del desplazamiento horizontal del menú móvil.

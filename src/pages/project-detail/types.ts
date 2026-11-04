@@ -136,6 +136,7 @@ export interface Collaborator {
   allowedTabs: string[];
   allowedCategories: string[];
   allowedSubcategories?: string[];
+  excludedSubcategories?: string[];
   canEditBudgetAreas?: boolean;
   canViewBudgetTotals?: boolean;
   createdAt?: any;
