@@ -1,7 +1,10 @@
 'use strict';
 
 // The HTTP function is private: Cloud Run IAM authenticates the CRM workflow.
-// This module only creates projects. A retry never edits an existing project.
+// Imports only create projects. A retry never edits an existing project.
+// The only edit is importMode 'correction': the CRM corrected a code it already
+// sent (its sale, its name or its contract) and GOAT re-reads the CRM-owned
+// reference fields. Budgets and anything an administrator changed stay as they are.
 class ImportError extends Error {
   constructor(status, message) {
     super(message);
@@ -55,7 +58,7 @@ function validatePayload(input) {
   if ((data.contractCurrency === '') !== (amount === null)) invalid('La moneda y el monto deben estar definidos juntos, o ambos pendientes.');
   data.contractAmount = amount;
   if (v2) {
-    if (!['new', 'historical'].includes(input.importMode) || typeof input.contractConfirmed !== 'boolean') invalid('Indicá el modo y la confirmación del contrato.');
+    if (!['new', 'historical', 'correction'].includes(input.importMode) || typeof input.contractConfirmed !== 'boolean') invalid('Indicá el modo y la confirmación del contrato.');
     if (historical ? !HISTORICAL_STATUSES.includes(input.projectStatus) : input.projectStatus !== 'Presupuesto') invalid('La clasificación del proyecto no es válida para este modo.');
     if ((amount !== null) !== input.contractConfirmed) invalid('Un precio pendiente conserva monto nulo y moneda vacía. Un importe requiere confirmación explícita.');
     const evidence = input.sourceEvidence;
@@ -122,7 +125,7 @@ function projectFromPayload(data, timestamp, quote = null, now = new Date()) {
     controlTotalContractUsd: data.contractCurrency === 'USD' ? data.contractAmount : null,
     controlTotalImportedAt: timestamp,
     crmSaleId: data.saleId,
-    crmSaleUrl: !data.saleId || data.saleId === 'interno' ? '' : `https://gran-crm.granberta.workers.dev/?ir=venta/${encodeURIComponent(data.saleId)}`,
+    crmSaleUrl: saleUrlFor(data.saleId),
     crmProjectImportVersion: data.schemaVersion,
     crmProjectImportedAt: timestamp,
     createdAt: timestamp,
@@ -130,8 +133,79 @@ function projectFromPayload(data, timestamp, quote = null, now = new Date()) {
   };
 }
 
+// The CRM-owned reference of a project, as an import would have written it.
+const saleUrlFor = saleId => !saleId || saleId === 'interno' ? '' : `https://gran-crm.granberta.workers.dev/?ir=venta/${encodeURIComponent(saleId)}`;
+const linkFields = data => ({ crmSaleId: data.saleId, crmSaleUrl: saleUrlFor(data.saleId), controlTotalProjectId: data.sourceProjectId });
+const contractFields = data => ({
+  controlTotalContractCurrency: data.contractCurrency,
+  controlTotalContractAmount: data.contractAmount,
+  controlTotalContractArs: data.contractCurrency === 'ARS' ? data.contractAmount : null,
+  controlTotalContractUsd: data.contractCurrency === 'USD' ? data.contractAmount : null,
+});
+const sameFields = (current, wanted) => Object.keys(wanted).every(key => (current[key] ?? null) === (wanted[key] ?? null));
+
+async function correctProject({ db, data, timestamp, clock }) {
+  const projectId = projectIdFor(data.projectCode);
+  const markerRef = db.collection('crmProjectImports').doc(projectId);
+  const age = clock().getTime() - Date.parse(data.sourceEvidence.verifiedAt);
+  if (age > 36 * 60 * 60 * 1000 || age < -300000) invalid('La verificación del registro está vencida o tiene fecha futura.');
+  return db.runTransaction(async transaction => {
+    const marker = await transaction.get(markerRef);
+    if (!marker.exists) throw new ImportError(409, 'Este código no llegó desde el CRM: no hay alta que corregir.');
+    const receipt = marker.data(), sent = receipt.source;
+    if (!sent || receipt.projectCode !== data.projectCode || sent.projectCode !== data.projectCode || !receipt.projectId) {
+      throw new ImportError(409, 'El recibo de este código no permite corregirlo. Requiere revisión.');
+    }
+    const projectRef = db.collection('projects').doc(receipt.projectId);
+    const commercialRef = db.collection('projectCommercial').doc(receipt.projectId);
+    const project = await transaction.get(projectRef);
+    if (!project.exists || project.data().projectCode !== data.projectCode) {
+      throw new ImportError(409, 'El proyecto de este código no está o cambió de código. Requiere revisión.');
+    }
+    const commercialDoc = await transaction.get(commercialRef);
+    if (!commercialDoc.exists) throw new ImportError(409, 'El proyecto no tiene sus datos comerciales separados. Requiere revisión.');
+    const commercial = commercialDoc.data();
+    const changes = {}, kept = [];
+    // The sale link is the CRM's: if it is neither what the CRM sent nor the
+    // correction, somebody linked it on purpose and nothing is written.
+    const link = linkFields(data);
+    if (!sameFields(commercial, link)) {
+      if (!sameFields(commercial, linkFields(sent))) throw new ImportError(409, 'El vínculo con el CRM se cambió en GOAT. Requiere revisión.');
+      Object.assign(changes, link);
+    }
+    // The contract reference and the visible name are corrected only while they
+    // still say what the CRM sent. A manual edit wins and is reported.
+    const contract = contractFields(data);
+    if (!sameFields(commercial, contract)) {
+      if (sameFields(commercial, contractFields(sent))) Object.assign(changes, contract);
+      else kept.push('contract');
+    }
+    const name = project.data().name;
+    const rename = name !== data.name && name === sent.name;
+    if (name !== data.name && !rename) kept.push('name');
+    const response = outcome => ({ schemaVersion: 1, projectCode: data.projectCode, projectId: receipt.projectId, outcome, ...(kept.length ? { kept } : {}) });
+    const IDENTITY = ['saleId', 'sourceProjectId', 'name', 'contractCurrency', 'contractAmount'];
+    if (!Object.keys(changes).length && !rename && IDENTITY.every(key => sent[key] === data[key])) return response('already_corrected');
+    const now = timestamp();
+    // Writes after every read; budgets, items and payments are never touched.
+    if (Object.keys(changes).length) transaction.update(commercialRef, { ...changes, updatedAt: now });
+    if (rename) transaction.update(projectRef, { name: data.name, updatedAt: now });
+    const { baniPost, ...source } = data;
+    transaction.update(markerRef, {
+      saleId: data.saleId, source,
+      corrections: [...(receipt.corrections || []), {
+        receivedAt: now, kept, evidence: data.sourceEvidence,
+        from: Object.fromEntries(IDENTITY.map(key => [key, sent[key]])),
+        to: Object.fromEntries(IDENTITY.map(key => [key, data[key]])),
+      }],
+    });
+    return response('corrected');
+  });
+}
+
 async function importProject({ db, payload, timestamp, clock = () => new Date(), getQuote = fetchBnaQuote }) {
   const data = validatePayload(payload);
+  if (data.importMode === 'correction') return correctProject({ db, data, timestamp, clock });
   const projectId = projectIdFor(data.projectCode);
   const markerRef = db.collection('crmProjectImports').doc(projectId);
   const projectRef = db.collection('projects').doc(projectId);

@@ -14,7 +14,7 @@ El modo `historical` permite venta/fechas desconocidas (`null` o vacío); las fe
 
 - Cuenta llamadora: `crm-goat-caller@gb-goat.iam.gserviceaccount.com`, sólo invoca este servicio.
 - El invocador se declara explícitamente en `functions/index.js`. No usar `invoker: 'private'` más un permiso manual posterior: el CLI reemplaza el binding `roles/run.invoker` al volver a desplegar y quitaría ese permiso. La prueba `crmProjectDeployment.test.js` inspecciona el manifiesto real del SDK en cada CI para evitar esa regresión. El servicio sigue sin acceso público.
-- Cuenta del receptor: `crm-project-import@gb-goat.iam.gserviceaccount.com`, rol de lectura y creación en `(default)`, sin permisos de actualización, eliminación o Firebase Auth.
+- Cuenta del receptor: `crm-project-import@gb-goat.iam.gserviceaccount.com`, rol de lectura, creación y actualización en `(default)` (la actualización es sólo para las correcciones, abajo), sin permisos de eliminación o Firebase Auth.
 - Los recibos `crmProjectImports/{id}` no están accesibles desde el cliente; el Admin SDK usa IAM.
 
 ## Idempotencia y conflictos
@@ -23,7 +23,19 @@ Una transacción busca el código exacto y usa el mismo ID `ct-G-SIGLAS-NUMERO` 
 
 El CRM marca `goat` como pendiente al generar únicamente las nuevas G. Si falla, conserva el código y los otros destinos; el workflow queda en rojo y el repaso actual de seis horas reintenta sólo ese destino. El fallo lo atiende el circuito existente del mecánico del CRM. No se añade cron ni job. Esta deduplicación se aplica al código confirmado; no cambia la numeración ni la puerta de generación del CRM.
 
-La lista Proyectos usa una suscripción en tiempo real con los mismos filtros de permisos. La importación manual desde CT permanece disponible para casos anteriores. Esta integración es de alta: las correcciones posteriores de nombre/cliente/código o contrato se revisan en GOAT, sin actualización automática del presupuesto.
+La lista Proyectos usa una suscripción en tiempo real con los mismos filtros de permisos. La importación manual desde CT permanece disponible para casos anteriores. Las correcciones posteriores de cliente o código se revisan en GOAT; las de venta, nombre o contrato llegan por el modo de corrección, sin actualización automática del presupuesto.
+
+## Correcciones desde el CRM
+
+Cuando el corrector del Code Generator cambia la venta de origen, el nombre o el precio final de un código ya entregado, envía el mismo payload v2 con `importMode: 'correction'`, armado desde la fila corregida del registro y con su evidencia (vigente 36h). El código G no cambia: un cambio de cliente o de sigla cambia el código y se sigue revisando a mano.
+
+- Requiere el recibo `crmProjectImports/{id}` del alta y el proyecto con sus datos comerciales separados. Sin recibo, proyecto borrado o con otro código: HTTP 409 sin escrituras.
+- El vínculo con el CRM (`crmSaleId`, `crmSaleUrl`, `controlTotalProjectId`) es del CRM: se corrige si todavía dice lo que el CRM mandó. Si alguien lo cambió en GOAT: HTTP 409 sin escrituras.
+- La referencia del contrato (`controlTotalContract*`) y el nombre visible se corrigen sólo si siguen diciendo lo que mandó el CRM. Si un administrador los editó, se conservan y la respuesta lo informa en `kept` (`contract`, `name`).
+- Nunca toca presupuesto (`budgetTotal`), partidas, gastos, pagos, equipo ni estado.
+- El recibo pasa a la venta corregida y guarda el historial en `corrections` (de, a, conservados, evidencia). Repetir la misma corrección devuelve `already_corrected` sin escrituras; un reintento del alta con los datos corregidos sigue siendo `already_processed`.
+
+Para publicarlo: revisión, `node scripts/configure-crm-import.cjs` en seco (muestra que agrega `datastore.entities.update` al rol `crmProjectImport`), `--apply`, despliegue de `functions:importCrmProject` y recién después el emisor del CRM.
 
 ## Importación administrativa histórica
 
