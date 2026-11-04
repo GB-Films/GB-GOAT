@@ -111,15 +111,12 @@ service firebase.storage {
     }
 
     function canWriteAreaExpense(projectId, area, subcategory) {
-      return (
-          hasCollaboratorDoc(projectId)
-          && collaboratorDoc(projectId).canEditBudgetAreas == true
-          && 'areas' in collaboratorDoc(projectId).allowedTabs
-          && subcategory is string
-          && subcategory != ''
-          && 'allowedSubcategories' in collaboratorDoc(projectId)
-          && areaSubcategoryKey(area, subcategory) in collaboratorDoc(projectId).allowedSubcategories
-        ) || canWriteArea(projectId, area);
+      let access = collaboratorDoc(projectId);
+      return (hasCollaboratorDoc(projectId)
+        && access.canEditBudgetAreas == true && 'areas' in access.allowedTabs
+        && !(areaSubcategoryKey(area, subcategory) in access.get('excludedSubcategories', []))
+        && (area in access.allowedCategories || (subcategory is string && subcategory != ''
+          && areaSubcategoryKey(area, subcategory) in access.get('allowedSubcategories', [])))) || isProjectAdmin(projectId);
     }
 
     function canWritePaymentReceipt(projectId, collectionName, itemId) {
@@ -161,6 +158,7 @@ service firebase.storage {
                 && hasCollaboratorDoc(projectId)
                 && collaboratorDoc(projectId).canEditBudgetAreas == true
                 && 'areas' in collaboratorDoc(projectId).allowedTabs
+                && !(areaSubcategoryKey(firestore.get(/databases/(default)/documents/projects/$(projectId)/areaExpenses/$(itemId)).data.area, firestore.get(/databases/(default)/documents/projects/$(projectId)/areaExpenses/$(itemId)).data.get('subcategory', '')) in collaboratorDoc(projectId).get('excludedSubcategories', []))
                 && (
                   (
                     collaboratorDoc(projectId).keys().hasAny(['allowedCategories'])
@@ -253,6 +251,7 @@ service firebase.storage {
               && hasCollaboratorDoc(projectId)
               && collaboratorDoc(projectId).canEditBudgetAreas == true
               && 'areas' in collaboratorDoc(projectId).allowedTabs
+              && !(areaSubcategoryKey(request.resource.metadata.area, firestore.get(/databases/(default)/documents/projects/$(projectId)/areaExpenses/$(request.resource.metadata.expenseId)).data.get('subcategory', '')) in collaboratorDoc(projectId).get('excludedSubcategories', []))
               && (
                 request.resource.metadata.area in collaboratorDoc(projectId).allowedCategories
                 || (

@@ -1,3 +1,4 @@
+import { canViewProjectSubcategory, hasFullProjectAreaAccess } from './projectAccess';
 import {
   canAssistantEditArea,
   canAssistantEditSubcategory,
@@ -85,6 +86,7 @@ export type AssistantCollaborator = {
   role?: string;
   allowedCategories?: string[];
   allowedSubcategories?: string[];
+  excludedSubcategories?: string[];
 };
 
 export type AssistantProjectDocument = {
@@ -300,13 +302,18 @@ export const buildAssistantTools = ({
   );
 
   const visibleAreaExpenses = (context: AssistantProjectContext) => (
-    context.areaExpenses.filter((expense) => {
-      if (context.capabilities.isProjectAdmin) return true;
-      if (context.capabilities.access.allowedCategories.includes(expense.area)) return true;
-      const subcategory = cleanAreaExpenseSubcategory(expense.subcategory);
-      return Boolean(subcategory && context.capabilities.access.allowedSubcategories.includes(`${expense.area}||${subcategory}`));
-    })
+    context.areaExpenses.filter((expense) => canViewProjectSubcategory(context.capabilities.isProjectAdmin, context.capabilities.access, expense.area, expense.subcategory))
   );
+
+  const scopedAssignedBudget = (context: AssistantProjectContext, area?: string) => {
+    const fullAreas = context.categories.filter(name => (!area || name === area) && hasFullProjectAreaAccess(context.capabilities.isProjectAdmin, context.capabilities.access, name));
+    const partial = Object.entries(context.meta.areaExpenseSubcategoryBudgets || {}).reduce((total, [key, entry]) => {
+      const [parent, child] = key.split('||');
+      if ((area && parent !== area) || fullAreas.includes(parent) || !canViewProjectSubcategory(context.capabilities.isProjectAdmin, context.capabilities.access, parent, child)) return total;
+      return total + (Number(typeof entry === 'number' ? entry : entry?.budget) || 0);
+    }, 0);
+    return getAssignedBudgetTotal(context.meta, visibleBudgetItems(context), fullAreas) + partial;
+  };
 
   const tools: AssistantTool[] = [
     {
@@ -338,7 +345,7 @@ export const buildAssistantTools = ({
           resumen: describeAssistantScope(capabilities),
           areas: capabilities.areas.map((scope) => ({
             area: scope.area,
-            acceso: scope.canEditArea ? 'completa' : scope.canEditSubcategories,
+            acceso: scope.canEditArea ? 'completa' : scope.inheritsSubcategories ? { excepto: scope.excludedSubcategories } : scope.canEditSubcategories,
           })),
         };
       },
@@ -353,7 +360,7 @@ export const buildAssistantTools = ({
         const context = resolved.context;
         const budgetItems = visibleBudgetItems(context);
         const areaExpenses = visibleAreaExpenses(context);
-        const budgetTotal = getAssignedBudgetTotal(context.meta, budgetItems, context.capabilities.isProjectAdmin ? undefined : context.capabilities.access.allowedCategories);
+        const budgetTotal = scopedAssignedBudget(context);
         const expenseTotal = areaExpenses.reduce((total, item) => total + (Number(item.total) || 0), 0);
         const finance = calculateProjectFinance({ ...context.meta, activeAreas: context.activeAreas }, budgetItems, areaExpenses);
         const paidTotal = finance.paid;
@@ -461,7 +468,7 @@ export const buildAssistantTools = ({
           current.gastos += 1;
           groups.set(key, current);
         });
-        const assignedTotal = context.capabilities.isProjectAdmin || context.capabilities.access.allowedCategories.includes(scope.area) ? getCategoryBudget(context.meta, assigned, scope.area) : 0;
+        const assignedTotal = scopedAssignedBudget(context, scope.area);
         const spentTotal = expenses.reduce((total, item) => total + (Number(item.total) || 0), 0);
         return {
           proyecto: context.projectName || context.projectId,
@@ -471,7 +478,7 @@ export const buildAssistantTools = ({
           saldo: round2(assignedTotal - spentTotal),
           partidas: assigned.length,
           gastosCargados: expenses.length,
-          puedeEditar: scope.canEditArea ? 'area completa' : scope.canEditSubcategories,
+          puedeEditar: scope.canEditArea ? 'area completa' : scope.inheritsSubcategories ? { excepto: scope.excludedSubcategories } : scope.canEditSubcategories,
           subcategorias: Array.from(groups.values()),
         };
       },
@@ -669,6 +676,7 @@ export const buildAssistantTools = ({
           rol: collaborator.role || '',
           areas: Array.isArray(collaborator.allowedCategories) ? collaborator.allowedCategories : [],
           subcategorias: Array.isArray(collaborator.allowedSubcategories) ? collaborator.allowedSubcategories : [],
+          subcategoriasExcluidas: Array.isArray(collaborator.excludedSubcategories) ? collaborator.excludedSubcategories : [],
         })),
       };
     },
@@ -1642,6 +1650,7 @@ export const buildAssistantTools = ({
         const collaboratorsToUpdate = context.collaborators.filter((collaborator) => (
           (Array.isArray(collaborator.allowedCategories) ? collaborator.allowedCategories : []).includes(current)
           || (Array.isArray(collaborator.allowedSubcategories) ? collaborator.allowedSubcategories : []).some((key) => key.split('||')[0] === current)
+          || (Array.isArray(collaborator.excludedSubcategories) ? collaborator.excludedSubcategories : []).some((key) => key.split('||')[0] === current)
         ));
 
         const projectRef = doc(db, 'projects', context.projectId);
@@ -1669,6 +1678,8 @@ export const buildAssistantTools = ({
               allowedCategories: (Array.isArray(collaborator.allowedCategories) ? collaborator.allowedCategories : [])
                 .map((category) => (category === current ? nextName : category)),
               allowedSubcategories: (Array.isArray(collaborator.allowedSubcategories) ? collaborator.allowedSubcategories : [])
+                .map((key) => (key.split('||')[0] === current ? `${nextName}||${key.split('||')[1] || ''}` : key)),
+              excludedSubcategories: (Array.isArray(collaborator.excludedSubcategories) ? collaborator.excludedSubcategories : [])
                 .map((key) => (key.split('||')[0] === current ? `${nextName}||${key.split('||')[1] || ''}` : key)),
               updatedAt: serverTimestamp(),
             });
@@ -1709,10 +1720,12 @@ export const buildAssistantTools = ({
         for (const collaborator of context.collaborators) {
           const allowedCategories = Array.isArray(collaborator.allowedCategories) ? collaborator.allowedCategories : [];
           const allowedSubcategories = Array.isArray(collaborator.allowedSubcategories) ? collaborator.allowedSubcategories : [];
-          if (!allowedCategories.includes(current) && !allowedSubcategories.some((key) => key.split('||')[0] === current)) continue;
+          const excludedSubcategories = Array.isArray(collaborator.excludedSubcategories) ? collaborator.excludedSubcategories : [];
+          if (!allowedCategories.includes(current) && !allowedSubcategories.some((key) => key.split('||')[0] === current) && !excludedSubcategories.some((key) => key.split('||')[0] === current)) continue;
           await updateDoc(doc(db, 'projects', context.projectId, 'collaborators', normalizeEmail(collaborator.email)), {
             allowedCategories: allowedCategories.filter((category) => category !== current),
             allowedSubcategories: allowedSubcategories.filter((key) => key.split('||')[0] !== current),
+            excludedSubcategories: excludedSubcategories.filter((key) => key.split('||')[0] !== current),
             updatedAt: serverTimestamp(),
           });
         }
@@ -1811,7 +1824,7 @@ export const buildAssistantTools = ({
         const nextPermissionKey = subcategoryKeyOf(area, name);
         const collaboratorsToUpdate = oldPermissionKey
           ? context.collaborators.filter((collaborator) => (
-            Array.isArray(collaborator.allowedSubcategories) && collaborator.allowedSubcategories.includes(oldPermissionKey)
+            (Array.isArray(collaborator.allowedSubcategories) && collaborator.allowedSubcategories.includes(oldPermissionKey)) || (Array.isArray(collaborator.excludedSubcategories) && collaborator.excludedSubcategories.includes(oldPermissionKey))
           ))
           : [];
 
@@ -1841,6 +1854,10 @@ export const buildAssistantTools = ({
             transaction.update(doc(db, 'projects', context.projectId, 'collaborators', normalizeEmail(collaborator.email)), {
               allowedSubcategories: Array.from(new Set(
                 (Array.isArray(collaborator.allowedSubcategories) ? collaborator.allowedSubcategories : [])
+                  .map((key) => (key === oldPermissionKey ? nextPermissionKey : key)),
+              )),
+              excludedSubcategories: Array.from(new Set(
+                (Array.isArray(collaborator.excludedSubcategories) ? collaborator.excludedSubcategories : [])
                   .map((key) => (key === oldPermissionKey ? nextPermissionKey : key)),
               )),
               updatedAt: serverTimestamp(),
@@ -1885,7 +1902,7 @@ export const buildAssistantTools = ({
         }
         const permissionKey = subcategoryKeyOf(area, subcategory);
         const collaboratorsToUpdate = context.collaborators.filter((collaborator) => (
-          Array.isArray(collaborator.allowedSubcategories) && collaborator.allowedSubcategories.includes(permissionKey)
+          (Array.isArray(collaborator.allowedSubcategories) && collaborator.allowedSubcategories.includes(permissionKey)) || (Array.isArray(collaborator.excludedSubcategories) && collaborator.excludedSubcategories.includes(permissionKey))
         ));
         const nextBudgets = { ...(context.meta.areaExpenseSubcategoryBudgets || {}) };
         delete nextBudgets[permissionKey];
@@ -1911,6 +1928,8 @@ export const buildAssistantTools = ({
           collaboratorsToUpdate.forEach((collaborator) => {
             transaction.update(doc(db, 'projects', context.projectId, 'collaborators', normalizeEmail(collaborator.email)), {
               allowedSubcategories: (Array.isArray(collaborator.allowedSubcategories) ? collaborator.allowedSubcategories : [])
+                .filter((key) => key !== permissionKey),
+              excludedSubcategories: (Array.isArray(collaborator.excludedSubcategories) ? collaborator.excludedSubcategories : [])
                 .filter((key) => key !== permissionKey),
               updatedAt: serverTimestamp(),
             });
@@ -2059,7 +2078,7 @@ export const buildAssistantTools = ({
           if (key.split('||')[0] === area) delete nextBudgets[key];
         });
         const collaboratorsToUpdate = context.collaborators.filter((collaborator) => (
-          (Array.isArray(collaborator.allowedSubcategories) ? collaborator.allowedSubcategories : [])
+          [...(collaborator.allowedSubcategories || []), ...(collaborator.excludedSubcategories || [])]
             .some((key) => key.split('||')[0] === area)
         ));
         const projectRef = doc(db, 'projects', context.projectId);
@@ -2084,6 +2103,8 @@ export const buildAssistantTools = ({
           collaboratorsToUpdate.forEach((collaborator) => {
             transaction.update(doc(db, 'projects', context.projectId, 'collaborators', normalizeEmail(collaborator.email)), {
               allowedSubcategories: (Array.isArray(collaborator.allowedSubcategories) ? collaborator.allowedSubcategories : [])
+                .filter((key) => key.split('||')[0] !== area),
+              excludedSubcategories: (Array.isArray(collaborator.excludedSubcategories) ? collaborator.excludedSubcategories : [])
                 .filter((key) => key.split('||')[0] !== area),
               updatedAt: serverTimestamp(),
             });
@@ -2265,7 +2286,7 @@ export const buildAssistantTools = ({
         resumen: describeAssistantScope(capabilities),
         areas: capabilities.areas.map((scope) => ({
           area: scope.area,
-          acceso: scope.canEditArea ? 'completa' : scope.canEditSubcategories,
+          acceso: scope.canEditArea ? 'completa' : scope.inheritsSubcategories ? { excepto: scope.excludedSubcategories } : scope.canEditSubcategories,
         })),
         pestanasHabilitadas: capabilities.tabs,
         sinAcceso: missingTabs,

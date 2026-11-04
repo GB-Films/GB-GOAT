@@ -70,6 +70,31 @@ try {
   await assertFails(upload(editor, metadata('area_editor', { itemId: 'different-expense' })));
   await assertFails(upload(editor, metadata('project_admin')));
   assert.equal(nextFile, 7);
+  const { uploadAccessScope, ...legacyMetadata } = metadata('area_editor');
+  const uploadInvoice = () => editor.storage().ref(`projects/${projectId}/areas/produccion/facturas/invoice-${++nextFile}.pdf`)
+    .put(new Uint8Array([37, 80, 68, 70]), { contentType: 'application/pdf', customMetadata: {
+      projectId, area: 'Producción', areaFolder: 'produccion', collectionName: 'areaExpenses', expenseId, uploadAccessScope: 'area_editor',
+    } });
+  await assertSucceeds(uploadInvoice());
+  await assertSucceeds(upload(editor, legacyMetadata));
+  await testEnv.withSecurityRulesDisabled(async context => {
+    await setDoc(doc(context.firestore(), `projects/${projectId}/collaborators/editor@example.test`), {
+      role: 'jefe_area', canEditBudgetAreas: true, allowedTabs: ['areas'], allowedCategories: ['Producción'],
+      allowedSubcategories: ['Producción||'], excludedSubcategories: ['Producción||'],
+    });
+  });
+  await assertFails(upload(editor, metadata('area_editor')));
+  await assertFails(upload(editor, legacyMetadata));
+  await assertFails(uploadInvoice());
+  await assertSucceeds(upload(projectAdmin, metadata('project_admin')));
+  await testEnv.withSecurityRulesDisabled(async context => {
+    await setDoc(doc(context.firestore(), `projects/${projectId}/collaborators/editor@example.test`), {
+      role: 'jefe_area', canEditBudgetAreas: true, allowedTabs: ['areas'], allowedCategories: ['Producción'],
+      excludedSubcategories: ['Producción||Otra'],
+    });
+  });
+  await assertSucceeds(upload(editor, metadata('area_editor')));
+  await assertSucceeds(uploadInvoice());
   // Reproduce «Otros comprobantes» de Presu Ppal: el cliente anterior enviaba
   // expenseId, omitiendo los campos obligatorios itemId/paymentId y la ruta de autorización.
   const uploadRowReceipt = (context, collectionName, fields) => context.storage()

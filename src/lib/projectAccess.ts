@@ -22,6 +22,7 @@ export type ProjectAccess = {
   allowedTabs?: unknown;
   allowedCategories?: unknown;
   allowedSubcategories?: unknown;
+  excludedSubcategories?: unknown;
   canEditBudgetAreas?: boolean;
   canViewBudgetTotals?: boolean;
 };
@@ -78,6 +79,7 @@ export const getDefaultCollaboratorPermissions = (
     return {
       allowedTabs: [...PROJECT_TAB_IDS],
       allowedCategories: categories,
+      excludedSubcategories: [],
       canEditBudgetAreas: true,
       canViewBudgetTotals: true,
     };
@@ -88,6 +90,7 @@ export const getDefaultCollaboratorPermissions = (
       ? [...DEFAULT_PRODUCTION_LEAD_TABS]
       : [...DEFAULT_AREA_LEAD_TABS],
     allowedCategories: chosenCategories,
+    excludedSubcategories: [],
     canEditBudgetAreas: true,
     canViewBudgetTotals: false,
   };
@@ -101,6 +104,51 @@ export const areaSubcategoryKey = (area: unknown, subcategory: unknown) => (
 
 export const areaFromSubcategoryKey = (key: string) => key.split('||')[0] || '';
 
+export const canViewProjectSubcategory = (
+  admin: boolean,
+  access: ProjectAccess | null | undefined,
+  area?: string | null,
+  subcategory?: string | null,
+) => {
+  if (admin) return true;
+  if (!area) return false;
+  const key = areaSubcategoryKey(area, subcategory);
+  if (asStringArray(access?.excludedSubcategories).includes(key)) return false;
+  return asStringArray(access?.allowedCategories).includes(area)
+    || (Boolean(cleanAreaExpenseSubcategory(subcategory)) && asStringArray(access?.allowedSubcategories).includes(key));
+};
+
+export const hasFullProjectAreaAccess = (
+  admin: boolean,
+  access: ProjectAccess | null | undefined,
+  area?: string | null,
+) => Boolean(area && (admin || (
+  asStringArray(access?.allowedCategories).includes(area)
+  && !asStringArray(access?.excludedSubcategories).some(key => areaFromSubcategoryKey(key) === area)
+)));
+
+export function toggleProjectAreaAccess(access: ProjectAccess, area: string) {
+  const selected = asStringArray(access.allowedCategories).includes(area);
+  return {
+    allowedCategories: selected ? asStringArray(access.allowedCategories).filter(a => a !== area) : [...asStringArray(access.allowedCategories), area],
+    allowedSubcategories: asStringArray(access.allowedSubcategories).filter(key => areaFromSubcategoryKey(key) !== area),
+    excludedSubcategories: asStringArray(access.excludedSubcategories).filter(key => areaFromSubcategoryKey(key) !== area),
+  };
+}
+
+export function toggleProjectSubcategoryAccess(access: ProjectAccess, area: string, subcategory: string) {
+  const key = areaSubcategoryKey(area, subcategory);
+  const inherited = asStringArray(access.allowedCategories).includes(area);
+  const selected = canViewProjectSubcategory(false, access, area, subcategory);
+  const explicit = asStringArray(access.allowedSubcategories).filter(k => k !== key);
+  const excluded = asStringArray(access.excludedSubcategories).filter(k => k !== key);
+  return {
+    allowedCategories: asStringArray(access.allowedCategories),
+    allowedSubcategories: !inherited && !selected ? [...explicit, key] : explicit,
+    excludedSubcategories: inherited && selected ? [...excluded, key] : excluded,
+  };
+}
+
 export const canEditProjectArea = (
   isProjectAdmin: boolean,
   access: ProjectAccess | null | undefined,
@@ -113,6 +161,7 @@ export const canEditProjectArea = (
       access?.canEditBudgetAreas === true
       && asStringArray(access.allowedCategories).includes(area)
       && asStringArray(access.allowedTabs).includes('areas')
+      && hasFullProjectAreaAccess(false, access, area)
     )
   )
 );
@@ -122,17 +171,11 @@ export const canEditProjectSubcategory = (
   access: ProjectAccess | null | undefined,
   area?: string | null,
   subcategory?: string | null,
-) => {
-  if (canEditProjectArea(isProjectAdmin, access, area)) return true;
-  const normalizedSubcategory = cleanAreaExpenseSubcategory(subcategory);
-  return Boolean(
-    area
-    && normalizedSubcategory
-    && access?.canEditBudgetAreas === true
-    && asStringArray(access.allowedTabs).includes('areas')
-    && asStringArray(access.allowedSubcategories).includes(areaSubcategoryKey(area, normalizedSubcategory))
-  );
-};
+) => Boolean(area && (isProjectAdmin || (
+  access?.canEditBudgetAreas === true
+  && asStringArray(access.allowedTabs).includes('areas')
+  && canViewProjectSubcategory(false, access, area, subcategory)
+)));
 
 export const canEditExistingPayment = (isProjectAdmin: boolean, payment?: { id?: string; sharedRecordId?: string; createdBy?: string; createdByEmail?: string }, uid = '', email = '') =>
   isProjectAdmin || Boolean(payment?.id && !payment.sharedRecordId && uid && email && payment.createdBy === uid && payment.createdByEmail === email);

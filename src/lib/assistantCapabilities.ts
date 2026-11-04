@@ -17,6 +17,8 @@ export type AssistantAreaScope = {
   area: string;
   canEditArea: boolean;
   canEditSubcategories: string[];
+  inheritsSubcategories?: boolean;
+  excludedSubcategories?: string[];
 };
 
 export type AssistantCapabilities = {
@@ -36,6 +38,7 @@ export type AssistantCapabilities = {
     allowedTabs: string[];
     allowedCategories: string[];
     allowedSubcategories: string[];
+    excludedSubcategories?: string[];
   };
   can: {
     viewProject: boolean;
@@ -96,6 +99,7 @@ export const buildAssistantCapabilities = ({
     allowedTabs: asStringArray(collaborator?.allowedTabs),
     allowedCategories: asStringArray(collaborator?.allowedCategories),
     allowedSubcategories: asStringArray(collaborator?.allowedSubcategories),
+    excludedSubcategories: asStringArray(collaborator?.excludedSubcategories),
   };
 
   const tabs = isProjectAdmin
@@ -116,8 +120,10 @@ export const buildAssistantCapabilities = ({
     .map((area) => ({
       area,
       canEditArea: canEditProjectArea(isProjectAdmin, access, area),
+      inheritsSubcategories: access.allowedCategories.includes(area),
+      excludedSubcategories: access.excludedSubcategories.filter(key => areaFromSubcategoryKey(key) === area).map(key => key.split('||')[1]),
       canEditSubcategories: access.allowedSubcategories
-        .filter((key) => areaFromSubcategoryKey(key) === area)
+        .filter((key) => areaFromSubcategoryKey(key) === area && !access.excludedSubcategories.includes(key))
         .map((key) => key.split('||')[1] || '')
         .filter(Boolean),
     }));
@@ -215,6 +221,8 @@ export const describeAssistantScope = (capabilities: AssistantCapabilities) => {
     lines.push(`Áreas habilitadas: ${capabilities.areas.map((scope) => (
       scope.canEditArea
         ? `${scope.area} (completa)`
+        : scope.inheritsSubcategories && scope.excludedSubcategories?.length
+          ? `${scope.area} (todas excepto: ${scope.excludedSubcategories.join(', ')})`
         : `${scope.area} (subcategorías: ${scope.canEditSubcategories.join(', ') || 'solo lectura'})`
     )).join('; ')}.`);
   }

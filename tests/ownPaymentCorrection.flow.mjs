@@ -25,6 +25,9 @@ export async function testOwnPaymentCorrections({ db, call, snapshot }) {
   const fresh = { ...request, attemptId: 'new', expected: snapshot(corrected.paymentHistory[1]) };
   for (const amount of [-1, 0, 1.001, 61, Infinity]) await assert.rejects(invoke({ ...fresh, amount }));
   await assert.rejects(call({ auth: { ...auth(), token: { ...auth().token, email_verified: false } }, data: fresh }), /Verificá/);
+  await root.collection('collaborators').doc('editor@example.test').update({ excludedSubcategories: ['Post||'] });
+  await assert.rejects(invoke(fresh), /área/);
+  await root.collection('collaborators').doc('editor@example.test').update({ excludedSubcategories: [] });
   await root.collection('collaborators').doc('editor@example.test').update({ allowedCategories: [] });
   await assert.rejects(invoke(fresh), /área/);
   await root.collection('collaborators').doc('editor@example.test').update({ allowedCategories: ['Post'] });
