@@ -861,6 +861,8 @@ try {
   console.log('PASS: signed profiles apply immediately, resume legacy signed updates, preserve unchanged profiles, reject duplicate identifiers, stale data and foreign accounts, and require no administrative review.');
   const { testProviderAccountChoice } = await import('./providerAccountChoice.flow.mjs');
   await testProviderAccountChoice({ db, admin, deps, request, signActual, env, doc, getDoc, setDoc, assertFails, createProviderPortalHandler, createProviderPortalAdminHandler });
+  const { testPortalInvoiceUpload } = await import('./portalInvoiceUpload.flow.mjs');
+  await testPortalInvoiceUpload({ db, portal, request, sign, env, assertFails, createProviderPortalHandler, deps });
   console.log("PASS: own bank required at intake, personal signup without signature, company responsibility declaration with DNI and optional power activates without admin review, minimal third-party declaration, issuer-linked invoice and payout.");
   console.log(
     "PASS: real GB Sign PDF/signature/artifacts → immediate signed profile application; automatic scoped third-party application without admin review, no duplicate payment; external isolation and producer access.",
