@@ -147,6 +147,14 @@ test('una exclusión prevalece sobre el área y una delegación explícita en li
   assert.deepEqual(area.subcategorias, []);
 });
 
+test('el resumen administrativo conserva asignaciones históricas fuera del listado actual de categorías', async () => {
+  const context = buildContext();
+  context.capabilities = buildAssistantCapabilities({ ...baseProject, userId: 'owner-uid' });
+  context.meta.categoryBudgets = { 'Categoría histórica': 500 };
+  const summary = await runTool(buildTools({ loadProject: async () => context }), 'resumen_proyecto');
+  assert.equal(summary.presupuestoPrincipal, 6500);
+});
+
 test('el detalle del proyecto muestra el alcance real', async () => {
   const detail = await runTool(buildTools(), 'detalle_proyecto');
 

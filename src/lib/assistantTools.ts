@@ -306,6 +306,9 @@ export const buildAssistantTools = ({
   );
 
   const scopedAssignedBudget = (context: AssistantProjectContext, area?: string) => {
+    if (context.capabilities.isProjectAdmin) {
+      return area ? getCategoryBudget(context.meta, context.budgetItems, area) : getAssignedBudgetTotal(context.meta, context.budgetItems);
+    }
     const fullAreas = context.categories.filter(name => (!area || name === area) && hasFullProjectAreaAccess(context.capabilities.isProjectAdmin, context.capabilities.access, name));
     const partial = Object.entries(context.meta.areaExpenseSubcategoryBudgets || {}).reduce((total, [key, entry]) => {
       const [parent, child] = key.split('||');
