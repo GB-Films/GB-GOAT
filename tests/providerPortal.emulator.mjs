@@ -763,7 +763,8 @@ try {
   assert.equal((await db.doc("providerIdentifiers/cuit_20333333334").get()).exists, false, "the third party's CUIT never becomes the service provider's identifier");
   assert.equal((await db.doc("projects/project/areaExpenses/new-person-work").get()).data().providerId, added.providerId);
   assert.deepEqual((await db.doc("projects/project/areaExpenses/new-person-work").get()).data().paymentHistory, []);
-  await assert.rejects(register({ attemptId: "new-person-again" }), /enlace no está disponible/);
+  await assert.rejects(register({ attemptId: "new-person-again" }), error => error.code === 'failed-precondition' && /ya fue utilizado/.test(error.message) && /Mi proveedor/.test(error.message));
+  assert.equal((await db.doc('providerInvites/new-person').get()).data().used, true);
   await db.doc("providerInvites/intake-duplicate").set({ status: "pending", used: false });
   await assert.rejects(register({ inviteToken: "intake-duplicate" }), /ya tiene un alta/);
   const general = await register({ inviteToken: "intake-duplicate", attemptId: "general-legacy", form: { ...intakeForm, dni: "34567890" } });

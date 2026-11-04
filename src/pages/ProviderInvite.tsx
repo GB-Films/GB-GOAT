@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { GoogleAuthProvider, onAuthStateChanged, signInWithPopup, User } from 'firebase/auth';
+import { GoogleAuthProvider, onAuthStateChanged, reauthenticateWithPopup, signInWithPopup, User } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import { useParams } from 'react-router-dom';
 import { CheckCircle2, Loader2, UserRound, Building2, AlertTriangle, CalendarDays } from 'lucide-react';
@@ -12,6 +12,8 @@ import {
 import { getProviderInviteTargetIssue } from '../lib/providerInvites';
 import { emptyThirdParty, providerFiscalErrors } from '../lib/providerThirdParty';
 import { portalRequest } from '../lib/providerPortal';
+import { providerRegistrationFailure, registrationFieldErrors, registrationProblem, verifyRegistrationSession, type RegistrationFailure } from '../lib/providerRegistrationFlow';
+import { ProviderRegistrationFailure } from '../components/ProviderRegistrationFailure';
 
 type ProviderType = 'persona' | 'empresa';
 
@@ -339,8 +341,10 @@ export default function ProviderInvite({teamOnboarding}: {teamOnboarding?: {init
   const [submitLoading, setSubmitLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [registeredProviderId, setRegisteredProviderId] = useState('');
-  const [attemptId] = useState(() => crypto.randomUUID());
+  const [attemptId, setAttemptId] = useState(() => crypto.randomUUID());
   const [error, setError] = useState('');
+  const [failure, setFailure] = useState<RegistrationFailure | null>(null);
+  const [accountNotice, setAccountNotice] = useState('');
   const [form, setForm] = useState(()=>teamOnboarding ? {...emptyForm,...teamOnboarding.initialForm,type:'persona' as const,email:auth.currentUser?.email?.trim().toLowerCase() || ''} : emptyForm);
   const [ownAccountConfirmed,setOwnAccountConfirmed] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<FormErrors>({});
@@ -349,32 +353,69 @@ export default function ProviderInvite({teamOnboarding}: {teamOnboarding?: {init
   const [personalAccountAccepted, setPersonalAccountAccepted] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
   const submitErrorRef = useRef<HTMLDivElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+  const accountIdentity = useRef(auth.currentUser ? `${auth.currentUser.uid}:${auth.currentUser.email}` : '');
+  const currentToken = useRef(token);
+  currentToken.current = token;
+  const isTeamOnboarding = Boolean(teamOnboarding);
 
   useEffect(() => onAuthStateChanged(auth, (user) => {
     setGoogleUser(user);
-    setPersonalAccountAccepted(false);
+    const identity = user ? `${user.uid}:${user.email}` : '';
+    if (accountIdentity.current !== identity) {
+      setPersonalAccountAccepted(false);
+      setOwnAccountConfirmed(false);
+      setAccountNotice('');
+    }
+    accountIdentity.current = identity;
     setForm((current) => ({ ...current, email: user?.email?.trim().toLowerCase() || '' }));
   }), []);
 
   const chooseGoogleAccount = async () => {
     setSigningIn(true);
     setError('');
+    setFailure(null);
     try {
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: 'select_account' });
       await signInWithPopup(auth, provider);
-    } catch {
-      setError('No se completó el inicio de sesión con Google. Volvé a intentarlo.');
+    } catch (err) {
+      const issue = providerRegistrationFailure(err, attemptId, 'signin');
+      setFailure(issue); setError(issue.message);
     } finally {
       setSigningIn(false);
     }
   };
+
+  // Call the popup immediately from the button click, before token/network awaits.
+  const verifyGoogleAccount = () => {
+    const user = auth.currentUser;
+    if (!user) { void chooseGoogleAccount(); return; }
+    setSigningIn(true); setError(''); setFailure(null); setAccountNotice('');
+    const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt:'select_account', login_hint:user.email || '' });
+    void reauthenticateWithPopup(user, provider).then(async () => {
+      await verifyRegistrationSession(() => auth.currentUser, { uid:user.uid, email:user.email || '' });
+      setAccountNotice('Cuenta verificada. Revisá las confirmaciones y volvé a enviar el alta.');
+    }).catch(err => {
+      const issue = providerRegistrationFailure(err, attemptId, 'verify');
+      setFailure(issue); setError(issue.message);
+    }).finally(() => setSigningIn(false));
+  };
+
+  const recoveryNotice = failure && <ProviderRegistrationFailure failure={failure} busy={signingIn || submitLoading}
+    onVerify={verifyGoogleAccount} onChoose={() => void chooseGoogleAccount()}
+    onRetry={() => formRef.current?.requestSubmit()} onReload={() => window.location.reload()} />;
 
   const categories = form.type === 'empresa' ? COMPANY_PROVIDER_CATEGORIES : PRODUCTION_AREA_CATEGORIES;
   const dniError = fieldErrors.dni;
   const cuitError = fieldErrors.cuit;
 
   useEffect(() => {
+    let active = true;
+    setLoading(true); setInvite(null); setError(''); setFailure(null); setSubmitted(false); setRegisteredProviderId('');
+    setAttemptId(crypto.randomUUID()); setSubmitLoading(false); setOwnAccountConfirmed(false);
+    if (!isTeamOnboarding) setForm({ ...emptyForm, email:auth.currentUser?.email?.trim().toLowerCase() || '' });
     const loadInvite = async () => {
       if(teamOnboarding) {setInvite({id:'team',status:'pending'});setLoading(false);return;}
       const isLocalPreview = Boolean((import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV) && token === 'preview';
@@ -386,6 +427,7 @@ export default function ProviderInvite({teamOnboarding}: {teamOnboarding?: {init
       try {
         const inviteRef = doc(db, 'providerInvites', token);
         const snap = await getDoc(inviteRef);
+        if (!active) return;
         if (!snap.exists()) {
           setError(PROVIDER_INVITE_MESSAGES.INVITE_NOT_FOUND);
           return;
@@ -404,21 +446,26 @@ export default function ProviderInvite({teamOnboarding}: {teamOnboarding?: {init
           return;
         }
         const targetIssue = await readInviteTargetIssue(data);
+        if (!active) return;
         if (targetIssue) {
           setError(targetIssue);
           return;
         }
         setInvite({ id: snap.id, ...data });
       } catch (err) {
+        if (!active) return;
         console.error('Error loading provider invite:', err);
-        setError('No se pudo validar el link. Revisá tu conexión e intentá de nuevo.');
+        const issue = providerRegistrationFailure(err, attemptId, 'load');
+        setFailure(issue); setError(issue.message);
       } finally {
-        setLoading(false);
+        if (active) setLoading(false);
       }
     };
 
     if (token || teamOnboarding) loadInvite();
-  }, [token]);
+    else { setError('Falta el enlace de alta. Pedí a Gran Berta que te comparta uno nuevo.'); setLoading(false); }
+    return () => { active = false; };
+  }, [token, isTeamOnboarding]);
 
   function validateForm(values: ProviderForm = form): FormErrors {
     const nextErrors: FormErrors = {};
@@ -442,6 +489,7 @@ export default function ProviderInvite({teamOnboarding}: {teamOnboarding?: {init
     if (!values.address.trim()) nextErrors.address = requiredMessage;
     if (!values.category) nextErrors.category = requiredMessage;
     if (values.category === 'Otra' && !values.categoryOther.trim()) nextErrors.categoryOther = requiredMessage;
+    Object.assign(nextErrors, registrationFieldErrors(values));
 
     return nextErrors;
   }
@@ -452,6 +500,7 @@ export default function ProviderInvite({teamOnboarding}: {teamOnboarding?: {init
     setOwnAccountConfirmed(false);
     if (showFieldErrors) setFieldErrors(validateForm(nextForm));
     setError('');
+    setFailure(null);
   };
 
   const selectType = (type: ProviderType) => {
@@ -461,12 +510,15 @@ export default function ProviderInvite({teamOnboarding}: {teamOnboarding?: {init
     setFieldErrors({});
     setShowFieldErrors(false);
     setError('');
+    setFailure(null);
   };
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    setFailure(null);
     if (!googleUser || !personalAccountAccepted) {
       setError('Iniciá sesión con tu cuenta Google y confirmá que tenés control personal de ella.');
+      setFailure(null);
       return;
     }
     const validationErrors = validateForm();
@@ -484,18 +536,16 @@ export default function ProviderInvite({teamOnboarding}: {teamOnboarding?: {init
 
     setSubmitLoading(true);
     setError('');
+    setFailure(null);
+    const submittedToken = token;
 
     try {
-      const account = auth.currentUser;
-      if (!account || account.uid !== googleUser.uid) throw new Error('La cuenta cambió. Volvé a confirmar el alta.');
-      const identity = await account.getIdTokenResult(true);
-      if (identity.signInProvider !== 'google.com' || identity.claims.email_verified !== true
-        || String(identity.claims.email || '').toLowerCase() !== form.email) {
-        throw new Error('Iniciá sesión con una cuenta Google con correo verificado.');
-      }
+      if (!ownAccountConfirmed) throw registrationProblem('registration/bank-consent');
+      await verifyRegistrationSession(() => auth.currentUser, { uid:googleUser.uid, email:form.email });
+      if (currentToken.current !== submittedToken) return;
       if(teamOnboarding) {
-        if(!ownAccountConfirmed) throw new Error('Confirmá que sos titular de la cuenta provista.');
         const result=await portalRequest({action:'teamComplete',form:{...form,bankAccount_cbu:normalizeDigits(form.bankAccount_cbu)},personalAccountAccepted,ownAccountConfirmed});
+        if (currentToken.current !== submittedToken) return;
         if(!['ready','legacy'].includes(result.status)) {
           await teamOnboarding.onReview?.();
           return;
@@ -503,28 +553,19 @@ export default function ProviderInvite({teamOnboarding}: {teamOnboarding?: {init
         await teamOnboarding.onComplete();
         return;
       }
-      const result = await portalRequest({ action:'registerProvider', inviteToken:token, attemptId, form, personalAccountAccepted, ownAccountConfirmed });
+      const result = await portalRequest({ action:'registerProvider', inviteToken:token, attemptId, form:{ ...form, bankAccount_cbu:normalizeDigits(form.bankAccount_cbu) }, personalAccountAccepted, ownAccountConfirmed });
+      if (currentToken.current !== submittedToken) return;
+      if (result?.status !== 'registered' || typeof result.providerId !== 'string' || !/^[\w-]{1,160}$/.test(result.providerId)) throw registrationProblem('registration/invalid-response');
       setRegisteredProviderId(result.providerId);
       setSubmitted(true);
     } catch (err: any) {
+      if (currentToken.current !== submittedToken) return;
       console.error('Error submitting provider invite:', err);
-      const firebaseMessageByCode: Record<string, string> = {
-        'permission-denied': 'No pudimos asignar el alta al gasto de este link (código permission-denied): el gasto pudo haber cambiado o sido eliminado mientras completabas el formulario. Mandá esta pantalla a Gran Berta Films para que lo revisen y te generen un link nuevo.',
-        'firestore/permission-denied': 'No pudimos asignar el alta al gasto de este link (código permission-denied): el gasto pudo haber cambiado o sido eliminado mientras completabas el formulario. Mandá esta pantalla a Gran Berta Films para que lo revisen y te generen un link nuevo.',
-        unavailable: 'No pudimos conectar con el servidor. Revisá la conexión a internet y volvé a intentar.',
-        'firestore/unavailable': 'No pudimos conectar con el servidor. Revisá la conexión a internet y volvé a intentar.',
-        'deadline-exceeded': 'La conexión tardó demasiado. Los datos siguen cargados: volvé a presionar Enviar.',
-        aborted: 'El alta cambió mientras se enviaba. Los datos siguen cargados: volvé a presionar Enviar.',
-        'not-found': 'La fila de gasto asociada a este link ya no existe. Pedí un link nuevo.',
-        'firestore/not-found': 'La fila de gasto asociada a este link ya no existe. Pedí un link nuevo.',
-      };
-      const callableMessage = ['functions/failed-precondition','functions/permission-denied','functions/unauthenticated','functions/invalid-argument'].includes(err?.code) ? err.message : '';
-      const submitError = callableMessage
-        || PROVIDER_INVITE_MESSAGES[err?.message]
-        || firebaseMessageByCode[err?.code]
-        || 'No pudimos confirmar el alta. Tus datos siguen cargados; volvé a intentar con esta misma ventana.';
-      if (err?.message === 'DNI_EXISTS' || err?.message === 'CUIT_EXISTS') {
-        const field = err.message === 'DNI_EXISTS' ? 'dni' : 'cuit';
+      const issue = providerRegistrationFailure(err, attemptId);
+      setFailure(issue);
+      const submitError = issue.message;
+      if (issue.field) {
+        const field = issue.field as FormErrorKey;
         setShowFieldErrors(true);
         setFieldErrors((current) => ({ ...current, [field]: submitError }));
         window.requestAnimationFrame(() => {
@@ -540,7 +581,7 @@ export default function ProviderInvite({teamOnboarding}: {teamOnboarding?: {init
       }
       setError(submitError);
     } finally {
-      setSubmitLoading(false);
+      if (currentToken.current === submittedToken) setSubmitLoading(false);
     }
   };
 
@@ -576,8 +617,8 @@ export default function ProviderInvite({teamOnboarding}: {teamOnboarding?: {init
         <div className="bg-white border border-red-100 rounded-2xl p-10 max-w-lg text-center shadow-sm">
           <AlertTriangle className="w-12 h-12 text-red-500 mx-auto mb-5" />
           <div className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate-400 mb-3">Gran Berta Films</div>
-          <h1 className="text-2xl font-bold text-slate-900 mb-3">Link no disponible</h1>
-          <p className="text-sm text-red-500 leading-relaxed">{error}</p>
+          <h1 className="text-2xl font-bold text-slate-900 mb-3">No se pudo abrir el alta</h1>
+          <div className="text-sm text-red-600 leading-relaxed">{recoveryNotice || error}</div>
         </div>
       </div>
     );
@@ -600,9 +641,10 @@ export default function ProviderInvite({teamOnboarding}: {teamOnboarding?: {init
             <p className="text-sm text-slate-600">{form.type === 'empresa' ? 'Podés usar tu correo personal o el que utilizás para administrar o trabajar en la empresa. Vas a ingresar y firmar con esta misma cuenta. En Mi proveedor completarás tu DNI y firmarás, bajo tu responsabilidad, que tenés facultades vigentes para representar a la empresa. Adjuntar un poder es opcional.' : 'Usá tu cuenta personal de Google. Este correo identifica tu acceso a tu ficha. El alta de una persona física no requiere firmar una declaración de representación; las autorizaciones para facturar y cobrar mediante otra persona se completan después desde Mi proveedor.'}</p>
             <p className="text-sm text-slate-600">Puede ser Gmail u otro correo asociado a una cuenta Google. Si todavía no tenés una, podés <a className="underline" href="https://accounts.google.com/signup" target="_blank" rel="noreferrer">crear una cuenta Google</a> usando tu correo actual.</p>
             {googleUser && <p className="text-sm font-semibold">{googleUser.email}</p>}
+            {accountNotice && <p role="status" className="text-sm text-emerald-700">{accountNotice}</p>}
             <button type="button" disabled={signingIn || submitLoading} onClick={() => void chooseGoogleAccount()} className="rounded-lg border px-4 py-2 text-sm font-bold disabled:opacity-50">{signingIn ? 'Conectando…' : googleUser ? 'Elegir otra cuenta Google' : 'Continuar con Google'}</button>
             <label className="flex gap-2 text-sm"><input type="checkbox" checked={personalAccountAccepted} disabled={!googleUser || submitLoading} onChange={(e) => setPersonalAccountAccepted(e.target.checked)} />{form.type === 'empresa' ? 'Confirmo que tengo control personal de esta cuenta Google y que la uso para gestionar a la empresa. Entiendo que antes de firmar contratos debo identificarme y firmar mi declaración de responsabilidad como representante desde Mi proveedor.' : 'Confirmo que esta cuenta Google me pertenece, es de uso personal y la utilizaré para ingresar a mi ficha en GOAT.'}</label>
-            {error && !form.type && <p role="alert" className="text-sm text-red-600">{error}</p>}
+            {error && !form.type && <div role="alert" className="text-sm text-red-600">{recoveryNotice || error}</div>}
           </section>
           {!teamOnboarding && <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-8">
             <button
@@ -628,8 +670,8 @@ export default function ProviderInvite({teamOnboarding}: {teamOnboarding?: {init
           </div>}
 
           {form.type && (
-            <form onSubmit={handleSubmit} noValidate data-provider-form className="space-y-6">
-              <fieldset disabled={submitLoading} className="space-y-6">
+            <form ref={formRef} onSubmit={handleSubmit} noValidate data-provider-form className="space-y-6">
+              <fieldset disabled={submitLoading || signingIn} className="space-y-6">
               {form.type === 'persona' ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <Field label="Nombre" required error={fieldErrors.name}>
@@ -644,10 +686,10 @@ export default function ProviderInvite({teamOnboarding}: {teamOnboarding?: {init
                   <Field label="CUIT / CUIL" required error={cuitError}>
                     <input aria-label="CUIT / CUIL" inputMode="numeric" value={form.cuit} onChange={(e) => updateField('cuit', e.target.value)} required aria-invalid={Boolean(cuitError)} className={withFieldError(cuitError)} />
                   </Field>
-                  <Field label="Fecha de nacimiento">
+                  <Field label="Fecha de nacimiento" error={fieldErrors.birthDate}>
                     <InlineDatePicker value={form.birthDate} onChange={(value) => updateField('birthDate', value)} />
                   </Field>
-                  <Field label="Restricción alimentaria">
+                  <Field label="Restricción alimentaria" error={fieldErrors.dietaryRestriction}>
                     <input value={form.dietaryRestriction} onChange={(e) => updateField('dietaryRestriction', e.target.value)} className={inputClass} placeholder="Ej: celiaquía, vegetariano/a, ninguna..." />
                   </Field>
                 </div>
@@ -701,7 +743,7 @@ export default function ProviderInvite({teamOnboarding}: {teamOnboarding?: {init
                     <input
                       value={form.bankAccount_cbu}
                       aria-label="CBU"
-                      onChange={(e) => updateField('bankAccount_cbu', normalizeDigits(e.target.value).slice(0, 22))}
+                      onChange={(e) => updateField('bankAccount_cbu', normalizeDigits(e.target.value))}
                       inputMode="numeric"
                       pattern="[0-9]{22}"
                       maxLength={22}
@@ -710,13 +752,13 @@ export default function ProviderInvite({teamOnboarding}: {teamOnboarding?: {init
                       className={withFieldError(fieldErrors.bankAccount || fieldErrors.bankAccount_cbu, 'font-mono')}
                     />
                   </Field>
-                  <Field label="Alias">
+                  <Field label="Alias" error={fieldErrors.bankAccount_alias}>
                     <input
                       value={form.bankAccount_alias}
                       aria-label="Alias"
                       onChange={(e) => updateField('bankAccount_alias', e.target.value)}
-                      aria-invalid={Boolean(fieldErrors.bankAccount)}
-                      className={withFieldError(fieldErrors.bankAccount)}
+                      aria-invalid={Boolean(fieldErrors.bankAccount || fieldErrors.bankAccount_alias)}
+                      className={withFieldError(fieldErrors.bankAccount || fieldErrors.bankAccount_alias)}
                       placeholder="Alias de la cuenta"
                     />
                   </Field>
@@ -739,7 +781,7 @@ export default function ProviderInvite({teamOnboarding}: {teamOnboarding?: {init
                   tabIndex={-1}
                   className="p-4 rounded-lg bg-red-50 border border-red-100 text-sm font-bold text-red-600 outline-none focus:ring-2 focus:ring-red-200"
                 >
-                  {error}
+                  {recoveryNotice || error}
                 </div>
               )}
 
@@ -749,7 +791,7 @@ export default function ProviderInvite({teamOnboarding}: {teamOnboarding?: {init
               </div>
               <button
                 type="submit"
-                disabled={submitLoading || !ownAccountConfirmed}
+                disabled={signingIn || submitLoading || !ownAccountConfirmed}
                 className="w-full px-5 py-4 rounded-xl bg-black text-white text-xs font-bold uppercase tracking-widest disabled:bg-slate-300 disabled:cursor-not-allowed hover:bg-slate-800 transition-colors flex items-center justify-center gap-2"
               >
                 {submitLoading && <Loader2 className="w-4 h-4 animate-spin" />}

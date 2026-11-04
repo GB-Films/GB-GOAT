@@ -31,15 +31,16 @@ try {
   const saved=(await db.doc(`providers/${out.providerId}`).get()).data();
   assert.equal(out.reused,false);assert.equal(saved.personalGoogleAccount.uid,'person');assert.equal(saved.registration.status,'complete');
   assert.equal((await db.doc(`providerPortalUsers/person/memberships/${out.providerId}`).get()).data().status,'active');
-  assert.equal((await submit(first)).providerId,out.providerId);
+  const resumed=await submit(first);assert.equal(resumed.providerId,out.providerId);assert.equal(resumed.resumed,true);
   await denied({...first,form:{...first.form,phone:'changed'}},/otros datos/);
   pass('new person, Google identity, own access, exact and changed retry');
-  for(const variant of ['dni-legacy','cuit-legacy','both-indexed','no-index','seven-digit','nine-digit','company']){
+  for(const variant of ['dni-legacy','cuit-legacy','both-indexed','no-index','seven-digit','nine-digit','company','formatted-cbu']){
     const token=`reuse-${variant}`,providerId=token;
     const data=input(token);const form=data.form;
     if(variant==='company')Object.assign(form,{type:'empresa',name:'',lastName:'',dni:'',businessName:'Empresa ficticia',cuit:`30${sequence++}9`});
     if(variant==='seven-digit')Object.assign(form,{dni:'1234567',cuit:'20123456789'});
     if(variant==='nine-digit')Object.assign(form,{dni:'123456789',cuit:'20123456780'});
+    if(variant==='formatted-cbu')form.bankAccount_cbu='00000031 00123456 789012';
     const before={name:'Carga provisoria',source:'manual',createdAt:admin.firestore.Timestamp.fromMillis(123000),createdBy:'operator',notes:'Preservar',bankAccount_alias:'anterior'};
     if(variant==='dni-legacy')before.dni_cuit=form.dni.slice(0,2)+'.'+form.dni.slice(2);
     else if(['cuit-legacy','company'].includes(variant))before.dni_cuit=form.cuit.slice(0,2)+'-'+form.cuit.slice(2,10)+'-'+form.cuit.slice(10);
@@ -55,7 +56,9 @@ try {
     const count=(await db.collection('providers').get()).size,result=await submit(data);
     assert.equal(result.providerId,providerId);assert.equal(result.reused,true);assert.equal((await db.collection('providers').get()).size,count);
     const after=(await db.doc(`providers/${providerId}`).get()).data();
+    assert.equal(after.email,'person@example.test');assert.equal(after.personalGoogleAccount.uid,'person');assert.equal(after.registration.status,'complete');
     assert.equal(after.createdAt.toMillis(),123000);assert.equal(after.createdBy,'operator');assert.equal(after.notes,'Preservar');assert.equal(after.bankAccount_alias,'own.alias');
+    if(variant==='formatted-cbu')assert.equal(after.bankAccount_cbu,'0000003100123456789012');
     assert.deepEqual((await rowRef.get()).data(),row,'paid row and receipts stay byte-for-byte unchanged');
     assert.equal((await db.doc(`providerIdentifiers/cuit_${form.cuit}`).get()).data().providerId,providerId);
     assert.equal((await db.doc(`providerPortalUsers/person/memberships/${providerId}`).get()).data().status,variant==='company'?'needs_confirmation':'active');

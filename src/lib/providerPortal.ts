@@ -10,6 +10,7 @@ import {
 } from "firebase/auth";
 import { auth } from "./firebase";
 import { personalSignatureFields } from "./portalSigning";
+import { registrationNeedsVerification, registrationProblem } from './providerRegistrationFlow';
 
 export async function portalRequest(
   input: Record<string, unknown>,
@@ -30,7 +31,10 @@ export async function portalRequest(
     const user = auth.currentUser;
     if (!user) throw Error("Iniciá sesión.");
     const session = await user.getIdTokenResult();
-    if (Date.now() / 1000 - Number(session.claims.auth_time || 0) > 540) {
+    if (registrationNeedsVerification(session.claims)) {
+      // Intake must recover through an explicit click. A popup opened after
+      // token/network awaits can be blocked, especially on mobile browsers.
+      if (input.action === 'registerProvider') throw registrationProblem('auth/requires-recent-login');
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: 'select_account', login_hint: user.email || '' });
       await reauthenticateWithPopup(user, provider);
