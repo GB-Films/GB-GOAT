@@ -37,3 +37,31 @@
     @apply rounded-lg text-sm font-medium text-slate-600 transition-colors hover:text-blue-700;
   }
 }
+
+@media (max-width: 639px) {
+  .provider-portal { font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
+  .provider-portal .portal-panel { padding: 12px; border-radius: 12px; min-width: 0; }
+  .provider-portal h1 { font-size: 20px; line-height: 1.2; }
+  .provider-portal h2, .provider-portal h3 { font-size: 14px; line-height: 1.35; }
+  .provider-portal .text-sm { font-size: 12px; line-height: 1.45; }
+  .provider-portal .text-xs { font-size: 11px; line-height: 1.4; }
+  .provider-portal .text-lg { font-size: 15px; }
+  .provider-portal .portal-button { min-height: 40px; max-width: 100%; padding: 6px 10px; gap: 6px; font-size: 12px; line-height: 1.35; border-radius: 9px; white-space: normal; }
+  .provider-portal .portal-tabs button { font-size: 12px; }
+  .provider-portal .portal-status { padding: 3px 7px; font-size: 10px; }
+  .provider-portal .portal-details > summary { font-size: 13px; min-height: 36px; align-content: center; }
+  .provider-portal .space-y-5 > :not(:last-child) { margin-block-end: 12px; }
+  .provider-portal .space-y-4 > :not(:last-child) { margin-block-end: 10px; }
+  .provider-portal .space-y-3 > :not(:last-child) { margin-block-end: 8px; }
+  .provider-portal .mt-5, .provider-portal .mt-4 { margin-top: 12px; }
+  .provider-portal .gap-4 { gap: 10px; }
+  .provider-portal fieldset.rounded-xl, .provider-portal form.rounded-2xl { padding: 10px; min-width: 0; }
+  /* Keep inputs at 16px to avoid automatic zoom on iOS; surrounding copy is compact. */
+  .provider-portal input:not([type=checkbox]):not([type=radio]):not([type=file]), .provider-portal select, .provider-portal textarea {
+    min-width: 0; min-height: 40px; max-width: 100%; font-size: 16px; padding: 6px 8px; border-radius: 9px;
+  }
+  .provider-portal input[type=file] { min-width: 0; font-size: 12px; padding: 6px; }
+  .provider-portal input[type=checkbox], .provider-portal input[type=radio] { flex-shrink: 0; min-width: 16px; min-height: 16px; }
+  .provider-portal .portal-money-grid > * { min-width: 0; }
+  .provider-portal .portal-money-grid dd { margin: 3px 0 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+}

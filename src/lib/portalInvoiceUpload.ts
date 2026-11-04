@@ -1,7 +1,7 @@
-export type InvoiceWork = { key: string; projectName: string; description: string; invoiceCount: number; hasInvoice?: boolean; thirdPartyPayoutRequired?: boolean };
+export type InvoiceWork = { key: string; projectName: string; description: string; invoiceCount: number; hasInvoice?: boolean; invoiceRevision?: number; thirdPartyPayoutRequired?: boolean };
 export function invoiceWorkUnavailable(work?: InvoiceWork) {
   if (!work) return 'Elegí el trabajo al que corresponde la factura.';
-  if (work.hasInvoice || work.invoiceCount > 0) return 'Este trabajo ya tiene una factura. Podés verla abajo; para corregirla, contactá a producción.';
+  if (work.hasInvoice || work.invoiceCount > 0) return 'Este trabajo ya tiene una factura. Podés verla abajo. Si la cargaste vos, eliminala para reemplazarla; las demás las corrige producción.';
   if (work.thirdPartyPayoutRequired) return 'La factura del tercero se carga por administración. Contactá a producción.';
   return '';
 }
@@ -20,7 +20,7 @@ export async function submitPortalInvoice(input: { providerId: string; work: Inv
   await deps.verifySession();
   const base64 = await deps.read(input.file);
   await deps.verifySession();
-  const result = await deps.request({ action: 'uploadInvoice', providerId: input.providerId, workKey: input.work.key,
+  const result = await deps.request({ action: 'uploadInvoice', providerId: input.providerId, workKey: input.work.key, invoiceRevision: input.work.invoiceRevision || 0,
     attemptId: input.attemptId, file: { base64, contentType, fileName: input.file.name } });
   if (result?.uploaded !== true) throw Error('No recibimos la confirmación de carga. Actualizá Facturas antes de reintentar.');
   return result;

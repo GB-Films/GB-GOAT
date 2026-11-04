@@ -61,7 +61,7 @@ export function ProviderInvoiceUpload({ providerId, works, onUploaded }: { provi
           try { invoiceFileType(next); setFile(next); attempt.current = crypto.randomUUID(); }
           catch (error) { e.target.value = ''; setProblem(portalInvoiceFailure(error)); } }} />
     </label>
-    <p className="text-xs text-slate-500">PDF, JPG o PNG · hasta 2 MB. Las facturas cargadas se consultan desde esta sección; para corregirlas, contactá a producción.</p>
+    <p className="text-xs text-slate-500">PDF, JPG o PNG · hasta 2 MB. Podés eliminar y volver a cargar tus propias facturas. Las de producción sólo se consultan.</p>
     {problem && <div role="alert" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900"><p>{problem.message}</p>
       {problem.verify && <button type="button" className="portal-button mt-2" disabled={busy} onClick={verify}>Verificar con Google</button>}
       {problem.refresh && <button type="button" className="portal-button mt-2" disabled={busy} onClick={() => void onUploaded()}>Actualizar facturas</button>}

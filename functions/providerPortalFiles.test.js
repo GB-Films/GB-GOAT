@@ -91,3 +91,11 @@ test("portal uploads must match the server-owned provider/work/path/content asso
     ),
   );
 });
+
+test('own advance and refund files require exact payment metadata; another payment receipt stays private', async () => {
+  const metadata = { metadata: { projectId: 'p', collectionName: 'areaExpenses', expenseId: 'e', paymentId: 'pay', reimbursementId: 'refund' } };
+  await reader({ metadata })(file, { ...context, kind: 'advance', paymentId: 'pay' });
+  await reader({ metadata })(file, { ...context, kind: 'reimbursement', paymentId: 'pay', reimbursementId: 'refund' });
+  await assert.rejects(reader({ metadata })(file, { ...context, kind: 'advance', paymentId: 'other' }));
+  await assert.rejects(reader({ metadata })(file, { ...context, kind: 'reimbursement', paymentId: 'pay', reimbursementId: 'other' }));
+});

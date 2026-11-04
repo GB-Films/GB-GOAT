@@ -1,7 +1,8 @@
 const { HttpsError } = require("firebase-functions/v2/https");
 const logger = require('firebase-functions/logger');
 const M = require("./providerPortalModel");
-const { createPortalInvoiceUpload } = require("./providerPortalInvoice");
+const { createPortalReimbursements, ownAdvanceFile } = require("./providerPortalReimbursements");
+const { createPortalInvoiceUpload, createPortalInvoiceRemoval, portalInvoiceRows } = require("./providerPortalInvoice");
 const { confirmationContent, confirmationState } = require('./providerProfileConfirmation');
 const { createAccountChoiceService } = require('./providerAccountChoice');
 const { createTeamOnboarding } = require('./teamOnboarding');
@@ -59,6 +60,8 @@ function createProviderPortalHandler({
   registrationLog = (entry) => logger.warn('provider_registration_failed', entry),
 }) {
   const uploadInvoice = createPortalInvoiceUpload({ db, sign, timestamp });
+  const removeInvoice = createPortalInvoiceRemoval({ db, timestamp });
+  const reimbursements = createPortalReimbursements({ db });
   const accountChoices = createAccountChoiceService({ db, timestamp, clock, verifyGoogleToken });
   const thirdParties = createSignedThirdPartyService({ db, timestamp, clock, sign });
   const teamOnboarding = createTeamOnboarding({ db, timestamp, clock });
@@ -101,7 +104,7 @@ function createProviderPortalHandler({
     await assertProviderPortalAllowed(db, providerId);
     return row;
   };
-  async function works(providerId) {
+  async function works(providerId, actor) {
     const snapshots = await Promise.all(
       ["budgetItems", "areaExpenses"].map((c) =>
         db
@@ -134,7 +137,10 @@ function createProviderPortalHandler({
           projects.get(projectId),
           doc.ref.path,
         );
-        if (row) result.push(row);
+        if (row) {
+          if (actor) row.invoices = await portalInvoiceRows(db, doc.data(), row.key, providerId, actor);
+          result.push(row);
+        }
       }
     return result;
   }
@@ -396,10 +402,11 @@ function createProviderPortalHandler({
           ? { method: authority.method || 'administrative_review', signedAt: authority.signedAt || '', declarationId: authority.declarationId } : null,
         company: { name: provider.businessName || provider.name, cuit: provider.cuit || provider.cuitNormalized || '', registeredEmail: provider.personalGoogleAccount?.email || provider.portalAccessEmail || '' } };
     }
+    if (input.action === "reimbursements") return reimbursements(providerId);
     if (input.action === "overview") {
       const provider = (await db.doc(`providers/${providerId}`).get()).data();
       const [work, financial, declarations, intake, preferences] = await Promise.all([
-        works(providerId),
+        works(providerId, actor),
         db
           .collection("providerFinancialRecords")
           .where("providerId", "==", providerId)
@@ -429,7 +436,7 @@ function createProviderPortalHandler({
         thirdPartyIntake: intake?.data()?.providerId === providerId
           ? { party: intake.data().party, workKeys: intake.data().workKeys, roles: intake.data().roles }
           : null,
-        works: declarationRows.some((d, i) => d.status === 'active' && needsThirdPartyApplication(declarations.docs[i].data())) ? await works(providerId) : work,
+        works: declarationRows.some((d, i) => d.status === 'active' && needsThirdPartyApplication(declarations.docs[i].data())) ? await works(providerId, actor) : work,
         financial: financial.docs.map((s) => {
           const r = s.data();
           return {
@@ -623,7 +630,7 @@ function createProviderPortalHandler({
       return { status: "revoked" };
     }
     if (input.action === "download") {
-      let file;
+      let file, advanceContext = {};
       if (input.recordId) {
         const r = (
           await db.doc(`providerFinancialRecords/${id(input.recordId)}`).get()
@@ -657,9 +664,15 @@ function createProviderPortalHandler({
             .doc(`projects/${id(parts[0])}/${parts[1]}/${id(parts[2])}`)
             .get()
         ).data();
-        if (e?.providerId !== providerId)
+        const advance = ['advance', 'reimbursement'].includes(input.kind);
+        if (advance) {
+          const project = (await db.doc(`projects/${id(parts[0])}`).get()).data();
+          if (!project || !e || !M.ownExpense(e, project, `projects/${parts.join('/')}`)) fail('El trabajo cambió. Actualizá tus reintegros.');
+          const selected = ownAdvanceFile(e, providerId, input);
+          file = selected.file; advanceContext = { paymentId: selected.paymentId, reimbursementId: selected.reimbursementId || '' };
+        } else if (e?.providerId !== providerId)
           throw new HttpsError("permission-denied", "Trabajo ajeno.");
-        const index = Number(input.index);
+        const index = Number(input.index ?? (advance ? 0 : undefined));
         if (!Number.isInteger(index) || index < 0 || index > 500)
           fail("Documento inválido.");
         if (input.kind === "invoice") file = M.expenseInvoices(e)[index];
@@ -672,7 +685,12 @@ function createProviderPortalHandler({
         providerId,
         workKey: input.workKey || "",
         kind: input.kind || "shared",
+        ...advanceContext,
       });
+    }
+    if (input.action === "removeInvoice") {
+      identity(request, true);
+      return removeInvoice({ providerId, actor, input });
     }
     if (input.action === "uploadInvoice") {
       identity(request, true);
