@@ -110,6 +110,12 @@ export async function testTeamProviderAssignment({ db, admin, env, assertFails, 
   await assert.rejects(call(assignment(callerRevoked, cv)), e => e.code === 'permission-denied');
   await db.doc(`users/${manager.uid}`).update({ role: 'admin' });
 
+  const wrongAcl = await seed('direct-wrong-acl');
+  await db.doc('projects/direct_wrong_acl').set({ createdBy: 'other', collaboratorEmails: [wrongAcl.a.email] });
+  await db.doc(`projects/direct_wrong_acl/collaborators/${wrongAcl.a.email}`).set({ uid: 'different-identity', email: wrongAcl.a.email, role: 'admin' });
+  await assert.rejects(preview(wrongAcl), /permiso de proyecto.*otra cuenta/);
+  assert.equal((await db.doc(`users/${wrongAcl.a.uid}`).get()).exists, false);
+
   const raceCaller = await seed('direct-race-caller'); const raceView = await preview(raceCaller);
   const racing = createProviderPortalAdminHandler({ db, timestamp, sign: {}, findAccount: async email => {
     const result = await findAccount(email); await db.doc(`users/${manager.uid}`).update({ role: 'colaborador' }); return result;

@@ -13,9 +13,11 @@ const personal = p => p && (!p.type || p.type === 'persona');
 const accountEmail = p => M.email(p.personalGoogleAccount?.email || p.portalAccessEmail || p.email);
 const identity = p => ({ type: p.type || 'persona', account: p.personalGoogleAccount || null, email: accountEmail(p), registration: p.registration || null, source: p.source || '' });
 function verifiedAccount(account, expectedEmail, expectedUid) {
-  if (!account || account.disabled || account.emailVerified !== true || M.email(account.email) !== expectedEmail
-    || !account.providerData?.some(p => p.providerId === 'google.com') || expectedUid && account.uid !== expectedUid)
-    conflict('La cuenta Google registrada no está disponible o no coincide con la ficha. La persona debe revisar su acceso en Mi proveedor.');
+  if (!account || account.disabled) conflict('La cuenta Google registrada no está disponible: está deshabilitada o fue eliminada. Revisá su acceso antes de incorporarla.');
+  if (account.emailVerified !== true || !account.providerData?.some(p => p.providerId === 'google.com'))
+    conflict('La persona debe entrar a Mi proveedor con su cuenta Google verificada antes de incorporarse al equipo.');
+  if (M.email(account.email) !== expectedEmail || expectedUid && account.uid !== expectedUid)
+    conflict('La cuenta Google no coincide con la ficha. Revisá la asociación de la persona antes de dar acceso al equipo.');
   return { uid: M.id(account.uid), email: M.email(account.email), name: M.text(account.displayName), photoURL: M.text(account.photoURL, 1000) };
 }
 function createTeamProviderAssignment({ db, timestamp, findAccount }) {
@@ -45,7 +47,7 @@ function createTeamProviderAssignment({ db, timestamp, findAccount }) {
     let account;
     try { account = await findAccount(target); }
     catch (error) {
-      if (error?.code === 'auth/user-not-found') conflict('La persona todavía no ingresó con su cuenta Google registrada. Debe completar su acceso a Mi proveedor antes de incorporarla.');
+      if (error?.code === 'auth/user-not-found') conflict('No encontramos una cuenta Google para el correo de acceso registrado. Revisá ese correo con la persona antes de incorporarla.');
       throw new HttpsError('unavailable', 'No pudimos comprobar la cuenta Google. Volvé a intentar; no se asignó ningún rol.');
     }
     return verifiedAccount(account, target, p.personalGoogleAccount?.uid);
@@ -89,6 +91,8 @@ function createTeamProviderAssignment({ db, timestamp, findAccount }) {
       const collabs = await Promise.all(group.map(p => read(p.ref.collection('collaborators').doc(account.email))));
       group.forEach((p, index) => {
         const data = p.data(), collaborator = collabs[index];
+        if (collaborator.data()?.uid && collaborator.data().uid !== account.uid)
+          conflict('Un permiso de proyecto con ese correo pertenece a otra cuenta. Revisá la asignación anterior antes de incorporar a esta persona.');
         if (data.createdBy === account.uid || collaborator.exists || M.list(data.collaboratorEmails).includes(account.email) || M.list(data.teamOnboardingBlockedEmails).includes(account.email))
           assignments.push({ project: p, collaborator });
       });
