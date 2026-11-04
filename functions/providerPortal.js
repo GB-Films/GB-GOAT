@@ -1,4 +1,5 @@
 const { HttpsError } = require("firebase-functions/v2/https");
+const logger = require('firebase-functions/logger');
 const M = require("./providerPortalModel");
 const { confirmationContent, confirmationState } = require('./providerProfileConfirmation');
 const { createAccountChoiceService } = require('./providerAccountChoice');
@@ -54,6 +55,7 @@ function createProviderPortalHandler({
   clock = () => new Date(),
   verifyGoogleToken,
   findAccountByUid,
+  registrationLog = (entry) => logger.warn('provider_registration_failed', entry),
 }) {
   const accountChoices = createAccountChoiceService({ db, timestamp, clock, verifyGoogleToken });
   const thirdParties = createSignedThirdPartyService({ db, timestamp, clock, sign });
@@ -258,8 +260,17 @@ function createProviderPortalHandler({
     await config();
     if (input.action === 'registrationStatuses') return createProviderRegistrationLookup({db})(actor, input);
     if (input.action === 'registerProvider') {
-      identity(request, true);
-      return registerProvider(actor, input);
+      const supportReference = typeof input.attemptId === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(input.attemptId) ? input.attemptId : require('node:crypto').randomUUID();
+      try {
+        identity(request, true);
+        return await registerProvider(actor, input);
+      } catch (error) {
+        // No form, identity, bank data or invitation tokens in diagnostics.
+        const frames = typeof error.stack === 'string' ? error.stack.split('\n').slice(1,5).map(line => line.trim()) : [];
+        registrationLog({ supportReference, code:String(error.code || 'unknown').slice(0,80), errorType:String(error.name || 'Error').slice(0,80), frames });
+        if (error instanceof HttpsError) throw new HttpsError(error.code, error.message, { ...(error.details && typeof error.details === 'object' ? error.details : {}), supportReference });
+        throw new HttpsError('internal', 'El servidor encontró un error al guardar el alta. Compartí la referencia con Gran Berta para revisar este intento.', { supportReference });
+      }
     }
     if (input.action === 'teamBootstrap') return teamOnboarding.bootstrap(actor, input);
     if (input.action === 'teamComplete') return teamOnboarding.submit(actor, input);

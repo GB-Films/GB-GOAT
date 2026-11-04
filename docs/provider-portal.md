@@ -4,6 +4,18 @@ Implementación en dos repositorios: GOAT y GB Sign. El código no activa usuari
 
 ## Experiencia
 
+### Recuperación del alta
+
+El alta distingue la verificación de Google del guardado. Si la sesión supera el margen de nueve minutos, se detiene antes de enviar y ofrece **Verificar con Google** desde un clic explícito. La verificación exige la misma cuenta, correo verificado y proveedor Google; cambiar la cuenta invalida las confirmaciones personales y bancarias. Los datos del formulario y la clave del intento se conservan durante la recuperación en esa ventana.
+
+Los errores de ventanas bloqueadas/cerradas, conexión, configuración, sesión, campos inválidos y servidor muestran la causa conocida y una acción acorde al paso fallido. Los reintentos de conexión usan el mismo intento: el recibo transaccional recupera el alta ya guardada sin crear otro proveedor ni consumir nuevamente el enlace. Un error desconocido se identifica como tal y permite compartir una referencia; no se presenta como un problema bancario o de identidad sin evidencia.
+
+El servidor normaliza los separadores de CBU/CVU antes de validar sus 22 dígitos y devuelve el campo inválido cuando corresponde. Los fallos de `registerProvider` devuelven una referencia correlacionada con `provider_registration_failed`; los registros guardan código, tipo y ubicación del fallo, sin formulario, datos bancarios, cuenta personal ni token de invitación. Los errores internos no se envían completos al cliente. Enlaces inexistentes, usados, cancelados y vencidos tienen indicaciones distintas. Una inscripción sólo se muestra exitosa con una respuesta válida del servidor.
+
+Cambios de enlace descartan lecturas y resultados anteriores. Los errores al consultar un enlace ofrecen volver a comprobarlo; los de acceso a Google vuelven al acceso, y los del envío reintentan el envío. La referencia técnica permanece colapsada. Las pruebas usan datos ficticios y no completan altas reales. Para publicar este lote, actualizar primero `providerPortal` y luego el frontend; no requiere cambiar proveedores de Auth, IAM ni reglas.
+
+Referencia del SDK: [verificación de usuarios](https://firebase.google.com/docs/auth/web/manage-users) y [consideraciones de ventanas y almacenamiento del navegador](https://firebase.google.com/docs/auth/web/redirect-best-practices).
+
 ### Estado de alta en el listado de gastos
 
 El listado interno consulta `providerPortal.registrationStatuses` para las fichas que no tienen una marca de alta. Una confirmación histórica de perfil aplicada, con prueba completa y versión reconocida, acredita el alta sin exigir que la persona vuelva a entrar o repita el formulario. La respuesta sólo incluye los IDs registrados; no expone declaraciones, firmantes, archivos ni datos bancarios, y no escribe marcas ni cambia accesos. Está restringida a cuentas Google verificadas del equipo habilitado y mantiene el bloqueo del alta de equipo pendiente.

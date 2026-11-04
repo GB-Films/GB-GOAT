@@ -2,27 +2,35 @@ const { HttpsError } = require('firebase-functions/v2/https');
 const { hash, id, thirdPartyIdentity } = require('./providerPortalModel');
 const { signedProfileRegistration } = require('./providerRegistrationEvidence');
 const { assertProviderPortalAllowed } = require('./providerAdministrativeRecords');
-const fail = message => { throw new HttpsError('failed-precondition', message); };
+const fail = (message, details) => { throw new HttpsError('failed-precondition', message, details); };
 const digits = value => String(value || '').replace(/\D/g, '');
 const fields = { name:160, lastName:160, businessName:160, dni:20, cuit:30, email:300, phone:60, address:300,
   birthDate:10, category:100, categoryOther:300, bankAccount_cbu:22, bankAccount_alias:100, dietaryRestriction:300 };
+const labels = { name:'Nombre',lastName:'Apellido',businessName:'Razón social',dni:'DNI',cuit:'CUIT / CUIL',email:'Correo',phone:'Teléfono',address:'Domicilio',birthDate:'Fecha de nacimiento',category:'Categoría',categoryOther:'Comentario de categoría',bankAccount_cbu:'CBU / CVU',bankAccount_alias:'Alias',dietaryRestriction:'Restricción alimentaria' };
+const invalid = (field, message) => fail(message, { field, reason:'REGISTRATION_INVALID_FIELD' });
 function validateRegistration(input, actor, allowEmptyCuit = false) {
-  if (!input || !['persona','empresa'].includes(input.type) || Object.keys(input).some(k => k !== 'type' && !(k in fields))) fail('Revisá los datos del alta.');
+  if (!input || !['persona','empresa'].includes(input.type)) fail('Elegí Persona física o Empresa antes de completar el alta.');
+  if (Object.keys(input).some(k => k !== 'type' && !(k in fields))) fail('El formulario contiene campos que no corresponden a esta versión. Conservá los datos y avisá a Gran Berta para revisar el enlace.');
   const form = { type:input.type };
   for (const [key,max] of Object.entries(fields)) {
-    if (typeof (input[key] ?? '') !== 'string' || (input[key] || '').length > max) fail('Revisá los datos del alta.');
-    form[key] = (input[key] || '').trim();
+    if (typeof (input[key] ?? '') !== 'string') invalid(key, `Revisá ${labels[key]}: debe ser un dato de texto.`);
+    const raw = input[key] || '';
+    // The UI accepts separators in a CBU/CVU. Normalize before checking its
+    // numeric length, with a small bound on the raw input as well.
+    const value = key === 'bankAccount_cbu' ? digits(raw) : raw.trim();
+    if (value.length > max || (key === 'bankAccount_cbu' && raw.length > 100)) invalid(key, `${labels[key]} admite hasta ${max} caracteres. Acortá este dato.`);
+    form[key] = value;
   }
-  if (form.email.toLowerCase() !== actor.email) fail('Usá la cuenta Google con la que ingresaste.');
+  if (form.email.toLowerCase() !== actor.email) invalid('email', 'El correo no coincide con tu sesión. Elegí la cuenta Google que vas a usar y volvé a confirmar que te pertenece.');
   form.email = actor.email;
-  for (const key of ['phone','address','category', ...(form.type === 'persona' ? ['name','lastName'] : ['businessName'])]) if (!form[key]) fail('Completá los campos obligatorios.');
-  if (form.type === 'persona' && !/^\d{7,9}$/.test(digits(form.dni))) fail('Revisá tu DNI.');
-  if (!(allowEmptyCuit && !form.cuit) && !/^\d{11}$/.test(digits(form.cuit))) fail('Revisá tu CUIT/CUIL.');
+  for (const key of ['phone','address','category', ...(form.type === 'persona' ? ['name','lastName'] : ['businessName'])]) if (!form[key]) invalid(key, `Falta completar ${labels[key]}.`);
+  if (form.type === 'persona' && !/^\d{7,9}$/.test(digits(form.dni))) invalid('dni', 'El DNI debe tener entre 7 y 9 números. Revisá este campo.');
+  if (!(allowEmptyCuit && !form.cuit) && !/^\d{11}$/.test(digits(form.cuit))) invalid('cuit', 'El CUIT / CUIL debe tener 11 números. Revisá este campo.');
   form.bankAccount_cbu = digits(form.bankAccount_cbu);
-  if (form.bankAccount_cbu && !/^\d{22}$/.test(form.bankAccount_cbu)) fail('El CBU/CVU debe tener 22 números.');
-  if (!form.bankAccount_cbu && !form.bankAccount_alias) fail('Completá tu CBU o alias propio.');
-  if (form.category === 'Otra' && !form.categoryOther) fail('Indicá tu actividad.');
-  if (form.birthDate && (!/^\d{4}-\d{2}-\d{2}$/.test(form.birthDate) || Number.isNaN(Date.parse(form.birthDate)) || new Date(form.birthDate).toISOString().slice(0,10) !== form.birthDate)) fail('Revisá la fecha de nacimiento.');
+  if (form.bankAccount_cbu && !/^\d{22}$/.test(form.bankAccount_cbu)) invalid('bankAccount_cbu', 'El CBU/CVU debe tener 22 números. Revisá este campo.');
+  if (!form.bankAccount_cbu && !form.bankAccount_alias) invalid('bankAccount_alias', 'Completá tu CBU o alias propio.');
+  if (form.category === 'Otra' && !form.categoryOther) invalid('categoryOther', 'Indicá tu actividad en Comentario de categoría.');
+  if (form.birthDate && (!/^\d{4}-\d{2}-\d{2}$/.test(form.birthDate) || Number.isNaN(Date.parse(form.birthDate)) || new Date(form.birthDate).toISOString().slice(0,10) !== form.birthDate)) invalid('birthDate', 'La fecha de nacimiento no es válida. Revisá el día, mes y año.');
   return form;
 }
 function identifiers(provider) {
@@ -60,7 +68,10 @@ function createProviderRegistration({ db, timestamp, clock = () => new Date(), l
         return { providerId:receipt.providerId, status:'registered', reused:receipt.reused, resumed:true };
       }
       const invite = (await tx.get(inviteRef)).data();
-      if (!invite || invite.used !== false || invite.status !== 'pending') fail('Este enlace no está disponible. Pedí uno nuevo a Gran Berta.');
+      if (!invite) fail('El enlace de alta no existe. Pedí uno nuevo a Gran Berta.');
+      if (invite.used === true || invite.status === 'used') fail('Este enlace ya fue utilizado. Si completaste el alta, entrá a Mi proveedor con tu cuenta registrada; si no, pedí un enlace nuevo a Gran Berta.');
+      if (invite.status === 'cancelled') fail('Este enlace fue cancelado. Pedí a Gran Berta un enlace nuevo.');
+      if (invite.used !== false || invite.status !== 'pending') fail('El enlace no tiene un estado válido para completar el alta. Pedí uno nuevo a Gran Berta.');
       if (invite.expiresAt != null && (!invite.expiresAt.toDate || invite.expiresAt.toDate() <= clock())) fail('Este link venció. Pedí uno nuevo a Gran Berta.');
       const values = identifiers(form);
       const keys = [...(form.type === 'persona' ? [['dni', values.dni]] : []), ...(values.cuit ? [['cuit', values.cuit]] : [])];
