@@ -141,5 +141,7 @@ try {
     const absent=createTeamOnboarding({...deps,findAccount:async()=>{throw Object.assign(Error('not found'),{code:'auth/user-not-found'});}});
     assert((await absent.admin(actor('admin'),{action:'teamCreateInvite',email:actor('absent').email})).token);
   });
+  const { testTeamProviderAssignment } = await import('./teamProviderAssignment.flow.mjs');
+  await testTeamProviderAssignment({ db, admin, env, assertFails, assertSucceeds, createRequire: require });
   console.log(`TEAM ONBOARDING: ${checks} scenarios passed`);
 } finally { await env.cleanup(); await app.delete(); }

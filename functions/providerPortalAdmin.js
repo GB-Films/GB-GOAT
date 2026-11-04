@@ -1,4 +1,5 @@
 const { HttpsError } = require("firebase-functions/v2/https");
+const { createTeamProviderAssignment } = require('./teamProviderAssignment');
 const { createTeamOnboarding } = require('./teamOnboarding');
 const { hasTeamWorkAccess } = require('./teamWorkAccess');
 const { checkCompanyReview } = require('./providerRepresentation');
@@ -42,6 +43,11 @@ function createProviderPortalAdminHandler({
       throw new HttpsError('permission-denied', 'Completá el alta de equipo antes de acceder al trabajo.');
     if (['teamCreateInvite','teamReviews','resolveTeamProvider','reviewTeamAccess','reviewTeamProfile'].includes(input.action))
       return createTeamOnboarding({ db, timestamp, clock, findAccount }).admin(actor, input);
+    if (['teamProviderCandidates', 'teamProviderPreview', 'teamAssignProvider'].includes(input.action)) {
+      const teamProviderAction = { teamProviderCandidates: 'search', teamProviderPreview: 'preview', teamAssignProvider: 'assign' }[input.action];
+      if (request.auth.token?.firebase?.sign_in_provider !== 'google.com') throw new HttpsError('permission-denied', 'Ingresá con tu cuenta Google de administración.');
+      return createTeamProviderAssignment({ db, timestamp, findAccount })[teamProviderAction](actor, input);
+    }
     const global =
       ["admin", "ayudante_admin"].includes(user?.role) ||
       actor.email === "info@granbertafilms.com";

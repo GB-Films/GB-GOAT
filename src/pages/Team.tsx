@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import type { FormEvent } from 'react';
 import { collection, getDocs, doc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
@@ -8,6 +8,7 @@ import { roleSearchText } from '../lib/roles';
 import { normalizeEmail } from '../lib/identity';
 import { PageHeader } from '../components/PageHeader';
 import { portalAdminRequest } from '../lib/providerPortal';
+import { TeamFromProvider } from '../components/TeamFromProvider';
 import TeamOnboardingReviews from '../components/TeamOnboardingReviews';
 
 const getUserInviteLink = (token: string) => {
@@ -40,19 +41,14 @@ export default function Team() {
     });
   }, [users, searchTerm]);
 
-  useEffect(() => {
-    const fetchUsers = async () => {
-      try {
-        const querySnapshot = await getDocs(collection(db, 'users'));
-        setUsers(querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any)));
-      } catch (error) {
-        console.error("Error fetching users:", error);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchUsers();
+  const fetchUsers = useCallback(async () => {
+    try {
+      const snapshot = await getDocs(collection(db, 'users'));
+      setUsers(snapshot.docs.map(row => ({ id: row.id, ...row.data() })));
+    } catch (error) { console.error('Error fetching users:', error); throw error; }
+    finally { setLoading(false); }
   }, []);
+  useEffect(() => { void fetchUsers().catch(() => {}); }, [fetchUsers]);
 
   const handleRoleChange = async (targetUser: any, newRole: string) => {
     if (!isAdmin) {
@@ -126,10 +122,11 @@ export default function Team() {
   return (
     <div className="max-w-full mx-auto space-y-6">
       <PageHeader eyebrow="GB GOAT / Accesos" title="Usuarios y permisos" className="mb-8" />
+      {isAdmin && <TeamFromProvider isOwner={isOwner} onAssigned={async email => { await fetchUsers(); setSearchTerm(email); }} />}
       <TeamOnboardingReviews />
 
       {isAdmin && (
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+        <details className="bg-white rounded-xl border border-slate-200 shadow-sm p-5"><summary className="cursor-pointer text-sm font-semibold">Invitar por correo a una persona nueva</summary><div className="mt-4">
           <div className="flex flex-col lg:flex-row lg:items-end gap-4">
             <form onSubmit={createUserInvite} className="flex-1">
               <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">
@@ -178,7 +175,7 @@ export default function Team() {
               </button>
             </div>
           )}
-        </div>
+        </div></details>
       )}
 
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
@@ -292,7 +289,7 @@ export default function Team() {
         <div>
           <h4 className="text-sm font-bold text-blue-900">Invitar Colaboradores</h4>
           <p className="text-xs text-blue-700 mt-1 leading-relaxed">
-            Los nuevos usuarios quedan como colaboradores y no ven proyectos hasta que sean incorporados a una producción. Los Jefes de Producción globales pueden cargar proveedores y generar links de alta; solo info@granbertafilms.com puede subir o bajar roles globales de administrador.
+            Podés incorporar personas ya dadas de alta y elegir su rol. Los colaboradores no ven proyectos nuevos hasta que sean asignados a una producción. Los Jefes de Producción globales pueden cargar proveedores y generar links de alta; solo info@granbertafilms.com puede subir o bajar roles globales de administrador.
           </p>
           {profile?.email && !isOwner && (
             <p className="text-[10px] text-blue-500 mt-2 font-bold uppercase tracking-widest">
