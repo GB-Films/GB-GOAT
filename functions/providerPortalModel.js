@@ -233,6 +233,7 @@ function ownExpense(item, project, path) {
     paid: payments.reduce((s, p) => s + p.amount, 0),
     payments,
     invoiceCount: expenseInvoices(item).length,
+    hasInvoice: expenseInvoices(item).length > 0 || list(item.sharedInvoices).length > 0,
     markedPaidWithoutDetails: item.paid === true && payments.length === 0,
     thirdPartyPayoutRequired: item.thirdPartyPayoutRequired === true,
     otherCount: list(item.otherReceipts).length,

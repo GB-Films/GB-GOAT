@@ -1,4 +1,5 @@
 const admin = require("firebase-admin");
+const { invoiceFile } = require("./providerPortalInvoice");
 const { declarationPdf } = require("./providerDeclarationPdf");
 const { createHash } = require("node:crypto");
 const { createProjectContractBridge } = require('./providerProjectContracts');
@@ -534,28 +535,7 @@ function createSignBridge(db) {
       };
     },
     async storeInvoice({ providerId, actor, attemptId, file, workKey }) {
-      if (
-        !file ||
-        typeof file.base64 !== "string" ||
-        file.base64.length > 3e6 ||
-        !["application/pdf", "image/jpeg", "image/png"].includes(
-          file.contentType,
-        )
-      )
-        fail("Usá PDF, JPG o PNG de hasta2MB.");
-      const bytes = Buffer.from(file.base64, "base64");
-      if (!bytes.length || bytes.length > 2 * 1024 * 1024)
-        fail("El archivo supera2MB.");
-      const sha256 = createHash("sha256").update(bytes).digest("hex");
-      const magic =
-        file.contentType === "application/pdf"
-          ? bytes.subarray(0, 5).toString() === "%PDF-"
-          : file.contentType === "image/png"
-            ? bytes
-                .subarray(0, 8)
-                .equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
-            : bytes[0] === 255 && bytes[1] === 216;
-      if (!magic) fail("El contenido no coincide con el tipo de archivo.");
+      const { bytes, sha256 } = invoiceFile(file);
       const path = `providerPortalUploads/${providerId}/${sha256}/invoice`;
       try {
         await admin

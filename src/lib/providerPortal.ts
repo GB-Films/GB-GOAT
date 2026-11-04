@@ -34,7 +34,7 @@ export async function portalRequest(
     if (registrationNeedsVerification(session.claims)) {
       // Intake must recover through an explicit click. A popup opened after
       // token/network awaits can be blocked, especially on mobile browsers.
-      if (input.action === 'registerProvider') throw registrationProblem('auth/requires-recent-login');
+      if (['registerProvider', 'uploadInvoice'].includes(String(input.action))) throw registrationProblem('auth/requires-recent-login');
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: 'select_account', login_hint: user.email || '' });
       await reauthenticateWithPopup(user, provider);

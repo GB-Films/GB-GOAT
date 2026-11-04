@@ -1,6 +1,7 @@
 const { HttpsError } = require("firebase-functions/v2/https");
 const logger = require('firebase-functions/logger');
 const M = require("./providerPortalModel");
+const { createPortalInvoiceUpload } = require("./providerPortalInvoice");
 const { confirmationContent, confirmationState } = require('./providerProfileConfirmation');
 const { createAccountChoiceService } = require('./providerAccountChoice');
 const { createTeamOnboarding } = require('./teamOnboarding');
@@ -57,6 +58,7 @@ function createProviderPortalHandler({
   findAccountByUid,
   registrationLog = (entry) => logger.warn('provider_registration_failed', entry),
 }) {
+  const uploadInvoice = createPortalInvoiceUpload({ db, sign, timestamp });
   const accountChoices = createAccountChoiceService({ db, timestamp, clock, verifyGoogleToken });
   const thirdParties = createSignedThirdPartyService({ db, timestamp, clock, sign });
   const teamOnboarding = createTeamOnboarding({ db, timestamp, clock });
@@ -674,57 +676,7 @@ function createProviderPortalHandler({
     }
     if (input.action === "uploadInvoice") {
       identity(request, true);
-      const parts = text(input.workKey, 500).split("/");
-      if (
-        parts.length !== 3 ||
-        !["budgetItems", "areaExpenses"].includes(parts[1])
-      )
-        fail("Trabajo inválido.");
-      const ref = db.doc(
-        `projects/${id(parts[0])}/${parts[1]}/${id(parts[2])}`,
-      );
-      const current = (await ref.get()).data();
-      if (current?.providerId !== providerId)
-        throw new HttpsError("permission-denied", "Trabajo ajeno.");
-      if (current.thirdPartyPayoutRequired) fail('La factura del tercero debe registrarse con la declaración firmada desde la ficha completa de administración.');
-      const result = await sign.storeInvoice({
-        providerId,
-        actor,
-        attemptId: id(input.attemptId),
-        file: input.file,
-        workKey: input.workKey,
-      });
-      await db.runTransaction(async (tx) => {
-        const e = (await tx.get(ref)).data();
-        if (e?.providerId !== providerId)
-          throw new HttpsError("permission-denied", "Trabajo ajeno.");
-        if (e.thirdPartyPayoutRequired) fail('Este trabajo requiere la factura y cuenta del tercero declarado.');
-        const uploadRef = db.doc(
-          `providerPortalInvoiceUploads/${result.portalUploadId}`,
-        );
-        const upload = await tx.get(uploadRef);
-        if (upload.exists && upload.data().workKey !== input.workKey)
-          fail("El intento pertenece a otro trabajo.");
-        const invoices = list(e.invoices);
-        if (invoices.some((f) => f.portalUploadId === result.portalUploadId))
-          return;
-        if (invoices.length >= 100)
-          fail("Revisá el límite de archivos de este trabajo.");
-        tx.update(ref, {
-          invoices: [...invoices, result],
-          updatedAt: timestamp(),
-        });
-        if (!upload.exists)
-          tx.create(uploadRef, {
-            workKey: input.workKey,
-            providerId,
-            actor,
-            path: result.path,
-            sha256: result.sha256,
-            createdAt: timestamp(),
-          });
-      });
-      return { uploaded: true };
+      return uploadInvoice({ providerId, actor, input });
     }
     fail("Acción desconocida.");
   };

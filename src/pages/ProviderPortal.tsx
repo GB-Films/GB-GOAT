@@ -6,6 +6,7 @@ import {
   portalRequest,
   signPortalDocument,
 } from "../lib/providerPortal";
+import { ProviderInvoiceUpload } from "../components/ProviderInvoiceUpload";
 import PortalSignDialog from "../components/PortalSignDialog";
 import { ThirdPartyAuthorizationForm } from "../components/ThirdPartyAuthorizationForm";
 import { CompanyRepresentationForm } from "../components/CompanyRepresentationForm";
@@ -63,8 +64,7 @@ export default function ProviderPortal() {
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
     [signing, setSigning] = useState<any>(null),
-    [draft, setDraft] = useState<Record<string, string>>({}),
-    [uploadWork, setUploadWork] = useState("");
+    [draft, setDraft] = useState<Record<string, string>>({});
   const [party, setParty] = useState<any>(() => thirdPartyFormDefaults(null));
   const selectedProviderRef = useRef(providerId);
   const selected = members.find((m) => m.providerId === providerId);
@@ -215,7 +215,6 @@ export default function ProviderPortal() {
                 preparationRevision.current++;
                 setProfileNotice('');
                 setError('');
-                setUploadWork("");
                 setProviderId(e.target.value);
                 selectedProviderRef.current = e.target.value;
                 setDraft({});
@@ -314,62 +313,7 @@ export default function ProviderPortal() {
         <section className="space-y-3">
           <div><h2 className="text-lg font-semibold">Tus facturas</h2><p className="mt-1 text-sm text-slate-500">Adjuntá tu factura al trabajo correspondiente.</p></div>
           {!view && <p className={box + ' text-sm text-slate-500'}>{!hasLoaded ? 'Cargando tus facturas…' : 'Tus facturas aparecerán al habilitar la ficha de proveedor.'}</p>}
-          {view && (
-            <div className={box}>
-              <h2 className="font-bold">Cargar factura</h2>
-              {view.works.some((w: any) => w.thirdPartyPayoutRequired) && <p className="mt-2 text-sm text-slate-600">Las facturas de estos trabajos se registran por administración contra el CUIT y la cuenta declarados, desde la ficha completa.</p>}
-              <select
-                aria-label="Trabajo de la factura"
-                className="my-2 w-full rounded border p-2"
-                value={uploadWork}
-                onChange={(e) => setUploadWork(e.target.value)}
-              >
-                <option value="">Elegí un trabajo</option>
-                {view.works.map((w: any) => (
-                  <option key={w.key} value={w.key} disabled={w.thirdPartyPayoutRequired}>
-                    {w.thirdPartyPayoutRequired ? 'Factura de tercero: gestión administrativa · ' : ''}{w.projectName} · {w.description}
-                  </option>
-                ))}
-              </select>
-              <input
-                aria-label="Adjuntar factura"
-                disabled={busy || !uploadWork}
-                type="file"
-                accept="application/pdf,image/jpeg,image/png"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (!file) return;
-                  void run(async () => {
-                    if (file.size > 2 * 1024 * 1024)
-                      throw Error("Usá un archivo de hasta 2 MB.");
-                    const reader = new FileReader();
-                    const base64 = await new Promise<string>(
-                      (resolve, reject) => {
-                        reader.onload = () =>
-                          resolve(String(reader.result).split(",")[1]);
-                        reader.onerror = reject;
-                        reader.readAsDataURL(file);
-                      },
-                    );
-                    await portalRequest({
-                      action: "uploadInvoice",
-                      providerId,
-                      workKey: uploadWork,
-                      attemptId: crypto.randomUUID(),
-                      file: {
-                        base64,
-                        contentType: file.type,
-                        fileName: file.name,
-                      },
-                    });
-                    await load();
-                  });
-                  e.target.value = "";
-                }}
-              />
-              <p className="mt-2 text-xs text-slate-500">PDF, JPG o PNG · hasta 2 MB.</p>
-            </div>
-          )}
+          {view && <div key={`${user?.uid}/${providerId}`}><ProviderInvoiceUpload providerId={providerId} works={view.works} onUploaded={load} /></div>}
           {view?.works.map(
             (w: any) =>
               w.invoiceCount > 0 && (

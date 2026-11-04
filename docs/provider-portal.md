@@ -4,6 +4,16 @@ Implementación en dos repositorios: GOAT y GB Sign. El código no activa usuari
 
 ## Experiencia
 
+### Carga de facturas desde Mi proveedor
+
+En **Facturas**, el proveedor elige proyecto y trabajo, selecciona PDF/JPG/PNG de hasta 2 MB y pulsa **Cargar factura**. Se admite una carga únicamente si ese trabajo no tiene factura anterior, en `invoice`, `invoices` ni `sharedInvoices`. La disponibilidad no se decide por autor ni por estado de pago. Otros trabajos del mismo proyecto pueden tener sus propias facturas. Una factura de tercero conserva su circuito administrativo contra la declaración firmada.
+
+Si la sesión necesita renovarse, se conserva el archivo elegido y se ofrece **Verificar con Google** desde un clic explícito, antes de volver a cargar. No se abre una ventana de Google automáticamente después de leer el archivo. Los errores distinguen sesión, ventana bloqueada, formato/tamaño, lectura, conexión y factura existente. Se informa éxito sólo con confirmación del servidor.
+
+El servidor valida bytes y formato, comprueba pertenencia y gestión vigente del trabajo y relee proyecto, membresía, clasificación administrativa, portal y facturas en una transacción al guardar. Una carga concurrente de producción o de otro proveedor impide agregar otra. Reintentar el mismo archivo por el mismo autor recupera la carga confirmada, sin duplicar; otro autor no puede usar ese reintento. No se alteran importes, pagos ni documentos existentes. El portal no ofrece borrar o sustituir facturas y las reglas mantienen denegadas las escrituras directas del proveedor.
+
+Publicación: `providerPortal` compatible antes del frontend. Sin cambios de reglas, IAM ni configuración de Auth. Las pruebas usan datos ficticios en emuladores y no acreditan el consentimiento OAuth real ni una prueba manual en Safari. Referencias: [transacciones](https://firebase.google.com/docs/firestore/manage-data/transactions) y [sesión de usuario](https://firebase.google.com/docs/auth/web/manage-users).
+
 ### Recuperación del alta
 
 El alta distingue la verificación de Google del guardado. Si la sesión supera el margen de nueve minutos, se detiene antes de enviar y ofrece **Verificar con Google** desde un clic explícito. La verificación exige la misma cuenta, correo verificado y proveedor Google; cambiar la cuenta invalida las confirmaciones personales y bancarias. Los datos del formulario y la clave del intento se conservan durante la recuperación en esa ventana.
