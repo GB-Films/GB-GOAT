@@ -388,13 +388,28 @@ test('los saldos de caja se acotan a la caja del usuario', async () => {
   assert.equal(result.entregasPendientes.length, 0);
 });
 
-test('un administrador ve el resumen completo de cajas', async () => {
-  const adminCapabilities = buildAssistantCapabilities({ ...baseProject, userId: 'owner-uid' });
-  const context = { ...buildContext(), capabilities: adminCapabilities };
+test('un responsable de Caja General ve el resumen completo dentro del proyecto', async () => {
+  const adminCapabilities = buildAssistantCapabilities({ ...baseProject, userId: 'owner-uid', userEmail: 'tomas@granberta.com' });
+  const context = { ...buildContext(), userEmail: 'tomas@granberta.com', capabilities: adminCapabilities };
   const result = await runTool(buildTools({ loadProject: async () => context }), 'saldos_cajas');
 
   assert.equal(result.alcance, 'todo el equipo');
   assert.equal(result.cajaGeneral.entregasConfirmadas, 500);
+});
+
+test('un administrador excluido no recupera General por autoría previa ni recibe un resumen General', async () => {
+  const context = buildContext();
+  context.userEmail = 'admin@example.test';
+  context.capabilities = buildAssistantCapabilities({ ...baseProject, userId: 'owner-uid', userEmail: context.userEmail, globalRole: 'admin' });
+  context.cashMovements = [
+    { id: 'old-payment', type: 'pago', cashAccount: 'general', fromUserEmail: context.userEmail, amount: 9000 },
+    { id: 'old-delivery', type: 'entrega', fromUserEmail: context.userEmail, toUserEmail: 'other@example.test', amount: 8000 },
+  ];
+  const tools = buildTools({ loadProject: async () => context });
+  assert.equal((await runTool(tools, 'resumen_cajas')).movimientos, 0);
+  const balances = await runTool(tools, 'saldos_cajas');
+  assert.equal(balances.cajaGeneral, undefined);
+  assert.deepEqual(balances.saldosPorResponsable, []);
 });
 
 test('el resumen general suma los proyectos visibles y marca alertas', async () => {

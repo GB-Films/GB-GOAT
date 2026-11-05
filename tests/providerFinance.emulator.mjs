@@ -14,11 +14,11 @@ const env = await initializeTestEnvironment({ projectId,
 });
 const app = admin.initializeApp({ projectId });
 const db = app.firestore();
-const context = env.authenticatedContext('admin', { email_verified: true, email: 'admin@example.test' });
+const context = env.authenticatedContext('admin', { email_verified: true, email: 'agustin@granberta.com' });
 const editor = env.authenticatedContext('editor', { email_verified: true, email: 'editor@example.test' });
 const stranger = env.authenticatedContext('stranger', { email_verified: true, email: 'stranger@example.test' });
 const call = createProviderFinanceHandler({ db, timestamp: () => admin.firestore.FieldValue.serverTimestamp(), verifyFile: async (_provider, _id, file) => ({ ...file, contentType: 'application/pdf', sha256: file.testHash || 'a'.repeat(64) }), readFile: async () => 'JVBERg==' });
-const request = data => ({ auth: { uid: 'admin', token: { email: 'admin@example.test' } }, data });
+const request = data => ({ auth: { uid: 'admin', token: { email: 'agustin@granberta.com', email_verified: true } }, data });
 const expenseRef = index => db.doc(`projects/project${index}/areaExpenses/expense`);
 const allocations = [300, 450, 450].map((amount, index) => ({ projectId: `project${index}`, collectionName: 'areaExpenses', itemId: 'expense', amount }));
 const invoice = { action: 'create', id: 'invoice1', kind: 'invoice', providerId: 'supplier', date: '2026-10-15', issuerName: 'Emisor prueba', issuerCuit: '20000000001', recipientCuit: '30000000002', number: 'C 00001-00000123', net: 1200, total: 1200, allocations, file: { path: 'test-original', fileName: 'original.pdf' } };
@@ -26,7 +26,7 @@ const pay = (id, amounts = [300, 450, 450]) => ({ action: 'create', id, referenc
 try {
   await env.withSecurityRulesDisabled(async seed => {
     const store = seed.firestore();
-    await setDoc(doc(store, 'users/admin'), { role: 'admin', email: 'admin@example.test' });
+    await setDoc(doc(store, 'users/admin'), { role: 'admin', email: 'agustin@granberta.com' });
     await setDoc(doc(store, 'users/editor'), { role: 'jefe_produccion', email: 'editor@example.test' });
     await setDoc(doc(store, 'providers/supplier'), { name: 'Prestador prueba' });
     for (let i = 0; i < 3; i++) {
@@ -114,7 +114,7 @@ try {
   }
   console.log('CHECK: operative metadata edit with third-party destination');
   await assertSucceeds(updateDoc(doc(editor.firestore(), expenseRef(0).path), { operationalNote: 'Edición permitida con tercero' }));
-  const newExpense = { providerId: 'supplier', area: 'Post', subcategory: '', total: 1, paymentHistory: [], paymentAuthorIds: [], paymentLocked: false, createdBy: 'admin', createdByEmail: 'admin@example.test' };
+  const newExpense = { providerId: 'supplier', area: 'Post', subcategory: '', total: 1, paymentHistory: [], paymentAuthorIds: [], paymentLocked: false, createdBy: 'admin', createdByEmail: 'agustin@granberta.com' };
   await assertFails(setDoc(doc(context.firestore(), 'projects/project0/areaExpenses/injected-flag'), { ...newExpense, thirdPartyPayoutRequired: false }));
   await assertSucceeds(setDoc(doc(context.firestore(), 'projects/project0/areaExpenses/ordinary-create'), newExpense));
   await expenseRef(0).update({ thirdPartyPayoutRequired: false });
@@ -188,7 +188,7 @@ try {
   // Private shared originals: authenticated admin download, immutable after commit.
   const path = 'providerFinance/supplier/staged/original.pdf';
   const file = ref(context.storage(), path);
-  const metadata = { contentType: 'application/pdf', customMetadata: { providerId: 'supplier', recordId: 'staged', uploadedBy: 'admin@example.test' } };
+  const metadata = { contentType: 'application/pdf', customMetadata: { providerId: 'supplier', recordId: 'staged', uploadedBy: 'agustin@granberta.com' } };
   await assertSucceeds(uploadBytes(file, new Uint8Array([37, 80, 68, 70]), metadata));
   await assertSucceeds(getBytes(file));
   await assertFails(getBytes(ref(editor.storage(), path)));

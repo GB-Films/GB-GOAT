@@ -1,3 +1,4 @@
+import { canAccessGeneralCash } from './generalCashAccess';
 import {
   PROJECT_TAB_IDS,
   areaFromSubcategoryKey,
@@ -64,6 +65,7 @@ type BuildAssistantCapabilitiesInput = {
   categories?: unknown;
   activeAreas?: unknown;
   userId?: string;
+  userEmail?: string;
   globalRole?: string | null;
   collaborator?: ProjectAccess | null;
 };
@@ -84,6 +86,7 @@ export const buildAssistantCapabilities = ({
   categories,
   activeAreas,
   userId = '',
+  userEmail = '',
   globalRole = null,
   collaborator = null,
 }: BuildAssistantCapabilitiesInput): AssistantCapabilities => {
@@ -152,7 +155,7 @@ export const buildAssistantCapabilities = ({
       manageCollaborators: isProjectAdmin,
       assignCollaboratorAreas: isProjectAdmin || isProductionLead,
       uploadDocuments: isProjectAdmin || (isProductionLead && tabs.includes('documentos')),
-      seeFullCash: isProjectAdmin || isProductionLead,
+      seeFullCash: canAccessGeneralCash(userEmail) && (isProjectAdmin || Boolean(collaborator)),
       createProviders: hasGlobalRole(normalizedGlobalRole, PROVIDER_CREATE_ROLES),
       editProviders: hasGlobalRole(normalizedGlobalRole, PROVIDER_UPDATE_ROLES),
     },

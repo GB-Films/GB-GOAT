@@ -1,3 +1,5 @@
+import { useAuth } from '../context/AuthContext';
+import { canAccessGeneralCash } from '../lib/generalCashAccess';
 import { ProviderThirdParties } from './ProviderThirdParties';
 import { portalAdminRequest } from '../lib/providerPortal';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -15,6 +17,8 @@ const localToday = () => { const date = new Date(); return `${date.getFullYear()
 type Kind = 'invoice' | 'payment' | 'other';
 
 export function ProviderFinancePanel({ provider, lines, onChanged }: { provider: any; lines: any[]; onChanged?: () => void }) {
+  const { user } = useAuth();
+  const canUseGeneralCash = canAccessGeneralCash(user?.email);
   const [authorizations,setAuthorizations]=useState<any[]>([]);
   useEffect(()=>{portalAdminRequest({action:'authorizations',providerId:provider.id}).then(r=>setAuthorizations(r.authorizations)).catch(()=>setAuthorizations([]));},[provider.id]);
   const [records, setRecords] = useState<any[]>([]);
@@ -100,8 +104,8 @@ export function ProviderFinancePanel({ provider, lines, onChanged }: { provider:
       <div className="flex flex-wrap gap-2">{(['invoice', 'payment', 'other'] as Kind[]).map(value => <button key={value} type="button" disabled={busy || uncertain} onClick={() => start(value)} className={`flex items-center gap-1 rounded-lg border px-3 py-2 text-xs font-semibold disabled:opacity-40 ${value === 'invoice' ? 'border-blue-600 bg-blue-600 text-white hover:bg-blue-700' : 'border-slate-200 text-slate-700 hover:bg-slate-50'}`}><Plus size={14}/>{value === 'invoice' ? 'Factura' : value === 'payment' ? 'Pago' : 'Comprobante'}</button>)}</div>
     </div>
     {error && <p role="alert" className="rounded bg-rose-50 p-3 text-sm text-rose-800">{error}</p>}
-    {kind === 'payment' && <div key={formVersion}><ProviderPaymentForm authorizations={provider.type==='persona'?authorizations.filter(a=>a.valid&&a.effectiveRoles.includes('payment')&&a.effectiveRoles.includes('invoice')):[]} provider={provider} lines={expenses} invoices={records} busy={busy} uncertain={uncertain} onClose={() => setKind(null)} onSave={savePayment}/></div>}
+    {kind === 'payment' && <div key={formVersion}><ProviderPaymentForm canUseGeneralCash={canUseGeneralCash} authorizations={provider.type==='persona'?authorizations.filter(a=>a.valid&&a.effectiveRoles.includes('payment')&&a.effectiveRoles.includes('invoice')):[]} provider={provider} lines={expenses} invoices={records} busy={busy} uncertain={uncertain} onClose={() => setKind(null)} onSave={savePayment}/></div>}
     {kind && kind !== 'payment' && <div key={formVersion}><ProviderDocumentUploadForm kind={kind} lines={expenses} records={records} busy={busy} uncertain={uncertain} onClose={() => setKind(null)} onSave={saveDocument} /></div>}
-    <ProviderFinancialRecordList records={records} busy={busy || uncertain} onOpen={openProviderFile} onCancel={cancel} />
+    <ProviderFinancialRecordList canCancelGeneralCash={canUseGeneralCash} records={records} busy={busy || uncertain} onOpen={openProviderFile} onCancel={cancel} />
   </section>;
 }

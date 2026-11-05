@@ -16,6 +16,8 @@ The September 2026 incident showed that one paid area expense could be repurpose
 - Every creation, deletion, replacement, or area change of a main budget item advances a revision on the project in the same commit. Area activation reads a fresh budget snapshot and checks that revision in its transaction. A concurrent item creation or move causes activation to stop instead of omitting the row.
 - Main budget category rename, deletion, and replacement reread the project and budget from the server. An active area cannot be renamed or deleted through the main budget category controls, avoiding a hidden area-expense tab.
 
+General cash additionally requires the authenticated account to be one of the three named custodians in [general-cash-access.md](general-cash-access.md). Administrator/owner status does not grant this permission. Personal cash ownership and the financial transaction/audit constraints remain in force.
+
 ## Route review
 
 Collaborators can correct their own ordinary area payments through the callable, which checks the original UID/email, current area permissions, opened version, expense and cash balances, and an immutable before/after audit in one transaction. Other authors' payments and shared applications stay protected. Browser SDK access still cannot rewrite payment history; changing the cash source or deleting payments retains the administrative flow.

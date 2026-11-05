@@ -25,7 +25,7 @@ test('el dueño del proyecto conserva todo el alcance', () => {
   assert.equal(capabilities.can.editMainBudget, true);
   assert.equal(capabilities.can.deleteAreas, true);
   assert.equal(capabilities.can.viewResults, true);
-  assert.equal(capabilities.can.seeFullCash, true);
+  assert.equal(capabilities.can.seeFullCash, false);
   assert.equal(capabilities.tabs.includes('resultado'), true);
   assert.deepEqual(capabilities.areas.map((scope) => scope.area), ['Arte', 'Vestuario', 'Locaciones']);
   assert.ok(capabilities.areas.every((scope) => scope.canEditArea));
@@ -68,7 +68,7 @@ test('un jefe de producción no edita el presupuesto principal ni ve resultado',
   assert.equal(capabilities.can.viewResults, false);
   assert.equal(capabilities.can.editMainBudget, false);
   assert.equal(capabilities.can.assignCollaboratorAreas, true);
-  assert.equal(capabilities.can.seeFullCash, true);
+  assert.equal(capabilities.can.seeFullCash, false);
   assert.equal(capabilities.can.uploadDocuments, true);
   assert.deepEqual(capabilities.areas.map((scope) => scope.area), ['Arte']);
   assert.equal(capabilities.areas[0].canEditArea, true);

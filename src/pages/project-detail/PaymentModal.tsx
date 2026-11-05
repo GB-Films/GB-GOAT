@@ -1,4 +1,5 @@
-import { type FormEvent, useEffect, useRef, useState } from 'react';
+import { canAccessGeneralCash } from '../../lib/generalCashAccess';
+import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { collection, doc, runTransaction, serverTimestamp } from 'firebase/firestore';
 import { deleteObject, getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { Calendar, DollarSign, ExternalLink, History, Loader2, Paperclip, Plus, Trash2, Wallet } from 'lucide-react';
@@ -108,7 +109,7 @@ export function PaymentModal({
   isOpen,
   canManagePayments,
   uploadAccessScope,
-  cashBoxOptions,
+  cashBoxOptions: rawCashBoxOptions,
   providers = [],
   paymentType,
   isDeletingPayment,
@@ -126,6 +127,7 @@ export function PaymentModal({
   onCashMovementUpdated,
   onCashMovementDeleted,
 }: PaymentModalProps) {
+  const cashBoxOptions = useMemo(() => rawCashBoxOptions.filter(option => option.account !== 'general' || canAccessGeneralCash(currentUserEmail)), [rawCashBoxOptions, currentUserEmail]);
   const amountRef = useRef<HTMLInputElement>(null);
   const [selectedReceipt, setSelectedReceipt] = useState<File | null>(null);
   const [receiptPreviewUrl, setReceiptPreviewUrl] = useState('');

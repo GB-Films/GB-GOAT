@@ -1,3 +1,4 @@
+const { canAccessGeneralCash } = require('./generalCashAccess');
 const { HttpsError } = require('firebase-functions/v2/https');
 const { hash, id, list } = require('./providerPortalModel');
 const { projectFinanceAccess } = require('./projectFinanceAccess');
@@ -38,6 +39,7 @@ function createOwnPaymentCorrection({ db, timestamp, verifyPaymentReceipt }) {
       const history = list(expense.paymentHistory), index = history.findIndex(payment => payment.id === paymentId), payment = history[index];
       if (!payment || payment.sharedRecordId || payment.createdBy !== actor.uid || payment.createdByEmail !== actor.email)
         throw new HttpsError('permission-denied', 'Sólo podés corregir pagos que cargaste vos.');
+      if (payment.cashAccount === 'general' && !canAccessGeneralCash(actor.email)) throw new HttpsError('permission-denied', 'Caja General sólo está habilitada para sus responsables.');
       if (priorAudit.exists) {
         if (priorAudit.data().fingerprint !== fingerprint) fail('El intento ya corresponde a otra corrección.');
         return { paymentHistory: clientValue(history), paid: expense.paid, repeated: true };
@@ -55,6 +57,7 @@ function createOwnPaymentCorrection({ db, timestamp, verifyPaymentReceipt }) {
         || movement.collectionName !== 'areaExpenses' || movement.itemId !== itemId || movement.paymentId !== paymentId
         || movement.cashAccount !== payment.cashAccount || movement.fromUserEmail !== payment.paidByEmail
         || cents(movement.amount) !== cents(payment.amount))) fail('El vínculo con la caja cambió.');
+      if (movement?.cashAccount === 'general' && !canAccessGeneralCash(actor.email)) throw new HttpsError('permission-denied', 'Caja General sólo está habilitada para sus responsables.');
       if (movement && movement.cashAccount !== 'general') {
         if (movement.fromUserEmail !== actor.email) throw new HttpsError('permission-denied', 'No podés modificar la caja de otra persona.');
         const ledger = await tx.get(root.collection('cashMovements').limit(2001));
