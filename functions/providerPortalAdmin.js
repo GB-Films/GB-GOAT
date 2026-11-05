@@ -3,6 +3,7 @@ const { createTeamProviderAssignment } = require('./teamProviderAssignment');
 const { createTeamOnboarding } = require('./teamOnboarding');
 const { hasTeamWorkAccess } = require('./teamWorkAccess');
 const { checkCompanyReview } = require('./providerRepresentation');
+const { createProviderWorkAuthorizations } = require('./providerWorkAuthorizations');
 
 const { COMPANY_EVIDENCE, LEGACY_COMPANY_EVIDENCE } = require('./providerEvidence');
 const { thirdPartyIsCurrent } = require('./providerThirdPartyDeclaration');
@@ -51,6 +52,8 @@ function createProviderPortalAdminHandler({
     const global =
       ["admin", "ayudante_admin"].includes(user?.role) ||
       actor.email === "info@granbertafilms.com";
+    if (['workAuthorizations', 'workAuthorizationFile'].includes(input.action))
+      return createProviderWorkAuthorizations({ db, sign, clock })(actor, input, global);
     const projectAction = [
       "projectDocuments",
       "projectFile",

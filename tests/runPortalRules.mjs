@@ -25,6 +25,7 @@ const cases = [
   ["areaExpenseAccessRules", "demo-goat-area-access", "firestore"],
   ["financialRules", "demo-gb-goat-financial-rules", "firestore"],
   ["providerFinance", "demo-goat-provider-finance", "firestore,storage"],
+  ["providerWorkAuthorizations", "demo-goat-work-authorizations", "firestore"],
   [
     "storagePaymentReceipts",
     "demo-gb-goat-storage-receipts",

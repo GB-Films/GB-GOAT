@@ -20,6 +20,32 @@ beneficiario del pago. Cargar una factura no crea otro costo ni acredita un pago
 El indicador del gasto muestra la factura vinculada y abre la ficha. Las
 aplicaciones de pago aparecen en su historial y sus saldos habituales.
 
+### Declaraciones de facturación y cobro por terceros
+
+La ficha muestra directamente **Quién factura y cobra por este proveedor**, con
+estado, trabajos/proyectos incluidos, firmante, fecha y declaración firmada. Ya no
+hace falta abrir la ventana de asignación de documentos para encontrarla.
+
+Las filas marcadas `thirdPartyPayoutRequired` muestran **Facturación y cobro por
+tercero**. Al pulsar el nombre del prestador o ese indicador se consulta la
+autorización para ese gasto exacto. La ventanita separa la cuenta propia del
+prestador de nombre, CUIT, titular y CBU/CVU o alias del tercero. Sólo muestra la
+cuenta para copiar si hay una única autorización vigente de facturación y cobro;
+advierte si falta vigencia o hay más de una. La marca puede conservarse después de
+revocar la declaración: no se interpreta como prueba de vigencia.
+
+`manageProviderPortal` ofrece lecturas `workAuthorizations` y
+`workAuthorizationFile`, ligadas al usuario verificado, proyecto, proveedor actual
+y gasto. No aplican ni aprueban declaraciones. La respuesta omite otras cuentas
+propias, trabajos ajenos, referencias privadas y enlaces de firma. Una constancia
+que incluya otros proyectos sólo puede descargarse con el acceso administrativo
+global existente. Las lecturas y descargas comprueban otra vez el alcance. No se
+modifican pagos, importes, cuentas del prestador ni reglas de firma/aplicación.
+
+Publicar primero `manageProviderPortal` y después el frontend. No hay migración,
+cambios de reglas, IAM ni Auth. Esta entrega es independiente del control de
+acceso de Caja General (PR79).
+
 El neto aplicado a gastos siempre se expresa en pesos, como los costos de GOAT.
 El pago simplificado cancela ese costo operativo, igual que la carga habitual
 desde una fila. No reconstruye IVA, retenciones, comisiones ni el débito bancario

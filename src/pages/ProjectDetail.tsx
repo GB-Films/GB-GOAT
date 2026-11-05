@@ -4060,7 +4060,7 @@ export default function ProjectDetail() {
             providers={providers} registrationEvidence={registrationEvidence}
             onUpdate={onUpdate}
             onDelete={onDelete}
-            type="provider"
+            type="provider" collectionName={collectionName}
             canCopyProviderInfo={canCopyProviderInfo}
             onCreateProviderInvite={(row) => createProviderInviteForItem(row, collectionName)}
             creatingProviderInvite={!!generatingProviderInviteLinks[`${collectionName}-${item.id}`]}
@@ -6268,7 +6268,7 @@ export default function ProjectDetail() {
                                                             providers={providers} registrationEvidence={registrationEvidence}
                                                             onUpdate={updateBudgetItem} 
                                                             onDelete={deleteBudgetItem} 
-                                                            type="provider"
+                                                            type="provider" collectionName="budgetItems"
                                                             canCopyProviderInfo={isProjectAdmin || isProductionLead}
                                                             onCreateProviderInvite={(row) => createProviderInviteForItem(row, 'budgetItems')}
                                                             creatingProviderInvite={!!generatingProviderInviteLinks[`budgetItems-${item.id}`]}
@@ -6780,7 +6780,7 @@ export default function ProjectDetail() {
                                         providers={providers} registrationEvidence={registrationEvidence}
                                         onUpdate={updateAreaExpense}
                                         onDelete={deleteAreaExpense}
-                                        type="provider"
+                                        type="provider" collectionName="areaExpenses"
                                         canCopyProviderInfo
                                         onCreateProviderInvite={(row) => createProviderInviteForItem(row, 'areaExpenses')}
                                         creatingProviderInvite={!!generatingProviderInviteLinks[`areaExpenses-${item.id}`]}
@@ -7069,7 +7069,7 @@ export default function ProjectDetail() {
                                   providers={providers} registrationEvidence={registrationEvidence}
                                   onUpdate={updateAreaExpense}
                                   onDelete={deleteAreaExpense}
-                                  type="provider"
+                                  type="provider" collectionName="areaExpenses"
                                   canCopyProviderInfo
                                   onCreateProviderInvite={(row) => createProviderInviteForItem(row, 'areaExpenses')}
                                   creatingProviderInvite={!!generatingProviderInviteLinks[`areaExpenses-${item.id}`]}

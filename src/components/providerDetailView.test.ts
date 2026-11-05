@@ -24,3 +24,9 @@ test('sin gestión no ofrece asignación y el modo restringido oculta CBU y alia
   assert.doesNotMatch(html, /Asignar documentos y pagos|PRIVATE-CBU|PRIVATE-ALIAS/);
   assert.ok(html.includes('30-12345678-9'));
 });
+
+test('las declaraciones se ven directamente en la ficha, fuera de la ventana de asignación', () => {
+  const html = renderToStaticMarkup(createElement(ProviderDetailView, { detail, loading: false, onClose: () => {},
+    authorizationPanel: createElement('section', null, 'DECLARACIONES-VISIBLES'), financePanel: createElement('div', null, 'ASIGNACION-CERRADA') }));
+  assert(html.indexOf('DECLARACIONES-VISIBLES') < html.indexOf('<dialog', html.indexOf('<dialog') + 1));
+});

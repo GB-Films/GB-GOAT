@@ -1,4 +1,3 @@
-import { ProviderThirdParties } from './ProviderThirdParties';
 import { portalAdminRequest } from '../lib/providerPortal';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
@@ -94,7 +93,6 @@ export function ProviderFinancePanel({ provider, lines, onChanged }: { provider:
     } finally { setBusy(false); }
   };
   return <section className="space-y-4">
-      {authorizations.length > 0 && <details className="rounded-xl border border-slate-200 p-3"><summary className="cursor-pointer text-xs font-medium text-slate-600">Quién factura y cobra por este proveedor</summary><div className="mt-3"><ProviderThirdParties providerId={provider.id} authorizations={authorizations} /></div></details>}
     <div className="flex flex-wrap items-center justify-between gap-3">
       <h3 className="text-sm font-medium text-slate-500">{providerDisplayName(provider)}</h3>
       <div className="flex flex-wrap gap-2">{(['invoice', 'payment', 'other'] as Kind[]).map(value => <button key={value} type="button" disabled={busy || uncertain} onClick={() => start(value)} className={`flex items-center gap-1 rounded-lg border px-3 py-2 text-xs font-semibold disabled:opacity-40 ${value === 'invoice' ? 'border-blue-600 bg-blue-600 text-white hover:bg-blue-700' : 'border-slate-200 text-slate-700 hover:bg-slate-50'}`}><Plus size={14}/>{value === 'invoice' ? 'Factura' : value === 'payment' ? 'Pago' : 'Comprobante'}</button>)}</div>
