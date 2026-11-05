@@ -52,7 +52,7 @@ test('un administrador con caja asignada ve primero su caja y luego Caja General
     isProjectAdmin: true,
     hasPersonalCashBox: true,
     personalBalance: 750,
-    currentUserEmail: 'admin@example.com',
+    currentUserEmail: 'tomas@granberta.com',
     currentUserName: 'Admin Proyecto',
   });
 
@@ -67,7 +67,7 @@ test('un administrador sin caja asignada conserva Caja General', () => {
     isProjectAdmin: true,
     hasPersonalCashBox: false,
     personalBalance: 0,
-    currentUserEmail: 'admin@example.com',
+    currentUserEmail: 'tomas@granberta.com',
     currentUserName: 'Admin Proyecto',
   });
 

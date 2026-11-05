@@ -7,10 +7,10 @@ import { ProjectDialog } from '../pages/project-detail/ProjectDialog';
 import type { ProjectDocumentScope } from '../lib/providerFinance';
 const formatDate = (value: any) => typeof value === 'string' ? value.split('-').reverse().join('/') : value?.seconds ? new Date(value.seconds * 1000).toLocaleDateString('es-AR') : '-';
 
-export function ProviderDetailView({ detail, loading, onClose, financePanel, companyPanel, administrationPanel, administrative = false, administrativeContact, canSeeBankDetails = true, initialProjectId, onOpenSharedDocument }: {
+export function ProviderDetailView({ detail, loading, onClose, financePanel, companyPanel, authorizationPanel, administrationPanel, administrative = false, administrativeContact, canSeeBankDetails = true, initialProjectId, onOpenSharedDocument }: {
   detail: any; loading: boolean; onClose: () => void; financePanel?: ReactNode; companyPanel?: ReactNode; canSeeBankDetails?: boolean;
   initialProjectId?: string; onOpenSharedDocument?: (id: string, scope?: ProjectDocumentScope) => Promise<unknown>;
-  administrationPanel?: ReactNode; administrative?: boolean; administrativeContact?: string;
+  administrationPanel?: ReactNode; authorizationPanel?: ReactNode; administrative?: boolean; administrativeContact?: string;
 }) {
   const [copiedProviderField, setCopiedProviderField] = useState('');
   const [showFullData, setShowFullData] = useState(false);
@@ -99,6 +99,7 @@ export function ProviderDetailView({ detail, loading, onClose, financePanel, com
                 )}
               </section>
         {administrationPanel}
+        {authorizationPanel}
         {companyPanel && <details className="rounded-xl border border-slate-200 p-3"><summary className="cursor-pointer text-xs font-semibold text-slate-600">Representación y respaldos de la empresa · acceso restringido</summary><div className="mt-3">{companyPanel}</div></details>}
         <div key={provider.id}><ProviderProjectList projects={detail.projects || []} lines={detail.lines || []} initialProjectId={initialProjectId} onOpenSharedDocument={onOpenSharedDocument} /></div>
       </>}

@@ -1,3 +1,5 @@
+import { canAccessGeneralCash } from './generalCashAccess';
+
 export const GENERAL_CASH_ACCOUNT = 'general' as const;
 
 export type PaymentCashBoxOption = {
@@ -39,7 +41,7 @@ export const buildPaymentCashBoxOptions = ({
     });
   }
 
-  if (isProjectAdmin) {
+  if (isProjectAdmin && canAccessGeneralCash(currentUserEmail)) {
     options.push({
       id: 'general',
       account: 'general',

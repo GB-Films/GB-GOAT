@@ -9,8 +9,8 @@ const inputClass = 'w-full rounded border border-slate-200 px-3 py-2 text-sm foc
 const money = (value: number) => (value / 100).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const today = () => { const date = new Date(); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`; };
 
-export function ProviderPaymentForm({ authorizations=[], provider, lines, invoices, busy, uncertain, onClose, onSave }: {
-  authorizations?:any[]; provider: any; lines: PayableProviderLine[]; invoices: any[]; busy: boolean; uncertain: boolean;
+export function ProviderPaymentForm({ canUseGeneralCash = false, authorizations=[], provider, lines, invoices, busy, uncertain, onClose, onSave }: {
+  canUseGeneralCash?: boolean; authorizations?:any[]; provider: any; lines: PayableProviderLine[]; invoices: any[]; busy: boolean; uncertain: boolean;
   onClose: () => void; onSave: (payload: Record<string, unknown> | null, file: File | null) => Promise<void>;
 }) {
   const projects = useMemo(() => paymentProjectChoices(lines), [lines]);
@@ -33,6 +33,7 @@ export function ProviderPaymentForm({ authorizations=[], provider, lines, invoic
     if (uncertain) { await onSave(null, null); return; }
     setError(''); setPreparing(true);
     try {
+      if (method === 'cash' && !canUseGeneralCash) throw Error('Caja General sólo está habilitada para sus responsables.');
       const allocations = allocateProviderPayment(lines, selectedIds, Number(amount), invoices);
       if (method === 'transfer' && !file) throw Error('Adjuntá el comprobante de pago.');
       const appliedProjects = [...new Set(allocations.map(row => row.projectId))];
@@ -77,7 +78,7 @@ export function ProviderPaymentForm({ authorizations=[], provider, lines, invoic
           <label className="block space-y-1"><span className="block text-xs text-slate-500">Importe a aplicar (pesos)</span><input type="number" min="0.01" max={selectedBalance / 100} step="0.01" required value={amount} onChange={event => setAmountOverride(event.target.value)} className={inputClass}/></label>
           <label className="block space-y-1"><span className="block text-xs text-slate-500">Fecha de pago</span><input type="date" required value={date} onChange={event => setDate(event.target.value)} className={inputClass}/></label>
         </div>
-        <div className="flex flex-wrap gap-5 text-sm"><label className="flex items-center gap-2"><input type="radio" name="payment-method" checked={method === 'transfer'} onChange={() => setMethod('transfer')}/>Comprobante de pago</label><label className="flex items-center gap-2"><input type="radio" name="payment-method" checked={method === 'cash'} onChange={() => setMethod('cash')}/>Efectivo</label></div>
+        <div className="flex flex-wrap gap-5 text-sm"><label className="flex items-center gap-2"><input type="radio" name="payment-method" checked={method === 'transfer'} onChange={() => setMethod('transfer')}/>Comprobante de pago</label>{canUseGeneralCash && <label className="flex items-center gap-2"><input type="radio" name="payment-method" checked={method === 'cash'} onChange={() => setMethod('cash')}/>Efectivo</label>}</div>
         {method === 'transfer' ? <label className="block space-y-1"><span className="block text-xs text-slate-500">Comprobante · PDF o imagen · hasta 2 MB</span><input type="file" accept="application/pdf,image/jpeg,image/png,image/webp" required onChange={event => setFile(event.target.files?.[0] || null)} className="block w-full text-sm"/></label>
           : <label className="block space-y-1"><span className="block text-xs text-slate-500">Caja de efectivo</span><select required value={cashProjectId} onChange={event => setCashProject(event.target.value)} className={inputClass}>{chosenProjects.map(project => <option key={project.id} value={project.id}>Caja General · {project.name}</option>)}</select></label>}
         {moneyCents(amount) > 0 && moneyCents(amount) < selectedBalance && <p className="text-xs text-slate-500">Pago parcial: se aplicará a los proyectos seleccionados en el orden mostrado. El resto conservará su saldo.</p>}

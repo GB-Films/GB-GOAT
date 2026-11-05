@@ -12,6 +12,7 @@ GB GOAT organiza el ciclo completo de una producción audiovisual: cliente y pro
 - `projects/{projectId}/areaExpenses` contiene la ejecución operativa por área y subcategoría.
 - `projects/{projectId}/collaborators` contiene roles y alcances exclusivos de ese proyecto.
 - `projects/{projectId}/cashMovements` registra entregas, devoluciones, transferencias y movimientos asociados a pagos.
+- Caja General y su libro completo están reservados a `tomas@granberta.com`, `agustin@granberta.com` y `guido@bani-vfx.com`, dentro de sus permisos de proyecto. Los demás usuarios, incluidos administradores, consultan sólo su caja personal; no hay bypass de dueño/admin. Detalles y orden de publicación en [general-cash-access.md](general-cash-access.md).
 - `providers`, `providerIdentifiers` y `clients` son catálogos globales.
 - `providerInvites`, `invoiceUploadInvites` y `userInvites` son accesos temporales con propósito limitado.
 
@@ -58,5 +59,5 @@ Publicar este cambio requiere las nuevas reglas de Firestore/Storage, la funció
 
 ## Límites conocidos
 
-- Los miembros de un proyecto pueden leer el contexto completo del proyecto. Las áreas y subcategorías limitan escritura, no confidencialidad de campos. Si se necesita ocultar importes o proveedores por área, habrá que separar documentos/colecciones para que las reglas puedan autorizar lecturas parciales.
+- Los miembros de un proyecto pueden leer su contexto operativo, con la excepción del libro completo de Caja General reservado a sus tres responsables. Las áreas y subcategorías limitan escritura, no confidencialidad de campos. Si se necesita ocultar importes o proveedores por área, habrá que separar documentos/colecciones para que las reglas puedan autorizar lecturas parciales.
 - El borrado de un proyecto elimina documentos conocidos desde el cliente, pero no garantiza el borrado recursivo de todos los archivos de Storage. Un borrado total y auditable requiere una función backend privilegiada.

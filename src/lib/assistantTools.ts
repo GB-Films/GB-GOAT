@@ -1,3 +1,4 @@
+import { canAccessGeneralCash, canReadCashMovement } from './generalCashAccess';
 import { canViewProjectSubcategory, hasFullProjectAreaAccess } from './projectAccess';
 import {
   canAssistantEditArea,
@@ -55,6 +56,7 @@ export type AssistantAreaExpense = AssistantBudgetItem & { subcategory?: string 
 export type AssistantCashMovement = {
   id: string;
   type: string;
+  cashAccount?: 'general' | 'personal';
   amount?: number;
   status?: string;
   fromUserEmail?: string;
@@ -696,11 +698,7 @@ export const buildAssistantTools = ({
       if (!context.capabilities.tabs.includes('cajas')) {
         return { error: 'El usuario no tiene acceso a la pestaña Cajas en este proyecto.' };
       }
-      const visible = context.cashMovements.filter((movement) => (
-        context.capabilities.can.seeFullCash
-        || asText(movement.fromUserEmail) === asText(context.userEmail)
-        || asText(movement.toUserEmail) === asText(context.userEmail)
-      ));
+      const visible = context.cashMovements.filter(movement => canReadCashMovement(context.userEmail, movement, context.capabilities.can.seeFullCash));
       const totals = visible.reduce((acc, movement) => {
         const key = movement.status || 'sin-estado';
         acc[key] = round2((acc[key] || 0) + (Number(movement.amount) || 0));
@@ -2312,13 +2310,8 @@ export const buildAssistantTools = ({
         return { error: 'El usuario no tiene acceso a la pestaña Cajas en este proyecto.' };
       }
 
-      const seeAll = context.capabilities.can.seeFullCash;
-      const ownEmail = asText(context.userEmail);
-      const movements = seeAll
-        ? context.cashMovements
-        : context.cashMovements.filter((movement) => (
-          asText(movement.fromUserEmail) === ownEmail || asText(movement.toUserEmail) === ownEmail
-        ));
+      const seeAll = context.capabilities.can.seeFullCash && canAccessGeneralCash(context.userEmail);
+      const movements = context.cashMovements.filter(movement => canReadCashMovement(context.userEmail, movement, seeAll));
 
       const general = calculateGeneralCashSummary(movements);
       const balances = calculateCashBalances(movements);
@@ -2333,14 +2326,14 @@ export const buildAssistantTools = ({
       return {
         proyecto: context.projectName || context.projectId,
         alcance: seeAll ? 'todo el equipo' : 'sólo la caja del usuario',
-        cajaGeneral: {
+        ...(seeAll ? { cajaGeneral: {
           salioDeCajaGeneral: round2(general.totalOut),
           entregasConfirmadas: round2(general.confirmedDeliveries),
           entregasPendientesDeConfirmacion: round2(general.pendingDeliveries),
           devolucionesConfirmadas: round2(general.confirmedReturns),
           devolucionesPendientes: round2(general.pendingReturns),
           pagosDirectosDeCajaGeneral: round2(general.directPayments),
-        },
+        } } : {}),
         saldosPorResponsable: Array.from(balances.entries())
           .filter(([, balance]) => Math.abs(balance) > 0.009)
           .map(([email, balance]) => ({

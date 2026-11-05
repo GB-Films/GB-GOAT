@@ -3,6 +3,7 @@ import { Copy, Link2, Plus } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { isInternalBudgetEstimate } from '../../lib/internalBudgetEstimate';
 import { expenseRegistrationState, type RegistrationEvidence } from '../../lib/providerRegistration';
+import { ProviderWorkAuthorization } from '../../components/ProviderWorkAuthorization';
 import { useParams } from 'react-router-dom';
 import {
   formatIdentifier,
@@ -16,6 +17,7 @@ const ProviderProfileDialog = lazy(() => import('../../components/ProviderProfil
 
 interface BudgetRowCellProps {
   item: any;
+  collectionName?: 'budgetItems' | 'areaExpenses';
   providers?: any[];
   onUpdate: (itemId: string, updates: any) => Promise<void>;
   onDelete?: (itemId: string) => Promise<void>;
@@ -29,7 +31,7 @@ interface BudgetRowCellProps {
   registrationEvidence?: RegistrationEvidence;
 }
 
-export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment, disabledPayment, disabled, canCopyProviderInfo, onCreateProviderInvite, creatingProviderInvite, registrationEvidence }: BudgetRowCellProps) {
+export function BudgetRowCell({ item, collectionName, providers, onUpdate, type, onManagePayment, disabledPayment, disabled, canCopyProviderInfo, onCreateProviderInvite, creatingProviderInvite, registrationEvidence }: BudgetRowCellProps) {
   const { id: projectId } = useParams();
   const [isEditingProvider, setIsEditingProvider] = useState(false);
   const [showProviderInfo, setShowProviderInfo] = useState(false);
@@ -68,7 +70,7 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
       const viewportHeight = window.visualViewport?.height || window.innerHeight;
       const dropdownWidth = Math.min(256, Math.max(220, viewportWidth - 24));
       const left = Math.max(12, Math.min(rect.left, viewportWidth - dropdownWidth - 12));
-      const dropdownHeight = isEditingProvider ? 320 : 180;
+      const dropdownHeight = isEditingProvider ? 320 : item.thirdPartyPayoutRequired ? 480 : 180;
       const opensUp = rect.bottom + dropdownHeight > viewportHeight && rect.top > dropdownHeight;
       setDropdownPosition({
         left,
@@ -88,7 +90,7 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
       window.visualViewport?.removeEventListener('resize', updateDropdownPosition);
       window.visualViewport?.removeEventListener('scroll', updateDropdownPosition);
     };
-  }, [isEditingProvider, showProviderInfo]);
+  }, [isEditingProvider, showProviderInfo, item.thirdPartyPayoutRequired]);
 
   const isInvalidProvider = item.providerName && !item.providerId && providers?.length;
   const provider = (() => {
@@ -114,6 +116,8 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
   const providerCuit = formatIdentifier(providerCuitRaw) || '';
   const providerCbu = provider?.bankAccount_cbu || provider?.bankAccount || '';
   const providerAlias = provider?.bankAccount_alias || '';
+  const authorizationScope = projectId && item.providerId && collectionName ? { projectId, providerId: item.providerId, itemId: item.id,
+    collectionName } : null;
   const canShowProviderInfo = Boolean(provider);
   const pendingProviderInvite = !item.providerId && !item.providerName && item.providerInviteLink?.status === 'pending'
     ? item.providerInviteLink
@@ -179,7 +183,8 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
                 provisional ? "text-amber-950" : isInvalidProvider ? "text-red-500 underline decoration-dotted" : "text-slate-900",
                 !canShowProviderInfo && "cursor-default"
               )}
-              title={canShowProviderInfo ? "Ver CUIT / CBU / Alias" : undefined}
+              aria-expanded={showProviderInfo}
+              title={canShowProviderInfo ? item.thirdPartyPayoutRequired ? "Ver cuentas y autorización del tercero" : "Ver CUIT / CBU / Alias" : undefined}
             >
               {item.providerName || 'Sin Nombre'}
             </button>
@@ -227,9 +232,10 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
           <div
             ref={dropdownRef}
             style={{ top: dropdownPosition.top, left: dropdownPosition.left, width: dropdownPosition.width }}
-            className="fixed max-w-[calc(100vw-24px)] bg-white border border-slate-200 shadow-2xl rounded-lg z-[420] p-3"
+            className="fixed max-h-[min(70vh,36rem)] overflow-y-auto max-w-[calc(100vw-24px)] bg-white border border-slate-200 shadow-2xl rounded-lg z-[420] p-3"
           >
-            <div className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Datos del proveedor</div>
+            <div className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">{item.thirdPartyPayoutRequired ? 'Cuenta propia del prestador' : 'Datos del proveedor'}</div>
+            {item.thirdPartyPayoutRequired && <p className="mb-2 text-[10px] text-slate-500">La cuenta del tercero para este trabajo aparece debajo.</p>}
             {[
               { label: 'Copiar CUIT', value: providerCuit, copyValue: providerCuitRaw || providerCuit },
               { label: 'Copiar CBU', value: providerCbu },
@@ -256,10 +262,12 @@ export function BudgetRowCell({ item, providers, onUpdate, type, onManagePayment
                 </button>
               </div>
             ))}
+            {item.thirdPartyPayoutRequired && authorizationScope && <ProviderWorkAuthorization scope={authorizationScope} canSeeBankDetails={canCopyProviderInfo} />}
             <button type="button" onClick={() => { setShowProviderInfo(false); setShowProviderDetail(true); }} className="mt-2 w-full rounded bg-slate-900 px-3 py-2 text-xs font-bold text-white">Ver ficha y comprobantes</button>
           </div>
         )}
         {showProviderDetail && provider && <Suspense fallback={<div className="fixed inset-0 z-[500] grid place-items-center bg-white/80 text-sm">Cargando proveedor…</div>}><ProviderProfileDialog provider={provider} initialProjectId={projectId} onClose={() => setShowProviderDetail(false)} /></Suspense>}
+        {item.thirdPartyPayoutRequired && <button type="button" onClick={() => { setIsEditingProvider(false); setShowProviderInfo(true); }} className="mt-1 inline-flex rounded border border-indigo-200 bg-indigo-50 px-2 py-1 text-[9px] font-semibold text-indigo-800 transition-colors hover:bg-indigo-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500" title="Ver la declaración y la cuenta del tercero para este trabajo">Facturación y cobro por tercero</button>}
         {((item.sharedInvoices?.length || 0) + (item.sharedReceipts?.length || 0) + (item.sharedPaymentIds?.length || 0)) > 0 && <button type="button" disabled={!provider} onClick={() => setShowProviderDetail(true)} className="mt-1 text-[9px] text-indigo-600 hover:underline" title="Ver aplicaciones sin duplicar el documento">
           {item.sharedInvoices?.length ? `${item.sharedInvoices.length} factura(s) vinculada(s)` : 'Comprobantes / pago vinculado'}
         </button>}

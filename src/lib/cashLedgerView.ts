@@ -19,9 +19,9 @@ export function sortCashMovements(movements: CashMovement[]): CashMovement[] {
 
 type CashExpense = { id: string; providerName?: string; description?: string };
 
-export function resolveCashBoxSelection(requested: string, admin: boolean, ownEmail: string, emails: string[]) {
+export function resolveCashBoxSelection(requested: string, canSeeGeneral: boolean, ownEmail: string, emails: string[]) {
   const own = normalizeEmail(ownEmail);
-  if (!admin) return emails.includes(own) ? own : '';
+  if (!canSeeGeneral) return emails.includes(own) ? own : '';
   if (requested === 'all' || requested === 'general' || emails.includes(requested)) return requested;
   return 'all';
 }

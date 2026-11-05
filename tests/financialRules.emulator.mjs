@@ -14,7 +14,7 @@ async function assertSucceeds(operation) {
 }
 
 const adminId = 'admin-test';
-const adminEmail = 'admin@example.test';
+const adminEmail = 'agustin@granberta.com';
 const collaboratorId = 'collaborator-test';
 const collaboratorEmail = 'collaborator@example.test';
 const projectId = 'project-test';
