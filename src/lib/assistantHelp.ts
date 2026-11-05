@@ -141,7 +141,7 @@ export const ASSISTANT_HELP_SECTIONS: AssistantHelpSection[] = [
       '2. La entrega queda pendiente hasta que esa persona confirma que la recibió.',
       '3. Con la recepción confirmada, el saldo queda disponible en su caja personal.',
       '4. Los pagos que hace con "Caja efectivo" descuentan de esa caja; también puede transferir plata a otro responsable o devolverla a Caja General.',
-      'Quién ve qué: los administradores y jefes de producción ven el panorama completo (cuánto salió de Caja General, qué está pendiente de confirmación y cuánto tiene cada persona); un colaborador ve su propia caja y sus movimientos.',
+      'Caja General está reservada a tomas@granberta.com, agustin@granberta.com y guido@bani-vfx.com, dentro de sus proyectos autorizados. Las demás personas consultan su caja y sus propios movimientos, aunque tengan rol administrador.',
       'Los reintegros a terceros también salen de una caja cuando se registran y quedan como "reintegro" en el historial.',
     ].join('\n'),
   },

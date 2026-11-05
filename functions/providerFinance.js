@@ -1,3 +1,4 @@
+const { canAccessGeneralCash, canReadPersonalCashMovement } = require('./generalCashAccess');
 const {authorizedParty}=require('./providerAuthorization');
 const { isInternalBudgetEstimate } = require('./internalBudgetEstimate');
 const { createHash } = require('node:crypto');
@@ -94,6 +95,33 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, ver
     const input = request.data || {};
     const actor = { uid: request.auth.uid, email: String(request.auth.token.email).trim().toLowerCase() };
     const admin = actor.email === 'info@granbertafilms.com' || user.data()?.role === 'admin' && require('./teamWorkAccess').hasTeamWorkAccess(user.data());
+    const assertGeneralCash = () => {
+      if (request.auth.token.email_verified !== true || !canAccessGeneralCash(actor.email))
+        throw new HttpsError('permission-denied', 'Caja General sólo está habilitada para sus responsables.');
+    };
+    if (input.action === 'personalCashMovements') {
+      if (request.auth.token.email_verified !== true) throw new HttpsError('permission-denied', 'Verificá tu correo.');
+      const projectId = id(input.projectId);
+      await projectFinanceAccess({ db, actor, projectId });
+      const ledger = db.collection(`projects/${projectId}/cashMovements`);
+      const parts = await Promise.all(['fromUserEmail', 'toUserEmail'].map(field => ledger.where(field, '==', actor.email).limit(2001).get()));
+      const rows = [...new Map(parts.flatMap(part => part.docs).map(row => [row.id, row])).values()];
+      if (rows.length > 2000) fail('La caja requiere revisión por su volumen de movimientos.');
+      const clientValue = value => value?.toDate ? value.toDate().toISOString() : value instanceof Date ? value.toISOString()
+        : Array.isArray(value) ? value.map(clientValue) : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, clientValue(entry)])) : value;
+      return { movements: rows.filter(row => canReadPersonalCashMovement(actor.email, row.data())).map(row => ({ ...clientValue(row.data()), id: row.id })) };
+    }
+    if (input.action === 'checkCashLinks') {
+      if (request.auth.token.email_verified !== true) throw new HttpsError('permission-denied', 'Verificá tu correo.');
+      const projectId = id(input.projectId);
+      const access = await projectFinanceAccess({ db, actor, projectId });
+      if (!access.admin) throw new HttpsError('permission-denied', 'Sólo administración puede revisar el vínculo financiero.');
+      if (input.checkAnyCash === true) return { hasLinkedCash: !(await db.collection(`projects/${projectId}/cashMovements`).limit(1).get()).empty };
+      if (!['budgetItems', 'areaExpenses'].includes(input.collectionName) || !Array.isArray(input.itemIds) || !input.itemIds.length || input.itemIds.length > 450) fail('Elegí hasta450 gastos.');
+      const items = new Set(input.itemIds.map(id));
+      const records = await db.collection(`projects/${projectId}/cashMovements`).where('collectionName', '==', input.collectionName).get();
+      return { hasLinkedCash: records.docs.some(row => ['pago', 'reintegro'].includes(row.data().type) && items.has(row.data().itemId)) };
+    }
     if (input.action === 'correctOwnPayment') {
       if (request.auth.token.email_verified !== true) throw new HttpsError('permission-denied', 'Verificá tu correo.');
       return createOwnPaymentCorrection({ db, timestamp, verifyPaymentReceipt })(actor, input);
@@ -144,6 +172,7 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, ver
         const snapshot = await tx.get(recordRef);
         if (!snapshot.exists) fail('No se encontró el registro.');
         const record = snapshot.data();
+        if (record.kind === 'payment' && record.method === 'cash') assertGeneralCash();
         if (record.status === 'cancelled') return { id: recordId, status: 'cancelled' };
         if (record.kind === 'invoice' && Object.keys(record.settlements || {}).length) fail('Primero anulá los pagos aplicados a esta factura.');
         const refs = record.allocations.map(row => db.doc(`projects/${key(row)}`));
@@ -197,6 +226,7 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, ver
     }
     if (input.action !== 'create') fail('Acción desconocida.');
     const record = normalizeRecord(input);
+    if (record.kind === 'payment' && record.method === 'cash') assertGeneralCash();
     const fingerprint = createHash('sha256').update(JSON.stringify({ ...record, filePath: input.file?.path || '' })).digest('hex');
     // Uploads are immutable once committed. Only the caller's staging path is accepted.
     const file = input.file ? await verifyFile(record.providerId, recordId, input.file, { hash: record.documentOnly === true }) : null;

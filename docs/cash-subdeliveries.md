@@ -1,5 +1,7 @@
 # Subentregas de cajas de proyecto
 
+Caja General tiene un permiso independiente del rol: sólo `tomas@granberta.com`, `agustin@granberta.com` y `guido@bani-vfx.com`, conservando los permisos del proyecto. Ver [Acceso a Caja General](general-cash-access.md). Los demás administradores mantienen sus cajas personales y las subentregas autorizadas; no obtienen acceso General por su rol.
+
 Sólo administradores de proyecto/app (incluido el creador según ACL vigente) pueden crear subentregas. No basta con ser jefe de producción/área ni con tener una caja. El destino es un integrante vigente del proyecto o un administrador global, nunca la misma persona.
 
 En Cajas → Registrar movimiento → Subentrega desde mi caja asignada, el origen no se elige: siempre es la caja propia del usuario autenticado en ese proyecto. Se acredita inmediatamente al destinatario como transferencia entre cajas; no es una entrega pendiente desde Caja General. Se conserva el formato de transferencias históricas para que saldos, movimientos y reportes descuenten una vez al emisor y acrediten una vez al receptor. No genera gastos ni pagos.
@@ -12,4 +14,4 @@ El entrypoint selecciona un worker mínimo para esta callable a través de `FUNC
 
 Pruebas: `tests/cashSubdeliveryRules.emulator.mjs`, `functions/cashSubdelivery.test.js`, suite financiera existente y tests de cajas. La nueva operación no cambia reglas de lectura de usuarios ni constituye una auditoría de toda la app. No se ejecutan movimientos reales para probar en producción.
 
-Ataques cubiertos y rechazados: escritura directa de transferencia aun sin marcador, origen/rol elegido por el cliente, actor sin rol admin, cruce de proyecto, destino ajeno o propio, importe cero/negativo/no finito/excesivo/fraccionario, nota excesiva, ruta inválida, reutilización de ID con datos distintos, cambio de política/counter desde un admin cliente y edición/borrado de subentregas. Se conserva la confirmación por el destinatario y la entrega General de administradores no restringidos en otros proyectos. Las consultas existentes y la suite financiera se verifican sin ampliar lecturas.
+Ataques cubiertos y rechazados: escritura directa de transferencia aun sin marcador, origen/rol elegido por el cliente, actor sin rol admin, cruce de proyecto, destino ajeno o propio, importe cero/negativo/no finito/excesivo/fraccionario, nota excesiva, ruta inválida, reutilización de ID con datos distintos, cambio de política/counter desde un admin cliente y edición/borrado de subentregas. Se conserva la confirmación por el destinatario y la entrega General de las cuentas responsables que tampoco estén restringidas en ese proyecto. Las consultas existentes y la suite financiera se verifican sin ampliar lecturas.

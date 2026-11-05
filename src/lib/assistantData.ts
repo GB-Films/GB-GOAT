@@ -1,3 +1,4 @@
+import { readProjectCashMovements } from './projectCashQueries';
 import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
 import { db } from './firebase';
 import { normalizeEmail, normalizeSearchText } from './identity';
@@ -137,6 +138,7 @@ export const loadAssistantProjectContext = async ({
       categories: project.categories,
       activeAreas: project.activeAreas,
       userId: uid,
+      userEmail: normalizedEmail,
       globalRole: globalRole || null,
       collaborator,
     });
@@ -146,7 +148,7 @@ export const loadAssistantProjectContext = async ({
     const [budgetSnap, areaSnap, cashSnap] = await Promise.all([
       getDocs(collection(db, 'projects', projectId, 'budgetItems')),
       getDocs(collection(db, 'projects', projectId, 'areaExpenses')),
-      getDocs(collection(db, 'projects', projectId, 'cashMovements')),
+      readProjectCashMovements(db, projectId, normalizedEmail),
     ]);
 
     const canSeeCollaborators = capabilities.can.manageCollaborators
@@ -190,7 +192,7 @@ export const loadAssistantProjectContext = async ({
       activeAreas: Array.isArray(project.activeAreas) ? project.activeAreas : [],
       budgetItems: mapDocs(budgetSnap.docs),
       areaExpenses: mapDocs(areaSnap.docs),
-      cashMovements: mapDocs(cashSnap.docs),
+      cashMovements: cashSnap,
       collaborators,
       documents,
     };

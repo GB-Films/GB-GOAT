@@ -1,3 +1,5 @@
+import { canAccessGeneralCash } from '../lib/generalCashAccess';
+import { readProjectCashMovements, watchProjectCashMovements } from '../lib/projectCashQueries';
 import { ProjectScopePermissions } from '../components/ProjectScopePermissions';
 import React, { useState, useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
@@ -821,7 +823,8 @@ export default function ProjectDetail() {
   const isGlobalAdmin = profile?.role === 'admin';
   const [isCreatingCashSubdelivery, setIsCreatingCashSubdelivery] = useState(false);
   const cashSubdeliveryRequestId = useRef<string | null>(null);
-  const canDeliverGeneralCash = isProjectAdmin && !safeArray(project?.generalCashDeliveryBlockedEmails).includes(normalizeEmail(user?.email));
+  const canViewGeneralCash = canAccessGeneralCash(user?.email);
+  const canDeliverGeneralCash = canViewGeneralCash && isProjectAdmin && !safeArray(project?.generalCashDeliveryBlockedEmails).includes(normalizeEmail(user?.email));
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return;
@@ -998,9 +1001,9 @@ export default function ProjectDetail() {
       setAreaExpenses(snapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() } as AreaExpense)));
       markReceived('expenses');
     }, failed);
-    const stopCash = onSnapshot(collection(db, 'projects', id, 'cashMovements'), (snapshot) => {
+    const stopCash = watchProjectCashMovements(db, id, user.email || '', (rows) => {
       if (cancelled) return;
-      setCashMovements(snapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() } as CashMovement)));
+      setCashMovements(rows as CashMovement[]);
       markReceived('cash');
     }, failed);
     return () => { cancelled = true; stopBudget(); stopExpenses(); stopCash(); };
@@ -1109,13 +1112,8 @@ export default function ProjectDetail() {
 
   const assertNoLinkedCashMovements = async (items: any[], collectionName: PaymentCollection) => {
     if (!id || items.length === 0) return;
-    const itemIds = new Set(items.map((item) => item.id));
-    const snapshot = await getDocsFromServer(collection(db, 'projects', id, 'cashMovements'));
-    if (snapshot.docs.some((entry) => {
-      const movement = entry.data();
-      return (movement.type === 'pago' || movement.type === 'reintegro') && movement.collectionName === collectionName
-        && itemIds.has(movement.itemId);
-    })) throw new Error('EXPENSE_HAS_CASH_MOVEMENT');
+    const response = await httpsCallable(getFunctions(), 'manageProviderFinance')({ action: 'checkCashLinks', projectId: id, collectionName, itemIds: items.map(item => item.id) });
+    if ((response.data as { hasLinkedCash: boolean }).hasLinkedCash) throw new Error('EXPENSE_HAS_CASH_MOVEMENT');
   };
 
   const queueExpenseRowsDeletion = async (
@@ -4237,12 +4235,12 @@ export default function ProjectDetail() {
       })
   ), [cashMovements, currentUserEmail]);
   const pendingCashReturns = React.useMemo(() => (
-    cashMovements.filter((movement) => movement.type === 'devolucion'
+    cashMovements.filter((movement) => canViewGeneralCash && movement.type === 'devolucion'
       && movement.status === 'pending'
       && normalizeEmail(movement.toUserEmail) === currentUserEmail)
-  ), [cashMovements, currentUserEmail]);
+  ), [cashMovements, currentUserEmail, canViewGeneralCash]);
   const cashReturnRecipients = React.useMemo(() => cashResponsibles.filter((responsible) =>
-    responsible.role === 'admin' && normalizeEmail(responsible.email) !== currentUserEmail
+    responsible.role === 'admin' && canAccessGeneralCash(responsible.email) && normalizeEmail(responsible.email) !== currentUserEmail
   ), [cashResponsibles, currentUserEmail]);
   const cashReturnRecipientEmail = resolveCashReturnRecipientEmail(cashReturnRecipients, cashReturnRecipientChoice);
   const productionTransferTargets = React.useMemo(() => (
@@ -4258,7 +4256,7 @@ export default function ProjectDetail() {
   const visibleCashRows = React.useMemo(() => (
     cashLedgerPeople(cashResponsibles, cashMovements)
       .filter((responsible) => (
-        isProjectAdmin
+        canViewGeneralCash
         || normalizeEmail(responsible.email) === currentUserEmail
       ))
       .map((responsible) => {
@@ -4282,8 +4280,8 @@ export default function ProjectDetail() {
         };
       })
       .filter(row => row.movements.length > 0 || row.balance !== 0 || row.email === currentUserEmail)
-  ), [cashBalanceByEmail, cashMovements, cashResponsibles, currentUserEmail, isProjectAdmin]);
-  const activeCashBox = resolveCashBoxSelection(selectedCashBox, isProjectAdmin, currentUserEmail, visibleCashRows.map(row => row.email));
+  ), [cashBalanceByEmail, cashMovements, cashResponsibles, currentUserEmail, canViewGeneralCash]);
+  const activeCashBox = resolveCashBoxSelection(selectedCashBox, canViewGeneralCash, currentUserEmail, visibleCashRows.map(row => row.email));
 
   useEffect(() => {
     if (!cashRecipientEmail && cashResponsibles.length > 0) {
@@ -4994,8 +4992,7 @@ export default function ProjectDetail() {
     }
     setIsCreatingCashReturn(true);
     try {
-      const fresh = await getDocsFromServer(collection(db, 'projects', id, 'cashMovements'));
-      const movements = fresh.docs.map((entry) => entry.data() as CashMovement);
+      const movements = await readProjectCashMovements(db, id, currentUserEmail) as CashMovement[];
       const balance = calculateCashBalances(movements).get(currentUserEmail) || 0;
       const reserved = movements.filter((movement) => movement.type === 'devolucion'
         && movement.status === 'pending' && normalizeEmail(movement.fromUserEmail) === currentUserEmail)
@@ -5028,15 +5025,14 @@ export default function ProjectDetail() {
   };
 
   const confirmCashReturn = async (movement: CashMovement) => {
-    if (!id || !user?.uid || !isProjectAdmin || movement.type !== 'devolucion'
+    if (!id || !user?.uid || !isProjectAdmin || !canViewGeneralCash || movement.type !== 'devolucion'
       || movement.status !== 'pending' || normalizeEmail(movement.toUserEmail) !== currentUserEmail
       || confirmingCashReturnId) return;
     const amount = Number(movement.amount) || 0;
     if (!window.confirm(`¿Confirmás que recibiste $${amount.toLocaleString()} de ${movement.fromUserName || movement.fromUserEmail} para Caja General? La caja asignada a esa persona se reducirá al confirmar.`)) return;
     setConfirmingCashReturnId(movement.id);
     try {
-      const fresh = await getDocsFromServer(collection(db, 'projects', id, 'cashMovements'));
-      const movements = fresh.docs.map((entry) => ({ id: entry.id, ...entry.data() } as CashMovement));
+      const movements = await readProjectCashMovements(db, id, currentUserEmail) as CashMovement[];
       const latest = movements.find((entry) => entry.id === movement.id);
       const balance = calculateCashBalances(movements).get(normalizeEmail(movement.fromUserEmail)) || 0;
       if (!latest || latest.status !== 'pending' || amount > balance + 0.01) {
@@ -5329,7 +5325,9 @@ export default function ProjectDetail() {
 
     setIsDeletingProject(true);
     try {
-      const financialCollections = ['budgetItems', 'areaExpenses', 'expenses', 'payments', 'invoices', 'activityLog', 'cashMovements'];
+      const financialCollections = ['budgetItems', 'areaExpenses', 'expenses', 'payments', 'invoices', 'activityLog'];
+      const cashCheck = await httpsCallable(getFunctions(), 'manageProviderFinance')({ action: 'checkCashLinks', projectId: id, checkAnyCash: true });
+      if ((cashCheck.data as { hasLinkedCash: boolean }).hasLinkedCash) { alert('Este proyecto tiene movimientos de caja. No se puede borrar desde la aplicación.'); return; }
       const financialSnapshots = await Promise.all(financialCollections.map((name) => (
         getDocsFromServer(collection(db, 'projects', id, name))
       )));
@@ -5355,7 +5353,6 @@ export default function ProjectDetail() {
         'invoices',
         'projectDocuments',
         'activityLog',
-        'cashMovements',
         'collaborators',
       ];
 
@@ -7196,25 +7193,25 @@ export default function ProjectDetail() {
           <div className="space-y-3 pb-12">
             <header className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
               <h2 className="text-base font-bold text-slate-900">Cajas</h2>
-              {(canDeliverGeneralCash || isProjectAdmin || cashBalanceByEmail.has(currentUserEmail)) && <button type="button"
+              {(canDeliverGeneralCash || cashBalanceByEmail.has(currentUserEmail)) && <button type="button"
                 onClick={() => setCashMovementDialog(canDeliverGeneralCash ? 'entrega' : isProjectAdmin ? 'transferencia' : 'devolucion')}
                 className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700">
                 <Plus className="h-4 w-4" />Registrar movimiento
               </button>}
             </header>
 
-            {activeCashBox !== 'all' && ((pendingCashDeliveries.length > 0 && activeCashBox !== currentUserEmail) || (isProjectAdmin && pendingCashReturns.length > 0 && activeCashBox !== 'general')) && <div className="flex flex-wrap gap-2">
+            {activeCashBox !== 'all' && ((pendingCashDeliveries.length > 0 && activeCashBox !== currentUserEmail) || (canViewGeneralCash && isProjectAdmin && pendingCashReturns.length > 0 && activeCashBox !== 'general')) && <div className="flex flex-wrap gap-2">
               {pendingCashDeliveries.length > 0 && activeCashBox !== currentUserEmail && <button type="button" onClick={() => setSelectedCashBox(currentUserEmail)}
                 className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900">Recibir caja ({pendingCashDeliveries.length})</button>}
-              {isProjectAdmin && pendingCashReturns.length > 0 && activeCashBox !== 'general' && <button type="button" onClick={() => setSelectedCashBox('general')}
+              {canViewGeneralCash && isProjectAdmin && pendingCashReturns.length > 0 && activeCashBox !== 'general' && <button type="button" onClick={() => setSelectedCashBox('general')}
                 className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900">Recibir devoluciones ({pendingCashReturns.length})</button>}
             </div>}
 
             <section aria-label="Detalle de caja" className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
               <CashBoxPicker rows={visibleCashRows} value={activeCashBox} onChange={setSelectedCashBox}
-                showGeneral={isProjectAdmin} generalOut={generalCashSummary.totalOut} />
+                showGeneral={canViewGeneralCash} generalOut={generalCashSummary.totalOut} />
               <CashLedger account={activeCashBox}
-                movements={isProjectAdmin && activeCashBox === 'all' ? cashMovements : activeCashBox === 'general' ? generalCashMovements : visibleCashRows.find(row => row.email === activeCashBox)?.movements || []}
+                movements={canViewGeneralCash && activeCashBox === 'all' ? cashMovements : activeCashBox === 'general' ? generalCashMovements : visibleCashRows.find(row => row.email === activeCashBox)?.movements || []}
                 people={visibleCashRows.map(row => ({ email: row.email, displayName: row.responsible.displayName }))}
                 budgetItems={budgetItems} areaExpenses={areaExpenses}
                 renderActions={movement => {
@@ -7223,7 +7220,7 @@ export default function ProjectDetail() {
                   const ownReturn = movement.type === 'devolucion' && normalizeEmail(movement.fromUserEmail) === currentUserEmail;
                   const actionClass = 'rounded-md border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50';
                   return <>
-                    {movement.status === 'pending' && recipient && (movement.type === 'entrega' || (movement.type === 'devolucion' && isProjectAdmin)) && <button type="button"
+                    {movement.status === 'pending' && recipient && (movement.type === 'entrega' || (movement.type === 'devolucion' && isProjectAdmin && canViewGeneralCash)) && <button type="button"
                       disabled={Boolean(confirmingCashDeliveryId || confirmingCashReturnId)}
                       onClick={() => movement.type === 'entrega' ? confirmCashDelivery(movement) : confirmCashReturn(movement)}
                       className="rounded-md bg-amber-950 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">

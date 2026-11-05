@@ -303,8 +303,12 @@ service cloud.firestore {
       let cashId = payment.get('cashMovementId', '');
       let path = /databases/$(database)/documents/projects/$(projectId)/cashMovements/$(cashId);
       let movement = cashId != '' ? get(path).data : {};
-      return cashId == '' || movement.get('cashAccount', 'personal') == 'general'
-        || movement.get('fromUserEmail', '').lower() == userEmail().lower();
+      return cashId == ''
+        ? (payment.get('cashAccount', 'personal') != 'general' || hasGeneralCashAccess())
+        : movement.get('cashAccount', 'personal') == 'general'
+          ? hasGeneralCashAccess()
+          : (payment.get('cashAccount', 'personal') != 'general' || hasGeneralCashAccess())
+            && movement.get('fromUserEmail', '').lower() == userEmail().lower();
     }
 
     function canDeleteClearedExpense(projectId, collectionName, itemId) {
@@ -346,6 +350,7 @@ service cloud.firestore {
         && request.resource.data.paymentHistory[oldCount].amount is number
         && request.resource.data.paymentHistory[oldCount].amount > 0
         && !request.resource.data.paymentHistory[oldCount].keys().hasAny(['sharedRecordId'])
+        && (request.resource.data.paymentHistory[oldCount].get('cashAccount', 'personal') != 'general' || hasGeneralCashAccess())
         && (
           request.resource.data.paymentHistory[oldCount].get('method', '') != 'tercero'
           || validThirdPartyPayment(request.resource.data.paymentHistory[oldCount])
@@ -427,6 +432,25 @@ service cloud.firestore {
             && oldEntries.removeAll([entry]).size() == newEntries.size()
             && newPayment.reimbursedAmount == oldPayment.reimbursedAmount - entry.amount)
         );
+    }
+
+    function canUpdateProjectAreaExpense(projectId, expenseId) {
+      // Resolve the same role once to keep valid payment appends below the rule expression limit.
+      let admin = isProjectAdmin(projectId);
+      return preservesSharedSupplierRecords() && ((admin
+          && (preservesPaidExpenseIdentity()
+            || validUnpaidAmountCorrection(projectId, 'areaExpenses', expenseId)
+            || validPaidProviderCorrection(projectId, expenseId))
+          && preservesAdminFinancialHistory(projectId, 'areaExpenses', expenseId))
+          || canPublicAssignProviderFromInvite(projectId, 'areaExpenses', expenseId)
+          || ((!admin && (
+            canWriteAreaExpense(projectId, resource.data.area, resource.data.subcategory)
+            && ((resource.data.area == request.resource.data.area
+                && resource.data.subcategory == request.resource.data.subcategory)
+              || canWriteAreaExpense(projectId, request.resource.data.area, request.resource.data.subcategory))
+          ) && preservesExpensePaymentAudit() && preservesPaidExpenseIdentity()
+            && preservesExpenseReceipts() && preservesExistingExpenseInvoice()))
+          || (request.auth == null && canPublicUploadInvoice(projectId, 'areaExpenses', expenseId)));
     }
 
     function preservesExpensePaymentAudit() {
@@ -968,8 +992,23 @@ service cloud.firestore {
 
     // generalCashDeliveryBlockedEmails and cashSubdeliveryRevision are server-only
     // project fields. subdelivery=true movements are immutable callable outputs.
+    function hasGeneralCashAccess() {
+      return isSignedIn() && userEmail().lower() in ['tomas@granberta.com', 'agustin@granberta.com', 'guido@bani-vfx.com'];
+    }
+
+    function canReadProjectCash(projectId) {
+      return hasProjectAccess(projectId) && (hasGeneralCashAccess()
+        || (resource.data.type == 'entrega'
+          ? resource.data.get('toUserEmail', '') == userEmail().lower()
+          : resource.data.type == 'devolucion'
+            ? resource.data.get('fromUserEmail', '') == userEmail().lower()
+            : resource.data.get('cashAccount', 'personal') != 'general'
+              && (resource.data.get('fromUserEmail', '') == userEmail().lower()
+                || resource.data.get('toUserEmail', '') == userEmail().lower())));
+    }
+
     function canInitiateGeneralCashDelivery(projectId) {
-      return isSignedIn() && !(userEmail().lower() in projectDoc(projectId).get('generalCashDeliveryBlockedEmails', []));
+      return hasGeneralCashAccess() && !(userEmail().lower() in projectDoc(projectId).get('generalCashDeliveryBlockedEmails', []));
     }
 
     function canCreateCashMovement(projectId, movementId) {
@@ -1005,6 +1044,7 @@ service cloud.firestore {
             && request.resource.data.createdByEmail == userEmail()
             && request.resource.data.fromUserEmail == userEmail()
             && request.resource.data.toUserEmail != userEmail()
+            && request.resource.data.toUserEmail in ['tomas@granberta.com', 'agustin@granberta.com', 'guido@bani-vfx.com']
             && request.resource.data.createdAt == request.time
             && request.resource.data.updatedAt == request.time
             && request.resource.data.keys().hasOnly([
@@ -1030,7 +1070,7 @@ service cloud.firestore {
             && (
               !request.resource.data.keys().hasAny(['cashAccount'])
               || request.resource.data.cashAccount == 'personal'
-              || (request.resource.data.cashAccount == 'general' && isProjectAdmin(projectId))
+              || (request.resource.data.cashAccount == 'general' && isProjectAdmin(projectId) && hasGeneralCashAccess())
             )
           )
           || (
@@ -1041,6 +1081,7 @@ service cloud.firestore {
             && request.resource.data.fromUserEmail == userEmail()
             && request.resource.data.collectionName in ['budgetItems', 'areaExpenses']
             && request.resource.data.cashAccount in ['general', 'personal']
+            && (request.resource.data.cashAccount != 'general' || hasGeneralCashAccess())
             && reimbursementCashIsRecorded(projectId, movementId)
           )
         );
@@ -1048,6 +1089,7 @@ service cloud.firestore {
 
     function canDeleteCashMovement(projectId, movementId) {
       return isProjectAdmin(projectId)
+        && (resource.data.get('cashAccount', 'personal') != 'general' || hasGeneralCashAccess())
         && !resource.data.get('subdelivery', false)
         && (resource.data.type != 'entrega' || canInitiateGeneralCashDelivery(projectId))
         && ((resource.data.type != 'pago' && resource.data.type != 'reintegro' && resource.data.type != 'devolucion')
@@ -1065,6 +1107,7 @@ service cloud.firestore {
             && resource.data.status == 'pending'
             && resource.data.toUserEmail == userEmail()
             && isProjectAdmin(projectId)
+            && hasGeneralCashAccess()
             && request.resource.data.type == resource.data.type
             && request.resource.data.status == 'confirmed'
             && request.resource.data.confirmedBy == request.auth.uid
@@ -1124,6 +1167,7 @@ service cloud.firestore {
           )
           || (
             resource.data.type == 'pago'
+            && (hasGeneralCashAccess() || (resource.data.get('cashAccount', 'personal') != 'general' && request.resource.data.get('cashAccount', 'personal') != 'general'))
             && request.resource.data.type == resource.data.type
             && isProjectAdmin(projectId)
             && (request.resource.data.fromUserEmail == resource.data.fromUserEmail
@@ -1691,20 +1735,7 @@ service cloud.firestore {
             && request.resource.data.paymentLocked == false
             && request.resource.data.paymentAuthorIds == []
           ;
-        allow update: if preservesSharedSupplierRecords() && ((isProjectAdmin(projectId)
-          && (preservesPaidExpenseIdentity()
-            || validUnpaidAmountCorrection(projectId, 'areaExpenses', expenseId)
-            || validPaidProviderCorrection(projectId, expenseId))
-          && preservesAdminFinancialHistory(projectId, 'areaExpenses', expenseId))
-          || canPublicAssignProviderFromInvite(projectId, 'areaExpenses', expenseId)
-          || ((!isProjectAdmin(projectId) && (
-            canWriteAreaExpense(projectId, resource.data.area, resource.data.subcategory)
-            && ((resource.data.area == request.resource.data.area
-                && resource.data.subcategory == request.resource.data.subcategory)
-              || canWriteAreaExpense(projectId, request.resource.data.area, request.resource.data.subcategory))
-          ) && preservesExpensePaymentAudit() && preservesPaidExpenseIdentity()
-            && preservesExpenseReceipts() && preservesExistingExpenseInvoice()))
-          || (request.auth == null && canPublicUploadInvoice(projectId, 'areaExpenses', expenseId)));
+        allow update: if canUpdateProjectAreaExpense(projectId, expenseId);
         allow delete: if hasNoSharedSupplierRecords() && (canDeleteAreaExpenseWithPayment(projectId) || canDeleteClearedExpense(projectId, 'areaExpenses', expenseId));
       }
 
@@ -1772,7 +1803,7 @@ service cloud.firestore {
       }
 
       match /cashMovements/{movementId} {
-        allow read: if hasProjectAccess(projectId);
+        allow read: if canReadProjectCash(projectId);
         allow create: if canCreateCashMovement(projectId, movementId);
         allow update: if resource.data.get('sharedRecordId', '') == '' && canUpdateCashMovement(projectId, movementId);
         allow delete: if resource.data.get('sharedRecordId', '') == '' && canDeleteCashMovement(projectId, movementId);
