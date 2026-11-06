@@ -8,6 +8,7 @@ import {
 } from "../lib/providerPortal";
 import { ProviderInvoiceList } from "../components/ProviderInvoiceList";
 import { ProviderReimbursements } from "../components/ProviderReimbursements";
+import { ProviderWorkList } from '../components/ProviderWorkList';
 import { ProviderInvoiceUpload } from "../components/ProviderInvoiceUpload";
 import PortalSignDialog from "../components/PortalSignDialog";
 import { ThirdPartyAuthorizationForm } from "../components/ThirdPartyAuthorizationForm";
@@ -288,28 +289,8 @@ export default function ProviderPortal() {
       </nav>
       {tab === "Trabajos" && (
         <section className="space-y-3">
-          <div><h2 className="text-lg font-semibold">Tus trabajos</h2><p className="mt-1 text-sm text-slate-500">Importes y pagos registrados de cada trabajo.</p></div>
-          {view?.works.map((w: any) => (
-            <article key={w.key} className={box}>
-              <h2 className="font-bold">{w.projectName}</h2>
-              <p className="text-sm text-slate-600">{w.description}</p>
-              <div className="portal-money-grid mt-3 grid grid-cols-2 gap-2 rounded-xl bg-slate-50 p-2 text-sm sm:mt-4 sm:gap-3 sm:p-3">
-                <span><span className="mb-1 block text-xs text-slate-500">Importe del trabajo</span><strong className="text-lg">{money(w.total, w.currency)}</strong></span>
-                <span>
-                  {w.markedPaidWithoutDetails ? (
-                    "Marcado pagado; sin detalle cargado"
-                  ) : (
-                    <>Pagos registrados: {money(w.paid, w.currency)}</>
-                  )}
-                </span>
-              </div>
-            </article>
-          ))}
-          {!view?.works.length && (
-            <p className={box}>
-              {!hasLoaded || (selected?.status === 'active' && !view) ? 'Cargando tus datos…' : 'Todavía no tenés trabajos asignados.'}
-            </p>
-          )}
+          <div><h2 className="text-lg font-semibold">Tus trabajos</h2><p className="mt-1 text-xs text-slate-500">Desplegá un proyecto para ver sus trabajos y pagos.</p></div>
+          <ProviderWorkList key={providerId} works={view?.works || []} emptyMessage={!hasLoaded || (selected?.status === 'active' && !view) ? 'Cargando tus datos…' : 'Todavía no tenés trabajos asignados.'} />
         </section>
       )}
       {tab === "Facturas" && (
