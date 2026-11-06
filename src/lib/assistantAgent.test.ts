@@ -68,6 +68,37 @@ test('el asistente responde sin herramientas cuando no hacen falta', async () =>
   assert.equal(result.messages.length, 3);
 });
 
+test('prepara la lista verificable antes de pedir confirmación y conserva el estado de DeepSeek al continuar', async () => {
+  let writes = 0;
+  const dateTool: AssistantTool = { name: 'programar_fechas_pago', description: '', parameters: { type: 'object', properties: {} }, requiresConfirmation: true,
+    prepare: async () => ({ args: { planId: 'checked' }, summary: 'Persona ficticia: 20/11/2026' }), run: async () => { writes++; return { ok: true }; } };
+  const pending = await runAssistantTurn({ history: [], userText: 'Programá las fechas', tools: [dateTool], callModel: async () => ({ message: { role: 'assistant', content: '', reasoning_content: 'private-protocol-state', tool_calls: [
+    { id: 'one', type: 'function', function: { name: dateTool.name, arguments: '{}' } },
+    { id: 'two', type: 'function', function: { name: dateTool.name, arguments: '{}' } },
+  ] } }) });
+  assert.equal(writes, 0); assert.equal(pending.reply, ''); assert.equal(pending.pending?.args.planId, 'checked');
+  assert.equal(pending.pending?.summary, 'Persona ficticia: 20/11/2026');
+  assert(pending.messages.some(message => message.role === 'tool' && message.tool_call_id === 'two' && message.content.includes('No ejecutada')));
+  const executed = await dateTool.run(pending.pending!.args);
+  const result = await continueAssistantTurn({ history: [...pending.messages, { role: 'tool', tool_call_id: 'one', content: JSON.stringify(executed) }], tools: [dateTool], callModel: async ({ messages }) => {
+    assert(messages.some(message => message.reasoning_content === 'private-protocol-state'));
+    return { message: { role: 'assistant', content: 'Fechas programadas.' } };
+  } });
+  assert.equal(writes, 1); assert.equal(result.reply, 'Fechas programadas.'); assert(!result.reply.includes('private-protocol-state'));
+});
+
+test('una preparación inválida no ofrece confirmar ni escribe; el día de referencia usa Argentina', async () => {
+  const tool: AssistantTool = { name: 'programar_fechas_pago', description: '', parameters: { type: 'object', properties: {} }, requiresConfirmation: true,
+    prepare: async () => ({ error: 'Dos gastos coinciden; precisá cuál.' }), run: () => assert.fail('No debe escribir') };
+  let round = 0;
+  const result = await runAssistantTurn({ history: [], userText: 'Programá Juan', tools: [tool], callModel: async () => ++round === 1
+    ? { message: { role: 'assistant', content: '', tool_calls: [{ id: 'one', type: 'function', function: { name: tool.name, arguments: '{}' } }] } }
+    : { message: { role: 'assistant', content: 'Indicá el gasto exacto.' } } });
+  assert.equal(result.pending, undefined); assert.match(result.reply, /gasto exacto/);
+  const prompt = buildAssistantSystemPrompt({ today: new Date('2026-11-07T01:00:00Z') });
+  assert.match(prompt, /2026-11-06/); assert.match(prompt, /programar_fechas_pago/); assert.match(prompt, /no lo reemplaces por asignar una fecha/);
+});
+
 test('una herramienta desconocida no rompe la conversación', async () => {
   let round = 0;
   const result = await runAssistantTurn({
@@ -125,7 +156,8 @@ test('el prompt del sistema explica el alcance, el formato y las confirmaciones'
   assert.match(prompt, /Proyectos a los que tiene acceso: Largometraje, Spot/);
   assert.match(prompt, /piden confirmación al usuario/);
   assert.match(prompt, /panel angosto/);
-  assert.match(prompt, /Los pagos, los reintegros y todo lo que toca cajas/);
+  assert.match(prompt, /Registrar, transferir o ejecutar pagos, reintegros y movimientos de cajas se hace SIEMPRE a mano/);
+  assert.match(prompt, /programar_fechas_pago/);
 });
 
 test('las acciones de escritura quedan pendientes de confirmación', async () => {

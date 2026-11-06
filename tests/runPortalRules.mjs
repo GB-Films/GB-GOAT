@@ -24,6 +24,7 @@ const cases = [
   ],
   ["areaExpenseAccessRules", "demo-goat-area-access", "firestore"],
   ["financialRules", "demo-gb-goat-financial-rules", "firestore"],
+  ["assistantPaymentDates", "demo-goat-assistant-dates", "firestore"],
   ["providerFinance", "demo-goat-provider-finance", "firestore,storage"],
   ["providerWorkAuthorizations", "demo-goat-work-authorizations", "firestore"],
   [
@@ -49,7 +50,7 @@ for (const [name, project, services] of cases) {
       services,
       "--project",
       project,
-      `node ${['categoryBudgets', 'projectPins', 'generalCashAccess'].includes(name) ? '--import tsx ' : ''}tests/${name}.emulator.mjs`,
+      `node ${['categoryBudgets', 'projectPins', 'generalCashAccess', 'assistantPaymentDates'].includes(name) ? '--import tsx ' : ''}tests/${name}.emulator.mjs`,
     ],
     { encoding: "utf8", timeout: 240000, env: process.env, maxBuffer: 8e6 },
   );

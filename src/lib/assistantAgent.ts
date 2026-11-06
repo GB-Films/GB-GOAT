@@ -11,6 +11,8 @@ export type AssistantToolCall = {
 export type AssistantMessage = {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
+  // Protocol state kept only in conversation memory; never rendered in the chat.
+  reasoning_content?: string;
   tool_calls?: AssistantToolCall[];
   tool_call_id?: string;
 };
@@ -41,7 +43,7 @@ export const ASSISTANT_FUNCTIONS_REGION = 'us-central1';
 // Único punto de contacto con el modelo: pasa por la Cloud Function, que es la
 // que guarda la API key de DeepSeek y aplica la cuota diaria por usuario.
 export const callDeepSeekAssistant: AssistantModelCaller = async ({ messages, tools }) => {
-  const callable = httpsCallable(getFunctions(getApp(), ASSISTANT_FUNCTIONS_REGION), 'assistantChat');
+  const callable = httpsCallable(getFunctions(getApp(), ASSISTANT_FUNCTIONS_REGION), 'assistantChat', { timeout: 115000 });
   const result = await callable({ messages, tools });
   const data = (result?.data || {}) as any;
   return {
@@ -49,6 +51,7 @@ export const callDeepSeekAssistant: AssistantModelCaller = async ({ messages, to
       role: 'assistant',
       content: typeof data?.message?.content === 'string' ? data.message.content : '',
       tool_calls: Array.isArray(data?.message?.tool_calls) ? data.message.tool_calls : [],
+      ...(typeof data?.message?.reasoning_content === 'string' ? { reasoning_content: data.message.reasoning_content } : {}),
     },
     model: typeof data?.model === 'string' ? data.model : undefined,
     reasoningEffort: typeof data?.reasoningEffort === 'string' ? data.reasoningEffort : undefined,
@@ -70,7 +73,7 @@ export const buildAssistantSystemPrompt = ({
 }) => [
   'Sos el asistente interno de GB GOAT, la herramienta de gestión de producción de Gran Berta Films.',
   'Hablás en español rioplatense, claro y directo.',
-  `Hoy es ${today.toISOString().slice(0, 10)}.`,
+  `Hoy es ${new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Argentina/Buenos_Aires', year: 'numeric', month: '2-digit', day: '2-digit' }).format(today)} (Argentina).`,
   ...(isAppAdmin
     ? ['El usuario es administrador global de la aplicación.']
     : globalRole ? [`Rol global del usuario: ${globalRole}.`] : []),
@@ -86,7 +89,8 @@ export const buildAssistantSystemPrompt = ({
   '- Si te preguntan qué puede hacer esa persona, usá `que_puedo_hacer` y contestá según su rol real.',
   '- Podés crear partidas y gastos de área, editar filas, moverlas de categoría o de área/subcategoría, borrarlas (si no tienen pagos), asignar o quitar proveedor, generar links de alta de proveedor, y administrar la estructura: crear/renombrar/borrar categorías, crear/editar/borrar subcategorías con su presupuesto, y activar, desactivar o eliminar áreas. Todas esas acciones piden confirmación al usuario: no afirmes que ya las hiciste hasta que la herramienta devuelva ok.',
   '- Si una herramienta de escritura devuelve un error (por ejemplo una fila con pagos registrados), explicá el motivo en simple y ofrecé la alternativa.',
-  '- Los pagos, los reintegros y todo lo que toca cajas se hacen SIEMPRE a mano desde la app: no los ejecutes ni los ofrezcas como acción; explicá dónde se hacen y, si querés, guiá al usuario paso a paso.',
+  '- Podés programar o quitar fechas previstas de pago, también para muchas personas, con `programar_fechas_pago`. Primero consultá los gastos para obtener sus ids exactos y distinguí trabajos si un proveedor tiene varios. Prepará un solo lote con las fechas pedidas; la app muestra el detalle y pide una confirmación antes de cambiar nada. Esto es programación, no ejecución de pagos.',
+  '- Registrar, transferir o ejecutar pagos, reintegros y movimientos de cajas se hace SIEMPRE a mano desde la app: no los ejecutes ni los ofrezcas como acción. Si te piden pagar, no lo reemplaces por asignar una fecha ni marcar pagado. Explicá dónde hacerlo. Si no está claro si quiere programar o pagar, preguntá.',
   '- Tampoco hacés documentos ni cambios de permisos: eso se hace desde la app.',
   'Planillas:',
   '- Si el usuario adjunta una planilla o pega una tabla de Excel, tomá las filas del bloque "Planilla adjunta" o "Tabla pegada" como los datos a cargar.',
@@ -129,6 +133,7 @@ const runAssistantLoop = async ({
     const assistantMessage: AssistantMessage = {
       role: 'assistant',
       content: message.content || '',
+      ...(typeof message.reasoning_content === 'string' ? { reasoning_content: message.reasoning_content } : {}),
       ...(message.tool_calls && message.tool_calls.length > 0 ? { tool_calls: message.tool_calls } : {}),
     };
     messages.push(assistantMessage);
@@ -151,6 +156,19 @@ const runAssistantLoop = async ({
       if (!tool) {
         output = { error: `La herramienta ${call.function?.name || 'desconocida'} no está disponible para este usuario.` };
       } else if (tool.requiresConfirmation) {
+        let prepared: { args: any; summary: string } | { error: string };
+        try { prepared = tool.prepare ? await tool.prepare(args) : { args, summary: tool.summarize ? tool.summarize(args) : tool.name }; }
+        catch (error: any) { prepared = { error: error.message || 'No se pudo preparar la acción. Volvé a intentar.' }; }
+        if ('error' in prepared) {
+          messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(prepared) });
+          continue;
+        }
+        // Complete the protocol for other calls without executing further work
+        // behind the confirmation. The model may propose them again afterwards.
+        for (const deferred of assistantMessage.tool_calls.slice(assistantMessage.tool_calls.indexOf(call) + 1)) {
+          messages.push({ role: 'tool', tool_call_id: deferred.id,
+            content: JSON.stringify({ error: 'No ejecutada: primero debe confirmarse la acción pendiente. Volvé a proponerla después.' }) });
+        }
         // Acción de escritura: se frena acá y la app le pide confirmación al usuario.
         return {
           messages,
@@ -161,8 +179,8 @@ const runAssistantLoop = async ({
           pending: {
             callId: call.id,
             name: tool.name,
-            args,
-            summary: tool.summarize ? tool.summarize(args) : tool.name,
+            args: prepared.args,
+            summary: prepared.summary,
           },
         };
       } else {

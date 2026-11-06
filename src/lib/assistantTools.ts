@@ -1,4 +1,5 @@
 import { canAccessGeneralCash, canReadCashMovement } from './generalCashAccess';
+import { applyPaymentDatePlan, preparePaymentDatePlan, type PaymentDatePlan } from './assistantPaymentDates';
 import { canViewProjectSubcategory, hasFullProjectAreaAccess } from './projectAccess';
 import {
   canAssistantEditArea,
@@ -149,6 +150,7 @@ export type AssistantTool = {
   // Las acciones que escriben datos no se ejecutan solas: la app pide
   // confirmación y recién ahí corre `run`.
   requiresConfirmation?: boolean;
+  prepare?: (args: any) => Promise<{ args: any; summary: string } | { error: string }>;
   summarize?: (args: any) => string;
   run: (args: any) => unknown | Promise<unknown>;
 };
@@ -720,6 +722,38 @@ export const buildAssistantTools = ({
   });
 
   if (enableActions) {
+    const datePlans = new Map<string, PaymentDatePlan>();
+    tools.push({
+      name: 'programar_fechas_pago',
+      description: 'Programa o quita fechas previstas de pago de hasta 200 gastos de un proyecto en un lote. No registra ni ejecuta pagos. Primero consultá los gastos para identificarlos. Requiere confirmación y permisos de edición vigentes.',
+      requiresConfirmation: true,
+      parameters: projectOptionsSchema({ fecha: { type: 'string', description: 'Fecha común AAAA-MM-DD; vacío para quitarla. Cada asignación puede indicar otra fecha.' }, asignaciones: { type: 'array', items: { type: 'object', properties: {
+        fila: { type: 'string', description: 'Id exacto del gasto, preferentemente; no inventar identificadores.' }, fecha: { type: 'string' }, origen: { type: 'string', enum: ['budgetItems', 'areaExpenses'] },
+      }, required: ['fila'] } } }),
+      prepare: async args => {
+        if (!userId) return { error: 'Iniciá sesión para programar fechas.' };
+        const resolved = await resolveProject(args?.proyecto);
+        if ('error' in resolved) return resolved;
+        try {
+          const context = await loadProject(resolved.context.projectId);
+          if (!context) return { error: 'Ya no tenés acceso al proyecto.' };
+          const plan = preparePaymentDatePlan(context, args), planId = crypto.randomUUID();
+          datePlans.clear(); datePlans.set(planId, plan);
+          return { args: { planId }, summary: plan.summary };
+        } catch (e: any) { return { error: e.message || 'No se pudo preparar la programación.' }; }
+      },
+      run: async args => {
+        const plan = datePlans.get(args?.planId);
+        if (!plan) return { error: 'Volvé a preparar las fechas y confirmá el detalle antes de aplicarlas.' };
+        try {
+          const context = await loadProject(plan.projectId);
+          if (!context) return { error: 'Ya no tenés acceso al proyecto.' };
+          const result = await applyPaymentDatePlan(db, plan, context);
+          datePlans.delete(args.planId); projectCache.delete(plan.projectId);
+          return result;
+        } catch (e: any) { return { error: e.code === 'permission-denied' ? 'Ya no tenés permiso para modificar esos gastos. No se aplicó el lote.' : e.message || 'No se pudo confirmar el lote. Actualizá el proyecto antes de reintentarlo.' }; }
+      },
+    });
     const findProviderByName = async (name: string) => {
       const text = asText(name).trim();
       if (!text) return null;

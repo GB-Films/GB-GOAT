@@ -413,7 +413,7 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
                 <AlertTriangle className="h-3.5 w-3.5" />
                 Confirmá la acción
               </div>
-              <p className="mt-1 text-[12px] font-bold text-slate-800">{pendingAction.summary}</p>
+              <p className="mt-1 max-h-48 overflow-y-auto whitespace-pre-line text-[12px] font-bold text-slate-800">{pendingAction.summary}</p>
               <div className="mt-2 flex gap-2">
                 <button
                   type="button"

@@ -81,6 +81,20 @@ const runTool = async (
   return await tool.run(args) as any;
 };
 
+test('las fechas requieren preparar una vista verificable y no aceptan escribir un plan sin confirmar', async () => {
+  const tool = buildTools({ userId: 'area-uid' }).find(entry => entry.name === 'programar_fechas_pago')!;
+  assert.equal(tool.requiresConfirmation, true);
+  const prepared = await tool.prepare!({ fecha: '2026-11-20', asignaciones: [{ fila: 'a1' }] });
+  assert(!('error' in prepared));
+  if ('error' in prepared) return;
+  assert.match(prepared.summary, /Ferretería · Pintura: 20\/11\/2026/);
+  assert.equal(typeof prepared.args.planId, 'string');
+  const bad = await tool.run({ planId: 'invented-by-model' }) as any;
+  assert.match(bad.error, /confirmá el detalle/);
+  const denied = await tool.prepare!({ fecha: '2026-11-20', asignaciones: [{ fila: 'b2' }] });
+  assert('error' in denied);
+});
+
 test('el asistente lista los proyectos del usuario', async () => {
   const result = await runTool(buildTools(), 'listar_proyectos');
 

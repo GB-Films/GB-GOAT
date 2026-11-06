@@ -84,8 +84,10 @@ exports.syncProjectToBani = onDocumentWritten({
 const deepseekApiKey = defineSecret('DEEPSEEK_API_KEY');
 
 const DEEPSEEK_BASE_URL = 'https://api.deepseek.com/v1';
-const DEFAULT_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-flash';
-const REASONING_EFFORT = process.env.DEEPSEEK_REASONING_EFFORT || 'high';
+const { assistantModelConfig, assistantRequestBody, assistantResponseMessage } = require('./assistantProtocol');
+const assistantConfig = assistantModelConfig();
+const DEFAULT_MODEL = assistantConfig.model;
+const REASONING_EFFORT = assistantConfig.effort;
 const DAILY_MESSAGE_LIMIT = Math.max(1, Number(process.env.ASSISTANT_DAILY_LIMIT) || 300);
 const MAX_MESSAGES = 40;
 const MAX_MESSAGE_CHARS = 120_000;
@@ -189,15 +191,7 @@ exports.assistantChat = onCall(
           'Content-Type': 'application/json',
           Authorization: `Bearer ${deepseekApiKey.value()}`,
         },
-        body: JSON.stringify({
-          model: DEFAULT_MODEL,
-          messages,
-          ...(tools.length > 0 ? { tools, tool_choice: 'auto' } : {}),
-          temperature: 0.3,
-          reasoning_effort: REASONING_EFFORT,
-          max_tokens: 4096,
-          stream: false,
-        }),
+        body: JSON.stringify(assistantRequestBody(messages, tools, assistantConfig)),
         signal: controller.signal,
       });
     } catch (error) {
@@ -214,24 +208,23 @@ exports.assistantChat = onCall(
     }
 
     if (!response.ok) {
-      console.error('DeepSeek respondió con error', response.status, payload);
+      console.error('DeepSeek respondió con error', { status: response.status, code: payload?.error?.code });
       throw mapDeepSeekError(response.status, payload);
     }
 
     const message = payload?.choices?.[0]?.message;
-    if (!message) {
-      console.error('DeepSeek devolvió una respuesta sin mensaje', payload);
-      throw new HttpsError('internal', 'DeepSeek devolvió una respuesta vacía.');
+    if (payload?.choices?.[0]?.finish_reason === 'length') {
+      throw new HttpsError('resource-exhausted', 'La respuesta quedó incompleta por su tamaño. Pedí un grupo más chico o una tarea por vez.');
+    }
+    if (!message || (!(typeof message.content === 'string' && message.content.trim()) && !message.tool_calls?.length)) {
+      console.error('DeepSeek devolvió una respuesta sin mensaje', { model: payload?.model, finishReason: payload?.choices?.[0]?.finish_reason });
+      throw new HttpsError('unavailable', 'DeepSeek devolvió una respuesta vacía. Volvé a intentar.');
     }
 
     return {
       model: payload?.model || DEFAULT_MODEL,
       reasoningEffort: REASONING_EFFORT,
-      message: {
-        role: message.role || 'assistant',
-        content: typeof message.content === 'string' ? message.content : '',
-        tool_calls: Array.isArray(message.tool_calls) ? message.tool_calls : [],
-      },
+      message: assistantResponseMessage(message),
       usage: payload?.usage || null,
     };
     } catch (error) {
