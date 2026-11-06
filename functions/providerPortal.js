@@ -4,6 +4,7 @@ const M = require("./providerPortalModel");
 const { createPortalReimbursements, ownAdvanceFile } = require("./providerPortalReimbursements");
 const { createPortalInvoiceUpload, createPortalInvoiceRemoval, portalInvoiceRows } = require("./providerPortalInvoice");
 const { confirmationContent, confirmationState } = require('./providerProfileConfirmation');
+const { approvedEin } = require('./providerFiscalIdentifierException');
 const { createAccountChoiceService } = require('./providerAccountChoice');
 const { createTeamOnboarding } = require('./teamOnboarding');
 const { hasTeamWorkAccess } = require('./teamWorkAccess');
@@ -194,6 +195,11 @@ function createProviderPortalHandler({
       const membership = (await tx.get(membershipRef)).data();
       if (!applicable(current)) return current;
       if (current.contentHash !== decl.contentHash) fail('La declaración cambió mientras comprobabas la firma.');
+      if (current.content.fiscalIdentifier?.type === 'EIN') {
+        const exception = (await tx.get(db.doc(`providerFiscalIdentifierExceptions/${decl.providerId}`))).data();
+        const approved = approvedEin(decl.providerId, provider, actor, exception);
+        if (!approved || hash(approved) !== hash(current.content.fiscalIdentifier)) fail('La excepción del EIN cambió. Consultá a Gran Berta antes de aplicar la declaración.');
+      }
       if (
         !membership ||
         !["active", "needs_confirmation"].includes(membership.status) || membership.email !== actor.email
@@ -488,6 +494,8 @@ function createProviderPortalHandler({
             ? "profile"
             : "third_party";
       let content;
+      const fiscalIdentifier = ['representation', 'profile'].includes(kind)
+        ? approvedEin(providerId, provider, actor, (await db.doc(`providerFiscalIdentifierExceptions/${providerId}`).get()).data()) : null;
       if (kind === "representation") {
         if (provider.type !== 'empresa') fail('El alta de una persona física no requiere firma de representación.');
         if (!["own", "authorized_representative"].includes(input.capacity))
@@ -499,12 +507,12 @@ function createProviderPortalHandler({
           fail("Para una empresa indicá representante autorizado.");
         assertCompanyAccount(provider, actor, membership);
         content = companyRepresentation(provider, actor, input,
-          await sign.evidence.manifest(providerId, actor, input.evidenceIds, DECLARED_COMPANY_EVIDENCE));
+          await sign.evidence.manifest(providerId, actor, input.evidenceIds, DECLARED_COMPANY_EVIDENCE), fiscalIdentifier);
       }
       if (kind === "profile") {
         content = {
           application: 'signed_immediate',
-          changes: M.ownAccountProfileChanges(provider, input.changes, input.ownAccountConfirmed, input.confirmProfile === true),
+          changes: M.ownAccountProfileChanges(provider, input.changes, input.ownAccountConfirmed, input.confirmProfile === true, fiscalIdentifier),
           terms:
             "Declaro que los cambios detallados son verídicos y autorizo su aplicación al completar la firma desde mi cuenta Google aprobada. No requieren una aprobación administrativa posterior.",
         };
@@ -512,7 +520,7 @@ function createProviderPortalHandler({
           content.accountChoice = await accountChoices.resolve(providerId, actor, provider, input);
           if (String(provider.email || '') !== content.accountChoice.selected.email)
             content.changes.email = { before: String(provider.email || ''), after: content.accountChoice.selected.email, critical: true };
-          content.confirmation = confirmationContent(provider, actor, content.changes, input, content.accountChoice);
+          content.confirmation = confirmationContent(provider, actor, content.changes, input, content.accountChoice, fiscalIdentifier);
           content.terms = content.confirmation.terms;
           if (provider.type !== 'empresa') content.signerDni = content.confirmation.profile.dni.replace(/\D/g, '');
         }
@@ -542,7 +550,7 @@ function createProviderPortalHandler({
           ...new Set(content.workDetails.map((w) => w.key.split("/")[0])),
         ];
       }
-      content.provider = {
+      if (kind !== 'representation') content.provider = {
         name: text(
           provider.businessName ||
             [provider.name, provider.lastName].filter(Boolean).join(" "),
@@ -553,6 +561,7 @@ function createProviderPortalHandler({
         const p = content.confirmation.profile;
         content.provider = { name: p.type === 'empresa' ? p.businessName || p.name : [p.name, p.lastName].filter(Boolean).join(' '), cuit: p.cuit };
       }
+      if (fiscalIdentifier && String(content.provider.cuit || '').replace(/\D/g, '') === fiscalIdentifier.value) content.fiscalIdentifier = fiscalIdentifier;
       content.capacity =
         content.capacity ||
         membership.representation ||

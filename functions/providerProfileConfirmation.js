@@ -4,7 +4,7 @@ const VERSION = 'profile-confirmation-v1';
 const FIELDS = ['type', 'name', 'lastName', 'businessName', 'dni', 'cuit', 'birthDate', 'address', 'phone', 'email', 'bankAccount_cbu', 'bankAccount_alias', 'bankAccount_holder'];
 const snapshot = provider => ({ ...Object.fromEntries(FIELDS.map(key => [key, M.text(provider[key])])), birthDate: M.text(M.publicProfile(provider).birthDate), type: provider.type === 'empresa' ? 'empresa' : 'persona',
   ...(provider.type === 'empresa' ? { name: M.text(provider.businessName || provider.name) } : {}) });
-function confirmationContent(provider, actor, changes, input, accountChoice) {
+function confirmationContent(provider, actor, changes, input, accountChoice, fiscalIdentifier = null) {
   if (input.dataConfirmed !== true || input.accessEmailConfirmed !== true)
     M.fail('Confirmá tus datos y la cuenta Google con la que ingresaste.');
   const before = snapshot(provider);
@@ -15,7 +15,10 @@ function confirmationContent(provider, actor, changes, input, accountChoice) {
     M.fail('Completá tu DNI antes de confirmar los datos.');
   if (!profile.bankAccount_cbu && !profile.bankAccount_alias) M.fail('Completá tu CBU/CVU o alias propio.');
   if (profile.bankAccount_cbu && !/^\d{22}$/.test(profile.bankAccount_cbu)) M.fail('Revisá tu CBU/CVU: debe tener 22 dígitos.');
-  if (profile.cuit && !/^\d{11}$/.test(profile.cuit.replace(/\D/g, ''))) M.fail('Revisá tu CUIT: debe tener 11 dígitos.');
+  const preservedEin = fiscalIdentifier?.type === 'EIN' && /^\d{9}$/.test(fiscalIdentifier.value)
+    && fiscalIdentifier.value === profile.cuit.replace(/\D/g, '')
+    && fiscalIdentifier.value === before.cuit.replace(/\D/g, '');
+  if (profile.cuit && !/^\d{11}$/.test(profile.cuit.replace(/\D/g, '')) && !preservedEin) M.fail('Revisá tu CUIT: debe tener 11 dígitos.');
   if (input.ownAccountConfirmed !== true) M.fail('Confirmá la titularidad de la cuenta provista.');
   const selectedEmail = accountChoice?.selected.email || actor.email;
   return {

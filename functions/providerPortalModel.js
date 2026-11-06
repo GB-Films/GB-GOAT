@@ -52,7 +52,7 @@ const CRITICAL = [
   "bankAccount_holder",
 ];
 const COMMON = ["address", "phone", "birthDate", "dietaryRestriction"];
-function ownAccountProfileChanges(provider, input, confirmed, allowUnchanged = false) {
+function ownAccountProfileChanges(provider, input, confirmed, allowUnchanged = false, fiscalIdentifier = null) {
   const changes = { ...input };
   const account = { cbu: changes.bankAccount_cbu ?? provider.bankAccount_cbu, alias: changes.bankAccount_alias ?? provider.bankAccount_alias };
   const accountChanges = allowUnchanged || ['bankAccount_cbu', 'bankAccount_alias', 'bankAccount_holder', 'name', 'lastName', 'businessName'].some(key => Object.hasOwn(changes, key));
@@ -64,9 +64,9 @@ function ownAccountProfileChanges(provider, input, confirmed, allowUnchanged = f
     if (changes.bankAccount_holder && changes.bankAccount_holder !== holder) fail('La cuenta propia debe corresponder al proveedor de esta ficha.');
     changes.bankAccount_holder = holder;
   }
-  return profileChanges(provider, changes, allowUnchanged);
+  return profileChanges(provider, changes, allowUnchanged, fiscalIdentifier);
 }
-function profileChanges(before, input, allowUnchanged = false) {
+function profileChanges(before, input, allowUnchanged = false, fiscalIdentifier = null) {
   if (!input || typeof input !== "object" || Array.isArray(input))
     fail("Faltan los cambios.");
   const result = {};
@@ -79,7 +79,10 @@ function profileChanges(before, input, allowUnchanged = false) {
       fail("Dato no editable.");
     const value = text(raw);
     if (key === 'dni' && !/^\d{7,9}$/.test(value.replace(/\D/g, ''))) fail('El DNI debe tener entre 7 y 9 dígitos.');
-    if (key === "cuit" && !/^\d{11}$/.test(value.replace(/\D/g, "")))
+    const preservedEin = fiscalIdentifier?.type === 'EIN' && /^\d{9}$/.test(fiscalIdentifier.value)
+      && fiscalIdentifier.value === String(before.cuit || '').replace(/\D/g, '')
+      && fiscalIdentifier.value === value.replace(/\D/g, '');
+    if (key === "cuit" && !/^\d{11}$/.test(value.replace(/\D/g, "")) && !preservedEin)
       fail("El CUIT debe tener 11 dígitos.");
     if (key === "bankAccount_cbu" && value && !/^\d{22}$/.test(value))
       fail("CBU/CVU inválida.");
