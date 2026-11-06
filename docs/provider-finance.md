@@ -37,8 +37,12 @@ por proyecto, no por celda. Invalida su caché al cambiar las relaciones nativas
 los gastos, aunque el conjunto de IDs de factura permanezca igual. No convierte
 el número de aplicaciones visibles en un supuesto total global.
 
-Las columnas de factura, el indicador bajo el proveedor y el panel móvil usan
-la misma decisión. Si faltan archivo, acceso o metadatos suficientes, muestran
+La columna de factura y el panel móvil usan la misma decisión. La factura no se
+repite debajo del proveedor. Allí se conserva el acceso a la autorización y,
+sólo cuando hay un archivo activo de comprobante o pago asociado a esa fila, el
+enlace a esos documentos. Un ID de pago sin archivo no genera ese enlace. La
+misma consulta por lotes obtiene los metadatos de esos archivos, sin llamadas por
+celda. Si faltan archivo, acceso o metadatos suficientes para la factura, muestran
 una indicación y permiten reintentar; no abren otra factura ni simulan una URL.
 La descarga sigue usando `openProviderFile` y las comprobaciones de acceso
 existentes. No se cambian pagos, autorizaciones, referencias ni datos financieros.

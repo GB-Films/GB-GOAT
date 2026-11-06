@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { InvoiceContext, SharedExpenseInvoices } from '../components/SharedExpenseInvoices';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { BudgetRowCell } from '../pages/project-detail/BudgetRowCell';
 const scope = { projectId: 'project-a', collectionName: 'areaExpenses', itemId: 'row' };
 const record = { id: 'invoice', kind: 'invoice', status: 'active', issuerCuit: '27333333334', file: { fileName: 'third-party.pdf' }, allocations: [scope], distinctExpenseCount: 1 };
 function html(records = [record], providerCuit = '20111111112') {
@@ -26,4 +28,19 @@ test('each original has a separate control and missing files produce honest feed
   const missing = html([{ ...record, file: undefined }]);
   assert.match(missing, /no tiene un archivo disponible/);
   assert.doesNotMatch(missing, /href=|en la ficha del proveedor/);
+});
+test('the provider cell does not duplicate the invoice and only links an actual payment document', () => {
+  const provider = { id: 'provider', type: 'persona', name: 'Persona ficticia', cuit: '20111111112', source: 'provider_invite' };
+  const item = { id: 'row', providerId: provider.id, providerName: provider.name, thirdPartyPayoutRequired: true, sharedInvoices: [{ id: 'invoice' }], sharedPaymentIds: ['payment'] };
+  function cell(paymentFile: boolean) {
+    return renderToStaticMarkup(createElement(MemoryRouter, { initialEntries: ['/proyectos/project-a'] },
+      createElement(InvoiceContext.Provider, { value: { records: new Map([['payment', { ...record, id: 'payment', kind: 'payment', file: paymentFile ? record.file : undefined }]]), providers: new Map([[provider.id, provider]]), loading: false, reload() {} } },
+        createElement(Routes, null, createElement(Route, { path: '/proyectos/:id', element: createElement(BudgetRowCell, {
+          item, providers: [provider], collectionName: 'areaExpenses', type: 'provider', onUpdate: async () => {},
+        }) })))));
+  }
+  const noFile = cell(false);
+  assert.doesNotMatch(noFile, /Factura de tercero|Comprobantes \/ pago vinculado/);
+  assert.match(noFile, /Facturación y cobro por tercero/, 'the distinct authorization access remains available');
+  assert.match(cell(true), /Comprobantes \/ pago vinculado/);
 });

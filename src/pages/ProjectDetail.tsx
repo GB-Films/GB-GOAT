@@ -6122,7 +6122,7 @@ export default function ProjectDetail() {
               <div className="overflow-x-auto">
               <div className="min-w-[1360px]">
                 {/* Header Row */}
-                <div className="grid grid-cols-[minmax(160px,1.45fr)_minmax(180px,1.6fr)_78px_100px_76px_92px_96px_104px_150px_78px] gap-2 border-b border-slate-200 bg-slate-50 px-6 py-3">
+                <div className="grid grid-cols-[minmax(160px,1.45fr)_minmax(180px,1.6fr)_144px_100px_48px_92px_96px_104px_112px_78px] gap-2 border-b border-slate-200 bg-slate-50 px-6 py-3">
                   <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Proveedor / Concepto</div>
                   <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Descripción Detallada</div>
                   <div className="text-center text-[10px] font-bold uppercase tracking-widest text-slate-400">Factura</div>
@@ -6248,7 +6248,7 @@ export default function ProjectDetail() {
                                                       }
                                                     }}
                                                     className={cn(
-                                                      "group relative flex items-center border-b border-slate-50 px-6 py-3 transition-colors last:border-0",
+                                                      "group relative flex items-center border-b border-slate-50 px-6 py-2 transition-colors last:border-0",
                                                       dragOverExpenseId === item.id
                                                         ? "bg-emerald-50 ring-2 ring-inset ring-emerald-400"
                                                         : expenseNeedsProviderRegistration(item, providers, registrationEvidence) ? "bg-amber-50 hover:bg-amber-100/70" : "bg-white hover:bg-slate-50",
@@ -6262,7 +6262,7 @@ export default function ProjectDetail() {
                                                         disabled={!canEditMainBudget || Boolean(budgetSearchTerm)}
                                                         className="mr-2"
                                                       />
-                                                      <div className="grid w-full grid-cols-[minmax(142px,1.45fr)_minmax(180px,1.6fr)_78px_100px_76px_92px_96px_104px_150px_78px] items-center gap-2">
+                                                      <div className="grid w-full grid-cols-[minmax(160px,1.45fr)_minmax(180px,1.6fr)_144px_100px_48px_92px_96px_104px_112px_78px] items-center gap-2">
                                                         <div>
                                                           <BudgetRowCell 
                                                             item={item} 
@@ -6855,7 +6855,7 @@ export default function ProjectDetail() {
 
                   {!isCompactAreas && (
                   <div className="overflow-x-auto">
-                    <div className="grid min-w-[1360px] grid-cols-[minmax(160px,1.45fr)_minmax(180px,1.6fr)_78px_100px_76px_92px_96px_104px_150px_78px] bg-slate-50 border-b border-slate-200 px-6 py-3 gap-2">
+                    <div className="grid min-w-[1360px] grid-cols-[minmax(160px,1.45fr)_minmax(180px,1.6fr)_144px_100px_48px_92px_96px_104px_112px_78px] bg-slate-50 border-b border-slate-200 px-6 py-3 gap-2">
                       <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Proveedor / Concepto</div>
                       <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Descripcion Detallada</div>
                       <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">Factura</div>
@@ -7050,7 +7050,7 @@ export default function ProjectDetail() {
                               if (isFileDrag(event) && canUploadAreaFiles(item.area, item.subcategory)) handleInvoiceDrop(event, item);
                             }}
                             className={cn(
-                              "relative grid min-w-[1360px] grid-cols-[minmax(160px,1.45fr)_minmax(180px,1.6fr)_78px_100px_76px_92px_96px_104px_150px_78px] px-6 py-3 items-center gap-2 transition-colors group",
+                              "relative grid min-w-[1360px] grid-cols-[minmax(160px,1.45fr)_minmax(180px,1.6fr)_144px_100px_48px_92px_96px_104px_112px_78px] px-6 py-2 items-center gap-2 transition-colors group",
                               dragOverExpenseId === item.id
                                 ? "bg-emerald-50 ring-2 ring-inset ring-emerald-400"
                                 : expenseNeedsProviderRegistration(item, providers, registrationEvidence) ? "bg-amber-50 hover:bg-amber-100/70" : "bg-white hover:bg-slate-50",
@@ -7142,7 +7142,7 @@ export default function ProjectDetail() {
                           <button
                             type="button"
                             onClick={() => addAreaExpense(areaRow.area, subcategoryGroup.subcategory)}
-                            className="grid h-6 min-w-[1360px] grid-cols-[minmax(160px,1.45fr)_minmax(180px,1.6fr)_78px_100px_76px_92px_96px_104px_150px_78px] items-center gap-2 border-b border-dashed border-slate-200 bg-white px-6 text-slate-300 transition-colors hover:bg-slate-50 hover:text-slate-600"
+                            className="grid h-6 min-w-[1360px] grid-cols-[minmax(160px,1.45fr)_minmax(180px,1.6fr)_144px_100px_48px_92px_96px_104px_112px_78px] items-center gap-2 border-b border-dashed border-slate-200 bg-white px-6 text-slate-300 transition-colors hover:bg-slate-50 hover:text-slate-600"
                             title="Agregar nuevo gasto"
                           >
                             <span className="col-span-10 flex items-center justify-center gap-1.5 text-[9px] font-black uppercase tracking-widest">
