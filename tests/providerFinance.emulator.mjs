@@ -43,6 +43,8 @@ try {
   const scope = { projectId: 'project0', collectionName: 'areaExpenses', itemId: 'expense' };
   assert.equal((await scopedEditor({ action: 'download', id: 'invoice1', ...scope })).base64, 'JVBERg==');
   const visible = await scopedEditor({ action: 'projectDocuments', projectId: 'project0', recordIds: ['invoice1'] });
+  assert.equal(visible.records[0].distinctExpenseCount, 3, 'global count includes the two projects omitted from this scoped projection');
+  assert.equal(visible.records[0].issuerCuit, invoice.issuerCuit);
   assert.equal(visible.records.length, 1); assert.equal(visible.records[0].allocations.length, 1);
   assert.equal(visible.records[0].file.path, undefined, 'shared metadata does not return a permanent link or raw storage path');
   await assert.rejects(scopedEditor({ action: 'download', id: 'invoice1', ...scope, itemId: 'foreign' }), /ajeno/);

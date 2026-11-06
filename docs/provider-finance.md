@@ -17,8 +17,35 @@ adjuntos anteriores y ofrece tres cargas para administradores globales:
 
 La ficha distingue el prestador del gasto, el emisor fiscal de la factura y el
 beneficiario del pago. Cargar una factura no crea otro costo ni acredita un pago.
-El indicador del gasto muestra la factura vinculada y abre la ficha. Las
-aplicaciones de pago aparecen en su historial y sus saldos habituales.
+El indicador de factura del gasto abre directamente su original cuando tiene una
+única fila distinta asignada. Sólo abre la ficha cuando esa misma factura abarca
+más de una fila, incluso de distintos proyectos. Las aplicaciones duplicadas de
+una misma clave proyecto/colección/gasto cuentan como una sola fila. La cantidad
+de facturas en una celda no determina esta decisión: cada original conserva su
+propio botón, junto a los archivos legados que ya tuviera el gasto.
+
+La etiqueta **Factura de tercero**, amarilla con contorno, requiere que el CUIT
+real del emisor de la factura difiera del CUIT del prestador. No se deduce del
+pagador, nombre o indicador `thirdPartyPayoutRequired`, ni certifica la vigencia de
+una autorización. Las facturas propias mantienen el aspecto verde habitual.
+
+La consulta existente `projectDocuments` devuelve para facturas el emisor y
+`distinctExpenseCount`, calculado sobre todas las aplicaciones nativas antes de
+filtrar por proyecto. Sólo expone ese total; no devuelve IDs, nombres, importes o
+filas de proyectos ajenos. El cliente consulta por lotes de hasta100 registros
+por proyecto, no por celda. Invalida su caché al cambiar las relaciones nativas de
+los gastos, aunque el conjunto de IDs de factura permanezca igual. No convierte
+el número de aplicaciones visibles en un supuesto total global.
+
+Las columnas de factura, el indicador bajo el proveedor y el panel móvil usan
+la misma decisión. Si faltan archivo, acceso o metadatos suficientes, muestran
+una indicación y permiten reintentar; no abren otra factura ni simulan una URL.
+La descarga sigue usando `openProviderFile` y las comprobaciones de acceso
+existentes. No se cambian pagos, autorizaciones, referencias ni datos financieros.
+Publicar primero la extensión de lectura de `manageProviderFinance` y luego la
+web; no hay cambios de reglas, IAM, Storage ni escrituras de datos.
+
+Las aplicaciones de pago aparecen en su historial y sus saldos habituales.
 
 ### Declaraciones de facturación y cobro por terceros
 

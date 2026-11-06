@@ -5,8 +5,11 @@ import { getExpenseInvoices, getInvoiceDocumentKey, type ExpenseInvoiceDocument 
 import { ProjectDialog } from './ProjectDialog';
 import { INVOICE_INPUT_ACCEPT, RECEIPT_INPUT_ACCEPT } from './ExpenseFileCells';
 import { ProviderProfileButton } from '../../components/ProviderProfileButton';
+import { SharedExpenseInvoices } from '../../components/SharedExpenseInvoices';
+import type { ProjectDocumentScope } from '../../lib/providerFinance';
 
 export type MobileExpenseDocumentsProps = {
+  scope?: ProjectDocumentScope | null;
   item: any;
   canManage: boolean;
   canRemove: boolean;
@@ -54,7 +57,7 @@ export function ExpenseDocumentsPanel(props: MobileExpenseDocumentsProps) {
     <p className="break-words text-xs text-slate-500">{item.providerName || item.description || 'Documentación del gasto'}</p>
     <section className="space-y-2">
       <h3 className="text-xs font-black uppercase tracking-wide text-slate-600">Facturas</h3>
-      {!!item.sharedInvoices?.length && <ProviderProfileButton providerId={item.providerId}>Facturas vinculadas ({item.sharedInvoices.length})</ProviderProfileButton>}
+      <SharedExpenseInvoices item={item} scope={props.scope || null} />
       {invoices.map((invoice, index) => renderDocument(invoice, getInvoiceDocumentKey(invoice) || String(index), `Factura ${index + 1}`,
         canRemove ? () => props.onRemoveInvoice(invoice) : undefined, uploadingInvoice))}
       {!invoices.length && !item.sharedInvoices?.length && <p className="text-xs text-slate-400">Sin facturas cargadas.</p>}

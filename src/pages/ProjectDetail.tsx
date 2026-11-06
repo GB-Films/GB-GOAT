@@ -82,6 +82,7 @@ import { BudgetRowCell } from './project-detail/BudgetRowCell';
 import { DRAGGING_EXPENSE_ROW_CLASS, ExpenseDragHandle } from './project-detail/ExpenseDragHandle';
 import { PaymentModal } from './project-detail/PaymentModal';
 import { ExpenseInvoiceCell, ExpenseReceiptsCell, InvoiceDropOverlay } from './project-detail/ExpenseFileCells';
+import { SharedInvoiceRecordsProvider } from '../components/SharedExpenseInvoices';
 import type { AreaExpense, BudgetItem, CashMovement, Collaborator, Payment, PaymentCollection } from './project-detail/types';
 import { formatIdentifier, inferLegacyIdentifiers, normalizeDigits, providerDisplayName } from '../lib/providerConstants';
 import { normalizeEmail, normalizeSearchText } from '../lib/identity';
@@ -3968,6 +3969,7 @@ export default function ProjectDetail() {
   };
   const renderExpenseInvoiceCell = (item: any, collectionName: PaymentCollection) => (
     <ExpenseInvoiceCell
+      scope={id ? { projectId: id, collectionName, itemId: item.id } : null}
       item={item}
       canManage={canManageItemFiles(item, collectionName)}
       canRemove={isProjectAdmin}
@@ -3991,6 +3993,7 @@ export default function ProjectDetail() {
   );
   const renderMobileExpenseDocuments = (item: any, collectionName: PaymentCollection) => (
     <MobileExpenseDocuments
+      scope={id ? { projectId: id, collectionName, itemId: item.id } : null}
       item={item}
       canManage={canManageItemFiles(item, collectionName)}
       canRemove={isProjectAdmin}
@@ -5460,6 +5463,7 @@ export default function ProjectDetail() {
     : projectLoadStatus(financialLoad, loadScope) !== 'ready' || activeTab === 'resumen' ? financialLoad : auxiliaryLoad;
 
   return (
+    <SharedInvoiceRecordsProvider scopeKey={loadScope} projectId={id!} items={[...budgetItems.map(item => ({ ...item, __invoiceCollectionName: 'budgetItems' })), ...areaExpenses.map(item => ({ ...item, __invoiceCollectionName: 'areaExpenses' }))]} providers={providers}>
     <div className="mx-auto max-w-[1600px] text-[11px] sm:text-xs">
       <AnimatePresence>
         {expenseConfirmation && (
@@ -8465,5 +8469,6 @@ export default function ProjectDetail() {
       </AnimatePresence>
 
     </div>
+    </SharedInvoiceRecordsProvider>
   );
 }

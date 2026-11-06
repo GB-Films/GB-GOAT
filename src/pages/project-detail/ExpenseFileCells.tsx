@@ -5,11 +5,14 @@ import { FileText, Link as LinkIcon, Paperclip, Plus, X } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { getExpenseInvoices, getInvoiceDocumentKey, type ExpenseInvoiceDocument } from '../../lib/invoices';
 import { ProviderProfileButton } from '../../components/ProviderProfileButton';
+import { SharedExpenseInvoices } from '../../components/SharedExpenseInvoices';
+import type { ProjectDocumentScope } from '../../lib/providerFinance';
 
 export const INVOICE_INPUT_ACCEPT = 'application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png';
 export const RECEIPT_INPUT_ACCEPT = 'application/pdf,image/jpeg,image/png,image/webp,.pdf,.jpg,.jpeg,.png,.webp';
 
 type ExpenseInvoiceCellProps = {
+  scope?: ProjectDocumentScope | null;
   item: any;
   canManage: boolean;
   canRemove: boolean;
@@ -31,6 +34,7 @@ type ExpenseReceiptsCellProps = {
 };
 
 export function ExpenseInvoiceCell({
+  scope = null,
   item,
   canManage,
   canRemove,
@@ -51,9 +55,9 @@ export function ExpenseInvoiceCell({
 
   return (
     <>
-      <div className="flex items-center justify-center gap-1">
-      {!!item.sharedInvoices?.length && <ProviderProfileButton providerId={item.providerId}>Factura vinculada ({item.sharedInvoices.length})</ProviderProfileButton>}
-      {item.thirdPartyPayoutRequired && !item.sharedInvoices?.length && <ProviderProfileButton providerId={item.providerId}>Factura del tercero · gestionar en ficha</ProviderProfileButton>}
+      <div className="flex flex-wrap items-center justify-center gap-1">
+      <SharedExpenseInvoices item={item} scope={scope} />
+      {canManage && item.thirdPartyPayoutRequired && !item.sharedInvoices?.length && !invoices.length && <span className="text-[9px] text-slate-400">Sin factura cargada</span>}
       {singleInvoice ? (
         <>
           <a

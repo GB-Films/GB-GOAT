@@ -4,6 +4,7 @@ import { cn } from '../../lib/utils';
 import { isInternalBudgetEstimate } from '../../lib/internalBudgetEstimate';
 import { expenseRegistrationState, type RegistrationEvidence } from '../../lib/providerRegistration';
 import { ProviderWorkAuthorization } from '../../components/ProviderWorkAuthorization';
+import { SharedExpenseInvoices } from '../../components/SharedExpenseInvoices';
 import { useParams } from 'react-router-dom';
 import {
   formatIdentifier,
@@ -268,8 +269,9 @@ export function BudgetRowCell({ item, collectionName, providers, onUpdate, type,
         )}
         {showProviderDetail && provider && <Suspense fallback={<div className="fixed inset-0 z-[500] grid place-items-center bg-white/80 text-sm">Cargando proveedor…</div>}><ProviderProfileDialog provider={provider} initialProjectId={projectId} onClose={() => setShowProviderDetail(false)} /></Suspense>}
         {item.thirdPartyPayoutRequired && <button type="button" onClick={() => { setIsEditingProvider(false); setShowProviderInfo(true); }} className="mt-1 inline-flex rounded border border-indigo-200 bg-indigo-50 px-2 py-1 text-[9px] font-semibold text-indigo-800 transition-colors hover:bg-indigo-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500" title="Ver la declaración y la cuenta del tercero para este trabajo">Facturación y cobro por tercero</button>}
-        {((item.sharedInvoices?.length || 0) + (item.sharedReceipts?.length || 0) + (item.sharedPaymentIds?.length || 0)) > 0 && <button type="button" disabled={!provider} onClick={() => setShowProviderDetail(true)} className="mt-1 text-[9px] text-indigo-600 hover:underline" title="Ver aplicaciones sin duplicar el documento">
-          {item.sharedInvoices?.length ? `${item.sharedInvoices.length} factura(s) vinculada(s)` : 'Comprobantes / pago vinculado'}
+        {!!item.sharedInvoices?.length && <div className="mt-1 flex flex-wrap gap-1"><SharedExpenseInvoices item={item} scope={authorizationScope} /></div>}
+        {((item.sharedReceipts?.length || 0) + (item.sharedPaymentIds?.length || 0)) > 0 && <button type="button" disabled={!provider} onClick={() => setShowProviderDetail(true)} className="mt-1 text-[9px] text-indigo-600 hover:underline" title="Ver aplicaciones sin duplicar el documento">
+          Comprobantes / pago vinculado
         </button>}
         
         {isEditingProvider && !disabled && (
