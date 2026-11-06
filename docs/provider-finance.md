@@ -24,10 +24,16 @@ una misma clave proyecto/colección/gasto cuentan como una sola fila. La cantida
 de facturas en una celda no determina esta decisión: cada original conserva su
 propio botón, junto a los archivos legados que ya tuviera el gasto.
 
-La etiqueta **Factura de tercero**, amarilla con contorno, requiere que el CUIT
+El ícono de documento de **Factura de tercero**, con fondo amarillo, borde verde
+y esa leyenda al pasar el cursor o consultar su nombre accesible, requiere que el CUIT
 real del emisor de la factura difiera del CUIT del prestador. No se deduce del
 pagador, nombre o indicador `thirdPartyPayoutRequired`, ni certifica la vigencia de
-una autorización. Las facturas propias mantienen el aspecto verde habitual.
+una autorización. Varias facturas conservan un ícono identificado por original;
+la apertura directa o en ficha depende de sus filas, como se describe arriba.
+Las facturas propias mantienen el aspecto verde habitual. Este cambio visual no
+habilita borrar referencias financieras ni el enlace de carga habitual para un
+tercero: el reemplazo conserva el circuito de anulación y la autorización, y los
+comprobantes adicionales siguen en su columna existente.
 
 La consulta existente `projectDocuments` devuelve para facturas el emisor y
 `distinctExpenseCount`, calculado sobre todas las aplicaciones nativas antes de

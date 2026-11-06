@@ -12,9 +12,10 @@ function html(records = [record], providerCuit = '20111111112') {
     records: new Map(records.map(row => [row.id, row])), providers: new Map([['provider', { cuit: providerCuit }]]), loading: false, reload() {},
   } }, createElement(SharedExpenseInvoices, { item: { providerId: 'provider', sharedInvoices: records.map(row => ({ id: row.id })) }, scope })));
 }
-test('one-row third-party invoice is an amber bordered file button; multi-row uses the profile launcher', () => {
+test('one-row third-party invoice uses the document icon with yellow fill, green border and accessible tooltip; multi-row still opens the profile', () => {
   const single = html();
-  assert.match(single, /Factura de tercero/); assert.match(single, /border-amber-400/);
+  assert.match(single, /aria-label="Factura de tercero"/); assert.match(single, /title="Factura de tercero/);
+  assert.match(single, /lucide-file-text/); assert.match(single, /bg-amber-100/); assert.match(single, /border-emerald-500/);
   assert.doesNotMatch(single, /en la ficha del proveedor/);
   const multiple = html([{ ...record, distinctExpenseCount: 2 }]);
   assert.match(multiple, /en la ficha del proveedor/); assert.match(multiple, /2 filas/);
