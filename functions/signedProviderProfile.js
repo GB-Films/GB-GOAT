@@ -16,7 +16,9 @@ async function applySignedProviderProfile({ db, tx, ref, declaration, providerRe
   const identifiers = [];
   for (const field of ['cuit', 'dni']) if (Object.hasOwn(changes, field)) {
     const value = String(changes[field]).replace(/\D/g, ''), previous = String(provider[field + 'Normalized'] || provider[field] || '').replace(/\D/g, '');
-    if (!new RegExp(field === 'dni' ? '^\\d{7,9}$' : '^\\d{11}$').test(value)) M.fail(`Revisá el ${field.toUpperCase()} declarado.`);
+    const preservedEin = field === 'cuit' && declaration.content.fiscalIdentifier?.type === 'EIN'
+      && declaration.content.fiscalIdentifier.value === value && value === previous && /^\d{9}$/.test(value);
+    if (!new RegExp(field === 'dni' ? '^\\d{7,9}$' : '^\\d{11}$').test(value) && !preservedEin) M.fail(`Revisá el ${field.toUpperCase()} declarado.`);
     changes[field + 'Normalized'] = value;
     const nextRef = db.doc(`providerIdentifiers/${field}_${value}`), next = await tx.get(nextRef);
     if (next.exists && next.data().providerId !== declaration.providerId) M.fail('Ese identificador ya corresponde a otro proveedor. Corregí la declaración antes de aplicar.');

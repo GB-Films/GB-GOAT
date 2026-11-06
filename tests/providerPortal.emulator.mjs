@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { testProviderEinException } from './providerEinException.emulator.mjs';
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
@@ -309,6 +310,7 @@ try {
   assert.equal((await db.collection('providerPortalAudit').where('declarationId', '==', representation.id).get()).size, auditCount, 'retry does not duplicate activation/audit');
   assert.equal((await db.doc(`providerPortalDeclarations/${representation.id}`).get()).data().content.evidence.length, 1, 'no power was required or attached');
   assert.equal((await own({ action: 'myDocuments' })).documents.find(document => document.documentId === representation.id).declarationStatus, 'applied');
+  await testProviderEinException({ db, own, other, signActual, evidencePdf, env, assertFails, doc, getDoc, setDoc });
   const view = await own({ action: "overview", providerId: "supplier" });
   assert.equal(view.works.length, 1);
   assert.equal(view.works[0].total, 100);

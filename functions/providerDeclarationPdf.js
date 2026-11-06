@@ -20,6 +20,7 @@ const safe = (value) =>
     (c) => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0"),
   );
 async function declarationPdf(d) {
+  const names = { ...fieldNames, ...(d.content?.fiscalIdentifier?.type === 'EIN' ? { cuit: 'EIN', companyCuit: 'EIN de la empresa' } : {}) };
   const pdf = await PDFDocument.create();
   const created = new Date(d.preparedAt || 0);
   pdf.setCreationDate(created);
@@ -65,7 +66,7 @@ async function declarationPdf(d) {
     line('Datos que confirmo', true);
     for (const [key, value] of Object.entries(c.confirmation.profile))
       if (key !== 'type' && !(c.confirmation.profile.type === 'empresa' ? ['name', 'lastName', 'dni', 'birthDate'].includes(key) : key === 'businessName'))
-        line(`${fieldNames[key] || key}: ${value || 'No informado'}`);
+        line(`${names[key] || key}: ${value || 'No informado'}`);
     line(`Cuenta Google utilizada para esta confirmación: ${c.confirmation.accessEmail}`);
     if (c.accountChoice) {
       line(`Correo Google elegido para la ficha: ${c.accountChoice.selected.email}`);
@@ -76,7 +77,7 @@ async function declarationPdf(d) {
   if (!c.confirmation) {
     line(`Proveedor: ${c.provider?.name || d.providerId}`);
     line(
-      `${d.kind === "representation" ? "CUIT informado en la ficha (dato de referencia)" : "CUIT"}: ${c.provider?.cuit || "No informado"}`,
+      `${d.kind === "representation" ? `${names.cuit} informado en la ficha (dato de referencia)` : names.cuit}: ${c.provider?.cuit || "No informado"}`,
     );
     line(`Cuenta que declara: ${d.actor.email}`);
     line(`Carácter declarado: ${d.kind === "representation" ? "Representante autorizado de la empresa" : "Prestador por cuenta propia"}`);
@@ -86,12 +87,12 @@ async function declarationPdf(d) {
     for (const [key, value] of Object.entries(c.profile).sort(([a], [b]) =>
       a.localeCompare(b),
     ))
-      if (value) line(`${fieldNames[key] || key}: ${value}`);
+      if (value) line(`${names[key] || key}: ${value}`);
   if (d.kind === "profile")
     for (const [key, value] of Object.entries(c.changes).sort(([a], [b]) =>
       a.localeCompare(b),
     )) {
-      line(fieldNames[key] || key, true);
+      line(names[key] || key, true);
       line(`Valor anterior: ${value.before || "Sin dato"}`);
       line(`Valor propuesto: ${value.after || "Sin dato"}`);
       line(
