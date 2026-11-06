@@ -1,12 +1,12 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { providerFinanceRequest, type ProjectDocumentScope } from '../lib/providerFinance';
-import { isThirdPartyInvoice, projectInvoiceRelationsKey, sharedInvoiceAction, sharedInvoiceReferences, type InvoiceRecord } from '../lib/sharedExpenseInvoices';
+import { expenseLinkedRecordIds, isThirdPartyInvoice, projectInvoiceRelationsKey, sharedInvoiceAction, sharedInvoiceReferences, type InvoiceRecord } from '../lib/sharedExpenseInvoices';
 import { SharedProviderFileButton } from './SharedProviderFileButton';
 import { ProviderProfileButton } from './ProviderProfileButton';
 
 export const InvoiceContext = createContext<{ records: Map<string, InvoiceRecord>; providers: Map<string, any>; loading: boolean; reload: () => void }>({ records: new Map(), providers: new Map(), loading: false, reload: () => {} });
 export function SharedInvoiceRecordsProvider({ scopeKey, projectId, items, providers, children }: { scopeKey: string; projectId: string; items: any[]; providers: any[]; children: ReactNode }) {
-  const idsKey = JSON.stringify([...new Set(items.flatMap(item => sharedInvoiceReferences(item).map(row => row.id)))].sort());
+  const idsKey = JSON.stringify([...new Set(items.flatMap(expenseLinkedRecordIds))].sort());
   const key = `${scopeKey}/${projectId}/${projectInvoiceRelationsKey(items)}`;
   const [revision, setRevision] = useState(0), [state, setState] = useState<{ key: string; records: InvoiceRecord[]; loading: boolean }>({ key: '', records: [], loading: true });
   useEffect(() => {
@@ -35,9 +35,9 @@ export function SharedExpenseInvoices({ item, scope }: { item: any; scope: Proje
     const thirdParty = isThirdPartyInvoice(record || reference, provider?.cuit || provider?.cuitNormalized || provider?.dni_cuit);
     const documentName = record?.number || reference.number || record?.file?.fileName || `Documento ${index + 1}`;
     const label = `${thirdParty ? 'Factura de tercero' : 'Factura'}${references.length > 1 ? ` · ${index + 1}: ${documentName}` : ''}`;
-    const className = `rounded border px-2 py-1 text-[9px] font-bold transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-50 ${thirdParty ? 'border-amber-400 bg-amber-50 text-amber-950 hover:bg-amber-100 focus-visible:outline-amber-600' : 'border-emerald-100 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 focus-visible:outline-emerald-600'}`;
+    const className = `max-w-full truncate whitespace-nowrap rounded border px-2 py-1 text-[9px] font-bold transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-50 ${thirdParty ? 'border-amber-400 bg-amber-50 text-amber-950 hover:bg-amber-100 focus-visible:outline-amber-600' : 'border-emerald-100 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 focus-visible:outline-emerald-600'}`;
     const action = sharedInvoiceAction(record, scope);
-    return <span key={reference.id} title={documentName} className="inline-flex flex-col gap-1">
+    return <span key={reference.id} title={documentName} className="inline-flex max-w-full flex-col gap-1">
       {action === 'file' ? <SharedProviderFileButton id={reference.id} scope={scope!} label={label} className={className} />
         : action === 'profile' ? <ProviderProfileButton providerId={item.providerId} className={className}>{label} · {record!.distinctExpenseCount} filas</ProviderProfileButton>
           : <><button type="button" className={className} disabled={loading} onClick={reload}>{loading ? 'Consultando factura…' : label}</button>

@@ -18,8 +18,24 @@ export function sharedInvoiceAction(record: InvoiceRecord | undefined, scope: Pr
 export function sharedInvoiceReferences(item: { sharedInvoices?: InvoiceReference[] }) {
   return [...new Map((Array.isArray(item.sharedInvoices) ? item.sharedInvoices : []).filter(row => row && typeof row.id === 'string').map(row => [row.id, row])).values()];
 }
+export function expenseLinkedRecordIds(item: any): string[] {
+  return [...new Set<string>([...sharedInvoiceReferences(item).map(row => row.id),
+    ...(Array.isArray(item.sharedReceipts) ? item.sharedReceipts.map((row: any) => row?.id) : []),
+    ...(Array.isArray(item.sharedPaymentIds) ? item.sharedPaymentIds : []),
+  ].filter((value): value is string => typeof value === 'string' && /^[\w-]{1,160}$/.test(value)))];
+}
+export function hasLinkedExpenseFile(item: any, records: Map<string, InvoiceRecord>, scope: ProjectDocumentScope | null) {
+  if (!scope) return false;
+  return expenseLinkedRecordIds(item).some(id => {
+    const record = records.get(id);
+    const referenced = record?.kind === 'payment' ? Array.isArray(item.sharedPaymentIds) && item.sharedPaymentIds.includes(id)
+      : record?.kind === 'other' && Array.isArray(item.sharedReceipts) && item.sharedReceipts.some((row: any) => row?.id === id);
+    return referenced && record?.status === 'active' && !!record.file?.fileName
+      && record.allocations?.some(row => row.projectId === scope.projectId && row.collectionName === scope.collectionName && row.itemId === scope.itemId);
+  });
+}
 export function projectInvoiceRelationsKey(items: any[]) {
-  // Cache invalidation only: this local graph is never the invoice's total.
-  return JSON.stringify(items.flatMap(item => sharedInvoiceReferences(item).map(row =>
-    [item.__invoiceCollectionName, item.id, row.id])).map(row => JSON.stringify(row)).sort());
+  // Cache invalidation for linked files only; never an invoice's global total.
+  return JSON.stringify(items.flatMap(item => expenseLinkedRecordIds(item).map(id =>
+    [item.__invoiceCollectionName, item.id, id])).map(row => JSON.stringify(row)).sort());
 }
