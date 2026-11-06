@@ -6,6 +6,7 @@ const { HttpsError } = require('firebase-functions/v2/https');
 const { FieldValue } = require('firebase-admin/firestore');
 const { projectFinanceAccess, linkedAllocation } = require('./projectFinanceAccess');
 const { createOwnPaymentCorrection } = require('./ownPaymentCorrection');
+const { distinctInvoiceExpenseCount } = require('./providerInvoiceMetadata');
 
 const fail = message => { throw new HttpsError('failed-precondition', message); };
 const text = (value, max = 500) => String(value || '').trim().slice(0, max);
@@ -141,6 +142,7 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, ver
             (await db.doc(`projects/${projectId}/${row.collectionName}/${id(row.itemId)}`).get()).data())));
         if (!linked.some(Boolean)) throw new HttpsError('permission-denied', 'Comprobante ajeno al proyecto.');
         return { id: recordId, kind: record.kind, status: record.status, number: record.number || '',
+          ...(record.kind === 'invoice' ? { distinctExpenseCount: distinctInvoiceExpenseCount(record.allocations), issuerName: text(record.issuerName), issuerCuit: text(record.issuerCuit).replace(/\D/g, '') } : {}),
           file: { fileName: record.file.fileName }, allocations: allocations.filter((_, index) => linked[index]).map(row => ({ projectId, collectionName: row.collectionName, itemId: row.itemId })) };
       }));
       return { records: records.filter(Boolean) };
