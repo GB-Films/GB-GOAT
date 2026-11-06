@@ -33,9 +33,9 @@ export async function portalRequest(
     if (!user) throw Error("Iniciá sesión.");
     const session = await user.getIdTokenResult();
     if (registrationNeedsVerification(session.claims)) {
-      // Intake must recover through an explicit click. A popup opened after
+      // Intake and file uploads recover through an explicit click. A popup opened after
       // token/network awaits can be blocked, especially on mobile browsers.
-      if (['registerProvider', 'uploadInvoice', 'removeInvoice'].includes(String(input.action))) throw registrationProblem('auth/requires-recent-login');
+      if (['registerProvider', 'uploadInvoice', 'removeInvoice', 'uploadEvidence'].includes(String(input.action))) throw registrationProblem('auth/requires-recent-login');
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: 'select_account', login_hint: user.email || '' });
       await reauthenticateWithPopup(user, provider);
