@@ -232,6 +232,7 @@ export const describeAssistantScope = (capabilities: AssistantCapabilities) => {
 
   const abilities = [
     capabilities.can.editMainBudget && 'editar el presupuesto principal',
+    (capabilities.can.editMainBudget || capabilities.areas.some(scope => scope.canEditArea || scope.canEditSubcategories.length > 0)) && 'programar fechas previstas de pago en gastos que puede editar, con confirmación; no ejecutar pagos',
     capabilities.can.activateAreas && 'activar áreas',
     capabilities.can.deleteAreas && 'eliminar áreas con su información',
     capabilities.can.manageSubcategoryBudgets && 'crear y editar subcategorías con presupuesto',

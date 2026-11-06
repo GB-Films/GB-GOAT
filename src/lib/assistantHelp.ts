@@ -195,6 +195,7 @@ export const ASSISTANT_HELP_SECTIONS: AssistantHelpSection[] = [
     keywords: ['finanzas', 'saldos', 'resultado', 'margen', 'incidencias', 'calendario de pagos', 'vencimientos'],
     content: [
       'Finanzas (saldos) muestra el calendario de pagos: qué vence, qué está vencido y qué falta agendar, además de los reintegros. Permite programar la fecha de pago de cada gasto.',
+      'El asistente puede programar o quitar fechas previstas en lote: identifica los gastos, muestra el detalle y pide confirmación. Respeta el acceso de edición a cada área/subcategoría; las partidas del presupuesto principal requieren administración. No registra pagos ni mueve cajas.',
       'Proveedores muestra saldos y documentos por proveedor. Se busca por proveedor y se filtra por estado de pago. La factura aparece verde si está pagada, amarilla si tiene pagos parciales y roja si está pendiente. Al pulsar el proveedor se abre su ficha.',
       'Resultado es el análisis financiero del proyecto y sólo lo ven los administradores. Los porcentajes predeterminados son: imprevistos 1%, impuestos 4,5%, financiación 2%, indirectos 8% y margen 10%. Se conservan los porcentajes ya guardados en el proyecto.',
       'Cómo se leen los pagos: un gasto con pagos parciales sigue mostrando saldo; un pago de tercero cuenta como costo del proyecto y genera una deuda con esa persona hasta que se reintegra.',
