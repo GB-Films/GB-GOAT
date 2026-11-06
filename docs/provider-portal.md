@@ -4,6 +4,20 @@ Implementación en dos repositorios: GOAT y GB Sign. El código no activa usuari
 
 ## Experiencia
 
+### Trabajos por proyecto
+
+**Trabajos** usa filas compactas por proyecto, cerradas inicialmente. El encabezado
+resume trabajado, pagado y saldo; al desplegar aparecen los trabajos y sus pagos
+registrados, también colapsados. Los importes pagados se distinguen en verde y los
+saldos pendientes en rosa, con etiquetas de texto. La vista se apila en celular
+sin una tabla ancha ni desplazamiento horizontal.
+
+Las monedas se resumen por separado. El saldo del proyecto suma los pendientes de
+cada trabajo: un sobrepago de otro trabajo no los cancela visualmente. Si hay un
+registro histórico marcado pagado sin detalle, se conserva esa aclaración y no
+se presenta su pago de cero como deuda. No hay cambios de datos, consultas,
+permisos ni operaciones del servidor.
+
 ### Carga de facturas desde Mi proveedor
 
 En **Facturas**, el proveedor elige proyecto y trabajo, selecciona PDF/JPG/PNG de hasta 2 MB y pulsa **Cargar factura**. Se admite una carga únicamente si ese trabajo no tiene factura anterior, en `invoice`, `invoices` ni `sharedInvoices`. La disponibilidad no se decide por autor ni por estado de pago. Otros trabajos del mismo proyecto pueden tener sus propias facturas. Una factura de tercero conserva su circuito administrativo contra la declaración firmada.
