@@ -5,6 +5,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { InvoiceContext, SharedExpenseInvoices } from '../components/SharedExpenseInvoices';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { BudgetRowCell } from '../pages/project-detail/BudgetRowCell';
+import { ExpenseInvoiceCell } from '../pages/project-detail/ExpenseFileCells';
+import { ExpenseDocumentsPanel } from '../pages/project-detail/MobileExpenseDocuments';
 const scope = { projectId: 'project-a', collectionName: 'areaExpenses', itemId: 'row' };
 const record = { id: 'invoice', kind: 'invoice', status: 'active', issuerCuit: '27333333334', file: { fileName: 'third-party.pdf' }, allocations: [scope], distinctExpenseCount: 1 };
 function html(records = [record], providerCuit = '20111111112') {
@@ -12,9 +14,10 @@ function html(records = [record], providerCuit = '20111111112') {
     records: new Map(records.map(row => [row.id, row])), providers: new Map([['provider', { cuit: providerCuit }]]), loading: false, reload() {},
   } }, createElement(SharedExpenseInvoices, { item: { providerId: 'provider', sharedInvoices: records.map(row => ({ id: row.id })) }, scope })));
 }
-test('one-row third-party invoice is an amber bordered file button; multi-row uses the profile launcher', () => {
+test('one-row third-party invoice uses the document icon with yellow fill, green border and accessible tooltip; multi-row still opens the profile', () => {
   const single = html();
-  assert.match(single, /Factura de tercero/); assert.match(single, /border-amber-400/);
+  assert.match(single, /aria-label="Factura de tercero"/); assert.match(single, /title="Factura de tercero/);
+  assert.match(single, /lucide-file-text/); assert.match(single, /bg-amber-100/); assert.match(single, /border-emerald-500/);
   assert.doesNotMatch(single, /en la ficha del proveedor/);
   const multiple = html([{ ...record, distinctExpenseCount: 2 }]);
   assert.match(multiple, /en la ficha del proveedor/); assert.match(multiple, /2 filas/);
@@ -43,4 +46,26 @@ test('the provider cell does not duplicate the invoice and only links an actual 
   assert.doesNotMatch(noFile, /Factura de tercero|Comprobantes \/ pago vinculado/);
   assert.match(noFile, /Facturación y cobro por tercero/, 'the distinct authorization access remains available');
   assert.match(cell(true), /Comprobantes \/ pago vinculado/);
+});
+
+test('third-party documents keep the same upload, link and removal controls in desktop and mobile views', () => {
+  const item = { id: 'row', providerId: 'provider', thirdPartyPayoutRequired: true, sharedInvoices: [{ id: record.id }] };
+  const props = { item, scope, canManage: true, canRemove: true, uploadingInvoice: false, uploadingReceipt: false, generatingLink: false,
+    onUploadInvoice() {}, onUploadReceipt() {}, onRemoveInvoice() {}, onRemoveReceipt() {}, onRemoveSharedInvoice() {}, onCreateInvoiceLink() {} };
+  const render = (child: any) => renderToStaticMarkup(createElement(InvoiceContext.Provider, { value: { records: new Map([[record.id, record]]), providers: new Map([['provider', { cuit: '20111111112' }]]), loading: false, reload() {} } }, child));
+  const desktop = render(createElement(ExpenseInvoiceCell, props));
+  assert.match(desktop, /border-emerald-500/); assert.match(desktop, /bg-amber-100/);
+  assert.match(desktop, /Quitar factura de este gasto/);
+  assert.match(desktop, /Adjuntar otra factura/);
+  assert.match(desktop, /Copiar link para que el proveedor cargue su factura/);
+  assert.match(desktop, /type="file"/);
+  const readonly = render(createElement(ExpenseInvoiceCell, { ...props, canManage: false, canRemove: false }));
+  assert.doesNotMatch(readonly, /Quitar factura|type="file"|Copiar link/);
+  const mobile = render(createElement(ExpenseDocumentsPanel, props));
+  assert.match(mobile, /Quitar factura de este gasto/); assert.match(mobile, /Copiar link de carga/); assert.match(mobile, /type="file"/);
+  const additional = { id: 'extra', url: 'https://example.test/extra.pdf', fileName: 'extra.pdf' };
+  const multiple = render(createElement(ExpenseInvoiceCell, { ...props, item: { ...item, invoices: [additional] } }));
+  assert.match(multiple, /Ver 2 facturas/); assert.match(multiple, /Adjuntar otra factura/); assert.match(multiple, /Copiar link/);
+  const removed = render(createElement(ExpenseInvoiceCell, { ...props, item: { ...item, sharedInvoices: [{ id: record.id, fileHidden: true }] } }));
+  assert.doesNotMatch(removed, /Quitar factura de este gasto/); assert.match(removed, /Adjuntar factura/); assert.match(removed, /Copiar link/);
 });

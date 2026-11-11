@@ -64,19 +64,23 @@ export const calculateCashBalances = (movements: any[]): Map<string, number> => 
   const balances = new Map<string, number>();
   const email = (value: unknown) => String(value || '').trim().toLowerCase();
   for (const movement of movements) {
+    if (movement.status === 'cancelled') continue;
     if (movement.type === 'entrega' && movement.status === 'pending') continue;
     if (movement.type === 'devolucion' && movement.status !== 'confirmed') continue;
     const amount = Number(movement.amount) || 0;
     const toEmail = email(movement.toUserEmail);
     const fromEmail = email(movement.fromUserEmail);
     // Una devolución entra al registro de Caja General, no a la caja personal del administrador.
-    if (toEmail && movement.type !== 'devolucion') balances.set(toEmail, (balances.get(toEmail) || 0) + amount);
+    if (toEmail && movement.type !== 'devolucion' && !(movement.type === 'transferencia' && movement.status === 'pending')) balances.set(toEmail, (balances.get(toEmail) || 0) + amount);
     if (fromEmail && (movement.type === 'devolucion' || !isGeneralCashMovement(movement))) {
       balances.set(fromEmail, (balances.get(fromEmail) || 0) - amount);
     }
   }
   return balances;
 };
+
+export const isPendingCashReceipt = (movement: { type: string; status?: string }) =>
+  (movement.type === 'entrega' || movement.type === 'transferencia') && movement.status === 'pending';
 
 export const calculateGeneralCashSummary = (movements: any[]) => {
   const generalMovements = movements.filter(isGeneralCashMovement);

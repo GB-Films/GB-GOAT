@@ -46,6 +46,15 @@ test('transfers identify the other person and reverse direction between the two 
   assert.equal(entry(transfer, 'luz@example.com').counterparty.name, 'Ana');
 });
 
+test('personal deliveries stay visibly pending on both sides until their recipient confirms', () => {
+  const transfer = movement({ type: 'transferencia', status: 'pending', subdelivery: true, fromUserEmail: 'ana@example.com', toUserEmail: 'luz@example.com' });
+  for (const account of ['ana@example.com', 'luz@example.com', 'all']) {
+    assert.equal(entry(transfer, account).pending, true);
+    assert.equal(entry(transfer, account).label, 'Entrega entre cajas');
+  }
+  assert.equal(entry({ ...transfer, status: 'confirmed' }, 'luz@example.com').pending, false);
+});
+
 test('a return credits General rather than the receiving administrators personal cashbox', () => {
   const returned = movement({ type: 'devolucion', fromUserEmail: 'ana@example.com', toUserEmail: 'admin@example.com', status: 'confirmed' });
   assert.equal(entry(returned).signedAmount, -100);

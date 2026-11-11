@@ -1,5 +1,5 @@
 import type { ProjectDocumentScope } from './providerFinance';
-export type InvoiceReference = { id: string; issuerCuit?: string; issuerName?: string; number?: string };
+export type InvoiceReference = { id: string; issuerCuit?: string; issuerName?: string; number?: string; fileHidden?: boolean };
 export type InvoiceRecord = InvoiceReference & { kind: string; status: string; file?: { fileName?: string }; distinctExpenseCount?: number | null; allocations?: Array<{ projectId: string; collectionName: string; itemId: string }> };
 const digits = (value: unknown) => String(value || '').replace(/\D/g, '');
 export function isThirdPartyInvoice(invoice: { issuerCuit?: string }, providerCuit?: string) {
@@ -16,7 +16,7 @@ export function sharedInvoiceAction(record: InvoiceRecord | undefined, scope: Pr
   return record.distinctExpenseCount === 1 ? 'file' : 'profile';
 }
 export function sharedInvoiceReferences(item: { sharedInvoices?: InvoiceReference[] }) {
-  return [...new Map((Array.isArray(item.sharedInvoices) ? item.sharedInvoices : []).filter(row => row && typeof row.id === 'string').map(row => [row.id, row])).values()];
+  return [...new Map((Array.isArray(item.sharedInvoices) ? item.sharedInvoices : []).filter(row => row && typeof row.id === 'string' && row.fileHidden !== true).map(row => [row.id, row])).values()];
 }
 export function expenseLinkedRecordIds(item: any): string[] {
   return [...new Set<string>([...sharedInvoiceReferences(item).map(row => row.id),

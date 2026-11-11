@@ -1,7 +1,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { availablePersonalCents, createCashSubdeliveryHandler } = require('./cashSubdelivery');
-const request = (data = {}, uid = 'admin') => ({ auth: { uid, token: { email: `${uid}@example.test` } }, data: { projectId: 'p', requestId: '12345678-1234-1234-1234-123456789012', toUserEmail: 'recipient@example.test', amount: 50, notes: '', ...data } });
+const request = (data = {}, uid = 'admin') => ({ auth: { uid, token: { email: `${uid}@example.test` } }, data: { projectId: 'p', requestId: '12345678-1234-1234-1234-123456789012', toUserEmail: 'recipient@example.test', amount: 50, notes: '', receiptVersion: 1, ...data } });
+const confirmation = (movementId, uid = 'recipient', data = {}) => ({ auth: { uid, token: { email: `${uid}@example.test` } }, data: { action: 'confirm', projectId: 'p', movementId, ...data } });
 
 test('personal balance excludes General payments/pending deliveries, reserves returns and handles transfers once', () => {
   const rows = [
@@ -16,11 +17,19 @@ test('personal balance excludes General payments/pending deliveries, reserves re
   assert.equal(availablePersonalCents(rows, 'admin@example.test'), 21000);
   assert.equal(availablePersonalCents(rows, 'recipient@example.test'), 2000);
   assert.throws(() => availablePersonalCents([{ type: 'entrega', amount: Infinity, toUserEmail: 'admin@example.test' }], 'admin@example.test'), { code: 'failed-precondition' });
+  const delivery = { type: 'transferencia', status: 'pending', amount: 50, fromUserEmail: 'admin@example.test', toUserEmail: 'recipient@example.test' };
+  assert.equal(availablePersonalCents([delivery], 'admin@example.test'), -5000);
+  assert.equal(availablePersonalCents([delivery], 'recipient@example.test'), 0);
+  assert.equal(availablePersonalCents([{ ...delivery, status: 'confirmed' }], 'recipient@example.test'), 5000);
+  assert.equal(availablePersonalCents([{ ...delivery, status: 'cancelled' }], 'admin@example.test'), 0);
 });
 
 test('subdelivery input rejects forged source/role, missing auth and malformed values before reading data', async () => {
   const handler = createCashSubdeliveryHandler({ db: null });
   await assert.rejects(handler({ data: {} }), { code: 'unauthenticated' });
+  await assert.rejects(handler(request({ receiptVersion: undefined })), { code: 'failed-precondition' });
+  await assert.rejects(handler(request({ receiptVersion: 2 })), { code: 'failed-precondition' });
+  for (const data of [{ amount: 1 }, { confirmedBy: 'admin' }, { projectId: '../p' }, { movementId: 'bad' }]) await assert.rejects(handler(confirmation('subdelivery-12345678-1234-1234-1234-123456789012', 'recipient', data)), { code: 'invalid-argument' });
   for (const input of [{ fromUserEmail: 'other@example.test' }, { cashAccount: 'general' }, { role: 'admin' }, { projectId: '../p' }, { amount: -1 }, { amount: 0 }, { amount: 0.00000001 }, { amount: Infinity }, { amount: 1e14 }, { amount: 1.001 }, { amount: '50' }, { notes: 'x'.repeat(1001) }, { toUserEmail: 'bad/path@example.test' }, { requestId: 'bad' }, { toUserEmail: 'admin@example.test' }]) await assert.rejects(handler(request(input)), { code: 'invalid-argument' });
 });
 
@@ -45,6 +54,26 @@ test('real transactions enforce roles, live balance, immutable identity, retry a
     await assert.rejects(handler(request({ amount: 49 })), { code: 'already-exists' });
     const saved = (await root.collection('cashMovements').doc(first.id).get()).data();
     assert.equal(saved.fromUserEmail, 'admin@example.test'); assert.equal(saved.cashAccount, 'personal'); assert.equal(saved.subdelivery, true);
+    assert.equal(saved.status, 'pending'); assert.equal(saved.receiptVersion, 1);
+    assert.equal(availablePersonalCents([saved], 'recipient@example.test'), 0);
+    await db.collection('users').doc('recipient').update({ role: 'admin' });
+    await assert.rejects(handler(request({ requestId: '92345678-1234-1234-1234-123456789012', toUserEmail: 'admin@example.test', amount: 1 }, 'recipient')), { code: 'failed-precondition' });
+    await db.collection('users').doc('recipient').update({ role: 'colaborador' });
+    await assert.rejects(handler({ ...confirmation(first.id), auth: { uid: 'manager', token: { email: 'recipient@example.test' } } }), { code: 'permission-denied' });
+    for (const uid of ['admin', 'manager', 'outsider']) await assert.rejects(handler(confirmation(first.id, uid)), { code: 'permission-denied' });
+    const originalRevision = (await root.get()).data().cashSubdeliveryRevision;
+    const confirmed = await Promise.all([handler(confirmation(first.id)), handler(confirmation(first.id))]);
+    assert.equal(confirmed.filter(result => result.repeated).length, 1);
+    const received = (await root.collection('cashMovements').doc(first.id).get()).data();
+    assert.equal(received.status, 'confirmed'); assert.equal(received.confirmedBy, 'recipient'); assert.equal(received.confirmedByEmail, 'recipient@example.test');
+    assert(received.confirmedAt.toMillis() >= received.createdAt.toMillis());
+    assert.equal((await root.get()).data().cashSubdeliveryRevision, originalRevision + 1);
+    const preserved = value => Object.fromEntries(Object.entries(value).filter(([key]) => !['status', 'confirmedBy', 'confirmedByEmail', 'confirmedByName', 'confirmedAt', 'updatedAt'].includes(key)));
+    assert.deepEqual(preserved(received), preserved(saved), 'confirmation preserves the original delivery identity and money');
+    assert.equal(availablePersonalCents([received], 'recipient@example.test'), 5000);
+    await root.collection('collaborators').doc('recipient@example.test').delete();
+    await assert.rejects(handler(confirmation(first.id)), { code: 'permission-denied' });
+    await root.collection('collaborators').doc('recipient@example.test').set({ email: 'recipient@example.test', role: 'jefe_area' });
     const results = await Promise.allSettled(['22345678-1234-1234-1234-123456789012', '32345678-1234-1234-1234-123456789012'].map(requestId => handler(request({ requestId, amount: 40 }))));
     assert.equal(results.filter(r => r.status === 'fulfilled').length, 1);
     assert.equal(results.filter(r => r.status === 'rejected' && r.reason.code === 'failed-precondition').length, 1);
@@ -57,5 +86,8 @@ test('real transactions enforce roles, live balance, immutable identity, retry a
     const ledger = (await root.collection('cashMovements').get()).docs.map(doc => doc.data());
     assert.equal(ledger.filter(row => row.type === 'entrega').length, 3);
     assert.equal(availablePersonalCents(ledger, 'admin@example.test'), 1000);
+    const legacyId = 'subdelivery-a2345678-1234-1234-1234-123456789012';
+    await root.collection('cashMovements').doc(legacyId).set({ type: 'transferencia', subdelivery: true, cashAccount: 'personal', amount: 1, fromUserEmail: 'admin@example.test', toUserEmail: 'recipient@example.test' });
+    await assert.rejects(handler(confirmation(legacyId)), { code: 'permission-denied' });
   } finally { await deleteApp(app); }
 });

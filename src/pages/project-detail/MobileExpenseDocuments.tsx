@@ -7,6 +7,7 @@ import { INVOICE_INPUT_ACCEPT, RECEIPT_INPUT_ACCEPT } from './ExpenseFileCells';
 import { ProviderProfileButton } from '../../components/ProviderProfileButton';
 import { SharedExpenseInvoices } from '../../components/SharedExpenseInvoices';
 import type { ProjectDocumentScope } from '../../lib/providerFinance';
+import { sharedInvoiceReferences } from '../../lib/sharedExpenseInvoices';
 
 export type MobileExpenseDocumentsProps = {
   scope?: ProjectDocumentScope | null;
@@ -19,6 +20,7 @@ export type MobileExpenseDocumentsProps = {
   onUploadInvoice: (file?: File | null) => void;
   onUploadReceipt: (file?: File | null) => void;
   onRemoveInvoice: (invoice: ExpenseInvoiceDocument) => void;
+  onRemoveSharedInvoice?: (recordId: string) => void;
   onRemoveReceipt: (receipt: any) => void;
   onCreateInvoiceLink: () => void;
 };
@@ -57,10 +59,10 @@ export function ExpenseDocumentsPanel(props: MobileExpenseDocumentsProps) {
     <p className="break-words text-xs text-slate-500">{item.providerName || item.description || 'Documentación del gasto'}</p>
     <section className="space-y-2">
       <h3 className="text-xs font-black uppercase tracking-wide text-slate-600">Facturas</h3>
-      <SharedExpenseInvoices item={item} scope={props.scope || null} />
+      <SharedExpenseInvoices item={item} scope={props.scope || null} canRemove={canRemove} busy={uploadingInvoice} onRemove={props.onRemoveSharedInvoice} showNames />
       {invoices.map((invoice, index) => renderDocument(invoice, getInvoiceDocumentKey(invoice) || String(index), `Factura ${index + 1}`,
         canRemove ? () => props.onRemoveInvoice(invoice) : undefined, uploadingInvoice))}
-      {!invoices.length && !item.sharedInvoices?.length && <p className="text-xs text-slate-400">Sin facturas cargadas.</p>}
+      {!invoices.length && !sharedInvoiceReferences(item).length && <p className="text-xs text-slate-400">Sin facturas cargadas.</p>}
       {canManage && <>
         {upload('invoice')}
         <button type="button" onClick={props.onCreateInvoiceLink} disabled={generatingLink}

@@ -7,6 +7,7 @@ import { getExpenseInvoices, getInvoiceDocumentKey, type ExpenseInvoiceDocument 
 import { ProviderProfileButton } from '../../components/ProviderProfileButton';
 import { SharedExpenseInvoices } from '../../components/SharedExpenseInvoices';
 import type { ProjectDocumentScope } from '../../lib/providerFinance';
+import { sharedInvoiceReferences } from '../../lib/sharedExpenseInvoices';
 
 export const INVOICE_INPUT_ACCEPT = 'application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png';
 export const RECEIPT_INPUT_ACCEPT = 'application/pdf,image/jpeg,image/png,image/webp,.pdf,.jpg,.jpeg,.png,.webp';
@@ -20,6 +21,7 @@ type ExpenseInvoiceCellProps = {
   generatingLink: boolean;
   onUploadInvoice: (file?: File | null) => void;
   onRemoveInvoice: (invoice: ExpenseInvoiceDocument) => void;
+  onRemoveSharedInvoice?: (recordId: string) => void;
   onCreateInvoiceLink: () => void;
 };
 
@@ -42,30 +44,35 @@ export function ExpenseInvoiceCell({
   generatingLink,
   onUploadInvoice,
   onRemoveInvoice,
+  onRemoveSharedInvoice,
   onCreateInvoiceLink,
 }: ExpenseInvoiceCellProps) {
   const invoices = getExpenseInvoices(item);
+  const sharedInvoices = sharedInvoiceReferences(item);
+  const invoiceCount = invoices.length + sharedInvoices.length;
+  const invoiceColors = item.thirdPartyPayoutRequired
+    ? 'border-emerald-500 bg-amber-100 text-amber-950 hover:bg-amber-200'
+    : 'border-emerald-100 bg-emerald-50 text-emerald-600 hover:bg-emerald-600 hover:text-white';
   const [showInvoiceList, setShowInvoiceList] = useState(false);
 
   useEffect(() => {
-    if (invoices.length <= 1) setShowInvoiceList(false);
-  }, [invoices.length]);
+    if (invoiceCount <= 1) setShowInvoiceList(false);
+  }, [invoiceCount]);
 
   const singleInvoice = invoices.length === 1 ? invoices[0] : null;
 
   return (
     <>
       <div className="flex flex-wrap items-center justify-center gap-1">
-      <SharedExpenseInvoices item={item} scope={scope} />
-      {canManage && item.thirdPartyPayoutRequired && !item.sharedInvoices?.length && !invoices.length && <span className="text-[9px] text-slate-400">Sin factura cargada</span>}
-      {singleInvoice ? (
+      {invoiceCount === 1 && sharedInvoices.length > 0 && <SharedExpenseInvoices item={item} scope={scope} canRemove={canRemove} busy={uploadingInvoice} onRemove={onRemoveSharedInvoice} />}
+      {invoiceCount === 1 && singleInvoice ? (
         <>
           <a
             href={singleInvoice.url || '#'} onClick={e=>handlePortalInvoiceLink(e,singleInvoice)}
             target="_blank"
             rel="noreferrer"
-            className="flex h-7 w-7 items-center justify-center rounded border border-emerald-100 bg-emerald-50 text-emerald-600 transition-all hover:bg-emerald-600 hover:text-white"
-            title={singleInvoice.fileName || singleInvoice.originalFileName || 'Ver factura'}
+            className={cn('flex h-7 w-7 shrink-0 items-center justify-center rounded border transition-all', invoiceColors)}
+            title={`${item.thirdPartyPayoutRequired ? 'Factura de tercero · ' : ''}${singleInvoice.fileName || singleInvoice.originalFileName || 'Ver factura'}`}
           >
             <FileText className="h-3.5 w-3.5" />
           </a>
@@ -81,21 +88,21 @@ export function ExpenseInvoiceCell({
             </button>
           )}
         </>
-      ) : invoices.length > 1 ? (
+      ) : invoiceCount > 1 ? (
         <button
           type="button"
           onClick={() => setShowInvoiceList(true)}
-          className="relative flex h-7 min-w-8 items-center justify-center gap-1 rounded border border-emerald-100 bg-emerald-50 px-1.5 text-emerald-700 transition-all hover:bg-emerald-600 hover:text-white"
-          title={`Ver ${invoices.length} facturas`}
+          className={cn('relative flex h-7 min-w-8 shrink-0 items-center justify-center gap-1 rounded border px-1.5 transition-all', invoiceColors)}
+          title={`Ver ${invoiceCount} facturas`}
         >
           <FileText className="h-3.5 w-3.5" />
-          <span className="text-[9px] font-black">{invoices.length}</span>
+          <span className="text-[9px] font-black">{invoiceCount}</span>
         </button>
-      ) : !canManage && !item.sharedInvoices?.length ? (
+      ) : !canManage && invoiceCount === 0 ? (
         <span className="text-[9px] font-bold uppercase tracking-widest text-slate-300">Sin factura</span>
       ) : null}
 
-      {canManage && !item.sharedInvoices?.length && !item.thirdPartyPayoutRequired && (
+      {canManage && (
         <>
           <label
             className={cn(
@@ -104,7 +111,7 @@ export function ExpenseInvoiceCell({
                 ? 'cursor-wait border-slate-200 bg-slate-100 text-slate-300'
                 : 'cursor-pointer border-slate-200 bg-white text-slate-400 hover:border-black hover:text-black',
             )}
-            title={invoices.length > 0 ? 'Adjuntar otra factura PDF/JPG/PNG' : 'Adjuntar factura PDF/JPG/PNG'}
+            title={invoiceCount > 0 ? 'Adjuntar otra factura PDF/JPG/PNG' : 'Adjuntar factura PDF/JPG/PNG'}
           >
             <Paperclip className="h-3.5 w-3.5" />
             <input
@@ -131,7 +138,7 @@ export function ExpenseInvoiceCell({
       )}
       </div>
 
-      {showInvoiceList && invoices.length > 1 && createPortal((
+      {showInvoiceList && invoiceCount > 1 && createPortal((
         <div
           className="fixed inset-0 z-[520] flex items-center justify-center bg-black/45 p-4"
           role="dialog"
@@ -145,13 +152,14 @@ export function ExpenseInvoiceCell({
             <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
               <div>
                 <h3 className="text-sm font-black text-slate-900">Facturas del gasto</h3>
-                <p className="mt-0.5 text-[10px] font-bold uppercase tracking-widest text-slate-400">{invoices.length} documentos cargados</p>
+                <p className="mt-0.5 text-[10px] font-bold uppercase tracking-widest text-slate-400">{invoiceCount} documentos cargados</p>
               </div>
               <button type="button" onClick={() => setShowInvoiceList(false)} className="rounded p-2 text-slate-400 hover:bg-slate-100 hover:text-black" title="Cerrar">
                 <X className="h-4 w-4" />
               </button>
             </div>
             <div className="max-h-[65vh] divide-y divide-slate-100 overflow-y-auto">
+              {sharedInvoices.length > 0 && <div className="flex flex-wrap gap-4 px-5 py-4"><SharedExpenseInvoices item={item} scope={scope} canRemove={canRemove} busy={uploadingInvoice} onRemove={onRemoveSharedInvoice} showNames /></div>}
               {invoices.map((invoice, index) => (
                 <div key={getInvoiceDocumentKey(invoice) || index} className="flex items-center gap-3 px-5 py-4">
                   <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700">

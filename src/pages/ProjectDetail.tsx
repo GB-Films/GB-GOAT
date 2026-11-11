@@ -62,6 +62,7 @@ import { projectLoadStatus, type ProjectLoadState } from '../lib/projectLoadStat
 import { CashBoxPicker } from './project-detail/CashBoxPicker';
 import { CashLedger } from './project-detail/CashLedger';
 import { CashMovementDialog } from './project-detail/CashMovementDialog';
+import { CashReceiptButton } from './project-detail/CashReceiptButton';
 import { cashLedgerPeople } from '../lib/cashLedgerPeople';
 import { resolveCashBoxSelection } from '../lib/cashLedgerView';
 import { ProjectCommercialSummary } from './project-detail/ProjectCommercialSummary';
@@ -83,6 +84,7 @@ import { DRAGGING_EXPENSE_ROW_CLASS, ExpenseDragHandle } from './project-detail/
 import { PaymentModal } from './project-detail/PaymentModal';
 import { ExpenseInvoiceCell, ExpenseReceiptsCell, InvoiceDropOverlay } from './project-detail/ExpenseFileCells';
 import { SharedInvoiceRecordsProvider } from '../components/SharedExpenseInvoices';
+import { providerFinanceRequest } from '../lib/providerFinance';
 import type { AreaExpense, BudgetItem, CashMovement, Collaborator, Payment, PaymentCollection } from './project-detail/types';
 import { formatIdentifier, inferLegacyIdentifiers, normalizeDigits, providerDisplayName } from '../lib/providerConstants';
 import { normalizeEmail, normalizeSearchText } from '../lib/identity';
@@ -109,7 +111,7 @@ import { getReimbursementBalanceCents, getReimbursedCents, isThirdPartyPayment }
 import { getFileExtension, sanitizeFileName, validateSpreadsheetImport } from '../lib/files';
 import { PROJECT_STATUSES } from '../lib/projects';
 import { getExpenseInvoices, getInvoiceDocumentKey, type ExpenseInvoiceDocument } from '../lib/invoices';
-import { buildPaymentCashBoxOptions, calculateCashBalances, calculateGeneralCashSummary, GENERAL_CASH_ACCOUNT } from '../lib/cashBoxes';
+import { buildPaymentCashBoxOptions, calculateCashBalances, calculateGeneralCashSummary, isPendingCashReceipt, GENERAL_CASH_ACCOUNT } from '../lib/cashBoxes';
 import { cashMovementOptions } from '../lib/cashBoxDefaults';
 import { expenseNeedsProviderRegistration } from '../lib/providerRegistration';
 import { useProviderRegistrationEvidence } from '../hooks/useProviderRegistrationEvidence';
@@ -2576,6 +2578,18 @@ export default function ProjectDetail() {
     }
   };
 
+  const removeSharedInvoiceFile = async (expense: any, recordId: string, collectionName: PaymentCollection) => {
+    if (!id || !isProjectAdmin || !confirm('¿Quitar esta factura de este gasto?')) return;
+    const loadingKey = `${collectionName}-${expense.id}`;
+    setUploadingInvoices(prev => ({ ...prev, [loadingKey]: true }));
+    try {
+      const result = await providerFinanceRequest({ action: 'removeExpenseInvoiceFile', projectId: id, collectionName, itemId: expense.id, recordId }) as { sharedInvoices: any[] };
+      updateItemCollectionState(collectionName, expense.id, { sharedInvoices: result.sharedInvoices });
+    } catch (error: any) {
+      alert(error?.message || 'No se pudo quitar la factura. Actualizá la página y reintentá.');
+    } finally { setUploadingInvoices(prev => ({ ...prev, [loadingKey]: false })); }
+  };
+
   const createInvoiceUploadLink = async (expense: any, collectionName: PaymentCollection = 'areaExpenses') => {
     if (!id || !canManageItemFiles(expense, collectionName)) return;
     if (!expense.providerId || !expense.providerName) {
@@ -3978,6 +3992,7 @@ export default function ProjectDetail() {
       generatingLink={!!generatingInvoiceLinks[`${collectionName}-${item.id}`]}
       onUploadInvoice={(file) => uploadInvoiceForExpense(item, file, collectionName)}
       onRemoveInvoice={(invoice) => removeInvoiceFromExpense(item, invoice, collectionName)}
+      onRemoveSharedInvoice={(recordId) => removeSharedInvoiceFile(item, recordId, collectionName)}
       onCreateInvoiceLink={() => createInvoiceUploadLink(item, collectionName)}
     />
   );
@@ -4004,6 +4019,7 @@ export default function ProjectDetail() {
       onUploadInvoice={(file) => uploadInvoiceForExpense(item, file, collectionName)}
       onUploadReceipt={(file) => uploadOtherReceiptForExpense(item, file, collectionName)}
       onRemoveInvoice={(invoice) => removeInvoiceFromExpense(item, invoice, collectionName)}
+      onRemoveSharedInvoice={(recordId) => removeSharedInvoiceFile(item, recordId, collectionName)}
       onRemoveReceipt={(receipt) => removeOtherReceiptFromExpense(item, receipt, collectionName)}
       onCreateInvoiceLink={() => createInvoiceUploadLink(item, collectionName)}
     />
@@ -4229,8 +4245,7 @@ export default function ProjectDetail() {
   const pendingCashDeliveries = React.useMemo(() => (
     cashMovements
       .filter((movement) => (
-        movement.type === 'entrega'
-        && movement.status === 'pending'
+        isPendingCashReceipt(movement)
         && normalizeEmail(movement.toUserEmail) === currentUserEmail
       ))
       .sort((a, b) => {
@@ -4940,8 +4955,7 @@ export default function ProjectDetail() {
     if (
       !id
       || !user?.uid
-      || movement.type !== 'entrega'
-      || movement.status !== 'pending'
+      || !isPendingCashReceipt(movement)
       || normalizeEmail(movement.toUserEmail) !== currentUserEmail
       || confirmingCashDeliveryId
     ) return;
@@ -4966,7 +4980,11 @@ export default function ProjectDetail() {
         confirmedByName: currentUserName,
         updatedAt: serverTimestamp(),
       };
-      await updateDoc(doc(db, 'projects', id, 'cashMovements', movement.id), updates);
+      if (movement.type === 'transferencia') {
+        await httpsCallable(getFunctions(auth.app, 'us-central1'), 'createCashSubdelivery')({ action: 'confirm', projectId: id, movementId: movement.id });
+      } else {
+        await updateDoc(doc(db, 'projects', id, 'cashMovements', movement.id), updates);
+      }
       setCashMovements((current) => current.map((item) => (
         item.id === movement.id
           ? { ...item, ...updates, confirmedAt: new Date(), updatedAt: new Date() }
@@ -5167,13 +5185,13 @@ export default function ProjectDetail() {
     cashSubdeliveryRequestId.current ||= crypto.randomUUID();
     try {
       await httpsCallable(getFunctions(auth.app, 'us-central1'), 'createCashSubdelivery')({
-        projectId: id, requestId: cashSubdeliveryRequestId.current, toUserEmail: toEmail, amount, notes,
+        projectId: id, requestId: cashSubdeliveryRequestId.current, toUserEmail: toEmail, amount, notes, receiptVersion: 1,
       });
       cashSubdeliveryRequestId.current = null;
       form.reset();
       setSelectedCashBox(currentUserEmail);
       setCashMovementDialog(null);
-      showExpenseConfirmation('Transferencia registrada desde tu caja asignada.');
+      showExpenseConfirmation('Entrega registrada. Queda pendiente de que la persona confirme la recepción.', 'warning');
     } catch (error: any) {
       alert(error.message || 'No se pudo confirmar la subentrega. Reintentá sin cambiar los datos para evitar duplicados.');
     } finally { setIsCreatingCashSubdelivery(false); }
@@ -7222,16 +7240,12 @@ export default function ProjectDetail() {
                 budgetItems={budgetItems} areaExpenses={areaExpenses}
                 renderActions={movement => {
                   const target = resolveCashMovementTarget(movement, budgetItems, areaExpenses);
-                  const recipient = normalizeEmail(movement.toUserEmail) === currentUserEmail;
                   const ownReturn = movement.type === 'devolucion' && normalizeEmail(movement.fromUserEmail) === currentUserEmail;
                   const actionClass = 'rounded-md border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50';
                   return <>
-                    {movement.status === 'pending' && recipient && (movement.type === 'entrega' || (movement.type === 'devolucion' && isProjectAdmin && canViewGeneralCash)) && <button type="button"
-                      disabled={Boolean(confirmingCashDeliveryId || confirmingCashReturnId)}
-                      onClick={() => movement.type === 'entrega' ? confirmCashDelivery(movement) : confirmCashReturn(movement)}
-                      className="rounded-md bg-amber-950 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">
-                      {confirmingCashDeliveryId === movement.id || confirmingCashReturnId === movement.id ? 'Confirmando…' : 'Confirmar recepción'}
-                    </button>}
+                    <CashReceiptButton movement={movement} currentUserEmail={currentUserEmail}
+                      canReceiveGeneralReturn={isProjectAdmin && canViewGeneralCash} busy={Boolean(confirmingCashDeliveryId || confirmingCashReturnId)}
+                      onConfirmDelivery={confirmCashDelivery} onConfirmReturn={confirmCashReturn} />
                     {ownReturn && movement.status === 'pending' && <button type="button" disabled={Boolean(cancellingCashReturnId)}
                       onClick={() => cancelCashReturn(movement)} className={actionClass}>
                       {cancellingCashReturnId === movement.id ? 'Cancelando…' : 'Cancelar devolución'}
