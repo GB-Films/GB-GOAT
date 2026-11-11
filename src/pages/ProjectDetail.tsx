@@ -776,6 +776,7 @@ export default function ProjectDetail() {
   const [confirmingCashDeliveryId, setConfirmingCashDeliveryId] = useState('');
   const [confirmingCashReturnId, setConfirmingCashReturnId] = useState('');
   const [cancellingCashReturnId, setCancellingCashReturnId] = useState('');
+  const [deletingCashDeliveryId, setDeletingCashDeliveryId] = useState('');
   const [availableUsers, setAvailableUsers] = useState<any[]>([]);
   const [newCollaboratorSearch, setNewCollaboratorSearch] = useState('');
   const [selectedUserToAdd, setSelectedUserToAdd] = useState<any | null>(null);
@@ -5142,30 +5143,21 @@ export default function ProjectDetail() {
   };
 
   const deleteCashDelivery = async (movement: CashMovement) => {
-    if (!id || !canDeliverGeneralCash || movement.type !== 'entrega') return;
+    if (!id || !canDeliverGeneralCash || movement.type !== 'entrega' || deletingCashDeliveryId) return;
     if (!window.confirm('¿Eliminar definitivamente esta entrega de caja?')) return;
-
+    setDeletingCashDeliveryId(movement.id);
     try {
-      const batch = writeBatch(db);
-      batch.delete(doc(db, 'projects', id, 'cashMovements', movement.id));
-      batch.set(doc(collection(db, 'projects', id, 'activityLog')), {
-        action: 'cash_delivery_deleted',
-        movementId: movement.id,
-        amount: Number(movement.amount) || 0,
-        recipientEmail: movement.toUserEmail || '',
-        recipientName: movement.toUserName || '',
-        status: movement.status || 'pending',
-        deletedBy: user?.uid || '',
-        deletedByEmail: currentUserEmail,
-        deletedByName: currentUserName,
-        deletedByRole: currentProjectRole,
-        createdAt: serverTimestamp(),
+      await httpsCallable(getFunctions(auth.app, 'us-central1'), 'createCashSubdelivery')({
+        action: 'deleteDelivery', projectId: id, movementId: movement.id,
       });
-      await batch.commit();
       setCashMovements((current) => current.filter((item) => item.id !== movement.id));
-    } catch (error) {
+      showExpenseConfirmation('Entrega de caja eliminada.');
+    } catch (error: any) {
       console.error('Error deleting cash delivery:', error);
-      alert('No se pudo eliminar la entrega de caja.');
+      alert(['functions/failed-precondition', 'functions/permission-denied', 'functions/not-found'].includes(error?.code)
+        ? error.message : 'No se pudo eliminar la entrega de caja. Actualizá la página y volvé a intentar.');
+    } finally {
+      setDeletingCashDeliveryId('');
     }
   };
 
@@ -7254,8 +7246,8 @@ export default function ProjectDetail() {
                     {target.status === 'missing' && <span className="text-xs text-rose-600">Gasto eliminado</span>}
                     {movement.type === 'entrega' && (canDeliverGeneralCash || (!isProjectAdmin && normalizeEmail(movement.createdByEmail) === currentUserEmail)) && movement.status !== 'confirmed' &&
                       <button type="button" onClick={() => editCashDelivery(movement)} className={actionClass}>Editar</button>}
-                    {movement.type === 'entrega' && canDeliverGeneralCash && <button type="button" onClick={() => deleteCashDelivery(movement)}
-                      className="rounded-md border border-rose-100 px-2.5 py-1.5 text-xs text-rose-600 hover:bg-rose-50">Borrar</button>}
+                    {movement.type === 'entrega' && canDeliverGeneralCash && <button type="button" disabled={Boolean(deletingCashDeliveryId)} onClick={() => deleteCashDelivery(movement)}
+                      className="rounded-md border border-rose-100 px-2.5 py-1.5 text-xs text-rose-600 hover:bg-rose-50 disabled:opacity-50">{deletingCashDeliveryId === movement.id ? 'Comprobando…' : 'Borrar'}</button>}
                   </>;
                 }} />
             </section>

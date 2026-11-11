@@ -30,6 +30,7 @@ function createCashSubdeliveryHandler({ db, timestamp }) {
     if (!request.auth?.uid || !request.auth.token?.email) fail('unauthenticated', 'Iniciá sesión.');
     const input = request.data;
     if (input?.action === 'confirm') return confirmCashSubdelivery({ db, timestamp }, request);
+    if (input?.action === 'deleteDelivery') return require('./deleteCashDelivery').deleteCashDelivery({ db, timestamp, availablePersonalCents }, request);
     if (!input || typeof input !== 'object' || Array.isArray(input)
       || Object.keys(input).some(key => !['projectId', 'requestId', 'toUserEmail', 'amount', 'notes', 'receiptVersion'].includes(key))) fail('invalid-argument', 'Datos de subentrega inválidos.');
     if (input.receiptVersion !== 1) fail('failed-precondition', 'Actualizá la página para registrar una entrega con confirmación de recepción.');
