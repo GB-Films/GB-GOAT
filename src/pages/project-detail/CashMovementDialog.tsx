@@ -1,15 +1,17 @@
 import type { FormEvent } from 'react';
 import { ProjectDialog } from './ProjectDialog';
+import { cashMovementOptions, type CashMovementKind } from '../../lib/cashBoxDefaults';
 
-export type CashMovementKind = 'entrega' | 'transferencia' | 'devolucion';
+export type { CashMovementKind } from '../../lib/cashBoxDefaults';
 type Person = { email: string; displayName?: string };
 
-export function CashMovementDialog({ kind, onKindChange, onClose, canDeliver, canTransfer, canReturn,
+export function CashMovementDialog({ kind, onKindChange, onClose, canDeliver, canTransfer, canReturn, hasAssignedCashBox = canReturn,
   recipients, recipientEmail, onRecipientChange, availableBalance, ownName, defaultDate, busy, onSubmit }: {
   kind: CashMovementKind;
   onKindChange: (kind: CashMovementKind) => void;
   onClose: () => void;
   canDeliver: boolean; canTransfer: boolean; canReturn: boolean;
+  hasAssignedCashBox?: boolean;
   recipients: Person[]; recipientEmail: string; onRecipientChange: (email: string) => void;
   availableBalance: number; ownName: string; defaultDate: string; busy: boolean;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
@@ -22,9 +24,7 @@ export function CashMovementDialog({ kind, onKindChange, onClose, canDeliver, ca
     <label htmlFor="cash-movement-kind" className={labelClass}>Movimiento</label>
     <select id="cash-movement-kind" value={kind} disabled={busy}
       onChange={event => onKindChange(event.target.value as CashMovementKind)} className={`${inputClass} mb-4 bg-slate-50 font-semibold`}>
-      {canDeliver && <option value="entrega">Entregar desde Caja General</option>}
-      {canTransfer && <option value="transferencia">Transferir desde mi caja</option>}
-      {canReturn && <option value="devolucion">Devolver a Caja General</option>}
+      {cashMovementOptions({ hasAssignedCashBox, canDeliver, canTransfer, canReturn }).map(option => <option key={option.kind} value={option.kind}>{option.label}</option>)}
     </select>
     {!delivery && <p className="mb-4 text-sm text-slate-600">{ownName} · Disponible: <strong>${availableBalance.toLocaleString('es-AR')}</strong></p>}
     <form key={kind} onSubmit={onSubmit}>

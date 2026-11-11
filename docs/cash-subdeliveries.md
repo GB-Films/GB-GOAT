@@ -6,6 +6,20 @@ Sólo administradores de proyecto/app (incluido el creador según ACL vigente) p
 
 En Cajas → Registrar movimiento → Subentrega desde mi caja asignada, el origen no se elige: siempre es la caja propia del usuario autenticado en ese proyecto. Se acredita inmediatamente al destinatario como transferencia entre cajas; no es una entrega pendiente desde Caja General. Se conserva el formato de transferencias históricas para que saldos, movimientos y reportes descuenten una vez al emisor y acrediten una vez al receptor. No genera gastos ni pagos.
 
+Si el usuario ya tiene caja asignada en el proyecto, Registrar movimiento abre
+primero la transferencia desde su caja cuando ese rol puede realizarla. La lista
+ofrece después la entrega desde General a quienes conservan ese permiso. Sin
+caja asignada se mantiene la entrega General como primera opción autorizada.
+No se amplían roles de transferencia ni acceso a General por este orden.
+
+En pagos nuevos, la caja asignada también aparece primero y queda seleccionada
+por defecto, incluso con saldo cero. Si sus datos llegan después de abrir el
+formulario, reemplaza la selección automática inicial de General. Una selección
+manual de General se respeta mientras siga disponible. Al cerrar, cambiar de
+gasto, proyecto o cuenta se restablece la preferencia del contexto nuevo. No se
+activa automáticamente el uso de efectivo, ni se cambian pagos existentes,
+montos, comprobaciones de saldo o confirmaciones de las entregas.
+
 La callable `createCashSubdelivery` consulta roles y saldo vivos dentro de una transacción, reserva devoluciones pendientes y serializa subentregas simultáneas. Importes en centavos; clave estable por intento para reintentos idempotentes. El origen, autor y fecha son de servidor. El cliente no puede crear transferencias directamente, ni editar/borrar subentregas ya registradas. Los movimientos históricos no se migran ni borran.
 
 El entrypoint selecciona un worker mínimo para esta callable a través de `FUNCTION_TARGET`. La detección del manifiesto y los demás endpoints conservan el mapa original. Una prueba HTTP aislada verifica arranque y rechazo de solicitudes anónimas sin consultar ni modificar cajas.

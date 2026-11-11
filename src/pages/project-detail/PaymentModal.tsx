@@ -10,6 +10,7 @@ import { cn } from '../../lib/utils';
 import { validateMaxUploadSize } from '../../lib/uploadLimits';
 import { getFileExtension, sanitizeFileName } from '../../lib/files';
 import type { PaymentCashBoxOption } from '../../lib/cashBoxes';
+import { prioritizeAssignedCashBox, resolvePaymentCashBoxChoice } from '../../lib/cashBoxDefaults';
 import { assertCashPaymentLink, findCurrentPayment, samePaymentTarget } from '../../lib/expenseEdits';
 import { buildPaymentAuditAppend } from '../../lib/paymentAudit';
 import { parsePaymentAmount } from '../../lib/paymentAmounts';
@@ -127,7 +128,11 @@ export function PaymentModal({
   onCashMovementUpdated,
   onCashMovementDeleted,
 }: PaymentModalProps) {
-  const cashBoxOptions = useMemo(() => rawCashBoxOptions.filter(option => option.account !== 'general' || canAccessGeneralCash(currentUserEmail)), [rawCashBoxOptions, currentUserEmail]);
+  const cashBoxOptions = useMemo(() => prioritizeAssignedCashBox(rawCashBoxOptions.filter(option => option.account !== 'general' || canAccessGeneralCash(currentUserEmail)), currentUserEmail), [rawCashBoxOptions, currentUserEmail]);
+  const cashBoxChoiceContext = JSON.stringify([projectId, item?.__paymentCollection || paymentType, item?.id, currentUserEmail, isOpen]);
+  const [cashBoxChoice, setCashBoxChoice] = useState<{ context: string; id: string } | null>(null);
+  const selectedCashBoxId = resolvePaymentCashBoxChoice(cashBoxOptions, currentUserEmail,
+    cashBoxChoice?.context === cashBoxChoiceContext ? cashBoxChoice.id : '');
   const amountRef = useRef<HTMLInputElement>(null);
   const [selectedReceipt, setSelectedReceipt] = useState<File | null>(null);
   const [receiptPreviewUrl, setReceiptPreviewUrl] = useState('');
@@ -158,10 +163,11 @@ export function PaymentModal({
     setIsSubmittingPayment(false);
     setPaymentError('');
     setPaymentFundingMode('company');
+    setCashBoxChoice(null);
     setThirdPartyPayerId('');
     setActiveReimbursementId('');
     setReimbursementError('');
-  }, [isOpen, item?.id]);
+  }, [isOpen, projectId, item?.id, item?.__paymentCollection, paymentType, currentUserEmail]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -660,7 +666,7 @@ export function PaymentModal({
               const receiptFile = selectedReceipt || (formReceiptFile && formReceiptFile.size > 0 ? formReceiptFile : null);
               const useThirdParty = paymentFundingMode === 'third_party';
               const thirdPartyPayer = providers.find((provider) => provider.id === thirdPartyPayerId);
-              const requestedCashBoxId = String(formData.get('cashBoxId') || cashBoxOptions[0]?.id || '');
+              const requestedCashBoxId = String(formData.get('cashBoxId') || selectedCashBoxId);
               const selectedCashBox = cashBoxOptions.find((option) => option.id === requestedCashBoxId);
               const useCashBox = !useThirdParty && formData.get('useCashBox') === 'on' && Boolean(selectedCashBox);
 
@@ -938,7 +944,8 @@ export function PaymentModal({
                   </label>
                   <select
                     name="cashBoxId"
-                    defaultValue={cashBoxOptions[0]?.id}
+                    value={selectedCashBoxId}
+                    onChange={event => setCashBoxChoice({ context: cashBoxChoiceContext, id: event.target.value })}
                     className="w-full px-3 py-2 bg-white border border-amber-200 rounded-lg text-xs font-bold text-amber-900 focus:outline-none focus:border-amber-500"
                   >
                     {cashBoxOptions.map((option) => (
