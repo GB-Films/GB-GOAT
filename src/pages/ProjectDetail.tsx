@@ -111,7 +111,7 @@ import { getReimbursementBalanceCents, getReimbursedCents, isThirdPartyPayment }
 import { getFileExtension, sanitizeFileName, validateSpreadsheetImport } from '../lib/files';
 import { PROJECT_STATUSES } from '../lib/projects';
 import { getExpenseInvoices, getInvoiceDocumentKey, type ExpenseInvoiceDocument } from '../lib/invoices';
-import { buildPaymentCashBoxOptions, calculateCashBalances, calculateGeneralCashSummary, isPendingCashReceipt, GENERAL_CASH_ACCOUNT } from '../lib/cashBoxes';
+import { buildPaymentCashBoxOptions, calculateCashBalances, calculateCashBoxSummaries, calculateGeneralCashSummary, isPendingCashReceipt, GENERAL_CASH_ACCOUNT } from '../lib/cashBoxes';
 import { cashMovementOptions } from '../lib/cashBoxDefaults';
 import { expenseNeedsProviderRegistration } from '../lib/providerRegistration';
 import { useProviderRegistrationEvidence } from '../hooks/useProviderRegistrationEvidence';
@@ -4221,20 +4221,19 @@ export default function ProjectDetail() {
   }, [availableUsers, categories, collaborators, project?.createdBy, project?.createdByEmail]);
 
   const cashBalanceByEmail = React.useMemo(() => calculateCashBalances(cashMovements), [cashMovements]);
+  const cashSummaryByEmail = React.useMemo(() => calculateCashBoxSummaries(cashMovements), [cashMovements]);
 
-  const currentCashBalance = cashBalanceByEmail.get(currentUserEmail) || 0;
+  const currentCashBalance = cashSummaryByEmail.get(currentUserEmail)?.balance || 0;
+  const currentAvailableCashBalance = cashSummaryByEmail.get(currentUserEmail)?.available || 0;
   const hasAssignedCashBox = cashBalanceByEmail.has(currentUserEmail);
-  const pendingReturnAmount = cashMovements
-    .filter((movement) => movement.type === 'devolucion' && movement.status === 'pending' && normalizeEmail(movement.fromUserEmail) === currentUserEmail)
-    .reduce((total, movement) => total + (Number(movement.amount) || 0), 0);
-  const availableReturnBalance = Math.max(0, currentCashBalance - pendingReturnAmount);
+  const availableReturnBalance = Math.max(0, currentAvailableCashBalance);
   const paymentCashBoxOptions = React.useMemo(() => buildPaymentCashBoxOptions({
     isProjectAdmin,
     hasPersonalCashBox: hasAssignedCashBox,
-    personalBalance: currentCashBalance,
+    personalBalance: currentAvailableCashBalance,
     currentUserEmail,
     currentUserName,
-  }), [hasAssignedCashBox, currentCashBalance, currentUserEmail, currentUserName, isProjectAdmin]);
+  }), [hasAssignedCashBox, currentAvailableCashBalance, currentUserEmail, currentUserName, isProjectAdmin]);
   const generalCashSummary = React.useMemo(() => calculateGeneralCashSummary(cashMovements), [cashMovements]);
   const generalCashMovements = React.useMemo(() => (
     [...generalCashSummary.movements].sort((a, b) => {
@@ -4297,11 +4296,14 @@ export default function ProjectDetail() {
           responsible,
           email,
           movements,
-          balance: cashBalanceByEmail.get(email) || 0,
+          balance: cashSummaryByEmail.get(email)?.balance || 0,
+          availableBalance: cashSummaryByEmail.get(email)?.available || 0,
+          pendingOutgoing: cashSummaryByEmail.get(email)?.pendingOutgoing || 0,
+          pendingIncoming: cashSummaryByEmail.get(email)?.pendingIncoming || 0,
         };
       })
       .filter(row => row.movements.length > 0 || row.balance !== 0 || row.email === currentUserEmail)
-  ), [cashBalanceByEmail, cashMovements, cashResponsibles, currentUserEmail, canViewGeneralCash]);
+  ), [cashSummaryByEmail, cashMovements, cashResponsibles, currentUserEmail, canViewGeneralCash]);
   const activeCashBox = resolveCashBoxSelection(selectedCashBox, canViewGeneralCash, currentUserEmail, visibleCashRows.map(row => row.email));
 
   useEffect(() => {

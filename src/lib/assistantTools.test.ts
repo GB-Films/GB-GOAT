@@ -411,6 +411,19 @@ test('un responsable de Caja General ve el resumen completo dentro del proyecto'
   assert.equal(result.cajaGeneral.entregasConfirmadas, 500);
 });
 
+test('el asistente distingue saldo y disponible pendientes respetando el alcance de la caja propia', async () => {
+  const context = buildContext();
+  context.cashMovements = [
+    { id: 'funds', type: 'entrega', status: 'confirmed', amount: 100, toUserEmail: context.userEmail, toUserName: 'Persona' },
+    { id: 'transfer', type: 'transferencia', status: 'pending', amount: 100, fromUserEmail: context.userEmail, toUserEmail: 'recipient@example.test' },
+  ];
+  const result = await runTool(buildTools({ loadProject: async () => context }), 'saldos_cajas');
+  assert.deepEqual(result.saldosPorResponsable, [{ persona: 'Persona', email: context.userEmail, saldo: 100, disponible: 0, porConfirmar: 100, porRecibir: 0 }]);
+  context.cashMovements[1].status = 'confirmed';
+  const confirmed = await runTool(buildTools({ loadProject: async () => context }), 'saldos_cajas');
+  assert.deepEqual(confirmed.saldosPorResponsable, []);
+});
+
 test('un administrador excluido no recupera General por autoría previa ni recibe un resumen General', async () => {
   const context = buildContext();
   context.userEmail = 'admin@example.test';
