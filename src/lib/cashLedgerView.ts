@@ -43,13 +43,13 @@ export function cashLedgerEntry(movement: CashMovement, account: string, budgetI
   const overview = account === 'all';
   const general = account === 'general' || overview;
   const incoming = general ? movement.type === 'devolucion' : normalizeEmail(movement.toUserEmail) === normalizeEmail(account) && movement.type !== 'devolucion';
-  const pending = (movement.type === 'entrega' || movement.type === 'devolucion') && movement.status === 'pending';
-  const cancelled = movement.type === 'devolucion' && movement.status === 'cancelled';
+  const pending = ['entrega', 'devolucion', 'transferencia'].includes(movement.type) && movement.status === 'pending';
+  const cancelled = movement.status === 'cancelled';
   const items = movement.collectionName === 'budgetItems' ? budgetItems : movement.collectionName === 'areaExpenses' ? areaExpenses : [];
   const expense = items.find(item => item.id === movement.itemId);
   const label = movement.type === 'entrega' ? (general || pending ? 'Entrega de caja' : 'Caja recibida')
     : movement.type === 'devolucion' ? (general && !overview && !pending && !cancelled ? 'Devolución recibida' : 'Devolución de caja')
-      : movement.type === 'transferencia' ? (overview ? 'Transferencia' : incoming ? 'Transferencia recibida' : 'Transferencia enviada')
+      : movement.type === 'transferencia' ? (pending ? 'Entrega entre cajas' : overview ? 'Transferencia' : incoming ? 'Transferencia recibida' : 'Transferencia enviada')
         : movement.type === 'reintegro' ? 'Reintegro' : 'Pago';
   const person = (name?: string, email?: string) => ({ name: name || email || 'Sin identificar', email: name && name !== email ? email : undefined });
   const counterparty: { name: string; email?: string } = movement.type === 'entrega'

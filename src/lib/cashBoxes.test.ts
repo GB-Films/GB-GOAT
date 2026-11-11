@@ -1,6 +1,22 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildPaymentCashBoxOptions, calculateCashBalances, calculateGeneralCashSummary, isGeneralCashMovement } from './cashBoxes';
+import { buildPaymentCashBoxOptions, calculateCashBalances, calculateGeneralCashSummary, isGeneralCashMovement, isPendingCashReceipt } from './cashBoxes';
+
+test('toda entrega personal reserva al emisor y sólo acredita al destinatario tras su confirmación', () => {
+  const funds = { type: 'entrega', status: 'confirmed', amount: 100, toUserEmail: 'a@example.test' };
+  const transfer = { type: 'transferencia', subdelivery: true, receiptVersion: 1, status: 'pending', amount: 40, fromUserEmail: 'a@example.test', toUserEmail: 'b@example.test' };
+  const pending = calculateCashBalances([funds, transfer]);
+  assert.equal(pending.get('a@example.test'), 60);
+  assert.equal(pending.get('b@example.test') || 0, 0);
+  assert.equal(isPendingCashReceipt(transfer), true);
+  assert.equal(isPendingCashReceipt(funds), false);
+  const confirmed = calculateCashBalances([funds, { ...transfer, status: 'confirmed' }]);
+  assert.equal(confirmed.get('a@example.test'), 60, 'confirmation does not debit the sender twice');
+  assert.equal(confirmed.get('b@example.test'), 40);
+  assert.equal(calculateCashBalances([funds, { ...transfer, status: 'cancelled' }]).get('a@example.test'), 100);
+  assert.equal(calculateCashBalances([funds, { ...transfer, status: undefined }]).get('b@example.test'), 40, 'historical transfers retain their established balances');
+  assert.equal(calculateGeneralCashSummary([funds, transfer]).totalOut, 100);
+});
 
 test('las entregas legacy pertenecen a Caja General', () => {
   assert.equal(isGeneralCashMovement({ type: 'entrega' }), true);

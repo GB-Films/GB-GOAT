@@ -37,9 +37,16 @@ export async function testOwnPaymentCorrections({ db, call, snapshot }) {
   const cashPayment = (await expenseRef.get()).data().paymentHistory[1];
   const cashRequest = { ...request, attemptId: 'cash-limit', expected: snapshot(cashPayment), amount: 51 };
   await assert.rejects(invoke(cashRequest), /saldo disponible de tu caja/);
+  const pendingReceipt = root.collection('cashMovements').doc('pending-receipt');
+  await pendingReceipt.set({ type: 'transferencia', subdelivery: true, receiptVersion: 1, status: 'pending', amount: 100, fromUserEmail: 'viewer@example.test', toUserEmail: 'editor@example.test', cashAccount: 'personal' });
+  await assert.rejects(invoke({ ...cashRequest, attemptId: 'pending-receipt-blocked' }), /saldo disponible de tu caja/, 'unconfirmed incoming cash cannot fund a correction');
   await invoke({ ...cashRequest, attemptId: 'cash-ok', amount: 35 });
   assert.equal((await root.collection('cashMovements').doc('cash').get()).data().amount, 35);
   assert.equal((await expenseRef.get()).data().paymentHistory[0].amount, 40);
+  await pendingReceipt.update({ status: 'confirmed' });
+  const beforeReceiptSpend = (await expenseRef.get()).data().paymentHistory[1];
+  await invoke({ ...cashRequest, expected: snapshot(beforeReceiptSpend), attemptId: 'confirmed-receipt-available', amount: 55 });
+  assert.equal((await root.collection('cashMovements').doc('cash').get()).data().amount, 55);
   await root.collection('cashMovements').doc('cash').update({ fromUserEmail: 'viewer@example.test' });
   const latest = (await expenseRef.get()).data().paymentHistory[1];
   await assert.rejects(invoke({ ...request, attemptId: 'foreign-box', expected: snapshot(latest) }), /caja|vínculo/);

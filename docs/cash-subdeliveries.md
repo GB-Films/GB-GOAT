@@ -4,7 +4,11 @@ Caja General tiene un permiso independiente del rol: sólo `tomas@granberta.com`
 
 Sólo administradores de proyecto/app (incluido el creador según ACL vigente) pueden crear subentregas. No basta con ser jefe de producción/área ni con tener una caja. El destino es un integrante vigente del proyecto o un administrador global, nunca la misma persona.
 
-En Cajas → Registrar movimiento → Subentrega desde mi caja asignada, el origen no se elige: siempre es la caja propia del usuario autenticado en ese proyecto. Se acredita inmediatamente al destinatario como transferencia entre cajas; no es una entrega pendiente desde Caja General. Se conserva el formato de transferencias históricas para que saldos, movimientos y reportes descuenten una vez al emisor y acrediten una vez al receptor. No genera gastos ni pagos.
+En Cajas → Registrar movimiento → Transferir desde mi caja asignada, el origen siempre es la caja propia del usuario autenticado en ese proyecto. Toda entrega nueva queda pendiente de recepción, también entre cajas personales. El importe queda reservado al emisor y no se acredita al destinatario hasta que éste confirma. La confirmación no vuelve a descontar al emisor y no genera gastos ni pagos.
+
+El destinatario ve el aviso amarillo y **Confirmar recepción** tanto desde Cajas como desde las otras pestañas del proyecto. El servidor valida su identidad y acceso vigente; ni el emisor ni otro administrador pueden confirmar en su lugar. La confirmación guarda persona, correo y fecha, y es idempotente incluso con dos solicitudes simultáneas. Los clientes no pueden editar directamente las subentregas ni falsificar una confirmación.
+
+La creación exige `receiptVersion: 1`; un cliente anterior recibe una indicación de actualizar la página. La callable existente acepta `action: confirm` con proyecto e ID del movimiento, sin importe ni autor elegibles por el cliente. Las transferencias históricas sin este protocolo conservan sus saldos; no se migran masivamente ni se inventan recepciones pasadas. Una reparación particular requiere autorización y comprobar que el saldo del destinatario permite volver a dejarla pendiente.
 
 Si el usuario ya tiene caja asignada en el proyecto, Registrar movimiento abre
 primero la transferencia desde su caja cuando ese rol puede realizarla. La lista
@@ -24,6 +28,8 @@ activa automáticamente el uso de efectivo, ni se cambian pagos existentes,
 montos, comprobaciones de saldo o confirmaciones de las entregas.
 
 La callable `createCashSubdelivery` consulta roles y saldo vivos dentro de una transacción, reserva devoluciones pendientes y serializa subentregas simultáneas. Importes en centavos; clave estable por intento para reintentos idempotentes. El origen, autor y fecha son de servidor. El cliente no puede crear transferencias directamente, ni editar/borrar subentregas ya registradas. Los movimientos históricos no se migran ni borran.
+
+Publicación de este protocolo: primero `manageProviderFinance`, que comparte el cálculo de saldo de las correcciones de pagos; después `createCashSubdelivery` y finalmente la web. La protección de subentregas sigue en el servidor: no requiere nuevas reglas, endpoints ni permisos IAM. Se deben actualizar las pestañas abiertas para usar los avisos y saldos del protocolo nuevo. La posible reparación puntual de una entrega antigua se realiza sólo después de verificar backend y web compatibles.
 
 El entrypoint selecciona un worker mínimo para esta callable a través de `FUNCTION_TARGET`. La detección del manifiesto y los demás endpoints conservan el mapa original. Una prueba HTTP aislada verifica arranque y rechazo de solicitudes anónimas sin consultar ni modificar cajas.
 

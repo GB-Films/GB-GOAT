@@ -14,7 +14,7 @@ import {
   type AssistantProjectFinance,
   type AssistantProjectHandle,
 } from './assistantData';
-import { calculateCashBalances, calculateGeneralCashSummary } from './cashBoxes';
+import { calculateCashBalances, calculateGeneralCashSummary, isPendingCashReceipt } from './cashBoxes';
 import { buildPaymentCalendarDays, getOverdueLines, getTodayLines, getUnscheduledLines, sumDebt } from './paymentSchedule';
 import { hasRecordedPayment, sameExpenseVersion, samePaymentTarget } from './expenseEdits';
 import { buildLinkedProviderInviteExpiration } from './providerInvites';
@@ -2377,7 +2377,7 @@ export const buildAssistantTools = ({
           }))
           .sort((a, b) => b.saldo - a.saldo),
         entregasPendientes: movements
-          .filter((movement) => movement.type === 'entrega' && movement.status === 'pending')
+          .filter(isPendingCashReceipt)
           .map((movement) => ({
             para: movement.toUserName || movement.toUserEmail || '',
             monto: round2(Number(movement.amount) || 0),

@@ -17,7 +17,7 @@ try {
     await setDoc(doc(store, `${base}/collaborators/recipient@example.test`), { uid: 'recipient', email: 'recipient@example.test', role: 'jefe_area', allowedCategories: ['Arte'], allowedTabs: ['cajas'] });
     await setDoc(doc(store, `${base}/collaborators/lead@example.test`), { uid: 'lead', email: 'lead@example.test', role: 'jefe_produccion', allowedCategories: ['Arte'], allowedTabs: ['cajas'] });
     await setDoc(doc(store, 'projects/other-cash-project'), { createdBy: 'other', collaboratorEmails: [] });
-    await setDoc(doc(store, `${base}/cashMovements/subdelivery`), { type: 'transferencia', cashAccount: 'personal', subdelivery: true, amount: 30, fromUserEmail: 'tomas@granberta.com', toUserEmail: 'recipient@example.test', date: new Date() });
+    await setDoc(doc(store, `${base}/cashMovements/subdelivery`), { type: 'transferencia', cashAccount: 'personal', subdelivery: true, receiptVersion: 1, status: 'pending', amount: 30, fromUserEmail: 'tomas@granberta.com', toUserEmail: 'recipient@example.test', date: new Date() });
   });
   await assertSucceeds(setDoc(doc(other, `${base}/cashMovements/general`), delivery));
   await assertSucceeds(setDoc(doc(admin, 'projects/other-cash-project/cashMovements/allowed-general'), { ...delivery, createdBy: 'admin', createdByEmail: 'tomas@granberta.com' }));
@@ -33,6 +33,7 @@ try {
     await assertFails(updateDoc(doc(store, `${base}/cashMovements/subdelivery`), { amount: 1, updatedAt: serverTimestamp() }));
     await assertFails(deleteDoc(doc(store, `${base}/cashMovements/subdelivery`)));
   }
+  await assertFails(updateDoc(doc(recipient, `${base}/cashMovements/subdelivery`), { status: 'confirmed', confirmedBy: 'recipient', confirmedByEmail: 'recipient@example.test', confirmedByName: 'Recipient', confirmedAt: serverTimestamp(), updatedAt: serverTimestamp() }));
   await assertFails(setDoc(doc(other, 'projects/new-with-policy'), { createdBy: 'other', generalCashDeliveryBlockedEmails: [] }));
   await assertFails(updateDoc(doc(admin, `${base}/cashMovements/general`), { amount: 1, updatedAt: serverTimestamp() }));
   await assertFails(deleteDoc(doc(admin, `${base}/cashMovements/general`)));

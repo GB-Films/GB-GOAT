@@ -96,6 +96,8 @@ export interface CashMovement {
   type: 'entrega' | 'devolucion' | 'transferencia' | 'pago' | 'reintegro';
   amount: number;
   cashAccount?: 'general' | 'personal';
+  subdelivery?: boolean;
+  receiptVersion?: 1;
   date: any;
   fromUserEmail?: string;
   fromUserName?: string;
