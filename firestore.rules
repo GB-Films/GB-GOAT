@@ -604,7 +604,9 @@ service cloud.firestore {
       let linked = thirdParty || invoiceCount > 0 || paymentCount > 0
         || previous.get('sharedReceipts', []).size() > 0;
       return !changed.hasAny(['sharedInvoices', 'sharedReceipts', 'sharedPaymentIds', 'sharedPaymentRecords', 'thirdPartyPayoutRequired'])
-        && ((invoiceCount == 0 && !thirdParty) || !changed.hasAny(['invoice', 'invoices']))
+        // Ordinary file attachments remain available on a shared/third-party
+        // expense; the caller still passes the same file/author permissions.
+        // Native fiscal references and all monetary identities stay immutable.
         && (!thirdParty || next.get('paymentHistory', []).size() == previous.get('paymentHistory', []).size())
         && (!linked || !changed.hasAny(['providerId', 'providerName', 'area', 'total', 'unitPrice', 'quantity']))
         && (paymentCount == 0
@@ -1243,7 +1245,7 @@ service cloud.firestore {
         && nextInvoice.uploadedBy == 'provider_public_link'
         && (
           (hadInvoice && request.resource.data.invoice == resource.data.invoice)
-          || (!hadInvoice && !request.resource.data.keys().hasAny(['invoice']))
+          || (!hadInvoice && request.resource.data.get('invoice', null) == null)
         )
         && request.resource.data.publicInvoiceUpload.token is string
         && invoiceUploadInviteIsPending(request.resource.data.publicInvoiceUpload.token, projectId, collectionName, expenseId);

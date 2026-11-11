@@ -7,6 +7,7 @@ const { FieldValue } = require('firebase-admin/firestore');
 const { projectFinanceAccess, linkedAllocation } = require('./projectFinanceAccess');
 const { createOwnPaymentCorrection } = require('./ownPaymentCorrection');
 const { distinctInvoiceExpenseCount } = require('./providerInvoiceMetadata');
+const { createRemoveExpenseInvoiceFile } = require('./removeExpenseInvoiceFile');
 
 const fail = message => { throw new HttpsError('failed-precondition', message); };
 const text = (value, max = 500) => String(value || '').trim().slice(0, max);
@@ -96,6 +97,10 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, ver
     const input = request.data || {};
     const actor = { uid: request.auth.uid, email: String(request.auth.token.email).trim().toLowerCase() };
     const admin = actor.email === 'info@granbertafilms.com' || user.data()?.role === 'admin' && require('./teamWorkAccess').hasTeamWorkAccess(user.data());
+    if (input.action === 'removeExpenseInvoiceFile') {
+      if (request.auth.token.email_verified !== true) throw new HttpsError('permission-denied', 'Verificá tu correo.');
+      return createRemoveExpenseInvoiceFile({ db, timestamp })(actor, input);
+    }
     const assertGeneralCash = () => {
       if (request.auth.token.email_verified !== true || !canAccessGeneralCash(actor.email))
         throw new HttpsError('permission-denied', 'Caja General sólo está habilitada para sus responsables.');

@@ -24,7 +24,7 @@ una misma clave proyecto/colección/gasto cuentan como una sola fila. La cantida
 de facturas en una celda no determina esta decisión: cada original conserva su
 propio botón, junto a los archivos legados que ya tuviera el gasto.
 
-El ícono de documento de **Factura de tercero**, con fondo amarillo, borde verde
+Para los originales fiscales nativos, el ícono de **Factura de tercero**, con fondo amarillo, borde verde
 y esa leyenda al pasar el cursor o consultar su nombre accesible, requiere que el CUIT
 real del emisor de la factura difiera del CUIT del prestador. No se deduce del
 pagador, nombre o indicador `thirdPartyPayoutRequired`, ni certifica la vigencia de
@@ -52,8 +52,39 @@ celda. Si faltan archivo, acceso o metadatos suficientes para la factura, muestr
 una indicación y permiten reintentar; no abren otra factura ni simulan una URL.
 La descarga sigue usando `openProviderFile` y las comprobaciones de acceso
 existentes. No se cambian pagos, autorizaciones, referencias ni datos financieros.
-Publicar primero la extensión de lectura de `manageProviderFinance` y luego la
-web; no hay cambios de reglas, IAM, Storage ni escrituras de datos.
+La lectura y el estilo no requieren cambios de permisos; la publicación de los
+controles de archivos se detalla a continuación.
+
+### Controles de archivos en la fila
+
+La factura de tercero conserva los controles habituales: abrir el documento,
+quitarlo de este gasto, adjuntar otros archivos y copiar un enlace de carga.
+El ícono usa amarillo con borde verde y la leyenda aparece al pasar el cursor.
+Si hay varios originales o adjuntos, el contador abre una lista con cada archivo
+y sus acciones, sin aumentar la altura de la fila. El panel móvil conserva las
+mismas operaciones y sus permisos habituales: editores del área pueden adjuntar;
+administradores del proyecto pueden retirar documentos.
+
+Los adjuntos ordinarios `invoice`/`invoices` pueden coexistir con las referencias
+fiscales nativas. Las reglas mantienen protegidos prestador, importes, destino de
+cobro, aplicaciones y pagos. Los enlaces siguen siendo de un solo uso y sólo
+agregan archivos; funcionan también después de retirar un archivo y dejar el
+primario en `null`.
+En trabajos que facturan por un tercero, los adjuntos ordinarios y el contador
+usan el mismo color para indicar ese contexto; no verifican ni modifican los
+campos fiscales del emisor.
+
+Para retirar el original nativo de una fila, `removeExpenseInvoiceFile` valida en
+el servidor administración del proyecto y el vínculo exacto. Marca únicamente
+esa referencia con `fileHidden`, y registra el antes/después y el autor en la
+actividad del proyecto. Conserva el original para auditoría, sus aplicaciones,
+sus pagos y la visibilidad en otras filas/proyectos. No anula la factura fiscal,
+no borra el archivo compartido ni cancela pagos. La operación es idempotente.
+Las referencias retiradas no se cuentan entre los documentos de la celda.
+
+Publicación de estos controles: primero `manageProviderFinance`, luego las
+reglas de Firestore y finalmente la web. Storage, IAM y roles no cambian. No hay
+migración de documentos ni operaciones productivas para probar la corrección.
 
 Las aplicaciones de pago aparecen en su historial y sus saldos habituales.
 

@@ -58,3 +58,11 @@ test('the existing batched document lookup and cache key include receipts and pa
   assert.deepEqual(expenseLinkedRecordIds(linked), ['invoice', 'receipt', 'payment']);
   assert.notEqual(projectInvoiceRelationsKey([row]), projectInvoiceRelationsKey([linked]));
 });
+
+test('removing a native file from this row hides its control without rewriting the fiscal reference', () => {
+  const reference = { id: 'invoice', amountCents: 10000, issuerCuit: invoice.issuerCuit };
+  const hidden = { ...reference, fileHidden: true };
+  assert.deepEqual(sharedInvoiceReferences({ sharedInvoices: [reference, hidden] }), [reference]);
+  assert.deepEqual(sharedInvoiceReferences({ sharedInvoices: [hidden] }), []);
+  assert.equal(hidden.id, reference.id); assert.equal(hidden.amountCents, reference.amountCents);
+});

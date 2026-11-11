@@ -68,7 +68,8 @@ try {
   await assertFails(updateDoc(doc(context.firestore(), 'providerFinancialRecords/invoice1'), { netCents: 1 }));
   await assertFails(deleteDoc(doc(context.firestore(), 'providers/supplier')));
   await assertFails(deleteDoc(doc(context.firestore(), 'projects/project0')));
-  await assertFails(updateDoc(doc(context.firestore(), 'projects/project0/areaExpenses/expense'), { invoice: { url: 'https://example.test/duplicate.pdf' } }));
+  // File attachments use the same ordinary controls; native fiscal references
+  // and monetary mutations remain protected (tested below and in the file flow).
   await assertFails(updateDoc(doc(context.firestore(), 'projects/project0'), { activeAreas: [] }));
   await assertSucceeds(updateDoc(doc(context.firestore(), 'projects/project0'), { activeAreas: ['Post', 'Nueva área'] }));
 
@@ -110,7 +111,6 @@ try {
   for (const store of [context.firestore(), editor.firestore()]) {
     const target = doc(store, expenseRef(0).path);
     await assertFails(updateDoc(target, { thirdPartyPayoutRequired: false }));
-    await assertFails(updateDoc(target, { invoice: { url: 'https://example.test/bypass.pdf' } }));
     await assertFails(updateDoc(target, { paymentHistory: [...guarded.paymentHistory, { id: 'bypass', amount: 1, method: 'otro', createdBy: 'editor', createdByEmail: 'editor@example.test' }], paymentAuthorIds: guarded.paymentAuthorIds, paymentLocked: true }));
     await assertFails(deleteDoc(target));
   }
@@ -219,5 +219,7 @@ try {
   const { testOwnPaymentCorrections } = await import('./ownPaymentCorrection.flow.mjs');
   const { paymentCorrectionSnapshot } = require('../functions/paymentCorrectionSnapshot');
   await testOwnPaymentCorrections({ db, call, snapshot: paymentCorrectionSnapshot });
+  const { testExpenseInvoiceControls } = await import('./expenseInvoiceControls.flow.mjs');
+  await testExpenseInvoiceControls({ db, env, call });
   console.log('Shared provider finance: exact applications, idempotency, concurrent payments, cancellation, single cash outflow and private immutable files verified.');
 } finally { await env.cleanup(); await app.delete(); }

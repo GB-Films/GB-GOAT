@@ -84,6 +84,7 @@ import { DRAGGING_EXPENSE_ROW_CLASS, ExpenseDragHandle } from './project-detail/
 import { PaymentModal } from './project-detail/PaymentModal';
 import { ExpenseInvoiceCell, ExpenseReceiptsCell, InvoiceDropOverlay } from './project-detail/ExpenseFileCells';
 import { SharedInvoiceRecordsProvider } from '../components/SharedExpenseInvoices';
+import { providerFinanceRequest } from '../lib/providerFinance';
 import type { AreaExpense, BudgetItem, CashMovement, Collaborator, Payment, PaymentCollection } from './project-detail/types';
 import { formatIdentifier, inferLegacyIdentifiers, normalizeDigits, providerDisplayName } from '../lib/providerConstants';
 import { normalizeEmail, normalizeSearchText } from '../lib/identity';
@@ -2577,6 +2578,18 @@ export default function ProjectDetail() {
     }
   };
 
+  const removeSharedInvoiceFile = async (expense: any, recordId: string, collectionName: PaymentCollection) => {
+    if (!id || !isProjectAdmin || !confirm('¿Quitar esta factura de este gasto?')) return;
+    const loadingKey = `${collectionName}-${expense.id}`;
+    setUploadingInvoices(prev => ({ ...prev, [loadingKey]: true }));
+    try {
+      const result = await providerFinanceRequest({ action: 'removeExpenseInvoiceFile', projectId: id, collectionName, itemId: expense.id, recordId }) as { sharedInvoices: any[] };
+      updateItemCollectionState(collectionName, expense.id, { sharedInvoices: result.sharedInvoices });
+    } catch (error: any) {
+      alert(error?.message || 'No se pudo quitar la factura. Actualizá la página y reintentá.');
+    } finally { setUploadingInvoices(prev => ({ ...prev, [loadingKey]: false })); }
+  };
+
   const createInvoiceUploadLink = async (expense: any, collectionName: PaymentCollection = 'areaExpenses') => {
     if (!id || !canManageItemFiles(expense, collectionName)) return;
     if (!expense.providerId || !expense.providerName) {
@@ -3979,6 +3992,7 @@ export default function ProjectDetail() {
       generatingLink={!!generatingInvoiceLinks[`${collectionName}-${item.id}`]}
       onUploadInvoice={(file) => uploadInvoiceForExpense(item, file, collectionName)}
       onRemoveInvoice={(invoice) => removeInvoiceFromExpense(item, invoice, collectionName)}
+      onRemoveSharedInvoice={(recordId) => removeSharedInvoiceFile(item, recordId, collectionName)}
       onCreateInvoiceLink={() => createInvoiceUploadLink(item, collectionName)}
     />
   );
@@ -4005,6 +4019,7 @@ export default function ProjectDetail() {
       onUploadInvoice={(file) => uploadInvoiceForExpense(item, file, collectionName)}
       onUploadReceipt={(file) => uploadOtherReceiptForExpense(item, file, collectionName)}
       onRemoveInvoice={(invoice) => removeInvoiceFromExpense(item, invoice, collectionName)}
+      onRemoveSharedInvoice={(recordId) => removeSharedInvoiceFile(item, recordId, collectionName)}
       onRemoveReceipt={(receipt) => removeOtherReceiptFromExpense(item, receipt, collectionName)}
       onCreateInvoiceLink={() => createInvoiceUploadLink(item, collectionName)}
     />
