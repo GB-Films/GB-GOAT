@@ -10,6 +10,7 @@ GB GOAT organiza el ciclo completo de una producción audiovisual: cliente y pro
 - `projects/{projectId}/budgetItems` contiene las líneas de Presu Ppal. Su edición financiera es administrativa.
 - `projects/{projectId}.categoryBudgets` contiene las asignaciones globales opcionales por categoría, en ARS. Reemplazan el presupuesto estimado de sus partidas; los gastos y pagos conservan sus documentos propios.
 - `projects/{projectId}/areaExpenses` contiene la ejecución operativa por área y subcategoría.
+- Renombrar/reordenar una subcategoría o trasladar un gasto entre áreas activas usa `manageProviderFinance/reclassifyAreaExpenses`. Conserva IDs, pagos, archivos y declaraciones; actualiza sólo clasificación/orden y metadatos vinculados en una transacción auditada. Los pagos registrados no impiden esta operación. Alcance, permisos y publicación en [area-structure.md](area-structure.md).
 - `projects/{projectId}/collaborators` contiene roles y alcances exclusivos de ese proyecto.
 - `projects/{projectId}/cashMovements` registra entregas, devoluciones, transferencias y movimientos asociados a pagos.
 - Caja General y su libro completo están reservados a `tomas@granberta.com`, `agustin@granberta.com` y `guido@bani-vfx.com`, dentro de sus permisos de proyecto. Los demás usuarios, incluidos administradores, consultan sólo su caja personal; no hay bypass de dueño/admin. Detalles y orden de publicación en [general-cash-access.md](general-cash-access.md).

@@ -35,6 +35,7 @@ const cases = [
   ["generalCashAccess", "demo-goat-general-cash", "firestore"],
   ["cashSubdeliveryRules", "demo-goat-cash-subdeliveries", "firestore"],
   ["cashDeliveryDeletion", "demo-goat-cash-deletion", "firestore"],
+  ["areaStructureChange", "demo-goat-area-structure", "firestore"],
   ["teamOnboarding", "demo-goat-team-onboarding", "firestore,storage"],
   ["providerPortal", "demo-goat-provider-portal", "firestore,storage,auth"],
 ];
