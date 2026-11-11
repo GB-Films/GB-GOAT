@@ -36,10 +36,12 @@ test('movement creation and its selector share the assigned-cash-first order, wi
   const choices = cashMovementOptions(access);
   assert.deepEqual(choices.map(row => row.kind), ['transferencia', 'entrega', 'devolucion']);
   assert.equal(cashMovementOptions({ ...access, hasAssignedCashBox: false, canReturn: false })[0].kind, 'entrega');
-  const html = renderToStaticMarkup(createElement(CashMovementDialog, { ...access, kind: choices[0].kind, onKindChange() {}, onClose() {}, recipients: [{ email: 'recipient@example.test' }], recipientEmail: 'recipient@example.test', onRecipientChange() {}, availableBalance: 20, ownName: 'Persona de prueba', defaultDate: '2026-11-11', busy: false, onSubmit() {} }));
+  const html = renderToStaticMarkup(createElement(CashMovementDialog, { ...access, kind: choices[0].kind, onKindChange() {}, onClose() {}, recipients: [{ email: 'recipient@example.test' }], recipientEmail: 'recipient@example.test', onRecipientChange() {}, availableBalance: 20, currentBalance: 1750.5, ownName: 'Persona de prueba', defaultDate: '2026-11-11', busy: false, onSubmit() {} }));
   const select = html.match(/<select[^>]*id="cash-movement-kind"[\s\S]*?<\/select>/)![0];
   assert.match(select, /<option value="transferencia" selected="">/);
   assert(select.indexOf('value="transferencia"') < select.indexOf('value="entrega"'));
+  assert.match(select, /Transferir desde mi caja asignada \(saldo \$1\.750,5\)/);
+  assert.match(html, /max="20"/, 'displaying the ledger balance preserves the lower available transfer limit');
 });
 function paymentHtml(actorEmail = email) {
   return renderToStaticMarkup(createElement(PaymentModal, {
@@ -54,6 +56,7 @@ test('the payment form selects personal cash and lists it before General without
   const select = html.match(/<select[^>]*name="cashBoxId"[\s\S]*?<\/select>/)![0];
   assert.match(select, /<option value="personal" selected="">/);
   assert(select.indexOf('value="personal"') < select.indexOf('value="general"'));
+  assert.match(select, /Caja asignada a Persona de prueba \(saldo \$0\)/);
   assert.doesNotMatch(html.match(/<input[^>]*name="useCashBox"[^>]*>/)![0], /checked/);
   assert.doesNotMatch(paymentHtml('other@example.test').match(/<select[^>]*name="cashBoxId"[\s\S]*?<\/select>/)![0], /value="general"/);
 });

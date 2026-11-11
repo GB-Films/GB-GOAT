@@ -950,7 +950,7 @@ export function PaymentModal({
                   >
                     {cashBoxOptions.map((option) => (
                       <option key={option.id} value={option.id}>
-                        {option.label}{option.unlimited ? ' · salida de Caja General' : ` · saldo $${option.balance.toLocaleString()}`}
+                        {option.label}{option.unlimited ? ' · salida de Caja General' : ` (saldo $${option.balance.toLocaleString('es-AR')})`}
                       </option>
                     ))}
                   </select>
@@ -1072,7 +1072,7 @@ export function PaymentModal({
                             Caja del pago
                             <select name="editCashBoxId" defaultValue="keep" className="mt-1 w-full rounded border border-amber-200 bg-white px-3 py-2 text-xs">
                               {cashBoxOptions.map((option) => (
-                                <option key={option.id} value={option.id}>{option.label}{option.unlimited ? '' : ` · saldo $${option.balance.toLocaleString('es-AR')}`}</option>
+                                <option key={option.id} value={option.id}>{option.label}{option.unlimited ? '' : ` (saldo $${option.balance.toLocaleString('es-AR')})`}</option>
                               ))}
                               <option value="keep">Mantener {wasPaidWithCashBox ? payment.cashBoxLabel || 'la caja actual' : 'sin caja'}</option>
                               <option value="none">Sin caja · pagado por otro medio</option>
@@ -1200,7 +1200,7 @@ export function PaymentModal({
                             </div>
                             <select name="reimbursementCashBoxId" required defaultValue="" className="w-full rounded border border-slate-200 p-2 text-xs">
                               <option value="">Seleccionar caja de salida...</option>
-                              {cashBoxOptions.map((option) => <option key={option.id} value={option.id}>{option.label} · {option.unlimited ? 'sin límite' : `$${option.balance.toLocaleString('es-AR')}`}</option>)}
+                              {cashBoxOptions.map((option) => <option key={option.id} value={option.id}>{option.label}{option.unlimited ? ' · sin límite' : ` (saldo $${option.balance.toLocaleString('es-AR')})`}</option>)}
                             </select>
                             <input name="reimbursementDetail" required placeholder="Referencia del pago real" className="w-full rounded border border-slate-200 p-2 text-xs" />
                             <p className="text-[11px] text-slate-500">Sólo registrar cuando el dinero salió de esta caja. Los reintegros bancarios se registrarán desde Control Total cuando exista la cuenta pagadora verificable.</p>

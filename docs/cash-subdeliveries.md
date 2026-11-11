@@ -11,6 +11,9 @@ primero la transferencia desde su caja cuando ese rol puede realizarla. La lista
 ofrece después la entrega desde General a quienes conservan ese permiso. Sin
 caja asignada se mantiene la entrega General como primera opción autorizada.
 No se amplían roles de transferencia ni acceso a General por este orden.
+La opción de caja propia muestra su saldo actual entre paréntesis, también en
+pagos y reintegros. En subentregas se sigue indicando aparte el disponible para
+transferir, descontando las devoluciones pendientes.
 
 En pagos nuevos, la caja asignada también aparece primero y queda seleccionada
 por defecto, incluso con saldo cero. Si sus datos llegan después de abrir el

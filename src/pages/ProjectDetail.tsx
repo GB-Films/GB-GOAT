@@ -7252,7 +7252,7 @@ export default function ProjectDetail() {
               recipients={cashMovementDialog === 'entrega' ? cashResponsibles : cashMovementDialog === 'transferencia' ? productionTransferTargets : cashReturnRecipients}
               recipientEmail={cashMovementDialog === 'entrega' ? cashRecipientEmail : cashMovementDialog === 'transferencia' ? cashTransferTargetEmail : cashReturnRecipientEmail}
               onRecipientChange={cashMovementDialog === 'entrega' ? setCashRecipientEmail : cashMovementDialog === 'transferencia' ? setCashTransferTargetEmail : setCashReturnRecipientChoice}
-              availableBalance={availableReturnBalance} ownName={currentUserName || currentUserEmail}
+              availableBalance={availableReturnBalance} currentBalance={currentCashBalance} ownName={currentUserName || currentUserEmail}
               defaultDate={toProjectDateInputValue(new Date())}
               busy={isCreatingCashDelivery || isCreatingCashSubdelivery || isCreatingCashReturn}
               onSubmit={cashMovementDialog === 'entrega' ? createCashDelivery : cashMovementDialog === 'transferencia' ? createCashTransfer : createCashReturn} />}
