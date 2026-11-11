@@ -4,12 +4,30 @@ import {
   canEditExistingPayment,
   canEditProjectArea,
   canEditProjectSubcategory,
+  canOrganizeProjectArea,
+  canOrganizeProjectSubcategory,
   canViewProjectSubcategory,
   hasFullProjectAreaAccess,
   toggleProjectAreaAccess,
   toggleProjectSubcategoryAccess,
   normalizeAllowedTabs,
 } from './projectAccess';
+
+test('organizar subcategorías depende de edición de la categoría, sin exigir rol admin', () => {
+  const editor = { role: 'jefe_area', allowedCategories: ['Arte', 'Campo'], allowedTabs: ['areas'], canEditBudgetAreas: true };
+  assert.equal(canOrganizeProjectArea(false, editor, 'Arte'), true);
+  assert.equal(canOrganizeProjectSubcategory(false, editor, 'Arte', 'Vestuario'), true);
+  assert.equal(canOrganizeProjectSubcategory(false, editor, 'Campo', 'Vestuario'), true);
+  assert.equal(canOrganizeProjectArea(false, editor, 'Post'), false);
+  for (const access of [{ ...editor, canEditBudgetAreas: false }, { ...editor, allowedTabs: ['resumen'] },
+    { ...editor, allowedCategories: [], allowedSubcategories: ['Arte||Vestuario'] }]) {
+    assert.equal(canOrganizeProjectSubcategory(false, access, 'Arte', 'Vestuario'), false);
+  }
+  const partial = { ...editor, excludedSubcategories: ['Arte||Utilería'] };
+  assert.equal(canOrganizeProjectSubcategory(false, partial, 'Arte', 'Utilería'), false);
+  assert.equal(canOrganizeProjectSubcategory(false, partial, 'Arte', 'Vestuario'), true);
+  assert.equal(canOrganizeProjectSubcategory(true, partial, 'Arte', 'Utilería'), true);
+});
 
 test('seleccionar un área incluye subcategorías existentes y futuras, con exclusiones explícitas', () => {
   const full = { ...toggleProjectAreaAccess({}, 'Arte'), allowedTabs: ['areas'], canEditBudgetAreas: true };

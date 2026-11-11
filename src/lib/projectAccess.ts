@@ -177,6 +177,16 @@ export const canEditProjectSubcategory = (
   && canViewProjectSubcategory(false, access, area, subcategory)
 )));
 
+// Organizing a whole group needs its parent category grant. Exclusions still
+// apply to the group being moved, without blocking unrelated permitted groups.
+export const canOrganizeProjectArea = (isProjectAdmin: boolean, access: ProjectAccess | null | undefined, area?: string | null) => Boolean(
+  area && (isProjectAdmin || access?.canEditBudgetAreas === true
+    && asStringArray(access.allowedTabs).includes('areas') && asStringArray(access.allowedCategories).includes(area))
+);
+export const canOrganizeProjectSubcategory = (isProjectAdmin: boolean, access: ProjectAccess | null | undefined, area?: string | null, subcategory?: string | null) => (
+  canOrganizeProjectArea(isProjectAdmin, access, area) && canEditProjectSubcategory(isProjectAdmin, access, area, subcategory)
+);
+
 export const canEditExistingPayment = (isProjectAdmin: boolean, payment?: { id?: string; sharedRecordId?: string; createdBy?: string; createdByEmail?: string }, uid = '', email = '') =>
   isProjectAdmin || Boolean(payment?.id && !payment.sharedRecordId && uid && email && payment.createdBy === uid && payment.createdByEmail === email);
 

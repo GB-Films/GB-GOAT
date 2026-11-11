@@ -12,7 +12,9 @@ Una subcategoría completa lleva su presupuesto y sus permisos/exclusiones expl�
 
 ## Acceso e intentos repetidos
 
-La operación exige sesión verificada, perfil de equipo habilitado, pertenencia al proyecto y edición de origen y destino, incluidas exclusiones. Sólo administración del proyecto puede mover/reordenar grupos completos. El jefe de producción conserva la posibilidad de renombrar dentro de un área completa de su alcance, sin exclusiones. Mover gastos individuales mantiene el alcance de edición existente.
+La operación exige sesión verificada, perfil de equipo habilitado, pertenencia al proyecto y edición de origen y destino, incluidas exclusiones. Los colaboradores con edición sobre las categorías de origen y destino pueden renombrar, mover y reordenar grupos completos, sin exigir rol de administrador. Una exclusión sobre el grupo involucrado impide la operación; excluir otro grupo no bloquea los grupos permitidos. Un permiso aislado sobre una subcategoría permite mover sus gastos al alcance autorizado, pero no reorganizar la categoría completa.
+
+Organizar grupos conserva su presupuesto y no concede permiso para editar asignaciones. El editor de nombre muestra sólo ese campo cuando la persona no administra presupuestos; el servidor rechaza que se agregue una modificación de presupuesto a esa solicitud. Administración y los jefes de producción con acceso completo al área conservan sus permisos presupuestarios existentes.
 
 El identificador de operación y su contenido quedan en una auditoría inmutable. Un reintento con la misma solicitud devuelve el resultado anterior; no vuelve a mover. El cliente conserva ese intento también si la respuesta o la actualización de pantalla falla. Un origen, revisión o presupuesto desactualizado produce un mensaje para actualizar y reintentar, sin escrituras parciales. Los pagos concurrentes se preservan al releer dentro de la transacción.
 

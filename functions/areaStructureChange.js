@@ -79,9 +79,13 @@ function createAreaStructureChange({ db, timestamp }) {
         || !canEdit(access, fromArea, fromSubcategory) || !canEdit(access, targetArea, targetSubcategory)) fail('Necesitás permiso de edición en el origen y el destino.', 'permission-denied');
       const project = access.project, revision = Number(project.budgetRevision) || 0;
       if (!list(project.activeAreas).includes(fromArea) || !list(project.activeAreas).includes(targetArea)) fail('El origen y el destino deben tener gestión de área activa.');
-      if (!expenseMode && !access.admin && !(fromArea === targetArea && fromSubcategory !== targetSubcategory
-        && access.collaborator?.role === 'jefe_produccion' && list(access.collaborator.allowedCategories).includes(fromArea)
-        && !list(access.collaborator.excludedSubcategories).some(key => key.startsWith(`${fromArea}||`)))) fail('Sólo administración puede mover subcategorías completas.', 'permission-denied');
+      if (!expenseMode && !access.admin && ![fromArea, targetArea].every(area => list(access.collaborator?.allowedCategories).includes(area))) {
+        fail('Necesitás permiso de edición en las categorías de origen y destino para organizar subcategorías.', 'permission-denied');
+      }
+      const canManageBudget = access.admin || access.collaborator?.role === 'jefe_produccion'
+        && list(access.collaborator.allowedCategories).includes(fromArea)
+        && !list(access.collaborator.excludedSubcategories).some(key => key.startsWith(`${fromArea}||`));
+      if (input.budget && !canManageBudget) fail('Podés renombrar o mover la subcategoría conservando su presupuesto. No tenés permiso para modificar la asignación.', 'permission-denied');
       const prior = await tx.get(audit);
       if (prior.exists) {
         if (prior.data().fingerprint !== fingerprint) fail('Este intento ya corresponde a otro cambio.');
