@@ -14,7 +14,7 @@ import {
   type AssistantProjectFinance,
   type AssistantProjectHandle,
 } from './assistantData';
-import { calculateCashBalances, calculateGeneralCashSummary, isPendingCashReceipt } from './cashBoxes';
+import { calculateCashBoxSummaries, calculateGeneralCashSummary, isPendingCashReceipt } from './cashBoxes';
 import { buildPaymentCalendarDays, getOverdueLines, getTodayLines, getUnscheduledLines, sumDebt } from './paymentSchedule';
 import { hasRecordedPayment, sameExpenseVersion, samePaymentTarget } from './expenseEdits';
 import { buildLinkedProviderInviteExpiration } from './providerInvites';
@@ -2334,7 +2334,7 @@ export const buildAssistantTools = ({
 
   tools.push({
     name: 'saldos_cajas',
-    description: 'Muestra los saldos de caja por responsable, las entregas pendientes de confirmación y el resumen de Caja General.',
+    description: 'Muestra los saldos de caja por responsable y las entregas pendientes. El saldo se descuenta al confirmar la recepción; el disponible excluye los importes reservados.',
     parameters: projectOptionsSchema(),
     run: async (args) => {
       const resolved = await resolveProject(args?.proyecto);
@@ -2348,7 +2348,7 @@ export const buildAssistantTools = ({
       const movements = context.cashMovements.filter(movement => canReadCashMovement(context.userEmail, movement, seeAll));
 
       const general = calculateGeneralCashSummary(movements);
-      const balances = calculateCashBalances(movements);
+      const balances = calculateCashBoxSummaries(movements);
       const nameByEmail = new Map<string, string>();
       movements.forEach((movement) => {
         const to = asText(movement.toUserEmail);
@@ -2369,11 +2369,15 @@ export const buildAssistantTools = ({
           pagosDirectosDeCajaGeneral: round2(general.directPayments),
         } } : {}),
         saldosPorResponsable: Array.from(balances.entries())
-          .filter(([, balance]) => Math.abs(balance) > 0.009)
-          .map(([email, balance]) => ({
+          .filter(([email, summary]) => (seeAll || email === normalizeEmail(context.userEmail))
+            && (Math.abs(summary.balance) > 0.009 || summary.pendingOutgoing > 0 || summary.pendingIncoming > 0))
+          .map(([email, summary]) => ({
             persona: nameByEmail.get(email) || email,
             email,
-            saldo: round2(balance),
+            saldo: round2(summary.balance),
+            ...(summary.pendingOutgoing > 0 || summary.pendingIncoming > 0 ? {
+              disponible: round2(summary.available), porConfirmar: round2(summary.pendingOutgoing), porRecibir: round2(summary.pendingIncoming),
+            } : {}),
           }))
           .sort((a, b) => b.saldo - a.saldo),
         entregasPendientes: movements

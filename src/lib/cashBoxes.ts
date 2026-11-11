@@ -82,6 +82,33 @@ export const calculateCashBalances = (movements: any[]): Map<string, number> => 
 export const isPendingCashReceipt = (movement: { type: string; status?: string }) =>
   (movement.type === 'entrega' || movement.type === 'transferencia') && movement.status === 'pending';
 
+export type CashBoxSummary = { balance: number; available: number; pendingOutgoing: number; pendingIncoming: number };
+
+// The displayed balance moves on receipt. Spending checks keep using the
+// reserved balance above, so pending funds can never be spent a second time.
+export const calculateCashBoxSummaries = (movements: any[]): Map<string, CashBoxSummary> => {
+  const availableBalances = calculateCashBalances(movements);
+  const transfers = new Map<string, number>(), returns = new Map<string, number>(), incoming = new Map<string, number>();
+  const add = (map: Map<string, number>, value: unknown, amount: number) => {
+    const email = String(value || '').trim().toLowerCase();
+    if (email) map.set(email, (map.get(email) || 0) + amount);
+  };
+  for (const movement of movements) {
+    if (movement.status !== 'pending') continue;
+    const amount = Math.round((Number(movement.amount) || 0) * 100);
+    if (movement.type === 'transferencia') add(transfers, movement.fromUserEmail, amount);
+    if (movement.type === 'devolucion') add(returns, movement.fromUserEmail, amount);
+    if (isPendingCashReceipt(movement)) add(incoming, movement.toUserEmail, amount);
+  }
+  const emails = new Set([...availableBalances.keys(), ...transfers.keys(), ...returns.keys(), ...incoming.keys()]);
+  return new Map([...emails].map(email => {
+    const availableCents = Math.round((availableBalances.get(email) || 0) * 100);
+    const reservedTransfers = transfers.get(email) || 0, reservedReturns = returns.get(email) || 0;
+    return [email, { balance: (availableCents + reservedTransfers) / 100, available: (availableCents - reservedReturns) / 100,
+      pendingOutgoing: (reservedTransfers + reservedReturns) / 100, pendingIncoming: (incoming.get(email) || 0) / 100 }];
+  }));
+};
+
 export const calculateGeneralCashSummary = (movements: any[]) => {
   const generalMovements = movements.filter(isGeneralCashMovement);
   const confirmedDeliveries = generalMovements

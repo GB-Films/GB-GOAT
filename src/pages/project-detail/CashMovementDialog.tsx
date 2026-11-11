@@ -50,7 +50,7 @@ export function CashMovementDialog({ kind, onKindChange, onClose, canDeliver, ca
           <label htmlFor="cash-movement-notes" className={labelClass}>Descripción (opcional)</label>
           <input id="cash-movement-notes" name="notes" className={inputClass} placeholder={delivery ? 'Ej.: efectivo para rodaje' : transfer ? 'Ej.: fondos para Arte' : 'Ej.: saldo no utilizado'} />
         </div>
-        <p className="text-xs text-slate-500 sm:col-span-2">{transfer ? 'El importe queda reservado en tu caja. La persona debe confirmar la recepción para tenerlo disponible.' : delivery ? 'Se suma al saldo cuando la persona confirma la recepción.' : 'Se descuenta de tu saldo cuando el administrador confirma la recepción.'}</p>
+        <p className="text-xs text-slate-500 sm:col-span-2">{transfer ? 'El saldo se descuenta cuando la persona confirma la recepción. Mientras tanto, el importe queda reservado.' : delivery ? 'Se suma al saldo cuando la persona confirma la recepción.' : 'Se descuenta de tu saldo cuando el administrador confirma la recepción.'}</p>
         <div className="mt-1 flex justify-end gap-2 sm:col-span-2">
           <button type="button" onClick={onClose} className="rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-600">Cancelar</button>
           <button type="submit" disabled={busy || recipients.length === 0 || (!delivery && availableBalance <= 0)}

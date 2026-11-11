@@ -1091,9 +1091,10 @@ service cloud.firestore {
 
     function canDeleteCashMovement(projectId, movementId) {
       return isProjectAdmin(projectId)
+        // Delivery deletion must check the complete live ledger on the server.
+        && resource.data.type != 'entrega'
         && (resource.data.get('cashAccount', 'personal') != 'general' || hasGeneralCashAccess())
         && !resource.data.get('subdelivery', false)
-        && (resource.data.type != 'entrega' || canInitiateGeneralCashDelivery(projectId))
         && ((resource.data.type != 'pago' && resource.data.type != 'reintegro' && resource.data.type != 'devolucion')
           || (resource.data.type == 'pago' && (cashPaymentHasAudit(projectId, movementId, 'payment_deleted')
             || cashPaymentIsUnlinked(projectId, movementId)))

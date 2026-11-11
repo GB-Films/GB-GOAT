@@ -20,6 +20,8 @@ try {
     await setDoc(doc(store, `${base}/cashMovements/subdelivery`), { type: 'transferencia', cashAccount: 'personal', subdelivery: true, receiptVersion: 1, status: 'pending', amount: 30, fromUserEmail: 'tomas@granberta.com', toUserEmail: 'recipient@example.test', date: new Date() });
   });
   await assertSucceeds(setDoc(doc(other, `${base}/cashMovements/general`), delivery));
+  await assertFails(deleteDoc(doc(other, `${base}/cashMovements/general`)));
+  await assertFails(updateDoc(doc(other, `${base}/cashMovements/general`), { type: 'pago', updatedAt: serverTimestamp() }));
   await assertSucceeds(setDoc(doc(admin, 'projects/other-cash-project/cashMovements/allowed-general'), { ...delivery, createdBy: 'admin', createdByEmail: 'tomas@granberta.com' }));
   await assertFails(setDoc(doc(lead, `${base}/cashMovements/old-direct-transfer`), { ...delivery, type: 'transferencia', cashAccount: 'personal', fromUserEmail: 'lead@example.test', toUserEmail: 'recipient@example.test', createdBy: 'lead', createdByEmail: 'lead@example.test' }));
   const upperCaseAdmin = env.authenticatedContext('admin', { email_verified: true, email: 'TOMAS@GRANBERTA.COM' }).firestore();
@@ -39,5 +41,11 @@ try {
   await assertFails(deleteDoc(doc(admin, `${base}/cashMovements/general`)));
   await assertSucceeds(updateDoc(doc(admin, `${base}/cashMovements/general`), { status: 'confirmed', confirmedBy: 'admin', confirmedByEmail: 'tomas@granberta.com', confirmedByName: 'Admin', confirmedAt: serverTimestamp(), updatedAt: serverTimestamp() }));
   assert.equal((await getDoc(doc(admin, `${base}/cashMovements/general`))).data().status, 'confirmed');
+  await assertFails(deleteDoc(doc(other, `${base}/cashMovements/general`)));
+  await env.withSecurityRulesDisabled(async ctx => {
+    const { status, ...legacy } = delivery;
+    await setDoc(doc(ctx.firestore(), `${base}/cashMovements/legacy-delivery`), legacy);
+  });
+  await assertFails(deleteDoc(doc(other, `${base}/cashMovements/legacy-delivery`)));
   console.log('Rules: scoped General delivery restriction, policy/counter lockdown, forged-source denial, immutable subdelivery and recipient confirmation passed.');
 } finally { await env.cleanup(); }

@@ -56,7 +56,7 @@ test('the payment form selects personal cash and lists it before General without
   const select = html.match(/<select[^>]*name="cashBoxId"[\s\S]*?<\/select>/)![0];
   assert.match(select, /<option value="personal" selected="">/);
   assert(select.indexOf('value="personal"') < select.indexOf('value="general"'));
-  assert.match(select, /Caja asignada a Persona de prueba \(saldo \$0\)/);
+  assert.match(select, /Caja asignada a Persona de prueba \(disponible \$0\)/);
   assert.doesNotMatch(html.match(/<input[^>]*name="useCashBox"[^>]*>/)![0], /checked/);
   assert.doesNotMatch(paymentHtml('other@example.test').match(/<select[^>]*name="cashBoxId"[\s\S]*?<\/select>/)![0], /value="general"/);
 });

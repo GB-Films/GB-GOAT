@@ -111,7 +111,7 @@ import { getReimbursementBalanceCents, getReimbursedCents, isThirdPartyPayment }
 import { getFileExtension, sanitizeFileName, validateSpreadsheetImport } from '../lib/files';
 import { PROJECT_STATUSES } from '../lib/projects';
 import { getExpenseInvoices, getInvoiceDocumentKey, type ExpenseInvoiceDocument } from '../lib/invoices';
-import { buildPaymentCashBoxOptions, calculateCashBalances, calculateGeneralCashSummary, isPendingCashReceipt, GENERAL_CASH_ACCOUNT } from '../lib/cashBoxes';
+import { buildPaymentCashBoxOptions, calculateCashBalances, calculateCashBoxSummaries, calculateGeneralCashSummary, isPendingCashReceipt, GENERAL_CASH_ACCOUNT } from '../lib/cashBoxes';
 import { cashMovementOptions } from '../lib/cashBoxDefaults';
 import { expenseNeedsProviderRegistration } from '../lib/providerRegistration';
 import { useProviderRegistrationEvidence } from '../hooks/useProviderRegistrationEvidence';
@@ -776,6 +776,7 @@ export default function ProjectDetail() {
   const [confirmingCashDeliveryId, setConfirmingCashDeliveryId] = useState('');
   const [confirmingCashReturnId, setConfirmingCashReturnId] = useState('');
   const [cancellingCashReturnId, setCancellingCashReturnId] = useState('');
+  const [deletingCashDeliveryId, setDeletingCashDeliveryId] = useState('');
   const [availableUsers, setAvailableUsers] = useState<any[]>([]);
   const [newCollaboratorSearch, setNewCollaboratorSearch] = useState('');
   const [selectedUserToAdd, setSelectedUserToAdd] = useState<any | null>(null);
@@ -4220,20 +4221,19 @@ export default function ProjectDetail() {
   }, [availableUsers, categories, collaborators, project?.createdBy, project?.createdByEmail]);
 
   const cashBalanceByEmail = React.useMemo(() => calculateCashBalances(cashMovements), [cashMovements]);
+  const cashSummaryByEmail = React.useMemo(() => calculateCashBoxSummaries(cashMovements), [cashMovements]);
 
-  const currentCashBalance = cashBalanceByEmail.get(currentUserEmail) || 0;
+  const currentCashBalance = cashSummaryByEmail.get(currentUserEmail)?.balance || 0;
+  const currentAvailableCashBalance = cashSummaryByEmail.get(currentUserEmail)?.available || 0;
   const hasAssignedCashBox = cashBalanceByEmail.has(currentUserEmail);
-  const pendingReturnAmount = cashMovements
-    .filter((movement) => movement.type === 'devolucion' && movement.status === 'pending' && normalizeEmail(movement.fromUserEmail) === currentUserEmail)
-    .reduce((total, movement) => total + (Number(movement.amount) || 0), 0);
-  const availableReturnBalance = Math.max(0, currentCashBalance - pendingReturnAmount);
+  const availableReturnBalance = Math.max(0, currentAvailableCashBalance);
   const paymentCashBoxOptions = React.useMemo(() => buildPaymentCashBoxOptions({
     isProjectAdmin,
     hasPersonalCashBox: hasAssignedCashBox,
-    personalBalance: currentCashBalance,
+    personalBalance: currentAvailableCashBalance,
     currentUserEmail,
     currentUserName,
-  }), [hasAssignedCashBox, currentCashBalance, currentUserEmail, currentUserName, isProjectAdmin]);
+  }), [hasAssignedCashBox, currentAvailableCashBalance, currentUserEmail, currentUserName, isProjectAdmin]);
   const generalCashSummary = React.useMemo(() => calculateGeneralCashSummary(cashMovements), [cashMovements]);
   const generalCashMovements = React.useMemo(() => (
     [...generalCashSummary.movements].sort((a, b) => {
@@ -4296,11 +4296,14 @@ export default function ProjectDetail() {
           responsible,
           email,
           movements,
-          balance: cashBalanceByEmail.get(email) || 0,
+          balance: cashSummaryByEmail.get(email)?.balance || 0,
+          availableBalance: cashSummaryByEmail.get(email)?.available || 0,
+          pendingOutgoing: cashSummaryByEmail.get(email)?.pendingOutgoing || 0,
+          pendingIncoming: cashSummaryByEmail.get(email)?.pendingIncoming || 0,
         };
       })
       .filter(row => row.movements.length > 0 || row.balance !== 0 || row.email === currentUserEmail)
-  ), [cashBalanceByEmail, cashMovements, cashResponsibles, currentUserEmail, canViewGeneralCash]);
+  ), [cashSummaryByEmail, cashMovements, cashResponsibles, currentUserEmail, canViewGeneralCash]);
   const activeCashBox = resolveCashBoxSelection(selectedCashBox, canViewGeneralCash, currentUserEmail, visibleCashRows.map(row => row.email));
 
   useEffect(() => {
@@ -5142,30 +5145,21 @@ export default function ProjectDetail() {
   };
 
   const deleteCashDelivery = async (movement: CashMovement) => {
-    if (!id || !canDeliverGeneralCash || movement.type !== 'entrega') return;
+    if (!id || !canDeliverGeneralCash || movement.type !== 'entrega' || deletingCashDeliveryId) return;
     if (!window.confirm('¿Eliminar definitivamente esta entrega de caja?')) return;
-
+    setDeletingCashDeliveryId(movement.id);
     try {
-      const batch = writeBatch(db);
-      batch.delete(doc(db, 'projects', id, 'cashMovements', movement.id));
-      batch.set(doc(collection(db, 'projects', id, 'activityLog')), {
-        action: 'cash_delivery_deleted',
-        movementId: movement.id,
-        amount: Number(movement.amount) || 0,
-        recipientEmail: movement.toUserEmail || '',
-        recipientName: movement.toUserName || '',
-        status: movement.status || 'pending',
-        deletedBy: user?.uid || '',
-        deletedByEmail: currentUserEmail,
-        deletedByName: currentUserName,
-        deletedByRole: currentProjectRole,
-        createdAt: serverTimestamp(),
+      await httpsCallable(getFunctions(auth.app, 'us-central1'), 'createCashSubdelivery')({
+        action: 'deleteDelivery', projectId: id, movementId: movement.id,
       });
-      await batch.commit();
       setCashMovements((current) => current.filter((item) => item.id !== movement.id));
-    } catch (error) {
+      showExpenseConfirmation('Entrega de caja eliminada.');
+    } catch (error: any) {
       console.error('Error deleting cash delivery:', error);
-      alert('No se pudo eliminar la entrega de caja.');
+      alert(['functions/failed-precondition', 'functions/permission-denied', 'functions/not-found'].includes(error?.code)
+        ? error.message : 'No se pudo eliminar la entrega de caja. Actualizá la página y volvé a intentar.');
+    } finally {
+      setDeletingCashDeliveryId('');
     }
   };
 
@@ -7254,8 +7248,8 @@ export default function ProjectDetail() {
                     {target.status === 'missing' && <span className="text-xs text-rose-600">Gasto eliminado</span>}
                     {movement.type === 'entrega' && (canDeliverGeneralCash || (!isProjectAdmin && normalizeEmail(movement.createdByEmail) === currentUserEmail)) && movement.status !== 'confirmed' &&
                       <button type="button" onClick={() => editCashDelivery(movement)} className={actionClass}>Editar</button>}
-                    {movement.type === 'entrega' && canDeliverGeneralCash && <button type="button" onClick={() => deleteCashDelivery(movement)}
-                      className="rounded-md border border-rose-100 px-2.5 py-1.5 text-xs text-rose-600 hover:bg-rose-50">Borrar</button>}
+                    {movement.type === 'entrega' && canDeliverGeneralCash && <button type="button" disabled={Boolean(deletingCashDeliveryId)} onClick={() => deleteCashDelivery(movement)}
+                      className="rounded-md border border-rose-100 px-2.5 py-1.5 text-xs text-rose-600 hover:bg-rose-50 disabled:opacity-50">{deletingCashDeliveryId === movement.id ? 'Comprobando…' : 'Borrar'}</button>}
                   </>;
                 }} />
             </section>

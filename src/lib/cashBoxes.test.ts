@@ -1,6 +1,35 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildPaymentCashBoxOptions, calculateCashBalances, calculateGeneralCashSummary, isGeneralCashMovement, isPendingCashReceipt } from './cashBoxes';
+import { buildPaymentCashBoxOptions, calculateCashBalances, calculateCashBoxSummaries, calculateGeneralCashSummary, isGeneralCashMovement, isPendingCashReceipt } from './cashBoxes';
+
+test('el saldo visible se descuenta sólo al confirmar; el disponible reserva la entrega desde el inicio', () => {
+  const funds = { type: 'entrega', status: 'confirmed', amount: 100, toUserEmail: 'a@example.test' };
+  const transfer = { type: 'transferencia', status: 'pending', amount: 40, fromUserEmail: 'A@example.test', toUserEmail: 'b@example.test' };
+  const summary = calculateCashBoxSummaries([funds, transfer]);
+  assert.deepEqual(summary.get('a@example.test'), { balance: 100, available: 60, pendingOutgoing: 40, pendingIncoming: 0 });
+  assert.deepEqual(summary.get('b@example.test'), { balance: 0, available: 0, pendingOutgoing: 0, pendingIncoming: 40 });
+  assert.equal(calculateCashBalances([funds, transfer]).get('a@example.test'), 60, 'payment guards still use the reserved amount');
+  const confirmed = calculateCashBoxSummaries([funds, { ...transfer, status: 'confirmed' }]);
+  assert.deepEqual(confirmed.get('a@example.test'), { balance: 60, available: 60, pendingOutgoing: 0, pendingIncoming: 0 });
+  assert.deepEqual(confirmed.get('b@example.test'), { balance: 40, available: 40, pendingOutgoing: 0, pendingIncoming: 0 });
+  assert.equal(calculateCashBoxSummaries([funds, { ...transfer, status: 'cancelled' }]).get('a@example.test')?.balance, 100);
+  assert.equal(calculateCashBoxSummaries([funds, { ...transfer, status: undefined }]).get('a@example.test')?.balance, 60, 'legacy transfers keep the existing confirmed balance');
+});
+
+test('las reservas acumuladas y las devoluciones pendientes no se ofrecen de nuevo como disponibles', () => {
+  const movements = [
+    { type: 'entrega', status: 'confirmed', amount: 100, toUserEmail: 'a@example.test' },
+    ...[25, 15].map(amount => ({ type: 'transferencia', status: 'pending', amount, fromUserEmail: 'a@example.test', toUserEmail: 'b@example.test' })),
+    { type: 'entrega', status: 'pending', amount: 80, toUserEmail: 'a@example.test' },
+    { type: 'devolucion', status: 'pending', amount: 10, cashAccount: 'general', fromUserEmail: 'a@example.test', toUserEmail: 'admin@example.test' },
+    { type: 'pago', cashAccount: 'personal', amount: 20, fromUserEmail: 'a@example.test' },
+    { type: 'transferencia', status: 'cancelled', amount: 90, fromUserEmail: 'a@example.test', toUserEmail: 'b@example.test' },
+  ];
+  const original = structuredClone(movements), summary = calculateCashBoxSummaries(movements);
+  assert.deepEqual(summary.get('a@example.test'), { balance: 80, available: 30, pendingOutgoing: 50, pendingIncoming: 80 });
+  assert.equal(summary.has('admin@example.test'), false, 'return recipient does not get a personal incoming credit');
+  assert.deepEqual(movements, original);
+});
 
 test('toda entrega personal reserva al emisor y sólo acredita al destinatario tras su confirmación', () => {
   const funds = { type: 'entrega', status: 'confirmed', amount: 100, toUserEmail: 'a@example.test' };
