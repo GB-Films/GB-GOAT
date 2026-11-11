@@ -7,9 +7,9 @@ The September 2026 incident showed that one paid area expense could be repurpose
 ## Invariants in this branch
 
 - Once an expense has a payment history, a payment lock, or a legacy `paid` flag, its financial identity is locked. An administrator may correct quantity, unit price, and total after all payments have been deleted, provided `paymentHistory` is explicitly empty and `paid` is not true. Both area expenses and main budget items require an immutable before/after activity record in the same transaction. Provider corrections retain their separate audited flow; other identity changes stay blocked.
-- Paid expense rows cannot be deleted, replaced during budget copy, moved to a different area, or silently migrated from the main budget to area management.
+- Paid expense rows cannot be deleted, replaced during budget copy, or silently migrated from the main budget to area management. Renaming/reordering a subcategory or moving an area expense uses the audited classification-only server operation described in [area-structure.md](area-structure.md). It preserves the expense ID, provider, financial values, payment histories, files and signed authorizations; direct SDK changes to paid identity remain blocked.
 - An administrator may delete an individual cleared row after its last payment was audited as deleted, with no remaining cash movement. The deletion saves the complete prior document in an immutable activity record and advances the main-budget revision. This does not unlock identity editing or bulk replacement of historical rows. Payment mutations may affect only general cash or the acting administrator's own assigned cash box.
-- Row deletion, category rename, subcategory rename/removal, and area movement reread affected rows in a transaction. A concurrent payment or changed row aborts the operation instead of applying part of it.
+- Row deletion, category rename, subcategory removal, and area activation reread affected rows in a transaction. A concurrent payment or changed row aborts those operations instead of applying part of them. Classification-only changes reread the current rows and preserve concurrent payments; a changed source, structure revision or opened budget fails atomically.
 - Payment correction and deletion reread the selected payment and linked cash movement in a transaction. The same transaction updates the expense, the cash movement, and a new activity record. A removed final payment keeps `paymentLocked: true`.
 - Security rules require newly created cash payments to match the expense's appended payment. Cash payment corrections and deletions require the corresponding audit record and expense update in the same commit. Payment appends preserve the prior list order; corrections and deletions preserve every other payment in order. Activity records cannot be edited or deleted.
 - Budget items use a live listener, so an administrator sees payments recorded from other sessions without reloading the page.
@@ -27,7 +27,8 @@ Collaborators can correct their own ordinary area payments through the callable,
 | Area and main budget row edits | Transaction and paid identity check; server rule for every role |
 | Area and main budget row deletion | Transaction, paid check, and linked cash check; server rule |
 | Main budget copy and category deletion | Transactional replacement/deletion; aborts on stale or paid rows |
-| Main category and area subcategory changes | Transactional row checks; paid rows block identity changes |
+| Main category changes and subcategory removal | Transactional row checks; paid rows block destructive identity changes |
+| Area expense movement and subcategory rename/reorder/movement | Verified team session, source/destination scope, server transaction, preserved financial identity, updated linked classification metadata and immutable audit |
 | Area activation | Fresh server read, transactional row and revision checks; activation stops if one has a payment or a row enters the area concurrently |
 | New payment | Transactional expense and cash write; server validates cash link |
 | Payment correction and deletion | Transactional recheck of payment and cash link; coupled audit |

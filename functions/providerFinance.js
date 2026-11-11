@@ -96,6 +96,10 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, ver
     const user = await db.doc(`users/${request.auth.uid}`).get();
     const input = request.data || {};
     const actor = { uid: request.auth.uid, email: String(request.auth.token.email).trim().toLowerCase() };
+    if (input.action === 'reclassifyAreaExpenses') {
+      if (request.auth.token.email_verified !== true) throw new HttpsError('permission-denied', 'Verificá tu correo.');
+      return require('./areaStructureChange').createAreaStructureChange({ db, timestamp })(actor, input);
+    }
     const admin = actor.email === 'info@granbertafilms.com' || user.data()?.role === 'admin' && require('./teamWorkAccess').hasTeamWorkAccess(user.data());
     if (input.action === 'removeExpenseInvoiceFile') {
       if (request.auth.token.email_verified !== true) throw new HttpsError('permission-denied', 'Verificá tu correo.');

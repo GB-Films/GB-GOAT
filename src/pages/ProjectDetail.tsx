@@ -121,6 +121,9 @@ import { resolveCashReturnRecipientEmail } from '../lib/cashReturnRecipient';
 import { canChangePaymentCash, assertCanChangePaymentCash } from '../lib/paymentCashAccess';
 import { assertCashPaymentLink, buildUnpaidAmountCorrectionAudit, findCurrentPayment, hasRecordedPayment, hasActiveExpensePayments, isUnpaidAmountCorrection, prepareExpenseEdit, sameExpenseVersion, samePaymentTarget } from '../lib/expenseEdits';
 import { collapseAroundDraggedRow, type StructureDragLayout } from '../lib/dragPointerAnchor';
+import { runAreaStructureChange, areaStructureErrorMessage, areaGroupBudgetVersion, type AreaStructureChange, type AreaStructureAttempt } from '../lib/areaStructureChanges';
+import { ExpenseGroupDropTarget } from './project-detail/ExpenseGroupDropTarget';
+import { areaExpenseGroupDroppableId, areaExpenseAreaDroppableId, parseAreaExpenseDroppableId } from '../lib/areaExpenseDropTargets';
 
 const StructureDraggable = Draggable as any;
 
@@ -176,6 +179,7 @@ type AreaSubcategoryBudgetDraft = {
   assignBudget: boolean;
   budget: string;
   notes: string;
+  originalBudgetVersion: string;
 };
 
 const AREA_EXPENSE_SORT_OPTIONS: Array<{ id: AreaExpenseSortKey; label: string }> = [
@@ -297,28 +301,6 @@ const subcategoryBudgetFingerprint = (entries: Record<string, any>) => JSON.stri
 
 // Identificadores de arrastre de gastos por área. Se usan con @hello-pangea/dnd,
 // la misma librería que ordena las partidas de Presu Ppal.
-const AREA_EXPENSE_GROUP_DROPPABLE_PREFIX = 'area-expense-group';
-const AREA_EXPENSE_AREA_DROPPABLE_PREFIX = 'area-expense-area';
-
-const areaExpenseGroupDroppableId = (area: string, subcategory: string) => (
-  `${AREA_EXPENSE_GROUP_DROPPABLE_PREFIX}|${encodeURIComponent(String(area || '').trim())}|${encodeURIComponent(cleanAreaExpenseSubcategory(subcategory))}`
-);
-
-const areaExpenseAreaDroppableId = (area: string) => (
-  `${AREA_EXPENSE_AREA_DROPPABLE_PREFIX}|${encodeURIComponent(String(area || '').trim())}`
-);
-
-const parseAreaExpenseDroppableId = (droppableId: string) => {
-  const [prefix, area, subcategory] = String(droppableId || '').split('|');
-  if (prefix === AREA_EXPENSE_AREA_DROPPABLE_PREFIX && area) {
-    return { area: decodeURIComponent(area), subcategory: '', appendOnly: true };
-  }
-  if (prefix === AREA_EXPENSE_GROUP_DROPPABLE_PREFIX && area && subcategory !== undefined) {
-    return { area: decodeURIComponent(area), subcategory: decodeURIComponent(subcategory), appendOnly: false };
-  }
-  return null;
-};
-
 const sortAreaExpenses = (expenses: AreaExpense[], sortKey: AreaExpenseSortKey) => {
   return [...expenses].sort((a, b) => {
     if (sortKey === 'manual') {
@@ -759,6 +741,7 @@ export default function ProjectDetail() {
   const [structureDragKind, setStructureDragKind] = useState<'area-category' | 'area-subcategory' | null>(null);
   const [structureDragLayout, setStructureDragLayout] = useState<StructureDragLayout | null>(null);
   const [isSavingAreaStructure, setIsSavingAreaStructure] = useState(false);
+  const areaStructureAttempts = useRef(new Map<string, AreaStructureAttempt>());
   const [isCompactAreas, setIsCompactAreas] = useState(() => (
     typeof window !== 'undefined' && Boolean(window.matchMedia?.('(max-width: 767px)').matches)
   ));
@@ -1957,6 +1940,26 @@ export default function ProjectDetail() {
     return { area, subcategory: cleanAreaExpenseSubcategory(subcategory), budget: 0, assignBudget: false, notes: '' };
   };
 
+  const changeAreaStructure = async (change: AreaStructureChange) => {
+    if (!id) return;
+    await runAreaStructureChange({
+      input: { ...change, action: 'reclassifyAreaExpenses', projectId: id, expectedRevision: Number(project?.budgetRevision) || 0 },
+      attempts: areaStructureAttempts.current,
+      call: data => httpsCallable(getFunctions(auth.app, 'us-central1'), 'manageProviderFinance')(data),
+      refresh: async () => {
+        const [freshProject, freshExpenses, freshCollaborators] = await Promise.all([
+          getDocFromServer(doc(db, 'projects', id)), getDocsFromServer(collection(db, 'projects', id, 'areaExpenses')),
+          getDocsFromServer(collection(db, 'projects', id, 'collaborators')),
+        ]);
+        if (!freshProject.exists()) throw new Error('PROJECT_MISSING');
+        setProject((current: any) => ({ ...current, ...freshProject.data() }));
+        setAreaExpenses(freshExpenses.docs.map(row => ({ ...row.data(), id: row.id } as AreaExpense)));
+        setCollaborators(freshCollaborators.docs.map(row => ({ ...row.data(), email: row.data().email || row.id } as any)));
+      },
+      onRefreshError: () => showExpenseConfirmation('El cambio se guardó. Actualizá la página para ver la ubicación nueva.', 'warning'),
+    });
+  };
+
   const saveAreaSubcategories = async (area: string, subcategories: string[]) => {
     if (!id || !canEditArea(area)) return;
     const normalized = Array.from(new Set(
@@ -1977,7 +1980,7 @@ export default function ProjectDetail() {
   };
 
   const openAreaExpenseSubcategoryModal = (area: string, subcategory = '', editDefault = false) => {
-    if (!canEditArea(area)) return;
+    if (!canEditArea(area) || isSavingAreaStructure) return;
     const cleanSubcategory = cleanAreaExpenseSubcategory(subcategory);
     const existingEntry = (cleanSubcategory || editDefault) ? getAreaSubcategoryBudgetEntry(area, cleanSubcategory) : null;
     setSubcategoryBudgetDraft({
@@ -1988,6 +1991,7 @@ export default function ProjectDetail() {
       assignBudget: existingEntry?.assignBudget || false,
       budget: existingEntry ? String(existingEntry.budget || '') : '',
       notes: existingEntry?.notes || '',
+      originalBudgetVersion: areaGroupBudgetVersion(project?.areaExpenseSubcategoryBudgets?.[areaSubcategoryKey(area, cleanSubcategory)]),
     });
   };
 
@@ -2005,8 +2009,8 @@ export default function ProjectDetail() {
     const existing = getStoredAreaSubcategories(area);
     const editsDefaultSubcategory = subcategoryBudgetDraft.originalSubcategory === DEFAULT_AREA_EXPENSE_SUBCATEGORY;
     const original = editsDefaultSubcategory ? '' : cleanAreaExpenseSubcategory(subcategoryBudgetDraft.originalSubcategory);
-    const isRename = editsDefaultSubcategory || Boolean(original && original.toLowerCase() !== name.toLowerCase());
-    if ((!original || isRename) && existing.some((item) => item.toLowerCase() === name.toLowerCase())) {
+    const isRename = editsDefaultSubcategory || Boolean(original && original !== name);
+    if ((!original || isRename) && existing.some((item) => item.toLowerCase() === name.toLowerCase() && item.toLowerCase() !== original.toLowerCase())) {
       alert('Esa subcategoria ya existe en esta area.');
       return;
     }
@@ -2014,7 +2018,7 @@ export default function ProjectDetail() {
     const budget = subcategoryBudgetDraft.assignBudget
       ? Math.max(0, Number(subcategoryBudgetDraft.budget) || 0)
       : 0;
-    const currentBudgetKey = original ? areaSubcategoryKey(area, original) : '';
+    const currentBudgetKey = original || editsDefaultSubcategory ? areaSubcategoryKey(area, original) : '';
     const categoryBudget = getCategoryBudget(project, budgetItems, area);
     const capacity = getSubcategoryBudgetCapacity(
       categoryBudget,
@@ -2033,11 +2037,6 @@ export default function ProjectDetail() {
     const currentBudgetMap = project?.areaExpenseSubcategoryBudgets && typeof project.areaExpenseSubcategoryBudgets === 'object'
       ? { ...project.areaExpenseSubcategoryBudgets }
       : {};
-    if (isRename) {
-      delete currentBudgetMap[areaSubcategoryKey(area, original)];
-    }
-    const oldPermissionKey = original ? areaSubcategoryKey(area, original) : '';
-    const nextPermissionKey = areaSubcategoryKey(area, name);
     const nextBudgetMap = {
       ...currentBudgetMap,
       [areaSubcategoryKey(area, name)]: {
@@ -2054,6 +2053,14 @@ export default function ProjectDetail() {
 
     setIsSavingSubcategoryBudget(true);
     try {
+      if (isRename) {
+        await changeAreaStructure({ kind: 'subcategory', fromArea: area, fromSubcategory: original,
+          targetArea: area, targetSubcategory: name,
+          budget: { assigned: subcategoryBudgetDraft.assignBudget, amount: budget, notes: subcategoryBudgetDraft.notes.trim(),
+            expected: subcategoryBudgetDraft.originalBudgetVersion } });
+        setSubcategoryBudgetDraft(null);
+        return;
+      }
       const projectRef = doc(db, 'projects', id);
       const [serverProject, serverBudgetItems] = await Promise.all([
         getDocFromServer(projectRef),
@@ -2075,17 +2082,6 @@ export default function ProjectDetail() {
         || JSON.stringify(serverProject.data().areaExpenseSubcategories || {}) !== JSON.stringify(project?.areaExpenseSubcategories || {})) {
         throw new Error('SUBCATEGORIES_CHANGED');
       }
-      const expenseUpdates = isRename
-        ? areaExpenses.filter((expense) => (
-            expense.area === area
-            && (editsDefaultSubcategory
-              ? !hasAreaExpenseSubcategory(expense.subcategory)
-              : cleanAreaExpenseSubcategory(expense.subcategory) === original)
-          ))
-        : [];
-      if (expenseUpdates.length > 450) throw new Error('TOO_MANY_EXPENSES');
-      const collaboratorsToUpdate = isRename && oldPermissionKey
-        ? collaborators.filter((col) => (safeArray(col.allowedSubcategories).includes(oldPermissionKey) || safeArray(col.excludedSubcategories).includes(oldPermissionKey))) : [];
       await runTransaction(db, async (transaction) => {
         const currentProject = await transaction.get(projectRef);
         if (!currentProject.exists()
@@ -2094,46 +2090,12 @@ export default function ProjectDetail() {
             !== subcategoryBudgetFingerprint(serverProject.data().areaExpenseSubcategoryBudgets || {})) {
           throw new Error('SUBCATEGORIES_CHANGED');
         }
-        const refs = expenseUpdates.map((expense) => doc(db, 'projects', id, 'areaExpenses', expense.id));
-        const snapshots = await Promise.all(refs.map((expenseRef) => transaction.get(expenseRef)));
-        snapshots.forEach((snapshot, index) => {
-          if (!snapshot.exists() || hasRecordedPayment(snapshot.data())
-            || !sameExpenseVersion(snapshot.data().updatedAt, expenseUpdates[index].updatedAt)
-            || !samePaymentTarget(snapshot.data(), expenseUpdates[index])) throw new Error('EXPENSE_CHANGED');
-        });
         transaction.update(projectRef, {
           areaExpenseSubcategories: { ...(project?.areaExpenseSubcategories || {}), [area]: nextSubcategories },
           areaExpenseSubcategoryBudgets: nextBudgetMap,
           updatedAt: serverTimestamp(),
         });
-        refs.forEach((expenseRef) => transaction.update(expenseRef, { subcategory: name, updatedAt: serverTimestamp() }));
-        collaboratorsToUpdate.forEach((col) => transaction.update(
-          doc(db, 'projects', id, 'collaborators', normalizeEmail(col.email)),
-          {
-            allowedSubcategories: Array.from(new Set(safeArray(col.allowedSubcategories).map((key) => key === oldPermissionKey ? nextPermissionKey : key))),
-            excludedSubcategories: Array.from(new Set(safeArray(col.excludedSubcategories).map((key) => key === oldPermissionKey ? nextPermissionKey : key))),
-            updatedAt: serverTimestamp(),
-          },
-        ));
       });
-      if (isRename && oldPermissionKey) {
-        if (collaboratorsToUpdate.length > 0) {
-          setCollaborators((current) => current.map((col) => (
-            (safeArray(col.allowedSubcategories).includes(oldPermissionKey) || safeArray(col.excludedSubcategories).includes(oldPermissionKey))
-              ? {
-                  ...col,
-                  allowedSubcategories: Array.from(new Set(
-                    safeArray(col.allowedSubcategories).map((key) => key === oldPermissionKey ? nextPermissionKey : key)
-                  )),
-                  excludedSubcategories: Array.from(new Set(
-                    safeArray(col.excludedSubcategories).map((key) => key === oldPermissionKey ? nextPermissionKey : key)
-                  )),
-                  updatedAt: new Date(),
-                }
-              : col
-          )));
-        }
-      }
 
       setProject((current: any) => current ? {
         ...current,
@@ -2143,15 +2105,6 @@ export default function ProjectDetail() {
         },
         areaExpenseSubcategoryBudgets: nextBudgetMap,
       } : current);
-      if (expenseUpdates.length > 0) {
-        setAreaExpenses((current) => current.map((expense) => (
-          expense.area === area && (editsDefaultSubcategory
-            ? !hasAreaExpenseSubcategory(expense.subcategory)
-            : cleanAreaExpenseSubcategory(expense.subcategory) === original)
-            ? { ...expense, subcategory: name }
-            : expense
-        )));
-      }
       setSubcategoryBudgetDraft(null);
     } catch (error) {
       console.error('Error saving area expense subcategory:', error);
@@ -2159,7 +2112,7 @@ export default function ProjectDetail() {
         ? `El presupuesto disponible de ${area} cambió. Actualizá la página y revisá el importe antes de guardar.`
         : error instanceof Error && error.message === 'SUBCATEGORIES_CHANGED'
           ? 'El presupuesto o las subcategorias cambiaron. Actualizá la página y revisá los importes antes de guardar.'
-          : 'No se pudo guardar la subcategoria.');
+          : areaStructureErrorMessage(error));
     } finally {
       setIsSavingSubcategoryBudget(false);
     }
@@ -2259,83 +2212,22 @@ export default function ProjectDetail() {
   };
 
   const moveAreaExpense = async (expense: AreaExpense, nextArea: string, nextSubcategory: string, beforeExpenseId?: string) => {
-    if (!id || !expense?.id || beforeExpenseId === expense.id) return;
-    const sourceArea = expense.area;
-    const sourceSubcategory = cleanAreaExpenseSubcategory(expense.subcategory);
-    const targetArea = nextArea || sourceArea;
-    const targetSubcategory = cleanAreaExpenseSubcategory(nextSubcategory);
-    if (hasRecordedPayment(expense)
-      && (sourceArea !== targetArea || sourceSubcategory !== targetSubcategory)) {
-      alert('Un gasto con pagos no puede cambiar de área o subcategoría.');
-      return;
-    }
-    const inGroup = (item: AreaExpense, area: string, subcategory: string) => (
-      item.area === area && cleanAreaExpenseSubcategory(item.subcategory) === subcategory
-    );
-    const byManualOrder = (a: AreaExpense, b: AreaExpense) => (
-      (Number(a.order) || 0) - (Number(b.order) || 0)
-      || getDateTimestamp(a.createdAt) - getDateTimestamp(b.createdAt)
-    );
-    const sourceItems = areaExpenses
-      .filter((item) => inGroup(item, sourceArea, sourceSubcategory) && item.id !== expense.id)
-      .sort(byManualOrder);
-    const targetItems = sourceArea === targetArea && sourceSubcategory === targetSubcategory
-      ? sourceItems
-      : areaExpenses
-        .filter((item) => inGroup(item, targetArea, targetSubcategory) && item.id !== expense.id)
-        .sort(byManualOrder);
-    const beforeIndex = beforeExpenseId ? targetItems.findIndex((item) => item.id === beforeExpenseId) : -1;
-    const insertIndex = beforeIndex >= 0 ? beforeIndex : targetItems.length;
-    const movedExpense = { ...expense, area: targetArea, subcategory: targetSubcategory };
-    targetItems.splice(insertIndex, 0, movedExpense);
-
-    const updatedSource = sourceArea === targetArea && sourceSubcategory === targetSubcategory
-      ? []
-      : sourceItems.map((item, index) => ({ ...item, order: index }));
-    const updatedTarget = targetItems.map((item, index) => ({
-      ...item,
-      area: targetArea,
-      subcategory: targetSubcategory,
-      order: index,
-    }));
-    const updatedById = new Map([...updatedSource, ...updatedTarget].map((item) => [item.id, item]));
-    const nextTotal = Number(expense.total) || 0;
-    const budgetWarning = getAreaExpenseBudgetWarning(targetArea, nextTotal, expense.id);
-
-    setAreaExpenses((current) => current.map((item) => updatedById.get(item.id) || item));
-    setAreaExpenseSort('manual');
-
+    if (!id || !expense?.id || beforeExpenseId === expense.id || isSavingAreaStructure) return;
+    const sourceArea = expense.area, sourceSubcategory = cleanAreaExpenseSubcategory(expense.subcategory);
+    const targetArea = nextArea || sourceArea, targetSubcategory = cleanAreaExpenseSubcategory(nextSubcategory);
+    if (!canEditAreaExpense(expense) || !canEditAreaSubcategory(targetArea, targetSubcategory)) return;
+    const budgetWarning = getAreaExpenseBudgetWarning(targetArea, Number(expense.total) || 0, expense.id);
+    setIsSavingAreaStructure(true);
     try {
-      await runTransaction(db, async (transaction) => {
-        const changed = [...updatedSource, ...updatedTarget];
-        const refs = changed.map((item) => doc(db, 'projects', id, 'areaExpenses', item.id));
-        const snapshots = await Promise.all(refs.map((expenseRef) => transaction.get(expenseRef)));
-        snapshots.forEach((snapshot, index) => {
-          if (!snapshot.exists()) throw new Error('EXPENSE_CHANGED');
-          const latest = snapshot.data();
-          const original = areaExpenses.find((item) => item.id === changed[index].id);
-          if (!original || !sameExpenseVersion(latest.updatedAt, original.updatedAt)
-            || !samePaymentTarget(latest, original)) throw new Error('EXPENSE_CHANGED');
-          if (hasRecordedPayment(latest)
-            && (latest.area !== changed[index].area
-              || cleanAreaExpenseSubcategory(latest.subcategory) !== cleanAreaExpenseSubcategory(changed[index].subcategory))) {
-            throw new Error('PAID_EXPENSE_LOCKED');
-          }
-        });
-        changed.forEach((item, index) => transaction.update(refs[index], {
-          area: item.area,
-          subcategory: cleanAreaExpenseSubcategory(item.subcategory),
-          order: item.order,
-          updatedAt: serverTimestamp(),
-        }));
-      });
-      if (budgetWarning && (sourceArea !== targetArea || sourceSubcategory !== targetSubcategory)) {
-        showExpenseConfirmation(budgetWarning, 'warning');
-      }
+      await changeAreaStructure({ kind: 'expense', itemId: expense.id, fromArea: sourceArea, fromSubcategory: sourceSubcategory,
+        targetArea, targetSubcategory, ...(beforeExpenseId ? { beforeExpenseId } : {}) });
+      setAreaExpenseSort('manual');
+      if (budgetWarning && (sourceArea !== targetArea || sourceSubcategory !== targetSubcategory)) showExpenseConfirmation(budgetWarning, 'warning');
     } catch (error) {
       console.error('Error moving area expense:', error);
-      setAreaExpenses(areaExpenses);
-      alert('No se pudo mover el gasto. Intentá nuevamente.');
+      alert(areaStructureErrorMessage(error));
+    } finally {
+      setIsSavingAreaStructure(false);
     }
   };
 
@@ -3691,7 +3583,7 @@ export default function ProjectDetail() {
         project?.areaExpenseSubcategoryBudgets || {},
         subcategoryBudgetDraft.area,
         subcategoryBudgetDraft.originalSubcategory === DEFAULT_AREA_EXPENSE_SUBCATEGORY
-          ? ''
+          ? areaSubcategoryKey(subcategoryBudgetDraft.area, '')
           : subcategoryBudgetDraft.originalSubcategory
             ? areaSubcategoryKey(subcategoryBudgetDraft.area, subcategoryBudgetDraft.originalSubcategory)
             : '',
@@ -3731,189 +3623,37 @@ export default function ProjectDetail() {
       return;
     }
 
-    if (type !== 'area-subcategory') return;
+    if (type !== 'area-subcategory' || areaExpenseSearch.trim()) return;
     const prefix = 'area-subcategories|';
     if (!source.droppableId.startsWith(prefix) || !destination.droppableId.startsWith(prefix)) return;
     const sourceArea = decodeURIComponent(source.droppableId.slice(prefix.length));
     const targetArea = decodeURIComponent(destination.droppableId.slice(prefix.length));
     if (!activeAreas.includes(sourceArea) || !activeAreas.includes(targetArea)) return;
-    if (areaExpenseSearch.trim()) return;
-    const sourceGroups = selectedAreaDashboardRows.find((row) => row.area === sourceArea)?.subcategoryGroups || [];
-    const targetGroups = selectedAreaDashboardRows.find((row) => row.area === targetArea)?.subcategoryGroups || [];
-    const sourceName = sourceGroups[source.index]?.subcategory;
-    if (sourceName === undefined) return;
-    if (sourceArea !== targetArea && targetGroups.some((group) => group.subcategory.toLowerCase() === sourceName.toLowerCase())) {
-      alert(`La subcategoria «${sourceName || DEFAULT_AREA_EXPENSE_SUBCATEGORY_LABEL}» ya existe en ${targetArea}.`);
+    const sourceGroups = selectedAreaDashboardRows.find(row => row.area === sourceArea)?.subcategoryGroups || [];
+    const targetGroups = selectedAreaDashboardRows.find(row => row.area === targetArea)?.subcategoryGroups || [];
+    const move = moveAreaSubcategory(sourceGroups.map(group => group.subcategory), targetGroups.map(group => group.subcategory),
+      source.index, destination.index, sourceArea === targetArea);
+    if (!move) {
+      alert('No se puede mover a esa posición. Revisá si ya existe una subcategoría con ese nombre en el destino.');
       return;
     }
-    const move = moveAreaSubcategory(
-      sourceGroups.map((group) => group.subcategory),
-      targetGroups.map((group) => group.subcategory),
-      source.index,
-      destination.index,
-      sourceArea === targetArea,
-    );
-    if (!move) return;
-    const { subcategory, source: sourceList, target: targetList } = move;
-    const oldKey = areaSubcategoryKey(sourceArea, subcategory);
-    const newKey = areaSubcategoryKey(targetArea, subcategory);
-    const currentMap = project?.areaExpenseSubcategoryBudgets || {};
-    if (sourceArea !== targetArea && currentMap[newKey] !== undefined) {
-      alert(`La subcategoria «${subcategory || DEFAULT_AREA_EXPENSE_SUBCATEGORY_LABEL}» ya tiene una asignación en ${targetArea}.`);
-      return;
-    }
-    const budgetEntry = currentMap[oldKey];
-    const assignedBudget = typeof budgetEntry === 'number'
-      ? budgetEntry
-      : budgetEntry?.budgetAssigned === false ? 0 : Number(budgetEntry?.budget) || 0;
-    const movedExpenses = sourceArea === targetArea ? [] : areaExpenses.filter((item) => (
-      item.area === sourceArea && cleanAreaExpenseSubcategory(item.subcategory) === subcategory
-    ));
-    if (movedExpenses.some(hasRecordedPayment)) {
-      alert('Esta subcategoria tiene gastos con pagos registrados. No se puede cambiar de categoria sin alterar su historial.');
-      return;
-    }
-    if (movedExpenses.length > 400) {
-      alert('Hay demasiados gastos para mover esta subcategoria de una vez.');
-      return;
-    }
-    const collaboratorsToUpdate = sourceArea === targetArea ? [] : collaborators.filter((person) => (
-      (safeArray(person.allowedSubcategories).includes(oldKey) || safeArray(person.excludedSubcategories).includes(oldKey))
-    ));
-    if (movedExpenses.length + collaboratorsToUpdate.length > 450) {
-      alert('Hay demasiados gastos o permisos para mover esta subcategoria de una vez.');
-      return;
-    }
-    if (sourceArea !== targetArea) {
-      const sourceAreaDelegates = collaborators.filter((person) => safeArray(person.allowedCategories).includes(sourceArea));
-      const targetAreaDelegates = collaborators.filter((person) => safeArray(person.allowedCategories).includes(targetArea));
-      const warning = `Mover «${subcategory || DEFAULT_AREA_EXPENSE_SUBCATEGORY_LABEL}» de ${sourceArea} a ${targetArea} cambiará el área de ${movedExpenses.length} gastos.\n\n`
-        + `${collaboratorsToUpdate.length} permisos específicos seguirán a la subcategoria. `
-        + `${sourceAreaDelegates.length} colaboradores con acceso al área de origen pueden dejar de verla; `
-        + `${targetAreaDelegates.length} colaboradores con acceso al área de destino podrán verla.\n\n`
-        + `Presupuesto asignado que se trasladará: $${assignedBudget.toLocaleString('es-AR')}. ¿Continuar?`;
-      if (!confirm(warning)) return;
-    }
-
+    const subcategory = move.subcategory, oldKey = areaSubcategoryKey(sourceArea, subcategory), newKey = areaSubcategoryKey(targetArea, subcategory);
+    const entry = project?.areaExpenseSubcategoryBudgets?.[oldKey];
+    const assignedBudget = typeof entry === 'number' ? entry : entry?.budgetAssigned === false ? 0 : Number(entry?.budget) || 0;
+    const movedExpenses = areaExpenses.filter(row => row.area === sourceArea && cleanAreaExpenseSubcategory(row.subcategory) === subcategory);
+    if (sourceArea !== targetArea && !confirm(`Mover «${subcategory || DEFAULT_AREA_EXPENSE_SUBCATEGORY_LABEL}» de ${sourceArea} a ${targetArea}?\n\nSe moverán ${movedExpenses.length} gastos con sus pagos y comprobantes. Los permisos específicos seguirán a la subcategoría. El acceso por área se ajustará al destino.\n\nPresupuesto asignado: $${assignedBudget.toLocaleString('es-AR')}.`)) return;
     setIsSavingAreaStructure(true);
     try {
-      const projectRef = doc(db, 'projects', id);
-      const [baselineProject, serverBudgetItems] = await Promise.all([
-        getDocFromServer(projectRef),
-        sourceArea === targetArea ? Promise.resolve(null) : getDocsFromServer(collection(db, 'projects', id, 'budgetItems')),
-      ]);
-      if (!baselineProject.exists()) throw new Error('PROJECT_MISSING');
-      if (sourceArea !== targetArea && assignedBudget > 0) {
-        const targetCategoryBudget = getCategoryBudget(baselineProject.data(), serverBudgetItems!.docs.map(item => item.data()), targetArea);
-        const capacity = getSubcategoryBudgetCapacity(
-          targetCategoryBudget,
-          baselineProject.data().areaExpenseSubcategoryBudgets || {},
-          targetArea,
-        );
-        if (capacity.exceeds(assignedBudget)) throw new Error('SUBCATEGORY_BUDGET_EXCEEDED');
-      }
-      const currentLists = baselineProject.data().areaExpenseSubcategories || {};
-      const currentBudgets = baselineProject.data().areaExpenseSubcategoryBudgets || {};
-      if (subcategoryBudgetFingerprint(currentBudgets) !== subcategoryBudgetFingerprint(currentMap)
-        || JSON.stringify(currentLists) !== JSON.stringify(project?.areaExpenseSubcategories || {})) {
-        throw new Error('SUBCATEGORIES_CHANGED');
-      }
-      const nextLists = {
-        ...currentLists,
-        [sourceArea]: sourceList.map(normalizeAreaExpenseSubcategory),
-        [targetArea]: targetList.map(normalizeAreaExpenseSubcategory),
-      };
-      const nextBudgets = { ...currentBudgets };
-      if (sourceArea !== targetArea && budgetEntry !== undefined) {
-        delete nextBudgets[oldKey];
-        nextBudgets[newKey] = typeof budgetEntry === 'number' ? budgetEntry : { ...budgetEntry, area: targetArea };
-      }
-      const expenseRefs = movedExpenses.map((expense) => doc(db, 'projects', id, 'areaExpenses', expense.id));
-      const collaboratorRefs = collaboratorsToUpdate.map((person) => doc(db, 'projects', id, 'collaborators', normalizeEmail(person.email)));
-      const auditRef = sourceArea === targetArea ? null : doc(collection(db, 'projects', id, 'activityLog'));
-      await runTransaction(db, async (transaction) => {
-        const currentProject = await transaction.get(projectRef);
-        const expenseSnapshots = await Promise.all(expenseRefs.map((ref) => transaction.get(ref)));
-        const collaboratorSnapshots = await Promise.all(collaboratorRefs.map((ref) => transaction.get(ref)));
-        if (!currentProject.exists()
-          || (Number(currentProject.data().budgetRevision) || 0) !== (Number(baselineProject.data().budgetRevision) || 0)
-          || subcategoryBudgetFingerprint(currentProject.data().areaExpenseSubcategoryBudgets || {})
-            !== subcategoryBudgetFingerprint(currentBudgets)
-          || JSON.stringify(currentProject.data().areaExpenseSubcategories || {}) !== JSON.stringify(currentLists)) {
-          throw new Error('SUBCATEGORIES_CHANGED');
-        }
-        expenseSnapshots.forEach((snapshot, index) => {
-          const original = movedExpenses[index];
-          if (!snapshot.exists() || hasRecordedPayment(snapshot.data())
-            || snapshot.data().area !== sourceArea
-            || cleanAreaExpenseSubcategory(snapshot.data().subcategory) !== subcategory
-            || !sameExpenseVersion(snapshot.data().updatedAt, original.updatedAt)
-            || !samePaymentTarget(snapshot.data(), original)) throw new Error('EXPENSE_CHANGED');
-        });
-        collaboratorSnapshots.forEach((snapshot) => {
-          if (!snapshot.exists() || !(safeArray(snapshot.data().allowedSubcategories).includes(oldKey) || safeArray(snapshot.data().excludedSubcategories).includes(oldKey))) {
-            throw new Error('PERMISSIONS_CHANGED');
-          }
-        });
-        transaction.update(projectRef, {
-          areaExpenseSubcategories: nextLists,
-          areaExpenseSubcategoryBudgets: nextBudgets,
-          updatedAt: serverTimestamp(),
-        });
-        expenseRefs.forEach((ref) => transaction.update(ref, { area: targetArea, updatedAt: serverTimestamp() }));
-        collaboratorRefs.forEach((ref, index) => transaction.update(ref, {
-          allowedSubcategories: Array.from(new Set(
-            safeArray(collaboratorSnapshots[index].data()?.allowedSubcategories).map((key) => key === oldKey ? newKey : key),
-          )),
-          excludedSubcategories: Array.from(new Set(
-            safeArray(collaboratorSnapshots[index].data()?.excludedSubcategories).map((key) => key === oldKey ? newKey : key),
-          )),
-          updatedAt: serverTimestamp(),
-        }));
-        if (auditRef) transaction.set(auditRef, {
-          action: 'area_subcategory_moved',
-          subcategory,
-          fromArea: sourceArea,
-          toArea: targetArea,
-          expenseCount: movedExpenses.length,
-          assignedBudget,
-          permissionCount: collaboratorsToUpdate.length,
-          movedBy: user?.uid || '',
-          movedByEmail: normalizeEmail(user?.email),
-          createdAt: serverTimestamp(),
-        });
+      await changeAreaStructure({ kind: 'subcategory', fromArea: sourceArea, fromSubcategory: subcategory,
+        targetArea, targetSubcategory: subcategory, beforeSubcategory: move.target[destination.index + 1] ?? null });
+      if (sourceArea !== targetArea) setCollapsedAreaSubcategories(current => {
+        const next = { ...current }, oldCollapseKey = `${sourceArea}__${subcategory}`;
+        if (oldCollapseKey in next) { next[`${targetArea}__${subcategory}`] = next[oldCollapseKey]; delete next[oldCollapseKey]; }
+        return next;
       });
-      setProject((current: any) => current ? {
-        ...current,
-        areaExpenseSubcategories: nextLists,
-        areaExpenseSubcategoryBudgets: nextBudgets,
-      } : current);
-      if (sourceArea !== targetArea) {
-        setAreaExpenses((current) => current.map((expense) => (
-          expense.area === sourceArea && cleanAreaExpenseSubcategory(expense.subcategory) === subcategory
-            ? { ...expense, area: targetArea }
-            : expense
-        )));
-        setCollaborators((current) => current.map((person) => (
-          (safeArray(person.allowedSubcategories).includes(oldKey) || safeArray(person.excludedSubcategories).includes(oldKey))
-            ? { ...person, allowedSubcategories: safeArray(person.allowedSubcategories).map((key) => key === oldKey ? newKey : key), excludedSubcategories: safeArray(person.excludedSubcategories).map((key) => key === oldKey ? newKey : key) }
-            : person
-        )));
-        setCollapsedAreaSubcategories((current) => {
-          const next = { ...current };
-          const oldCollapseKey = `${sourceArea}__${subcategory}`;
-          if (oldCollapseKey in next) {
-            next[`${targetArea}__${subcategory}`] = next[oldCollapseKey];
-            delete next[oldCollapseKey];
-          }
-          return next;
-        });
-      }
     } catch (error) {
       console.error('Error moving area subcategory:', error);
-      alert(error instanceof Error && error.message === 'SUBCATEGORY_BUDGET_EXCEEDED'
-        ? `La subcategoria supera el presupuesto disponible de ${targetArea}. Reducí su asignación antes de moverla.`
-        : 'No se pudo mover la subcategoria. Actualizá la página y revisá gastos, presupuestos y permisos.');
+      alert(areaStructureErrorMessage(error));
     } finally {
       setIsSavingAreaStructure(false);
     }
@@ -6527,9 +6267,9 @@ export default function ProjectDetail() {
 
                 <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
                 <DragDropContext
-                  // Al contraer la estructura, el puntero puede quedar junto al borde
-                  // de la pantalla; el auto-scroll de DnD movería la página sin intención.
-                  autoScrollerOptions={{ disabled: structureDragKind !== null }}
+                  // The pointer anchor keeps collapse stable; autoscroll still lets
+                  // a complete subcategory reach destinations below the viewport.
+                  autoScrollerOptions={{ disabled: false }}
                   onBeforeCapture={({ draggableId }) => {
                     const kind = draggableId.startsWith('area-category|')
                       ? 'area-category'
@@ -6658,7 +6398,7 @@ export default function ProjectDetail() {
                   </div>
                     )}
                   </Droppable>
-                  {!expenseGroupCollapsed(collapsedCategories[areaRow.area], areaExpenseSearchTerm) && structureDragKind !== 'area-category' && (
+                  {(!expenseGroupCollapsed(collapsedCategories[areaRow.area], areaExpenseSearchTerm) || structureDragKind === 'area-subcategory') && structureDragKind !== 'area-category' && (
                   <>
                   {isCompactAreas && (
                   <Droppable
@@ -6694,6 +6434,8 @@ export default function ProjectDetail() {
                           data-structure-drag-id={`area-subcategory|${encodeURIComponent(areaRow.area)}|${hasNamedSubcategory ? `named|${encodeURIComponent(subcategoryGroup.subcategory)}` : 'general'}`}
                           className={cn('bg-slate-50', subcategorySnapshot.isDragging && 'shadow-lg')}
                         >
+                          <ExpenseGroupDropTarget collapsed={isSubcategoryCollapsed} disabled={!canEditThisSubcategory || isSavingAreaStructure}
+                            droppableId={areaExpenseGroupDroppableId(areaRow.area, subcategoryGroup.subcategory, true)}>
                           <div className={cn(
                             "flex items-center gap-1 border-y px-3 py-2",
                             "border-slate-300 bg-slate-200 text-slate-900 transition-colors duration-200"
@@ -6784,6 +6526,7 @@ export default function ProjectDetail() {
                             )}
                           </div>
 
+                          </ExpenseGroupDropTarget>
                           {!isSubcategoryCollapsed && structureDragKind !== 'area-subcategory' && (
                             <div className="space-y-2 bg-slate-100/80 p-2">
                               {subcategoryGroup.expenses.map((item) => (
@@ -6915,6 +6658,8 @@ export default function ProjectDetail() {
                             data-structure-drag-id={`area-subcategory|${encodeURIComponent(areaRow.area)}|${hasNamedSubcategory ? `named|${encodeURIComponent(subcategoryGroup.subcategory)}` : 'general'}`}
                             className={cn('bg-slate-50', subcategorySnapshot.isDragging && 'shadow-lg')}
                           >
+                            <ExpenseGroupDropTarget collapsed={isSubcategoryCollapsed} disabled={!canEditThisSubcategory || isSavingAreaStructure}
+                              droppableId={areaExpenseGroupDroppableId(areaRow.area, subcategoryGroup.subcategory, true)}>
                             <div className={cn(
                               "flex items-center justify-between gap-3 border-b px-6 py-2.5",
                               "border-slate-300 bg-slate-200 text-slate-900 transition-colors duration-200"
@@ -7021,6 +6766,7 @@ export default function ProjectDetail() {
                                 </button>
                               )}
                             </div>
+                            </ExpenseGroupDropTarget>
                             {!isSubcategoryCollapsed && structureDragKind !== 'area-subcategory' && (
                               <Droppable
                                 droppableId={areaExpenseGroupDroppableId(areaRow.area, subcategoryGroup.subcategory)}
@@ -7039,7 +6785,7 @@ export default function ProjectDetail() {
                       {subcategoryGroup.expenses.map((item, itemIndex) => {
                           const DraggableComponent = Draggable as any;
                           return (
-                          <DraggableComponent key={item.id} draggableId={item.id} index={itemIndex} isDragDisabled={!canEditAreaExpense(item)}>
+                          <DraggableComponent key={item.id} draggableId={item.id} index={itemIndex} isDragDisabled={!canEditAreaExpense(item) || isSavingAreaStructure}>
                             {(rowProvided: any, rowSnapshot: any) => (
                           <div
                             ref={rowProvided.innerRef}
@@ -7076,7 +6822,7 @@ export default function ProjectDetail() {
                               <div className="flex items-start gap-2">
                                 <ExpenseDragHandle
                                   dragHandleProps={rowProvided.dragHandleProps}
-                                  disabled={!canEditAreaExpense(item)}
+                                  disabled={!canEditAreaExpense(item) || isSavingAreaStructure}
                                   className="pt-1"
                                 />
                                 <BudgetRowCell
