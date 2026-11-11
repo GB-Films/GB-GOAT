@@ -33,7 +33,8 @@ try {
     const ref = doc(db(uid), root, 'cashMovements', `delivery-${uid}`);
     await assertSucceeds(setDoc(ref, movement(uid)));
     await assertSucceeds(updateDoc(ref, { amount: 110, updatedAt: serverTimestamp() }));
-    await assertSucceeds(deleteDoc(ref));
+    await assertFails(deleteDoc(ref)); // Even custodians must use the audited server balance check.
+    await store.doc(ref.path).delete(); // Synthetic fixture cleanup through the emulator admin SDK.
   }
   for (const uid of ['admin', 'owner', 'personal']) {
     await assertFails(getDocs(ledger(uid)));
