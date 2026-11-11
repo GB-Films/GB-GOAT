@@ -110,6 +110,7 @@ import { getFileExtension, sanitizeFileName, validateSpreadsheetImport } from '.
 import { PROJECT_STATUSES } from '../lib/projects';
 import { getExpenseInvoices, getInvoiceDocumentKey, type ExpenseInvoiceDocument } from '../lib/invoices';
 import { buildPaymentCashBoxOptions, calculateCashBalances, calculateGeneralCashSummary, GENERAL_CASH_ACCOUNT } from '../lib/cashBoxes';
+import { cashMovementOptions } from '../lib/cashBoxDefaults';
 import { expenseNeedsProviderRegistration } from '../lib/providerRegistration';
 import { useProviderRegistrationEvidence } from '../hooks/useProviderRegistrationEvidence';
 import { buildLinkedProviderInviteExpiration } from '../lib/providerInvites';
@@ -4205,17 +4206,18 @@ export default function ProjectDetail() {
   const cashBalanceByEmail = React.useMemo(() => calculateCashBalances(cashMovements), [cashMovements]);
 
   const currentCashBalance = cashBalanceByEmail.get(currentUserEmail) || 0;
+  const hasAssignedCashBox = cashBalanceByEmail.has(currentUserEmail);
   const pendingReturnAmount = cashMovements
     .filter((movement) => movement.type === 'devolucion' && movement.status === 'pending' && normalizeEmail(movement.fromUserEmail) === currentUserEmail)
     .reduce((total, movement) => total + (Number(movement.amount) || 0), 0);
   const availableReturnBalance = Math.max(0, currentCashBalance - pendingReturnAmount);
   const paymentCashBoxOptions = React.useMemo(() => buildPaymentCashBoxOptions({
     isProjectAdmin,
-    hasPersonalCashBox: cashBalanceByEmail.has(currentUserEmail),
+    hasPersonalCashBox: hasAssignedCashBox,
     personalBalance: currentCashBalance,
     currentUserEmail,
     currentUserName,
-  }), [cashBalanceByEmail, currentCashBalance, currentUserEmail, currentUserName, isProjectAdmin]);
+  }), [hasAssignedCashBox, currentCashBalance, currentUserEmail, currentUserName, isProjectAdmin]);
   const generalCashSummary = React.useMemo(() => calculateGeneralCashSummary(cashMovements), [cashMovements]);
   const generalCashMovements = React.useMemo(() => (
     [...generalCashSummary.movements].sort((a, b) => {
@@ -7197,8 +7199,8 @@ export default function ProjectDetail() {
           <div className="space-y-3 pb-12">
             <header className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
               <h2 className="text-base font-bold text-slate-900">Cajas</h2>
-              {(canDeliverGeneralCash || cashBalanceByEmail.has(currentUserEmail)) && <button type="button"
-                onClick={() => setCashMovementDialog(canDeliverGeneralCash ? 'entrega' : isProjectAdmin ? 'transferencia' : 'devolucion')}
+              {(canDeliverGeneralCash || hasAssignedCashBox) && <button type="button"
+                onClick={() => setCashMovementDialog(cashMovementOptions({ hasAssignedCashBox, canDeliver: canDeliverGeneralCash, canTransfer: isProjectAdmin, canReturn: hasAssignedCashBox })[0]?.kind || null)}
                 className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700">
                 <Plus className="h-4 w-4" />Registrar movimiento
               </button>}
@@ -7246,11 +7248,11 @@ export default function ProjectDetail() {
 
             {cashMovementDialog && <CashMovementDialog kind={cashMovementDialog} onKindChange={setCashMovementDialog}
               onClose={() => setCashMovementDialog(null)} canDeliver={canDeliverGeneralCash} canTransfer={isProjectAdmin}
-              canReturn={cashBalanceByEmail.has(currentUserEmail)}
+              canReturn={hasAssignedCashBox} hasAssignedCashBox={hasAssignedCashBox}
               recipients={cashMovementDialog === 'entrega' ? cashResponsibles : cashMovementDialog === 'transferencia' ? productionTransferTargets : cashReturnRecipients}
               recipientEmail={cashMovementDialog === 'entrega' ? cashRecipientEmail : cashMovementDialog === 'transferencia' ? cashTransferTargetEmail : cashReturnRecipientEmail}
               onRecipientChange={cashMovementDialog === 'entrega' ? setCashRecipientEmail : cashMovementDialog === 'transferencia' ? setCashTransferTargetEmail : setCashReturnRecipientChoice}
-              availableBalance={availableReturnBalance} ownName={currentUserName || currentUserEmail}
+              availableBalance={availableReturnBalance} currentBalance={currentCashBalance} ownName={currentUserName || currentUserEmail}
               defaultDate={toProjectDateInputValue(new Date())}
               busy={isCreatingCashDelivery || isCreatingCashSubdelivery || isCreatingCashReturn}
               onSubmit={cashMovementDialog === 'entrega' ? createCashDelivery : cashMovementDialog === 'transferencia' ? createCashTransfer : createCashReturn} />}

@@ -10,6 +10,7 @@ import { cn } from '../../lib/utils';
 import { validateMaxUploadSize } from '../../lib/uploadLimits';
 import { getFileExtension, sanitizeFileName } from '../../lib/files';
 import type { PaymentCashBoxOption } from '../../lib/cashBoxes';
+import { prioritizeAssignedCashBox, resolvePaymentCashBoxChoice } from '../../lib/cashBoxDefaults';
 import { assertCashPaymentLink, findCurrentPayment, samePaymentTarget } from '../../lib/expenseEdits';
 import { buildPaymentAuditAppend } from '../../lib/paymentAudit';
 import { parsePaymentAmount } from '../../lib/paymentAmounts';
@@ -127,7 +128,11 @@ export function PaymentModal({
   onCashMovementUpdated,
   onCashMovementDeleted,
 }: PaymentModalProps) {
-  const cashBoxOptions = useMemo(() => rawCashBoxOptions.filter(option => option.account !== 'general' || canAccessGeneralCash(currentUserEmail)), [rawCashBoxOptions, currentUserEmail]);
+  const cashBoxOptions = useMemo(() => prioritizeAssignedCashBox(rawCashBoxOptions.filter(option => option.account !== 'general' || canAccessGeneralCash(currentUserEmail)), currentUserEmail), [rawCashBoxOptions, currentUserEmail]);
+  const cashBoxChoiceContext = JSON.stringify([projectId, item?.__paymentCollection || paymentType, item?.id, currentUserEmail, isOpen]);
+  const [cashBoxChoice, setCashBoxChoice] = useState<{ context: string; id: string } | null>(null);
+  const selectedCashBoxId = resolvePaymentCashBoxChoice(cashBoxOptions, currentUserEmail,
+    cashBoxChoice?.context === cashBoxChoiceContext ? cashBoxChoice.id : '');
   const amountRef = useRef<HTMLInputElement>(null);
   const [selectedReceipt, setSelectedReceipt] = useState<File | null>(null);
   const [receiptPreviewUrl, setReceiptPreviewUrl] = useState('');
@@ -158,10 +163,11 @@ export function PaymentModal({
     setIsSubmittingPayment(false);
     setPaymentError('');
     setPaymentFundingMode('company');
+    setCashBoxChoice(null);
     setThirdPartyPayerId('');
     setActiveReimbursementId('');
     setReimbursementError('');
-  }, [isOpen, item?.id]);
+  }, [isOpen, projectId, item?.id, item?.__paymentCollection, paymentType, currentUserEmail]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -660,7 +666,7 @@ export function PaymentModal({
               const receiptFile = selectedReceipt || (formReceiptFile && formReceiptFile.size > 0 ? formReceiptFile : null);
               const useThirdParty = paymentFundingMode === 'third_party';
               const thirdPartyPayer = providers.find((provider) => provider.id === thirdPartyPayerId);
-              const requestedCashBoxId = String(formData.get('cashBoxId') || cashBoxOptions[0]?.id || '');
+              const requestedCashBoxId = String(formData.get('cashBoxId') || selectedCashBoxId);
               const selectedCashBox = cashBoxOptions.find((option) => option.id === requestedCashBoxId);
               const useCashBox = !useThirdParty && formData.get('useCashBox') === 'on' && Boolean(selectedCashBox);
 
@@ -938,12 +944,13 @@ export function PaymentModal({
                   </label>
                   <select
                     name="cashBoxId"
-                    defaultValue={cashBoxOptions[0]?.id}
+                    value={selectedCashBoxId}
+                    onChange={event => setCashBoxChoice({ context: cashBoxChoiceContext, id: event.target.value })}
                     className="w-full px-3 py-2 bg-white border border-amber-200 rounded-lg text-xs font-bold text-amber-900 focus:outline-none focus:border-amber-500"
                   >
                     {cashBoxOptions.map((option) => (
                       <option key={option.id} value={option.id}>
-                        {option.label}{option.unlimited ? ' · salida de Caja General' : ` · saldo $${option.balance.toLocaleString()}`}
+                        {option.label}{option.unlimited ? ' · salida de Caja General' : ` (saldo $${option.balance.toLocaleString('es-AR')})`}
                       </option>
                     ))}
                   </select>
@@ -1065,7 +1072,7 @@ export function PaymentModal({
                             Caja del pago
                             <select name="editCashBoxId" defaultValue="keep" className="mt-1 w-full rounded border border-amber-200 bg-white px-3 py-2 text-xs">
                               {cashBoxOptions.map((option) => (
-                                <option key={option.id} value={option.id}>{option.label}{option.unlimited ? '' : ` · saldo $${option.balance.toLocaleString('es-AR')}`}</option>
+                                <option key={option.id} value={option.id}>{option.label}{option.unlimited ? '' : ` (saldo $${option.balance.toLocaleString('es-AR')})`}</option>
                               ))}
                               <option value="keep">Mantener {wasPaidWithCashBox ? payment.cashBoxLabel || 'la caja actual' : 'sin caja'}</option>
                               <option value="none">Sin caja · pagado por otro medio</option>
@@ -1193,7 +1200,7 @@ export function PaymentModal({
                             </div>
                             <select name="reimbursementCashBoxId" required defaultValue="" className="w-full rounded border border-slate-200 p-2 text-xs">
                               <option value="">Seleccionar caja de salida...</option>
-                              {cashBoxOptions.map((option) => <option key={option.id} value={option.id}>{option.label} · {option.unlimited ? 'sin límite' : `$${option.balance.toLocaleString('es-AR')}`}</option>)}
+                              {cashBoxOptions.map((option) => <option key={option.id} value={option.id}>{option.label}{option.unlimited ? ' · sin límite' : ` (saldo $${option.balance.toLocaleString('es-AR')})`}</option>)}
                             </select>
                             <input name="reimbursementDetail" required placeholder="Referencia del pago real" className="w-full rounded border border-slate-200 p-2 text-xs" />
                             <p className="text-[11px] text-slate-500">Sólo registrar cuando el dinero salió de esta caja. Los reintegros bancarios se registrarán desde Control Total cuando exista la cuenta pagadora verificable.</p>
