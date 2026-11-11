@@ -96,6 +96,8 @@ import {
   canEditProjectArea,
   canViewProjectSubcategory, hasFullProjectAreaAccess,
   canEditProjectSubcategory,
+  canOrganizeProjectArea,
+  canOrganizeProjectSubcategory,
   getDefaultCollaboratorPermissions,
   normalizeAllowedTabs,
   normalizeProjectRole,
@@ -1980,8 +1982,10 @@ export default function ProjectDetail() {
   };
 
   const openAreaExpenseSubcategoryModal = (area: string, subcategory = '', editDefault = false) => {
-    if (!canEditArea(area) || isSavingAreaStructure) return;
     const cleanSubcategory = cleanAreaExpenseSubcategory(subcategory);
+    if (isSavingAreaStructure || !(cleanSubcategory || editDefault
+      ? canOrganizeSubcategory(area, cleanSubcategory)
+      : canManageSubcategoryBudget(area))) return;
     const existingEntry = (cleanSubcategory || editDefault) ? getAreaSubcategoryBudgetEntry(area, cleanSubcategory) : null;
     setSubcategoryBudgetDraft({
       mode: cleanSubcategory || editDefault ? 'edit' : 'create',
@@ -1999,7 +2003,8 @@ export default function ProjectDetail() {
     event.preventDefault();
     if (!id || !subcategoryBudgetDraft) return;
     const area = subcategoryBudgetDraft.area;
-    if (!canManageSubcategoryBudget(area)) return;
+    const managesBudget = canManageSubcategoryBudget(area);
+    if (!managesBudget && !canOrganizeSubcategory(area, cleanAreaExpenseSubcategory(subcategoryBudgetDraft.originalSubcategory))) return;
     const name = cleanAreaExpenseSubcategory(subcategoryBudgetDraft.name);
     if (!name) {
       alert('Ingresá un nombre de subcategoria.');
@@ -2010,6 +2015,7 @@ export default function ProjectDetail() {
     const editsDefaultSubcategory = subcategoryBudgetDraft.originalSubcategory === DEFAULT_AREA_EXPENSE_SUBCATEGORY;
     const original = editsDefaultSubcategory ? '' : cleanAreaExpenseSubcategory(subcategoryBudgetDraft.originalSubcategory);
     const isRename = editsDefaultSubcategory || Boolean(original && original !== name);
+    if (!managesBudget && !isRename) { setSubcategoryBudgetDraft(null); return; }
     if ((!original || isRename) && existing.some((item) => item.toLowerCase() === name.toLowerCase() && item.toLowerCase() !== original.toLowerCase())) {
       alert('Esa subcategoria ya existe en esta area.');
       return;
@@ -2026,7 +2032,7 @@ export default function ProjectDetail() {
       area,
       currentBudgetKey,
     );
-    if (subcategoryBudgetDraft.assignBudget && capacity.exceeds(budget)) {
+    if (managesBudget && subcategoryBudgetDraft.assignBudget && capacity.exceeds(budget)) {
       alert(`El presupuesto de las subcategorias no puede superar el de ${area}. Disponible para esta subcategoria: $${capacity.available.toLocaleString('es-AR')}.`);
       return;
     }
@@ -2056,8 +2062,8 @@ export default function ProjectDetail() {
       if (isRename) {
         await changeAreaStructure({ kind: 'subcategory', fromArea: area, fromSubcategory: original,
           targetArea: area, targetSubcategory: name,
-          budget: { assigned: subcategoryBudgetDraft.assignBudget, amount: budget, notes: subcategoryBudgetDraft.notes.trim(),
-            expected: subcategoryBudgetDraft.originalBudgetVersion } });
+          ...(managesBudget ? { budget: { assigned: subcategoryBudgetDraft.assignBudget, amount: budget, notes: subcategoryBudgetDraft.notes.trim(),
+            expected: subcategoryBudgetDraft.originalBudgetVersion } } : {}) });
         setSubcategoryBudgetDraft(null);
         return;
       }
@@ -3591,15 +3597,18 @@ export default function ProjectDetail() {
     : null;
   const subcategoryBudgetExceeds = Boolean(
     subcategoryBudgetDraft?.assignBudget
+    && (isProjectAdmin || userPermissions?.role === 'jefe_produccion')
+    && canEditProjectArea(isProjectAdmin, userPermissions, subcategoryBudgetDraft.area)
     && subcategoryBudgetCapacity?.exceeds(Number(subcategoryBudgetDraft.budget) || 0),
   );
 
   const onAreaStructureDragEnd = async (result: any) => {
     const { source, destination, type } = result || {};
-    if (!destination || !id || !isProjectAdmin || isSavingAreaStructure) return;
+    if (!destination || !id || isSavingAreaStructure) return;
     if (source.droppableId === destination.droppableId && source.index === destination.index) return;
 
     if (type === 'area-category') {
+      if (!isProjectAdmin) return;
       const displayedCategories = selectedAreaDashboardRows.map((row) => row.area);
       const nextCategories = reorderDisplayedCategories(categories, displayedCategories, source.index, destination.index);
       if (!nextCategories) return;
@@ -3637,6 +3646,7 @@ export default function ProjectDetail() {
       alert('No se puede mover a esa posición. Revisá si ya existe una subcategoría con ese nombre en el destino.');
       return;
     }
+    if (!canOrganizeSubcategory(sourceArea, move.subcategory) || !canOrganizeSubcategory(targetArea, move.subcategory)) return;
     const subcategory = move.subcategory, oldKey = areaSubcategoryKey(sourceArea, subcategory), newKey = areaSubcategoryKey(targetArea, subcategory);
     const entry = project?.areaExpenseSubcategoryBudgets?.[oldKey];
     const assignedBudget = typeof entry === 'number' ? entry : entry?.budgetAssigned === false ? 0 : Number(entry?.budget) || 0;
@@ -3696,6 +3706,8 @@ export default function ProjectDetail() {
     && canEditArea(area)
   );
   const canEditAreaExpense = (expense?: any | null) => canEditAreaSubcategory(expense?.area, expense?.subcategory);
+  const canOrganizeArea = (area: string) => canOrganizeProjectArea(isProjectAdmin, userPermissions, area);
+  const canOrganizeSubcategory = (area: string, subcategory: string) => canOrganizeProjectSubcategory(isProjectAdmin, userPermissions, area, subcategory);
   const canDeleteAreaExpense = (expense?: any | null) => {
     if (!expense || !canEditAreaExpense(expense)) return false;
     return !hasRecordedPayment(expense);
@@ -6404,7 +6416,7 @@ export default function ProjectDetail() {
                   <Droppable
                     droppableId={`area-subcategories|${encodeURIComponent(areaRow.area)}`}
                     type="area-subcategory"
-                    isDropDisabled={!isProjectAdmin || isSavingAreaStructure || Boolean(areaExpenseSearch.trim())}
+                    isDropDisabled={!canOrganizeArea(areaRow.area) || isSavingAreaStructure || Boolean(areaExpenseSearch.trim())}
                   >
                   {(subcategoryListProvided, subcategoryListSnapshot) => (
                   <div
@@ -6425,7 +6437,7 @@ export default function ProjectDetail() {
                           key={`mobile-${subcategoryKey}`}
                           draggableId={`area-subcategory|${encodeURIComponent(areaRow.area)}|${hasNamedSubcategory ? `named|${encodeURIComponent(subcategoryGroup.subcategory)}` : 'general'}`}
                           index={subcategoryIndex}
-                          isDragDisabled={!isProjectAdmin || isSavingAreaStructure || Boolean(areaExpenseSearch.trim())}
+                          isDragDisabled={!canOrganizeSubcategory(areaRow.area, subcategoryGroup.subcategory) || isSavingAreaStructure || Boolean(areaExpenseSearch.trim())}
                         >
                         {(subcategoryProvided: any, subcategorySnapshot: any) => (
                         <div
@@ -6440,7 +6452,7 @@ export default function ProjectDetail() {
                             "flex items-center gap-1 border-y px-3 py-2",
                             "border-slate-300 bg-slate-200 text-slate-900 transition-colors duration-200"
                           )}>
-                            {isProjectAdmin && (
+                            {canOrganizeSubcategory(areaRow.area, subcategoryGroup.subcategory) && (
                               <div
                                 {...subcategoryProvided.dragHandleProps}
                                 className={cn('cursor-grab rounded p-1 text-slate-600 hover:bg-slate-300', Boolean(areaExpenseSearch.trim()) && 'cursor-not-allowed opacity-40')}
@@ -6501,7 +6513,7 @@ export default function ProjectDetail() {
                                 ${subcategoryGroup.subtotal.toLocaleString()}
                               </div>
                             )}
-                            {canManageSubcategoryBudget(areaRow.area) && (
+                            {canOrganizeSubcategory(areaRow.area, subcategoryGroup.subcategory) && (
                               <button
                                 type="button"
                                 onClick={() => openAreaExpenseSubcategoryModal(areaRow.area, subcategoryGroup.subcategory, !hasNamedSubcategory)}
@@ -6628,7 +6640,7 @@ export default function ProjectDetail() {
                     <Droppable
                       droppableId={`area-subcategories|${encodeURIComponent(areaRow.area)}`}
                       type="area-subcategory"
-                      isDropDisabled={!isProjectAdmin || isSavingAreaStructure || Boolean(areaExpenseSearch.trim())}
+                      isDropDisabled={!canOrganizeArea(areaRow.area) || isSavingAreaStructure || Boolean(areaExpenseSearch.trim())}
                     >
                     {(subcategoryListProvided, subcategoryListSnapshot) => (
                     <div
@@ -6649,7 +6661,7 @@ export default function ProjectDetail() {
                             key={subcategoryKey}
                             draggableId={`area-subcategory|${encodeURIComponent(areaRow.area)}|${hasNamedSubcategory ? `named|${encodeURIComponent(subcategoryGroup.subcategory)}` : 'general'}`}
                             index={subcategoryIndex}
-                            isDragDisabled={!isProjectAdmin || isSavingAreaStructure || Boolean(areaExpenseSearch.trim())}
+                            isDragDisabled={!canOrganizeSubcategory(areaRow.area, subcategoryGroup.subcategory) || isSavingAreaStructure || Boolean(areaExpenseSearch.trim())}
                           >
                           {(subcategoryProvided: any, subcategorySnapshot: any) => (
                           <div
@@ -6665,7 +6677,7 @@ export default function ProjectDetail() {
                               "border-slate-300 bg-slate-200 text-slate-900 transition-colors duration-200"
                             )}>
                               <div className="flex items-center gap-2 min-w-0 flex-1">
-                                {isProjectAdmin && (
+                                {canOrganizeSubcategory(areaRow.area, subcategoryGroup.subcategory) && (
                                   <div
                                     {...subcategoryProvided.dragHandleProps}
                                     className={cn('cursor-grab rounded p-1 text-slate-600 hover:bg-slate-300', Boolean(areaExpenseSearch.trim()) && 'cursor-not-allowed opacity-40')}
@@ -6742,7 +6754,7 @@ export default function ProjectDetail() {
                                   ${subcategoryGroup.subtotal.toLocaleString()}
                                 </div>
                               )}
-                              {canManageSubcategoryBudget(areaRow.area) && (
+                              {canOrganizeSubcategory(areaRow.area, subcategoryGroup.subcategory) && (
                                 <button
                                   type="button"
                                   onClick={() => openAreaExpenseSubcategoryModal(areaRow.area, subcategoryGroup.subcategory, !hasNamedSubcategory)}
@@ -8001,6 +8013,7 @@ export default function ProjectDetail() {
                     required
                   />
                 </div>
+                {canManageSubcategoryBudget(subcategoryBudgetDraft.area) && <>
                 <div>
                   <label className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-slate-700">
                     <input
@@ -8051,9 +8064,10 @@ export default function ProjectDetail() {
                     placeholder="Condiciones, alcance o responsable..."
                   />
                 </div>
+                </>}
                 <div className="flex flex-col gap-3 pt-2 sm:flex-row sm:items-center sm:justify-between">
                   <div>
-                    {subcategoryBudgetDraft.mode === 'edit' && subcategoryBudgetDraft.originalSubcategory !== DEFAULT_AREA_EXPENSE_SUBCATEGORY && (
+                    {canManageSubcategoryBudget(subcategoryBudgetDraft.area) && subcategoryBudgetDraft.mode === 'edit' && subcategoryBudgetDraft.originalSubcategory !== DEFAULT_AREA_EXPENSE_SUBCATEGORY && (
                       <button
                         type="button"
                         onClick={deleteAreaExpenseSubcategoryBudget}

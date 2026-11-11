@@ -131,9 +131,50 @@ test('paid area classification preserves the native financial model, access and 
       for (const uid of ['limited', 'excluded', 'reader']) { await seed(); await assert.rejects(run({}, uid), { code: 'permission-denied' }); assert.equal((await root.collection('activityLog').get()).size, 0); }
       await seed(); await run({}, 'both'); assert.equal((await get('projects/structure/areaExpenses/paid')).area, 'Campo');
       await seed(); await groupRun({}, 'lead'); assert.equal((await get('projects/structure/areaExpenses/paid')).subcategory, 'Escénico');
-      await seed(); await assert.rejects(groupRun({ budget: undefined, targetSubcategory: 'Vestuario', beforeSubcategory: null }, 'both'), { code: 'permission-denied' });
+      await seed(); await groupRun({ budget: undefined, targetSubcategory: 'Vestuario', beforeSubcategory: null }, 'both');
+      assert.deepEqual((await root.get()).data().areaExpenseSubcategories.Arte, ['Utilería', 'Vestuario']);
       await seed(); await root.collection('collaborators').doc('lead@example.test').update({ excludedSubcategories: ['Arte||Utilería'] });
       await assert.rejects(groupRun({}, 'lead'), { code: 'permission-denied' });
+    });
+    await t.test('category editors can rename and move complete paid groups while retaining budgets and financial identity', async () => {
+      await seed(); const before = await capture();
+      await groupRun({ budget: undefined }, 'both');
+      assert.equal((await get('projects/structure/areaExpenses/paid')).subcategory, 'Escénico');
+      assert.deepEqual((await root.get()).data().areaExpenseSubcategoryBudgets['Arte||Escénico'], { area: 'Arte', subcategory: 'Escénico', budget: 300, budgetAssigned: true, notes: 'Conservar' });
+      await unchanged(before);
+      await seed(); const original = await capture();
+      await groupRun({ budget: undefined, targetArea: 'Campo', targetSubcategory: 'Vestuario', beforeSubcategory: 'Comidas' }, 'both');
+      assert.equal((await get('projects/structure/areaExpenses/paid')).area, 'Campo');
+      assert.equal((await get('projects/structure/areaExpenses/unpaid')).area, 'Campo');
+      assert.equal((await root.get()).data().areaExpenseSubcategoryBudgets['Campo||Vestuario'].budget, 300);
+      assert((await get('projects/structure/collaborators/follower@example.test')).excludedSubcategories.includes('Campo||Vestuario'));
+      await unchanged(original);
+    });
+    await t.test('whole-group changes require both parent category grants, edit access and no exclusion of the moved group', async () => {
+      for (const scenario of ['destination', 'source', 'reader', 'tab', 'excluded-source', 'excluded-target', 'explicit-only']) {
+        await seed();
+        const ref = root.collection('collaborators').doc('both@example.test');
+        if (scenario === 'destination') await ref.update({ allowedCategories: ['Arte'] });
+        if (scenario === 'source') await ref.update({ allowedCategories: ['Campo'] });
+        if (scenario === 'reader') await ref.update({ canEditBudgetAreas: false });
+        if (scenario === 'tab') await ref.update({ allowedTabs: ['resumen'] });
+        if (scenario === 'excluded-source') await ref.update({ excludedSubcategories: ['Arte||Vestuario'] });
+        if (scenario === 'excluded-target') await ref.update({ excludedSubcategories: ['Campo||Vestuario'] });
+        if (scenario === 'explicit-only') await ref.update({ allowedCategories: [], allowedSubcategories: ['Arte||Vestuario', 'Campo||Vestuario'] });
+        const before = await capture();
+        await assert.rejects(groupRun({ budget: undefined, targetArea: 'Campo', targetSubcategory: 'Vestuario' }, 'both'), { code: 'permission-denied' }, scenario);
+        assert.deepEqual(await capture(), before); assert.equal((await root.collection('activityLog').get()).size, 0);
+      }
+      await seed(); await root.collection('collaborators').doc('both@example.test').update({ excludedSubcategories: ['Arte||Utilería'] });
+      await groupRun({ budget: undefined }, 'both');
+      assert.equal((await get('projects/structure/areaExpenses/utility')).subcategory, 'Utilería');
+    });
+    await t.test('organizing categories does not grant budget editing rights', async () => {
+      await seed(); const before = await capture();
+      await assert.rejects(groupRun({}, 'both'), { code: 'permission-denied' });
+      assert.deepEqual(await capture(), before); assert.equal((await root.collection('activityLog').get()).size, 0);
+      await groupRun({ budget: undefined }, 'both');
+      assert.equal((await root.get()).data().areaExpenseSubcategoryBudgets['Arte||Escénico'].budget, 300);
     });
     await t.test('stale structure, changed source, duplicate names, invalid budget and foreign links fail atomically', async () => {
       const cases = [() => run({ expectedRevision: 1 }), () => run({ fromSubcategory: 'Ya no existe' }), () => run({ targetArea: 'Inactiva' }),
