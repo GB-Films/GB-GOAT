@@ -5,7 +5,7 @@ import { isInternalBudgetEstimate } from '../../lib/internalBudgetEstimate';
 import { expenseRegistrationState, type RegistrationEvidence } from '../../lib/providerRegistration';
 import { ProviderWorkAuthorization } from '../../components/ProviderWorkAuthorization';
 import { InvoiceContext } from '../../components/SharedExpenseInvoices';
-import { hasLinkedExpenseFile } from '../../lib/sharedExpenseInvoices';
+import { hasMultiRowLinkedExpenseFile } from '../../lib/sharedExpenseInvoices';
 import { useParams } from 'react-router-dom';
 import {
   formatIdentifier,
@@ -271,7 +271,7 @@ export function BudgetRowCell({ item, collectionName, providers, onUpdate, type,
         )}
         {showProviderDetail && provider && <Suspense fallback={<div className="fixed inset-0 z-[500] grid place-items-center bg-white/80 text-sm">Cargando proveedor…</div>}><ProviderProfileDialog provider={provider} initialProjectId={projectId} onClose={() => setShowProviderDetail(false)} /></Suspense>}
         {item.thirdPartyPayoutRequired && <button type="button" onClick={() => { setIsEditingProvider(false); setShowProviderInfo(true); }} className="mt-1 inline-flex rounded border border-indigo-200 bg-indigo-50 px-2 py-1 text-[9px] font-semibold text-indigo-800 transition-colors hover:bg-indigo-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500" title="Ver la declaración y la cuenta del tercero para este trabajo">Facturación y cobro por tercero</button>}
-        {hasLinkedExpenseFile(item, linkedRecords, authorizationScope) && <button type="button" disabled={!provider} onClick={() => setShowProviderDetail(true)} className="mt-1 text-[9px] text-indigo-600 hover:underline" title="Ver aplicaciones sin duplicar el documento">
+        {hasMultiRowLinkedExpenseFile(item, linkedRecords, authorizationScope) && <button type="button" disabled={!provider} onClick={() => setShowProviderDetail(true)} className="mt-1 text-[9px] text-indigo-600 hover:underline" title="Ver comprobantes o pagos que abarcan varias filas de gasto del proveedor">
           Comprobantes / pago vinculado
         </button>}
         

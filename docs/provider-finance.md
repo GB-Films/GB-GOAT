@@ -35,9 +35,9 @@ habilita borrar referencias financieras ni el enlace de carga habitual para un
 tercero: el reemplazo conserva el circuito de anulación y la autorización, y los
 comprobantes adicionales siguen en su columna existente.
 
-La consulta existente `projectDocuments` devuelve para facturas el emisor y
-`distinctExpenseCount`, calculado sobre todas las aplicaciones nativas antes de
-filtrar por proyecto. Sólo expone ese total; no devuelve IDs, nombres, importes o
+La consulta existente `projectDocuments` devuelve para facturas el emisor y, para
+facturas, pagos y comprobantes, `distinctExpenseCount`, calculado sobre todas las
+aplicaciones nativas antes de filtrar por proyecto. Sólo expone ese total; no devuelve IDs, nombres, importes o
 filas de proyectos ajenos. El cliente consulta por lotes de hasta100 registros
 por proyecto, no por celda. Invalida su caché al cambiar las relaciones nativas de
 los gastos, aunque el conjunto de IDs de factura permanezca igual. No convierte
@@ -45,9 +45,12 @@ el número de aplicaciones visibles en un supuesto total global.
 
 La columna de factura y el panel móvil usan la misma decisión. La factura no se
 repite debajo del proveedor. Allí se conserva el acceso a la autorización y,
-sólo cuando hay un archivo activo de comprobante o pago asociado a esa fila, el
-enlace a esos documentos. Un ID de pago sin archivo no genera ese enlace. La
-misma consulta por lotes obtiene los metadatos de esos archivos, sin llamadas por
+sólo cuando un archivo activo de comprobante o pago asociado abarca más de una
+fila distinta del proveedor, el enlace «Comprobantes / pago vinculado». Los
+documentos de una sola fila usan sus controles habituales; ser propios o de un
+tercero no cambia esta decisión. Un ID sin archivo o sin cantidad global
+confirmada no genera ese enlace. La misma consulta por lotes obtiene los
+metadatos de esos archivos, sin llamadas por
 celda. Si faltan archivo, acceso o metadatos suficientes para la factura, muestran
 una indicación y permiten reintentar; no abren otra factura ni simulan una URL.
 La descarga sigue usando `openProviderFile` y las comprobaciones de acceso
