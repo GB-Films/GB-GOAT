@@ -101,7 +101,7 @@ export function ProviderDetailView({ detail, loading, onClose, financePanel, com
         {administrationPanel}
         {authorizationPanel}
         {companyPanel && <details className="rounded-xl border border-slate-200 p-3"><summary className="cursor-pointer text-xs font-semibold text-slate-600">Representación y respaldos de la empresa · acceso restringido</summary><div className="mt-3">{companyPanel}</div></details>}
-        <div key={provider.id}><ProviderProjectList projects={detail.projects || []} lines={detail.lines || []} initialProjectId={initialProjectId} onOpenSharedDocument={onOpenSharedDocument} /></div>
+        <div key={`projects:${provider.id}`}><ProviderProjectList projects={detail.projects || []} lines={detail.lines || []} initialProjectId={initialProjectId} onOpenSharedDocument={onOpenSharedDocument} /></div>
       </>}
     </div>
     {financePanel && <ProviderFinanceWindow open={showFinance} onClose={() => setShowFinance(false)}>{financePanel}</ProviderFinanceWindow>}
