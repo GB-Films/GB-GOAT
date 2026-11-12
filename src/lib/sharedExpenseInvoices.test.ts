@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { expenseLinkedRecordIds, hasLinkedExpenseFile, isThirdPartyInvoice, projectInvoiceRelationsKey, sharedInvoiceAction, sharedInvoiceReferences, type InvoiceRecord } from './sharedExpenseInvoices';
+import { expenseLinkedRecordIds, hasMultiRowLinkedExpenseFile, isThirdPartyInvoice, projectInvoiceRelationsKey, sharedInvoiceAction, sharedInvoiceReferences, type InvoiceRecord } from './sharedExpenseInvoices';
 const scope = { projectId: 'project-a', collectionName: 'areaExpenses', itemId: 'row' };
 const invoice: InvoiceRecord = { id: 'invoice', kind: 'invoice', status: 'active', number: 'C 0001-123', issuerCuit: '27333333334', file: { fileName: 'original.pdf' }, distinctExpenseCount: 1, allocations: [scope] };
 test('one distinct expense downloads its native original; only multi-row invoices open the profile', () => {
@@ -37,20 +37,28 @@ test('linking the same invoice to a second row invalidates its project cache eve
   assert.notEqual(projectInvoiceRelationsKey([first]), projectInvoiceRelationsKey([{ ...first, __invoiceCollectionName: 'budgetItems' }]));
   assert.equal(projectInvoiceRelationsKey([first, second]), projectInvoiceRelationsKey([second, first]), 'reordering rows does not refetch metadata');
 });
-test('payment IDs without a file do not create a document link; actual receipts and payments keep their scoped access', () => {
+test('only a file spanning multiple distinct native rows creates the extra provider link', () => {
   const item = { sharedInvoices: [{ id: 'invoice' }], sharedPaymentIds: ['payment'], sharedReceipts: [{ id: 'receipt' }] };
   const records = new Map<string, InvoiceRecord>([['invoice', invoice]]);
-  assert.equal(hasLinkedExpenseFile(item, records, scope), false);
-  records.set('payment', { ...invoice, id: 'payment', kind: 'payment', file: undefined });
-  assert.equal(hasLinkedExpenseFile(item, records, scope), false, 'cash or a payment without an original is not a downloadable document');
+  assert.equal(hasMultiRowLinkedExpenseFile(item, records, scope), false);
+  records.set('payment', { ...invoice, id: 'payment', kind: 'payment', distinctExpenseCount: 2, file: undefined });
+  assert.equal(hasMultiRowLinkedExpenseFile(item, records, scope), false, 'cash or a payment without an original is not a downloadable document');
   records.set('payment', { ...invoice, id: 'payment', kind: 'payment' });
-  assert.equal(hasLinkedExpenseFile(item, records, scope), true);
-  assert.equal(hasLinkedExpenseFile(item, records, { ...scope, itemId: 'other' }), false);
-  records.set('payment', { ...invoice, id: 'payment', kind: 'payment', status: 'cancelled' });
-  assert.equal(hasLinkedExpenseFile(item, records, scope), false);
+  assert.equal(hasMultiRowLinkedExpenseFile(item, records, scope), false, 'one-row payments use their existing document controls');
+  for (const count of [undefined, null, 0, 1, 1.5, -1]) {
+    records.set('payment', { ...invoice, id: 'payment', kind: 'payment', distinctExpenseCount: count });
+    assert.equal(hasMultiRowLinkedExpenseFile(item, records, scope), false);
+  }
+  records.set('payment', { ...invoice, id: 'payment', kind: 'payment', distinctExpenseCount: 2 });
+  assert.equal(hasMultiRowLinkedExpenseFile(item, records, scope), true, 'global count may include a second row outside the scoped projection');
+  assert.equal(hasMultiRowLinkedExpenseFile(item, records, { ...scope, itemId: 'other' }), false);
+  records.set('payment', { ...invoice, id: 'payment', kind: 'payment', distinctExpenseCount: 2, status: 'cancelled' });
+  assert.equal(hasMultiRowLinkedExpenseFile(item, records, scope), false);
   records.set('receipt', { ...invoice, id: 'receipt', kind: 'other' });
-  assert.equal(hasLinkedExpenseFile(item, records, scope), true);
-  assert.equal(hasLinkedExpenseFile({ sharedInvoices: [{ id: 'receipt' }] }, records, scope), false, 'an invoice reference cannot become a receipt link');
+  assert.equal(hasMultiRowLinkedExpenseFile(item, records, scope), false);
+  records.set('receipt', { ...invoice, id: 'receipt', kind: 'other', distinctExpenseCount: 2 });
+  assert.equal(hasMultiRowLinkedExpenseFile(item, records, scope), true);
+  assert.equal(hasMultiRowLinkedExpenseFile({ sharedInvoices: [{ id: 'receipt' }] }, records, scope), false, 'an invoice reference cannot become a receipt link');
 });
 test('the existing batched document lookup and cache key include receipts and payments, not just invoices', () => {
   const row = { id: 'row', __invoiceCollectionName: 'areaExpenses', sharedInvoices: [{ id: 'invoice' }] };

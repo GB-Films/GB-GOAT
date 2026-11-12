@@ -32,20 +32,25 @@ test('each original has a separate control and missing files produce honest feed
   assert.match(missing, /no tiene un archivo disponible/);
   assert.doesNotMatch(missing, /href=|en la ficha del proveedor/);
 });
-test('the provider cell does not duplicate the invoice and only links an actual payment document', () => {
+test('the provider cell only adds a link for multi-row documents, regardless of third-party status', () => {
   const provider = { id: 'provider', type: 'persona', name: 'Persona ficticia', cuit: '20111111112', source: 'provider_invite' };
   const item = { id: 'row', providerId: provider.id, providerName: provider.name, thirdPartyPayoutRequired: true, sharedInvoices: [{ id: 'invoice' }], sharedPaymentIds: ['payment'] };
-  function cell(paymentFile: boolean) {
+  function cell(paymentFile: boolean, distinctExpenseCount: number | null = 1, thirdParty = true) {
     return renderToStaticMarkup(createElement(MemoryRouter, { initialEntries: ['/proyectos/project-a'] },
-      createElement(InvoiceContext.Provider, { value: { records: new Map([['payment', { ...record, id: 'payment', kind: 'payment', file: paymentFile ? record.file : undefined }]]), providers: new Map([[provider.id, provider]]), loading: false, reload() {} } },
+      createElement(InvoiceContext.Provider, { value: { records: new Map([['payment', { ...record, id: 'payment', kind: 'payment', distinctExpenseCount, file: paymentFile ? record.file : undefined }]]), providers: new Map([[provider.id, provider]]), loading: false, reload() {} } },
         createElement(Routes, null, createElement(Route, { path: '/proyectos/:id', element: createElement(BudgetRowCell, {
-          item, providers: [provider], collectionName: 'areaExpenses', type: 'provider', onUpdate: async () => {},
+          item: { ...item, thirdPartyPayoutRequired: thirdParty }, providers: [provider], collectionName: 'areaExpenses', type: 'provider', onUpdate: async () => {},
         }) })))));
   }
   const noFile = cell(false);
   assert.doesNotMatch(noFile, /Factura de tercero|Comprobantes \/ pago vinculado/);
   assert.match(noFile, /Facturación y cobro por tercero/, 'the distinct authorization access remains available');
-  assert.match(cell(true), /Comprobantes \/ pago vinculado/);
+  for (const thirdParty of [false, true]) {
+    assert.doesNotMatch(cell(true, 1, thirdParty), /Comprobantes \/ pago vinculado/);
+    assert.doesNotMatch(cell(true, null, thirdParty), /Comprobantes \/ pago vinculado/);
+    assert.doesNotMatch(cell(false, 2, thirdParty), /Comprobantes \/ pago vinculado/);
+    assert.match(cell(true, 2, thirdParty), /Comprobantes \/ pago vinculado/);
+  }
 });
 
 test('third-party documents keep the same upload, link and removal controls in desktop and mobile views', () => {
