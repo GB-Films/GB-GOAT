@@ -214,6 +214,14 @@ try {
   const scopedList = await scopedEditor({ action: 'projectDocuments', projectId: 'document-scope', recordIds: ['scope-invoice', 'scope-payment', 'scope-other'] });
   assert.equal(scopedList.records.length, 3);
   assert(scopedList.records.every(record => record.allocations.length === 1 && record.allocations[0].projectId === 'document-scope'));
+  assert(scopedList.records.every(record => record.distinctExpenseCount === 2), 'invoice, payment and receipt counts include native rows outside the visible project');
+  assert(!JSON.stringify(scopedList).includes('private-other-project'), 'the aggregate count must not expose foreign project or expense identifiers');
+  for (const kind of ['invoice', 'payment', 'other']) {
+    const recordId = `scope-${kind}`, visible = { projectId: 'document-scope', collectionName: 'areaExpenses', itemId: 'row' };
+    await db.doc(`providerFinancialRecords/${recordId}`).update({ allocations: [visible, visible] });
+    const single = await scopedEditor({ action: 'projectDocuments', projectId: 'document-scope', recordIds: [recordId] });
+    assert.equal(single.records[0].distinctExpenseCount, 1, 'repeated applications of one expense do not create a multi-row document link');
+  }
   await db.doc('projects/document-scope').update({ collaboratorEmails: [] });
   await assert.rejects(scopedEditor({ action: 'download', id: 'scope-payment', projectId: 'document-scope', collectionName: 'areaExpenses', itemId: 'row' }), /acceso/);
   const { testOwnPaymentCorrections } = await import('./ownPaymentCorrection.flow.mjs');

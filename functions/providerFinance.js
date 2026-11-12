@@ -151,7 +151,8 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, ver
             (await db.doc(`projects/${projectId}/${row.collectionName}/${id(row.itemId)}`).get()).data())));
         if (!linked.some(Boolean)) throw new HttpsError('permission-denied', 'Comprobante ajeno al proyecto.');
         return { id: recordId, kind: record.kind, status: record.status, number: record.number || '',
-          ...(record.kind === 'invoice' ? { distinctExpenseCount: distinctInvoiceExpenseCount(record.allocations), issuerName: text(record.issuerName), issuerCuit: text(record.issuerCuit).replace(/\D/g, '') } : {}),
+          distinctExpenseCount: distinctInvoiceExpenseCount(record.allocations),
+          ...(record.kind === 'invoice' ? { issuerName: text(record.issuerName), issuerCuit: text(record.issuerCuit).replace(/\D/g, '') } : {}),
           file: { fileName: record.file.fileName }, allocations: allocations.filter((_, index) => linked[index]).map(row => ({ projectId, collectionName: row.collectionName, itemId: row.itemId })) };
       }));
       return { records: records.filter(Boolean) };

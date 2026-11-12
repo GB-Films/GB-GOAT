@@ -24,13 +24,14 @@ export function expenseLinkedRecordIds(item: any): string[] {
     ...(Array.isArray(item.sharedPaymentIds) ? item.sharedPaymentIds : []),
   ].filter((value): value is string => typeof value === 'string' && /^[\w-]{1,160}$/.test(value)))];
 }
-export function hasLinkedExpenseFile(item: any, records: Map<string, InvoiceRecord>, scope: ProjectDocumentScope | null) {
+export function hasMultiRowLinkedExpenseFile(item: any, records: Map<string, InvoiceRecord>, scope: ProjectDocumentScope | null) {
   if (!scope) return false;
   return expenseLinkedRecordIds(item).some(id => {
     const record = records.get(id);
     const referenced = record?.kind === 'payment' ? Array.isArray(item.sharedPaymentIds) && item.sharedPaymentIds.includes(id)
       : record?.kind === 'other' && Array.isArray(item.sharedReceipts) && item.sharedReceipts.some((row: any) => row?.id === id);
     return referenced && record?.status === 'active' && !!record.file?.fileName
+      && Number.isSafeInteger(record.distinctExpenseCount) && record.distinctExpenseCount! > 1
       && record.allocations?.some(row => row.projectId === scope.projectId && row.collectionName === scope.collectionName && row.itemId === scope.itemId);
   });
 }
