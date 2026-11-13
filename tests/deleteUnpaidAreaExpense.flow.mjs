@@ -64,6 +64,11 @@ export async function testDeleteUnpaidAreaExpense({ db, admin, call, env }) {
   await assert.rejects(invoke(own, 'editor'), /facturas cambiaron/);
   assert.equal((await rowRef('ordinary').get()).exists, true);
   await invoke(deletion('ordinary', await preview('ordinary', 'editor')), 'editor');
+  await seed('legacy-default-group', { subcategory: 'Sin subcategoria' });
+  await db.doc(`projects/${projectId}/collaborators/editor@example.test`).update({ excludedSubcategories: ['Post||'] });
+  await assert.rejects(preview('legacy-default-group', 'editor'), /No tenés permiso/);
+  await db.doc(`projects/${projectId}/collaborators/editor@example.test`).update({ excludedSubcategories: [] });
+  await invoke(deletion('legacy-default-group', await preview('legacy-default-group', 'editor')), 'editor');
   await seed('authorized-third-party', { thirdPartyPayoutRequired: true, invoices: [invoices[0]] });
   await assert.rejects(preview('authorized-third-party', 'editor'), /No tenés permiso/);
   await invoke(deletion('authorized-third-party', await preview('authorized-third-party')));

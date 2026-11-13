@@ -9,10 +9,11 @@ function hasPayments(row) {
     || ['sharedPaymentIds', 'sharedPaymentRecords'].some(field => row[field] != null && (!Array.isArray(row[field]) || row[field].length > 0));
 }
 function canDelete(access, row) {
-  const c = access.collaborator || {}, key = `${row.area}||${row.subcategory || ''}`;
+  const c = access.collaborator || {}, storedSubcategory = String(row.subcategory || '').trim();
+  const subcategory = storedSubcategory === 'Sin subcategoria' ? '' : storedSubcategory, key = `${row.area}||${subcategory}`;
   return access.admin || row.paymentLocked !== true && (row.thirdPartyPayoutRequired === undefined || row.thirdPartyPayoutRequired === false) && !list(row.sharedInvoices).length && !list(row.sharedReceipts).length
     && c.canEditBudgetAreas === true && list(c.allowedTabs).includes('areas') && !list(c.excludedSubcategories).includes(key)
-    && (list(c.allowedCategories).includes(row.area) || !!row.subcategory && list(c.allowedSubcategories).includes(key));
+    && (list(c.allowedCategories).includes(row.area) || !!subcategory && list(c.allowedSubcategories).includes(key));
 }
 function createDeleteUnpaidAreaExpense({ db, timestamp }) {
   return async (actor, input) => {

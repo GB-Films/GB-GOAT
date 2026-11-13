@@ -15,6 +15,9 @@ test('deletion retains category editing and native/historical document administr
   assert.equal(canDelete(access, { ...row, sharedInvoices: [{ id: 'native' }] }), false);
   assert.equal(canDelete(access, { ...row, thirdPartyPayoutRequired: true }), false);
   assert.equal(canDelete(access, { ...row, thirdPartyPayoutRequired: null }), false);
+  const noDefaultGroup = { collaborator: { ...access.collaborator, excludedSubcategories: ['Arte||'] } };
+  assert.equal(canDelete(noDefaultGroup, { ...row, subcategory: '' }), false);
+  assert.equal(canDelete(noDefaultGroup, { ...row, subcategory: 'Sin subcategoria' }), false, 'legacy default label cannot bypass an explicit exclusion');
   assert.equal(canDelete({ admin: true }, { ...row, paymentLocked: true, sharedInvoices: [{ id: 'native' }] }), true);
 });
 test('detachment excludes only the deleted target while preserving the fiscal original and unrelated applications', () => {
