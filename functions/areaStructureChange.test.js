@@ -61,7 +61,7 @@ test('paid area classification preserves the native financial model, access and 
     await db.doc('providerPortalDeclarations/authority').set({ kind: 'third_party', status: 'active', proof: { complete: true, signedPdfSha256: 'signed-original' }, content: { workKeys: ['structure/areaExpenses/paid'] } });
   };
   const get = async path => (await db.doc(path).get()).data();
-  const financial = value => JSON.parse(JSON.stringify(value, (key, entry) => ['area', 'subcategory', 'order', 'updatedAt'].includes(key) ? undefined : entry));
+  const financial = value => JSON.parse(JSON.stringify(value, (key, entry) => ['area', 'subcategory', 'order', 'updatedAt', 'areaStructureRevision'].includes(key) ? undefined : entry));
   const capture = async () => ({ expense: await get('projects/structure/areaExpenses/paid'), cash: await get('projects/structure/cashMovements/cash'),
     invoice: await get('providerFinancialRecords/invoice'), payment: await get('providerFinancialRecords/payment'), authority: await get('providerPortalDeclarations/authority'),
     aggregateCash: await get('projects/structure/cashMovements/shared-general'), foreignIndex: await get('providerFinanceProjectIndex/other') });
@@ -71,6 +71,22 @@ test('paid area classification preserves the native financial model, access and 
     for (const key of ['authority', 'aggregateCash', 'foreignIndex']) assert.deepEqual(after[key], before[key], key + ' preserved byte-for-byte');
   };
   try {
+    await t.test('canonical acknowledgements return current classification for sequential moves and uncertain retries', async () => {
+      await seed(); const before = await capture();
+      const first = await run({}, 'both');
+      assert.equal(first.view.project.budgetRevision, 1);
+      const paid = first.view.expenses.find(row => row.id === 'paid');
+      assert.deepEqual(paid.after, { area: 'Campo', subcategory: 'Comidas', order: 1, areaStructureRevision: 1 });
+      assert.equal((await get('projects/structure/areaExpenses/paid')).areaStructureRevision, 1);
+      assert.doesNotMatch(JSON.stringify(first.view), /paymentHistory|invoice|providerId|payeeCuit|reference/);
+      const second = await run({ operationId: '32345678-1234-1234-1234-123456789012', expectedRevision: first.view.project.budgetRevision,
+        fromArea: 'Campo', fromSubcategory: 'Comidas', targetArea: 'Arte', targetSubcategory: 'Utilería' }, 'both');
+      assert.equal(second.view.project.budgetRevision, 2);
+      const retry = await run({}, 'both');
+      assert.equal(retry.repeated, true); assert.equal(retry.revision, 1); assert.equal(retry.view.project.budgetRevision, 2);
+      assert.equal(retry.view.expenses.find(row => row.id === 'paid').after.subcategory, 'Utilería');
+      assert.equal((await root.collection('activityLog').get()).size, 2); await unchanged(before);
+    });
     await t.test('rename paid group keeps payment history, files, fiscal keys, authorizations and exact row IDs', async () => {
       await seed(); const before = await capture();
       const first = await groupRun(); assert.equal(first.repeated, false); assert.equal(first.affectedExpenses, 2);
