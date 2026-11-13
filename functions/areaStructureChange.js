@@ -89,7 +89,12 @@ function createAreaStructureChange({ db, timestamp }) {
       const prior = await tx.get(audit);
       if (prior.exists) {
         if (prior.data().fingerprint !== fingerprint) fail('Este intento ya corresponde a otro cambio.');
-        return { repeated: true, revision: prior.data().revision };
+        const ids = list(prior.data().changes).map(change => change.id);
+        const currentRows = ids.length ? await tx.getAll(...ids.map(value => root.collection('areaExpenses').doc(id(value)))) : [];
+        return { repeated: true, revision: prior.data().revision, view: {
+          project: { budgetRevision: revision, areaExpenseSubcategories: project.areaExpenseSubcategories || {}, areaExpenseSubcategoryBudgets: project.areaExpenseSubcategoryBudgets || {} },
+          expenses: currentRows.map(row => ({ id: row.id, after: row.exists ? { area: row.data().area, subcategory: clean(row.data().subcategory), order: Number(row.data().order) || 0, areaStructureRevision: Number(row.data().areaStructureRevision) || 0 } : null })),
+        } };
       }
       if (revision !== input.expectedRevision) fail('La estructura del proyecto cambió. Actualizá la página y volvé a intentar.');
       const areaRows = await tx.get(root.collection('areaExpenses').limit(2001));
@@ -182,7 +187,7 @@ function createAreaStructureChange({ db, timestamp }) {
       const patchAllocation = allocation => allocation.projectId === projectId && allocation.collectionName === 'areaExpenses' && relocated.has(allocation.itemId)
         ? { ...allocation, area: relocated.get(allocation.itemId).area, ...(Object.hasOwn(allocation, 'subcategory') ? { subcategory: relocated.get(allocation.itemId).subcategory } : {}) } : allocation;
       const writes = [], now = timestamp(), enqueue = (ref, data, merge = false) => writes.push({ ref, data, merge });
-      for (const [id, patch] of patches) enqueue(root.collection('areaExpenses').doc(id), { ...patch, updatedAt: now });
+      for (const [id, patch] of patches) enqueue(root.collection('areaExpenses').doc(id), { ...patch, areaStructureRevision: revision + 1, updatedAt: now });
       const records = { ...object(indexSnapshot?.data()?.records) };
       for (const snapshot of activeRecords) {
         const record = snapshot.data();
@@ -215,7 +220,11 @@ function createAreaStructureChange({ db, timestamp }) {
       for (const write of writes) write.merge ? tx.set(write.ref, write.data, { merge: true }) : tx.update(write.ref, write.data);
       tx.create(audit, { action: 'area_structure_changed', kind: input.kind, actor, fingerprint, revision: revision + 1,
         fromArea, fromSubcategory, targetArea, targetSubcategory, changes, relatedMetadataPaths: writes.filter(w => !w.ref.path.includes('/areaExpenses/')).map(w => w.ref.path), createdAt: now });
-      return { repeated: false, revision: revision + 1, affectedExpenses: patches.size };
+      return { repeated: false, revision: revision + 1, affectedExpenses: patches.size, view: {
+        project: { budgetRevision: revision + 1, areaExpenseSubcategories: nextLists, areaExpenseSubcategoryBudgets: nextBudgets },
+        expenses: [...patches].map(([id, patch]) => ({ id, after: { area: patch.area, subcategory: patch.subcategory,
+          order: Number(patch.order ?? rowsById.get(id).order) || 0, areaStructureRevision: revision + 1 } })),
+      } };
     });
   };
 }

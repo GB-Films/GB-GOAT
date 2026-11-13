@@ -39,6 +39,28 @@ test('domain failures stay actionable and never expose the old EXPENSE_CHANGED p
   assert.doesNotMatch(areaStructureErrorMessage(Error('EXPENSE_CHANGED')), /EXPENSE_CHANGED/);
 });
 
+test('a committed location applies without waiting for catalog reloads and the next drag gets a fresh operation', async () => {
+  const attempts = new Map<string, AreaStructureAttempt>(), sent: Record<string, unknown>[] = [];
+  let applied = 0, refreshed = 0, sequence = 0;
+  const input = { action: 'reclassifyAreaExpenses' as const, projectId: 'project', expectedRevision: 0, kind: 'expense' as const,
+    itemId: 'paid', fromArea: 'Arte', fromSubcategory: 'Vestuario', targetArea: 'Campo', targetSubcategory: 'Comidas' };
+  const ack = { view: { project: { budgetRevision: 1 }, expenses: [] } };
+  const run = () => runAreaStructureChange({ input, attempts, call: async value => { sent.push(value); return ack; },
+    applyCommitted: result => { assert.strictEqual(result, ack); applied++; return true; }, refresh: async () => { refreshed++; },
+    onRefreshError: () => assert.fail('no refresh is necessary'), newId: () => `operation-${++sequence}` });
+  await run(); await run();
+  assert.equal(applied, 2); assert.equal(refreshed, 0); assert.equal(attempts.size, 0);
+  assert.notEqual(sent[0].operationId, sent[1].operationId);
+});
+
+test('a failed state application after an acknowledged write recovers without falsely reporting a failed move', async () => {
+  let refreshed = false;
+  await runAreaStructureChange({ input: { action: 'reclassifyAreaExpenses', projectId: 'project', expectedRevision: 0, kind: 'expense',
+    fromArea: 'Arte', fromSubcategory: '', targetArea: 'Campo', targetSubcategory: '' }, attempts: new Map(), call: async () => ({}),
+    applyCommitted: () => { throw Error('render failure'); }, refresh: async () => { refreshed = true; }, onRefreshError: () => assert.fail(), newId: () => 'attempt' });
+  assert.equal(refreshed, true);
+});
+
 test('the opened budget version ignores timestamps while detecting changed assignments and notes', () => {
   assert.equal(areaGroupBudgetVersion(undefined), 'null');
   assert.equal(areaGroupBudgetVersion(300), areaGroupBudgetVersion({ budget: 300, updatedAt: 'later' }));
