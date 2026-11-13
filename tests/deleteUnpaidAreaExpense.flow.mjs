@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { doc, getDoc, updateDoc, deleteDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, deleteDoc, setDoc, writeBatch, serverTimestamp } from 'firebase/firestore';
 import { assertFails } from '@firebase/rules-unit-testing';
 const require = createRequire(new URL('../functions/package.json', import.meta.url));
 const { createAreaStructureChange } = require('../functions/areaStructureChange');
@@ -33,6 +33,26 @@ export async function testDeleteUnpaidAreaExpense({ db, admin, call, env }) {
   const client = env.authenticatedContext('admin', { email: 'agustin@granberta.com', email_verified: true }).firestore();
   await assertFails(updateDoc(doc(client, auditRef.path), { previousDocument: {} }));
   await assertFails(deleteDoc(doc(client, auditRef.path)));
+
+  // Reported shape: no paid flag, no payments, an ordinary invoice, and an authorization to use a third party.
+  // The authorization alone blocks the legacy browser delete, even for an administrator.
+  const reportedShape = { providerId: 'supplier', area: 'Post', subcategory: '', paymentHistory: [], paymentLocked: false,
+    thirdPartyPayoutRequired: true, total: 100, invoice: invoices[0], invoices: [invoices[0]] };
+  await rowRef('authorized-duplicate').set(reportedShape);
+  const legacyBatch = writeBatch(client);
+  legacyBatch.delete(doc(client, rowRef('authorized-duplicate').path));
+  legacyBatch.set(doc(client, `projects/${projectId}/activityLog/legacy-attempt`), { action: 'expense_rows_deleted', collectionName,
+    itemId: 'authorized-duplicate', paymentCount: 0, previousDocuments: {}, deletedBy: 'admin', deletedByEmail: 'agustin@granberta.com',
+    deletedByName: 'Administrador ficticio', deletedByRole: 'admin', createdAt: serverTimestamp() });
+  await assertFails(legacyBatch.commit());
+  assert.equal((await rowRef('authorized-duplicate').get()).exists, true);
+  const reportedPreview = await preview('authorized-duplicate');
+  assert.equal(reportedPreview.invoiceCount, 1);
+  const reportedDeletion = deletion('authorized-duplicate', reportedPreview);
+  await invoke(reportedDeletion);
+  assert.equal((await rowRef('authorized-duplicate').get()).exists, false);
+  const retained = (await db.doc(`projects/${projectId}/activityLog/unpaid-expense-deleted-${reportedDeletion.operationId}`).get()).data();
+  assert.deepEqual(retained.previousDocument, reportedShape); assert.equal(retained.invoiceCount, 1);
 
   await seed('ordinary', { invoices: [invoices[0]] });
   await assert.rejects(preview('ordinary', 'stranger'), /acceso/);

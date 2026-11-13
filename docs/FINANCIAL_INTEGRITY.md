@@ -21,6 +21,8 @@ General cash additionally requires the authenticated account to be one of the th
 
 ## Route review
 
+An authorization for a third party to invoice/collect (`thirdPartyPayoutRequired`) is not a recorded payment. A row carrying that flag, an ordinary invoice and an empty payment history (including legacy rows without a `paid` field) can be deleted by a project administrator through the unpaid-row callable. The legacy direct SDK deletion remains protected; the client uses the server preview and confirmed deletion instead. The preview warns about removing the row's invoices, and the transaction rechecks payments, linked cash and document versions. Session, permission and uncertain connection errors have actionable messages rather than a silent console failure. Synthetic integration reproduces the rejected legacy batch and successful audited server deletion for this shape.
+
 Collaborators can correct their own ordinary area payments through the callable, which checks the original UID/email, current area permissions, opened version, expense and cash balances, and an immutable before/after audit in one transaction. Other authors' payments and shared applications stay protected. Browser SDK access still cannot rewrite payment history; changing the cash source or deleting payments retains the administrative flow.
 
 | Route | Protection |
