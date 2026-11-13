@@ -3,8 +3,14 @@ import { matchesSmartSearch, normalizeSearch } from './smartSearch';
 export const DOCUMENT_CATEGORIES = [
   { id: 'contratos', label: 'Contratos' },
   { id: 'seguros', label: 'Seguros' },
+  { id: 'recibos', label: 'Recibos' },
+  { id: 'terceros', label: 'Permisos a terceros' },
 ] as const;
 export type DocumentCategory = typeof DOCUMENT_CATEGORIES[number]['id'];
+export const UPLOAD_DOCUMENT_CATEGORIES = DOCUMENT_CATEGORIES.filter(category => category.id === 'contratos' || category.id === 'seguros');
+export function signingDocumentCategory(document: { source?: string }): DocumentCategory {
+  return document.source === 'cash_receipt' ? 'recibos' : document.source === 'portal_declaration' ? 'terceros' : 'contratos';
+}
 export type CatalogDocument = {
   id: string; family?: string; type?: string; subtype?: string; providerName: string;
   fileName: string; description: string; url: string; amount: number;
@@ -30,6 +36,7 @@ export function filterProjectDocuments<T extends { family?: string; type?: strin
 export const DOCUMENT_UPLOAD_TYPES: Record<DocumentCategory, string[]> = {
   contratos: ['Contrato proveedor', 'Contrato talento / crew', 'Prestación de servicios', 'Cesión de derechos', 'Release', 'Permiso de filmación', 'Autorización de locación', 'Condiciones de uso', 'Otro'],
   seguros: ['Seguro técnico / equipos', 'ART / accidentes personales', 'Responsabilidad civil', 'Seguro de locación', 'Póliza / certificado', 'Otro'],
+  recibos: [], terceros: [],
 };
 
 export function signingDocumentMatchesProvider(document: { providerId?: string; signatures?: Array<{ email?: string }> }, search: string,

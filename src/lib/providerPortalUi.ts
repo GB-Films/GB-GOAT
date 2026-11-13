@@ -1,13 +1,18 @@
 type SigningDocument = {
   id: string; documentId?: string; projectId?: string; projectName?: string; providerId?: string;
-  signed?: boolean; status?: string; declarationKind?: string; declarationVersion?: string;
+  signed?: boolean; status?: string; declarationKind?: string; declarationVersion?: string; goatProjectId?: string;
 };
 const inactive = new Set(['cancelled', 'revoked', 'replaced', 'rejected', 'applied', 'active', 'completed', 'signed']);
+export function portalDocumentCategory(doc: SigningDocument) {
+  return doc.declarationKind === 'cash_receipt' ? 'cash-receipts' : doc.declarationKind === 'third_party' ? 'third-party' : doc.declarationKind ? 'profile' : 'contracts';
+}
 export function groupPortalDocumentsByProject<T extends SigningDocument>(documents: T[]) {
   const groups = new Map<string, { key: string; name: string; documents: T[] }>();
   for (const doc of documents) {
-    const key = doc.declarationKind ? 'declarations' : doc.projectId ? `project:${doc.projectId}` : `unassigned:${doc.id}`;
-    const name = doc.declarationKind ? 'Datos y autorizaciones' : doc.projectName?.trim() || '';
+    const declaration = doc.declarationKind && doc.declarationKind !== 'cash_receipt';
+    const project = doc.goatProjectId || doc.projectId;
+    const key = declaration ? 'declarations' : project ? `project:${project}` : `unassigned:${doc.id}`;
+    const name = declaration ? 'Datos y autorizaciones' : doc.projectName?.trim() || '';
     if (!groups.has(key)) groups.set(key, { key, name, documents: [] });
     const group = groups.get(key)!;
     if (!group.name && name) group.name = name;

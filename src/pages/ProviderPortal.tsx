@@ -20,6 +20,7 @@ import { switchProviderGoogleAccount, verifyProviderGoogleAccount } from '../lib
 import { declarationCompletionMessage, portalDeclarationCompletionInput, type DeclarationDocument } from '../lib/providerDeclarationUi';
 import { ProviderSigningGuide } from '../components/ProviderSigningGuide';
 import { ProviderPortalDocuments } from '../components/ProviderPortalDocuments';
+import { ProviderPendingSignatures } from '../components/ProviderPendingSignatures';
 import { pendingPortalSignatureCount, portalErrorMessage, representsAnotherProvider } from '../lib/providerPortalUi';
 import { BriefcaseBusiness, FileText, Wallet, FolderPen, UserRound } from 'lucide-react';
 
@@ -141,7 +142,8 @@ export default function ProviderPortal() {
       if (signing.declarationKind === 'representation') { setTab('Documentos'); setProfileNotice(result.status === 'applied'
         ? 'Declaración firmada. Tu representación quedó habilitada; los contratos asignados aparecen en Documentos.'
         : 'La firma de esta presentación anterior quedó guardada. Completá la nueva declaración de representación para habilitarte sin esperar una revisión.'); }
-      if (signing.declarationKind === 'third_party') { setTab('Documentos'); setProfileNotice(declarationCompletionMessage('third_party', result.status)); } }
+      if (signing.declarationKind === 'third_party') { setTab('Documentos'); setProfileNotice(declarationCompletionMessage('third_party', result.status)); }
+      if (signing.declarationKind === 'cash_receipt') { setTab('Documentos'); setProfileNotice(result.status === 'signed' ? 'Recibo firmado. Podés descargarlo desde Documentos → Recibos.' : 'Todavía falta completar la firma del recibo.'); } }
     else { setTab('Documentos'); setProfileNotice('Tu firma quedó guardada. Consultá el estado del contrato y sus constancias aquí. Si faltan otras firmas, se indicará en el documento.'); }
     if (await load()) setDraft({});
     await loadDocuments();
@@ -244,6 +246,10 @@ export default function ProviderPortal() {
         ) : representsAnotherProvider(selected) ? <p className="mt-3 text-sm text-slate-600">Representás a <strong className="text-slate-900">{selected.name}</strong></p> : null}
         {user?.email && <ProviderSigningGuide email={user.email} needsRepresentation={selected?.status === 'needs_confirmation' && selected?.type === 'empresa'} pendingCount={pendingCount} onDocuments={() => { setError(''); setTab('Documentos'); }} />}
       </header>
+      <ProviderPendingSignatures documents={docs} onOpen={category => {
+        setTab('Documentos');
+        window.requestAnimationFrame(() => { const section = document.getElementById(`provider-documents-${category}`) as HTMLDetailsElement | null; if (section) { section.open = true; section.scrollIntoView({ behavior: 'smooth', block: 'start' }); } });
+      }} />
       {hasLoaded && !members.length && !error && <section className={box + ' space-y-3'}>
         <h2 className="font-semibold">¿Te registraste con otro correo?</h2>
         <p className="text-sm text-slate-600">Ingresá con esa cuenta Google para encontrar tu ficha. Después, en Mis datos, podrás elegir qué correo usar.</p>
@@ -402,7 +408,7 @@ export default function ProviderPortal() {
         onDownload={(doc, artifact) => run(async () => { downloadPortalFile(await portalRequest({ action: 'signingFile', requestId: doc.id, projectId: doc.projectId, documentId: doc.documentId, artifact })); })}
         onRecover={doc => run(async () => { await signPortalDocument(doc, { dni: '', typedName: '' }); const completion = portalDeclarationCompletionInput(doc); if (completion) await portalRequest(completion); await load(); await loadDocuments(); })}
         onApply={applyDeclaration}
-        onApplyDocument={doc => run(async () => { setProfileNotice(await applyDeclaration(doc.documentId, doc.declarationKind, doc)); })}
+        onApplyDocument={doc => run(async () => { if (doc.declarationKind === 'cash_receipt') { const result = await portalRequest(portalDeclarationCompletionInput(doc)!); setProfileNotice(result.status === 'signed' ? 'Recibo firmado y guardado.' : 'Todavía falta completar la firma.'); await loadDocuments(); } else setProfileNotice(await applyDeclaration(doc.documentId, doc.declarationKind, doc)); })}
         onRevoke={id => { if (confirm('¿Revocar para operaciones futuras? Se conserva la historia.')) void run(async () => { await portalRequest({ action: 'revokeThirdParty', providerId, declarationId: id }); await load(); }); }}
       />}
       {tab === "Mis datos" && view && (
