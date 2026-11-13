@@ -1,6 +1,7 @@
 const { HttpsError } = require("firebase-functions/v2/https");
 const logger = require('firebase-functions/logger');
 const M = require("./providerPortalModel");
+const { activeRecordAllocations } = require('./providerFinanceAllocations');
 const { createPortalReimbursements, ownAdvanceFile } = require("./providerPortalReimbursements");
 const { createPortalInvoiceUpload, createPortalInvoiceRemoval, portalInvoiceRows } = require("./providerPortalInvoice");
 const { confirmationContent, confirmationState } = require('./providerProfileConfirmation');
@@ -455,7 +456,7 @@ function createProviderPortalHandler({
             number: r.number || "",
             title: r.title || "",
             issuerName: r.issuerName || "",
-            allocations: list(r.allocations).map((a) => ({
+            allocations: activeRecordAllocations(r).map((a) => ({
               projectId: a.projectId,
               amountCents: a.amountCents,
             })),
@@ -647,7 +648,7 @@ function createProviderPortalHandler({
         if (!r || r.providerId !== providerId)
           throw new HttpsError("permission-denied", "Comprobante ajeno.");
         // Confirm every allocation belongs to this provider, even if an imported record is malformed.
-        for (const a of list(r.allocations)) {
+        for (const a of activeRecordAllocations(r)) {
           const e = (
             await db
               .doc(

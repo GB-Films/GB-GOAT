@@ -1,5 +1,6 @@
 const { HttpsError } = require('firebase-functions/v2/https');
 const { hasTeamWorkAccess } = require('./teamWorkAccess');
+const { activeRecordAllocations } = require('./providerFinanceAllocations');
 const list = value => Array.isArray(value) ? value : [];
 const deny = () => { throw new HttpsError('permission-denied', 'No tenés acceso a los comprobantes de este proyecto.'); };
 
@@ -19,7 +20,7 @@ async function projectFinanceAccess({ db, transaction, actor, projectId }) {
 }
 
 function linkedAllocation(record, projectId, itemId, collectionName, expense) {
-  if (!expense || expense.providerId !== record.providerId || !list(record.allocations).some(row =>
+  if (!expense || expense.providerId !== record.providerId || !activeRecordAllocations(record).some(row =>
     row.projectId === projectId && row.collectionName === collectionName && row.itemId === itemId)) return false;
   if (record.kind === 'payment') return list(expense.paymentHistory).some(payment => payment.sharedRecordId === record.id);
   return list(expense[record.kind === 'invoice' ? 'sharedInvoices' : 'sharedReceipts']).some(ref => ref.id === record.id);
