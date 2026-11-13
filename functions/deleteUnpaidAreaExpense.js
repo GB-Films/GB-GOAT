@@ -10,7 +10,7 @@ function hasPayments(row) {
 }
 function canDelete(access, row) {
   const c = access.collaborator || {}, key = `${row.area}||${row.subcategory || ''}`;
-  return access.admin || row.paymentLocked !== true && !list(row.sharedInvoices).length && !list(row.sharedReceipts).length
+  return access.admin || row.paymentLocked !== true && (row.thirdPartyPayoutRequired === undefined || row.thirdPartyPayoutRequired === false) && !list(row.sharedInvoices).length && !list(row.sharedReceipts).length
     && c.canEditBudgetAreas === true && list(c.allowedTabs).includes('areas') && !list(c.excludedSubcategories).includes(key)
     && (list(c.allowedCategories).includes(row.area) || !!row.subcategory && list(c.allowedSubcategories).includes(key));
 }

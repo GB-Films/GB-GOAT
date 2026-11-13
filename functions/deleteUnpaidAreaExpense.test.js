@@ -13,6 +13,8 @@ test('deletion retains category editing and native/historical document administr
   assert.equal(canDelete({ ...access, collaborator: { ...access.collaborator, excludedSubcategories: ['Arte||Utilería'] } }, row), false);
   assert.equal(canDelete(access, { ...row, paymentLocked: true }), false);
   assert.equal(canDelete(access, { ...row, sharedInvoices: [{ id: 'native' }] }), false);
+  assert.equal(canDelete(access, { ...row, thirdPartyPayoutRequired: true }), false);
+  assert.equal(canDelete(access, { ...row, thirdPartyPayoutRequired: null }), false);
   assert.equal(canDelete({ admin: true }, { ...row, paymentLocked: true, sharedInvoices: [{ id: 'native' }] }), true);
 });
 test('detachment excludes only the deleted target while preserving the fiscal original and unrelated applications', () => {

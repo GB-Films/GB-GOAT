@@ -2,7 +2,7 @@ import { hasActiveExpensePayments, hasRecordedPayment } from './expenseEdits';
 export function canDeleteUnpaidAreaExpense(row: any, isAdmin: boolean) {
   if (!row || hasActiveExpensePayments({ ...row, paymentHistory: row.paymentHistory ?? [] })
     || [row.sharedPaymentIds, row.sharedPaymentRecords].some(value => value != null && (!Array.isArray(value) || value.length > 0))) return false;
-  return isAdmin || !hasRecordedPayment(row) && !(row.sharedInvoices?.length || row.sharedReceipts?.length);
+  return isAdmin || !hasRecordedPayment(row) && (row.thirdPartyPayoutRequired === undefined || row.thirdPartyPayoutRequired === false) && !(row.sharedInvoices?.length || row.sharedReceipts?.length);
 }
 export type UnpaidExpenseDeletionPreview = { fingerprint: string; label: string; area: string; total: number; invoiceCount: number };
 export function unpaidExpenseDeletionConfirmation(source: Omit<UnpaidExpenseDeletionPreview, 'fingerprint'>) {

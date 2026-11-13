@@ -87,7 +87,7 @@ Las referencias retiradas no se cuentan entre los documentos de la celda.
 
 ### Borrar una fila sin pagos con facturas
 
-En Áreas, la presencia de facturas no impide borrar una fila sin pagos vigentes. La confirmación informa cuántas facturas se quitarán de esa fila y advierte que no se puede deshacer. Administración puede borrar una fila que conserve `paymentLocked` por un historial anterior, siempre que no tenga pagos, reintegros de caja ni aplicaciones de pago a sus facturas. Los editores mantienen el borrado de filas ordinarias dentro de las áreas y subcategorías permitidas; los vínculos fiscales nativos y las filas históricas mantienen su control administrativo.
+En Áreas, la presencia de facturas no impide borrar una fila sin pagos vigentes. La confirmación informa cuántas facturas se quitarán de esa fila y advierte que no se puede deshacer. Administración puede borrar una fila que conserve `paymentLocked` por un historial anterior, siempre que no tenga pagos, reintegros de caja ni aplicaciones de pago a sus facturas. Los editores mantienen el borrado de filas ordinarias dentro de las áreas y subcategorías permitidas; los vínculos fiscales nativos, las autorizaciones a terceros y las filas históricas mantienen su control administrativo.
 
 El servidor obtiene una vista previa actual y vuelve a validarla en la transacción de borrado. Si cambian la fila, sus facturas, permisos o pagos después de la advertencia, detiene la operación con el motivo correspondiente. Guarda una copia completa de la fila en actividad inmutable. No hace pruebas ni borrados sobre registros reales para validar el cambio.
 

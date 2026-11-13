@@ -8,6 +8,8 @@ test('an unpaid row remains deletable with many invoices and an administrator ca
   assert.equal(canDeleteUnpaidAreaExpense({ ...row, paymentLocked: true }, false), false);
   assert.equal(canDeleteUnpaidAreaExpense({ ...row, sharedInvoices: [{ id: 'native' }] }, true), true);
   assert.equal(canDeleteUnpaidAreaExpense({ ...row, sharedInvoices: [{ id: 'native' }] }, false), false);
+  assert.equal(canDeleteUnpaidAreaExpense({ ...row, thirdPartyPayoutRequired: true }, false), false);
+  assert.equal(canDeleteUnpaidAreaExpense({ ...row, thirdPartyPayoutRequired: null }, false), false);
   for (const change of [{ paid: true }, { paymentHistory: [{ amount: 0 }] }, { paymentHistory: {} }, { sharedPaymentIds: ['native-payment'] }, { sharedPaymentRecords: [{ id: 'native-payment' }] }]) assert.equal(canDeleteUnpaidAreaExpense({ ...row, ...change }, true), false);
 });
 test('confirmation explicitly warns that this row loses its invoices while shared originals remain elsewhere', () => {

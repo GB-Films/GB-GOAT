@@ -44,6 +44,9 @@ export async function testDeleteUnpaidAreaExpense({ db, admin, call, env }) {
   await assert.rejects(invoke(own, 'editor'), /facturas cambiaron/);
   assert.equal((await rowRef('ordinary').get()).exists, true);
   await invoke(deletion('ordinary', await preview('ordinary', 'editor')), 'editor');
+  await seed('authorized-third-party', { thirdPartyPayoutRequired: true, invoices: [invoices[0]] });
+  await assert.rejects(preview('authorized-third-party', 'editor'), /No tenés permiso/);
+  await invoke(deletion('authorized-third-party', await preview('authorized-third-party')));
   for (const [itemId, extra] of Object.entries({ paid: { paid: true }, zeroPayment: { paymentHistory: [{ id: 'p', amount: 0 }] }, sharedPayment: { sharedPaymentIds: ['payment'] }, protectedPayment: { sharedPaymentRecords: [{ id: 'p' }] } })) {
     await seed(itemId, extra); await assert.rejects(preview(itemId), /pagos registrados/); assert.equal((await rowRef(itemId).get()).exists, true);
   }
