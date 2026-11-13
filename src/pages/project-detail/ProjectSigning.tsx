@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { downloadPortalFile, portalAdminRequest } from '../../lib/providerPortal';
-import type { CatalogDocument } from '../../lib/projectDocumentCatalog';
+import type { CatalogDocument, DocumentCategory } from '../../lib/projectDocumentCatalog';
 import { ProjectContractDialog } from './ProjectContractDialog';
 import { ProjectSigningPanel, type ProjectSigningDocument, type ProjectSigningState } from './ProjectSigningPanel';
 
-export function ProjectSigning({ projectId, search = '', providers = [], manualDocuments = [], canPrepare = false }: { projectId: string; search?: string; providers?: any[]; manualDocuments?: CatalogDocument[]; canPrepare?: boolean }) {
+export function ProjectSigning({ projectId, category = 'contratos', search = '', providers = [], manualDocuments = [], canPrepare = false }: { projectId: string; category?: DocumentCategory; search?: string; providers?: any[]; manualDocuments?: CatalogDocument[]; canPrepare?: boolean }) {
   const [state, setState] = useState<ProjectSigningState | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -68,7 +68,7 @@ export function ProjectSigning({ projectId, search = '', providers = [], manualD
   }
 
   return <>
-    <ProjectSigningPanel state={state} documents={state?.documents || []} manualDocuments={manualDocuments} search={search} providers={providers}
+    <ProjectSigningPanel category={category} state={state} documents={state?.documents || []} manualDocuments={manualDocuments} search={search} providers={providers}
       busy={busy} downloading={downloading} error={error} notice={notice} onRefresh={refresh} onDownload={download}
       onPrepare={canPrepare ? setPreparing : undefined} />
     {preparing && <ProjectContractDialog projectId={projectId} document={preparing} providers={providers} onClose={() => setPreparing(null)}

@@ -1,10 +1,10 @@
 import type { ReactNode } from 'react';
-import { FileSignature, ShieldCheck, Search, Upload, ExternalLink, X } from 'lucide-react';
+import { FileSignature, ShieldCheck, Receipt, Users, Search, Upload, ExternalLink, X } from 'lucide-react';
 import { DOCUMENT_CATEGORIES, filterProjectDocuments, type CatalogDocument, type DocumentCategory } from '../../lib/projectDocumentCatalog';
 import { cashMovementDate } from '../../lib/cashLedgerView';
 import { cn } from '../../lib/utils';
 
-const icons = { contratos: FileSignature, seguros: ShieldCheck };
+const icons = { contratos: FileSignature, seguros: ShieldCheck, recibos: Receipt, terceros: Users };
 
 export function ProjectDocumentsView({ documents, category, onCategoryChange, search, onSearchChange, onUpload, signingSection }: {
   documents: CatalogDocument[]; category: DocumentCategory; onCategoryChange: (category: DocumentCategory) => void;
@@ -14,7 +14,7 @@ export function ProjectDocumentsView({ documents, category, onCategoryChange, se
   return <section className="space-y-4 pb-12">
     <header className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
       <h2 className="text-base font-bold text-slate-900">Documentos</h2>
-      {onUpload && <button type="button" onClick={onUpload}
+      {onUpload && ['contratos', 'seguros'].includes(category) && <button type="button" onClick={onUpload}
         className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700">
         <Upload className="h-4 w-4" />{category === 'contratos' ? 'Cargar contrato' : 'Cargar seguro'}
       </button>}
@@ -38,8 +38,8 @@ export function ProjectDocumentsView({ documents, category, onCategoryChange, se
         {search && <button type="button" onClick={() => onSearchChange('')} aria-label="Limpiar búsqueda" className="rounded p-1 text-slate-400 hover:bg-slate-100"><X className="h-4 w-4" /></button>}
       </div>
     </div>
-    {category === 'contratos' && signingSection}
-    {(category !== 'contratos' || !signingSection) && <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+    {category !== 'seguros' && signingSection}
+    {(category === 'seguros' || !signingSection) && <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
       <table className="w-full text-left text-sm">
         <thead className="border-b border-slate-200 bg-slate-50 text-xs text-slate-500"><tr>
           {['Documento', 'Proveedor', 'Fecha', ''].map(label => <th key={label} scope="col" className={cn('px-4 py-3 font-medium', !label && 'text-right')}>{label || <span className="sr-only">Archivo</span>}</th>)}

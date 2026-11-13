@@ -100,7 +100,9 @@ async function signActual(declaration, signerEmail = "own@example.test", signerU
     (d) => d.documentId === declaration.id,
   );
   assert(entry);
-  const script = `import {signDocument} from ${JSON.stringify(pathToFileURL(resolve(signRoot, "functions/index.js")).href)};const result=await signDocument.run(${JSON.stringify(
+  // Catch expected denials so Node drains Firestore's asynchronous rollback.
+  // An unhandled rejection exits the child before releasing its read locks.
+  const script = `import {signDocument} from ${JSON.stringify(pathToFileURL(resolve(signRoot, "functions/index.js")).href)};try { const result=await signDocument.run(${JSON.stringify(
     {
       auth: {
         uid: `sign-${signerUid}`,
@@ -128,7 +130,7 @@ async function signActual(declaration, signerEmail = "own@example.test", signerU
       },
       rawRequest: { headers: {}, ip: "127.0.0.1" },
     },
-  )});console.log(JSON.stringify(result));`;
+  )});console.log(JSON.stringify(result)); } catch(error) { console.error(error.code, error.message); process.exitCode=1; }`;
   execFileSync(process.execPath, ["--input-type=module", "-e", script], {
     cwd: signRoot,
     env: {
@@ -144,6 +146,12 @@ async function signActual(declaration, signerEmail = "own@example.test", signerU
   });
 }
 try {
+  if (process.env.GOAT_PORTAL_TEST_SUITE === 'cash-receipts') {
+    await db.doc('providerPortalConfig/current').set({ enabled: true });
+    await db.doc('users/admin').set({ role: 'admin', email: 'admin@example.test' });
+    const { testProviderCashReceipts } = await import('./providerCashReceipts.flow.mjs');
+    await testProviderCashReceipts({ db, admin, deps, manage, portal, request, sign, signActual, env, assertFails, getDoc, setDoc, doc, createProviderPortalAdminHandler, createProviderPortalHandler });
+  } else {
   await db.doc("providerPortalConfig/current").set({ enabled: true });
   await db
     .doc("users/admin")
@@ -867,10 +875,13 @@ try {
   await testProviderPortalOwnership({ db, portal, request, sign, env, assertFails, admin });
   const { testPortalInvoiceUpload } = await import('./portalInvoiceUpload.flow.mjs');
   await testPortalInvoiceUpload({ db, portal, request, sign, env, assertFails, createProviderPortalHandler, deps });
+  const { testProviderCashReceipts } = await import('./providerCashReceipts.flow.mjs');
+  await testProviderCashReceipts({ db, admin, deps, manage, portal, request, sign, signActual, env, assertFails, getDoc, setDoc, doc, createProviderPortalAdminHandler, createProviderPortalHandler });
   console.log("PASS: own bank required at intake, personal signup without signature, company responsibility declaration with DNI and optional power activates without admin review, minimal third-party declaration, issuer-linked invoice and payout.");
   console.log(
     "PASS: real GB Sign PDF/signature/artifacts → immediate signed profile application; automatic scoped third-party application without admin review, no duplicate payment; external isolation and producer access.",
   );
+  }
 } finally {
   await env.cleanup();
   await signEnv.cleanup();

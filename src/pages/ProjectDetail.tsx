@@ -7523,7 +7523,7 @@ export default function ProjectDetail() {
           <ProjectDocumentsView documents={projectDocuments} category={documentCategoryFilter} onCategoryChange={setDocumentCategoryFilter}
             search={documentSearch} onSearchChange={setDocumentSearch}
             onUpload={canUploadProjectDocuments ? () => setShowDocumentUploadModal(true) : undefined}
-            signingSection={id && canManageProjectSignatures ? <ProjectSigning projectId={id} search={documentSearch} providers={providers} manualDocuments={projectDocuments}
+            signingSection={id && canManageProjectSignatures ? <ProjectSigning projectId={id} category={documentCategoryFilter} search={documentSearch} providers={providers} manualDocuments={projectDocuments}
               canPrepare={isProjectAdmin || profile?.role === 'ayudante_admin' || normalizeEmail(user?.email) === 'info@granbertafilms.com'} /> : undefined} />
         )}
 

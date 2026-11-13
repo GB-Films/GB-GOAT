@@ -1,19 +1,19 @@
 import { useState, type FormEvent } from 'react';
 import { Upload } from 'lucide-react';
-import { DOCUMENT_CATEGORIES, DOCUMENT_UPLOAD_TYPES, type DocumentCategory } from '../../lib/projectDocumentCatalog';
+import { UPLOAD_DOCUMENT_CATEGORIES, DOCUMENT_UPLOAD_TYPES, type DocumentCategory } from '../../lib/projectDocumentCatalog';
 import { ProjectDialog } from './ProjectDialog';
 
 export function ProjectDocumentUpload({ initialCategory, providers, areas, busy, onClose, onSubmit }: {
   initialCategory: DocumentCategory; providers: Array<{ id: string; label: string }>; areas: string[]; busy: boolean;
   onClose: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
-  const [category, setCategory] = useState(initialCategory);
+  const [category, setCategory] = useState<DocumentCategory>(initialCategory === 'seguros' ? 'seguros' : 'contratos');
   const input = 'w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm focus:outline-blue-500';
   const label = 'block space-y-1.5 text-xs font-semibold text-slate-600';
   return <ProjectDialog title="Subir documento" onClose={() => { if (!busy) onClose(); }}>
     <form onSubmit={onSubmit}><fieldset disabled={busy} className="grid gap-4 sm:grid-cols-2">
       <label className={label}>Categoría<select value={category} onChange={event => setCategory(event.target.value as DocumentCategory)} className={input}>
-        {DOCUMENT_CATEGORIES.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
+        {UPLOAD_DOCUMENT_CATEGORIES.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
       </select></label>
       <input type="hidden" name="family" value={category} />
       <label className={label}>Tipo<select name="subtype" key={category} className={input}>

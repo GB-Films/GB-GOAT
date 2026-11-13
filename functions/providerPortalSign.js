@@ -4,6 +4,8 @@ const { declarationPdf } = require("./providerDeclarationPdf");
 const { createHash } = require("node:crypto");
 const { createProjectContractBridge } = require('./providerProjectContracts');
 const { createEvidenceStore } = require('./providerEvidence');
+const { cashReceiptPdf } = require('./providerCashReceiptPdf');
+const { createCashReceiptService } = require('./providerCashReceipts');
 const {
   fail,
   hash,
@@ -120,6 +122,14 @@ function createSignBridge(db) {
       const d = snap.data();
       if (!list(d.signerEmails).map(email).includes(actor.email)) return null;
       let requiredDni = '', declarationKind = '', declarationVersion = '', declarationStatus = '';
+      let cashReceipt = null, receiptCurrent = true;
+      if (d.portalManaged && d.goatCashReceiptId) {
+        cashReceipt = (await db.doc(`providerCashReceipts/${id(d.goatCashReceiptId)}`).get()).data();
+        if (!cashReceipt || cashReceipt.actor.email !== actor.email || cashReceipt.providerId !== d.goatProviderId || cashReceipt.contentHash !== d.portalContentHash) return null;
+        receiptCurrent = await createCashReceiptService({ db }).current(cashReceipt);
+        requiredDni = cashReceipt.content.signerDni;
+        declarationKind = 'cash_receipt'; declarationVersion = 'cash-receipt-v1'; declarationStatus = cashReceipt.status;
+      }
       // Keep signed originals as history, but stop requesting the obsolete
       // representation signature from people who act on their own behalf.
       if (d.portalManaged && d.goatDeclarationId) {
@@ -137,9 +147,10 @@ function createSignBridge(db) {
         id: s.id,
         documentId: r.docId,
         projectId: r.projectId,
-        projectName: text(r.projectName),
+        projectName: cashReceipt ? cashReceipt.content.projectName : text(r.projectName),
+        ...(cashReceipt ? { goatProjectId: cashReceipt.scope.projectId, cashReceiptId: cashReceipt.id } : {}),
         title: d.title || d.fileName,
-        status: d.status || r.status,
+        status: cashReceipt && ['cancelled', 'replaced'].includes(cashReceipt.status) ? cashReceipt.status : cashReceipt && !receiptCurrent ? 'replaced' : d.status || r.status,
         contentHash: d.portalContentHash || "",
         sha256: d.sha256,
         signatureFields: list(d.signatureFields).filter(
@@ -196,10 +207,13 @@ function createSignBridge(db) {
       return result;
     },
     async prepare(declaration, includePreview = false) {
+      const receipt = declaration.kind === 'cash_receipt';
+      const title = receipt ? declaration.title : declaration.kind === 'representation' ? 'Representación de empresa' : declaration.kind === 'profile' ? declaration.content.confirmation ? 'Confirmación de mis datos' : 'Actualización de mis datos' : 'Autorización de facturación y cobro';
+      const fileName = receipt ? 'recibo.pdf' : 'declaracion.pdf';
       const project = "goat_portal_declarations",
         documentId = declaration.id;
       const ref = store().doc(`projects/${project}/documents/${documentId}`);
-      const [parentBefore, existing, pdf] = await Promise.all([store().doc(`projects/${project}`).get(), ref.get(), declarationPdf(declaration)]);
+      const [parentBefore, existing, pdf] = await Promise.all([store().doc(`projects/${project}`).get(), ref.get(), receipt ? cashReceiptPdf(declaration) : declarationPdf(declaration)]);
       if (
         parentBefore.exists &&
         (!parentBefore.data().portalManaged ||
@@ -211,10 +225,10 @@ function createSignBridge(db) {
       const storagePath = `projects/${project}/documents/${documentId}/original.pdf`;
       const requestId = `${project}_${documentId}_${declaration.actor.email.replace(/[^a-z0-9]/g, "_")}`;
       const preview = includePreview ? { signingDocument: { id: requestId, documentId, projectId: project,
-        title: declaration.kind === 'representation' ? 'Representación de empresa' : declaration.kind === 'profile' ? declaration.content.confirmation ? 'Confirmación de mis datos' : 'Actualización de mis datos' : 'Autorización de facturación y cobro',
+        title,
         signatureFields: [field], sha256, contentHash: declaration.contentHash, status: 'pending', signed: false, portalManaged: true,
         providerId: declaration.providerId, declarationKind: declaration.kind, requiredDni: declaration.content.signerDni || '' },
-        originalFile: { base64: bytes.toString('base64'), contentType: 'application/pdf', fileName: 'declaracion.pdf', sha256 } } : {};
+        originalFile: { base64: bytes.toString('base64'), contentType: 'application/pdf', fileName, sha256 } } : {};
       if (existing.exists) {
         const prior = existing.data();
         if (
@@ -222,7 +236,7 @@ function createSignBridge(db) {
           prior.sha256 !== sha256 ||
           prior.storagePath !== storagePath ||
           !prior.portalManaged ||
-          prior.goatDeclarationId !== documentId ||
+          (receipt ? prior.goatCashReceiptId : prior.goatDeclarationId) !== documentId ||
           JSON.stringify(prior.signerEmails) !==
             JSON.stringify([declaration.actor.email])
         )
@@ -287,13 +301,12 @@ function createSignBridge(db) {
           { merge: true },
         );
         tx.create(ref, {
-          title:
-            declaration.kind === "profile"
+          title: receipt ? title : declaration.kind === "profile"
               ? declaration.content.confirmation ? "Confirmación de mis datos" : "Declaración de datos"
               : declaration.kind === "representation"
                 ? "Confirmación de representación"
                 : "Autorización de tercero",
-          fileName: "declaracion.pdf",
+          fileName,
           storagePath,
           contentType: "application/pdf",
           sha256,
@@ -305,7 +318,7 @@ function createSignBridge(db) {
           status: "pending",
           portalManaged: true,
           portalContentHash: declaration.contentHash,
-          goatDeclarationId: documentId,
+          ...(receipt ? { goatCashReceiptId: documentId } : { goatDeclarationId: documentId }),
           goatProviderId: declaration.providerId,
           createdAt: admin.firestore.FieldValue.serverTimestamp(),
         });
@@ -313,8 +326,9 @@ function createSignBridge(db) {
           projectId: project,
           docId: documentId,
           signerEmail: declaration.actor.email,
-          title: "Declaración de proveedor",
-          fileName: "declaracion.pdf",
+          title: receipt ? title : "Declaración de proveedor",
+          ...(receipt ? { projectName: declaration.content.projectName } : {}),
+          fileName,
           contentType: "application/pdf",
           storagePath,
           sha256,
@@ -329,6 +343,16 @@ function createSignBridge(db) {
         docId: documentId,
         contentHash: declaration.contentHash,
       };
+    },
+    async cancelCashReceipt(link) {
+      const ref = store().doc(`projects/${id(link.projectId || 'goat_portal_declarations')}/documents/${id(link.docId || link.receiptId)}`);
+      await store().runTransaction(async tx => {
+        const doc = (await tx.get(ref)).data();
+        if (!doc) return;
+        if (!doc?.portalManaged || !doc.goatCashReceiptId || doc.portalContentHash !== link.contentHash) fail('El recibo no corresponde a esta solicitud.');
+        // Signed evidence remains immutable; the GOAT record retains its cancellation.
+        if (doc.status !== 'completed' && doc.status !== 'cancelled') tx.update(ref, { status: 'cancelled', updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+      });
     },
     async verify(link, actor, contentHash) {
       const d = (
@@ -496,6 +520,17 @@ function createSignBridge(db) {
           ],
         };
       });
+      const receipts = await db.collection('providerCashReceipts').where('scope.projectId', '==', goatProjectId).limit(501).get();
+      if (receipts.size > 500) fail('Paginar recibos del proyecto.');
+      const receiptService = createCashReceiptService({ db });
+      for (const snapshot of receipts.docs) {
+        const receipt = snapshot.data(), current = await receiptService.current(receipt);
+        statementRows.push({ id: snapshot.id, source: 'cash_receipt', title: receipt.title, providerId: receipt.providerId,
+          status: receipt.proof?.complete ? 'completed' : 'pending',
+          declarationStatus: receipt.status === 'cancelled' ? 'cancelled' : current ? receipt.status : 'replaced',
+          artifactsReady: Boolean(receipt.proof?.complete), fileAvailable: Boolean(receipt.signing),
+          signatures: [{ email: receipt.actor.email, status: receipt.proof?.complete ? 'signed' : 'pending' }] });
+      }
       const link = (
         await db.doc(`providerPortalProjectLinks/${goatProjectId}`).get()
       ).data();

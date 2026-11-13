@@ -19,6 +19,7 @@ const { applySignedCompanyRepresentation } = require('./signedCompanyRepresentat
 const { thirdPartyDeclaration, thirdPartyDetails } = require('./providerThirdPartyDeclaration');
 const { applySignedProviderProfile } = require('./signedProviderProfile');
 const { createSignedThirdPartyService, needsThirdPartyApplication } = require('./signedThirdPartyDeclaration');
+const { createCashReceiptService } = require('./providerCashReceipts');
 const { administrativeRecordRef, isAdministrativeRecord, assertProviderPortalAllowed } = require('./providerAdministrativeRecords');
 const { fail, text, email, id, list, hash } = M;
 const internalRoles = [
@@ -387,6 +388,7 @@ function createProviderPortalHandler({
         input.action !== "completeDeclaration" &&
         !['uploadEvidence', 'evidenceFile', 'companyState'].includes(input.action),
     );
+    if (input.action === 'completeCashReceipt') return createCashReceiptService({ db, timestamp, sign, clock }).complete(actor, input);
     if (input.action === 'uploadEvidence') {
       identity(request, true);
       const provider = (await db.doc(`providers/${providerId}`).get()).data();

@@ -4,6 +4,7 @@ const { createTeamOnboarding } = require('./teamOnboarding');
 const { hasTeamWorkAccess } = require('./teamWorkAccess');
 const { checkCompanyReview } = require('./providerRepresentation');
 const { createProviderWorkAuthorizations } = require('./providerWorkAuthorizations');
+const { createCashReceiptService } = require('./providerCashReceipts');
 
 const { COMPANY_EVIDENCE, LEGACY_COMPANY_EVIDENCE } = require('./providerEvidence');
 const { thirdPartyIsCurrent } = require('./providerThirdPartyDeclaration');
@@ -29,6 +30,7 @@ function createProviderPortalAdminHandler({
 }) {
   const thirdParties = createSignedThirdPartyService({ db, timestamp, clock, sign });
   const administrative = createProviderAdministrativeRecords({ db, timestamp });
+  const cashReceipts = createCashReceiptService({ db, timestamp, sign, clock });
   return async (request) => {
     if (!request.auth?.uid || request.auth.token?.email_verified !== true)
       throw new HttpsError("unauthenticated", "Iniciá sesión.");
@@ -52,6 +54,7 @@ function createProviderPortalAdminHandler({
     const global =
       ["admin", "ayudante_admin"].includes(user?.role) ||
       actor.email === "info@granbertafilms.com";
+    if (['cashReceiptSource', 'requestCashReceipt', 'cashReceiptFile', 'cancelCashReceipt'].includes(input.action)) return cashReceipts.admin(actor, input);
     if (['workAuthorizations', 'workAuthorizationFile'].includes(input.action))
       return createProviderWorkAuthorizations({ db, sign, clock })(actor, input, global);
     const projectAction = [
@@ -97,6 +100,11 @@ function createProviderPortalAdminHandler({
       return sign.prepareProjectContract({ ...input, projectId, documentId: id(input.documentId) }, actor);
     }
     if (input.action === "projectFile") {
+      if (input.source === 'cash_receipt') {
+        const receipt = (await db.doc(`providerCashReceipts/${id(input.documentId)}`).get()).data();
+        if (!receipt || receipt.scope.projectId !== id(input.projectId)) fail('Recibo fuera del alcance de este proyecto.');
+        return sign.declarationFile(receipt.signing, input.artifact);
+      }
       if (input.source === "portal_declaration") {
         const d = (
           await db
@@ -352,7 +360,7 @@ function createProviderPortalAdminHandler({
         ...result,
         documents: result.documents.map((d) => ({
           ...d,
-          fileAvailable: global || !d.multiProject,
+          fileAvailable: d.fileAvailable !== false && (global || !d.multiProject),
         })),
       };
     }

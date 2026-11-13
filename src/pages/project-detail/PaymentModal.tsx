@@ -23,6 +23,7 @@ import { paymentCorrectionSnapshot } from '../../lib/ownPaymentCorrection';
 import { assertReimbursementAmount, assertReimbursementCashLink, getReimbursementBalanceCents, getReimbursedCents, isThirdPartyPayment } from '../../lib/reimbursements';
 import type { Payment, PaymentCollection } from './types';
 import { SearchableSelect } from '../../components/SearchableSelect';
+import { CashPaymentReceiptButton } from '../../components/CashPaymentReceiptButton';
 
 const formatDate = (dateString: string | any) => {
   if (!dateString) return 'Sin fecha';
@@ -1120,6 +1121,7 @@ export function PaymentModal({
                               </span>
                             </div>
                           )}
+                          {projectId && item?.id && item?.providerId && <CashPaymentReceiptButton key={`cash-receipt:${projectId}/${collectionName}/${item.id}/${payment.id}`} projectId={projectId} collectionName={collectionName} itemId={item.id} payment={payment} canRequest={canManagePayments} />}
                           {isExternal && (
                             <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">
                               <div className="font-bold">Pagó {payment.thirdPartyPayerName || 'persona sin identificar'}</div>

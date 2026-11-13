@@ -8,6 +8,7 @@ export type DeclarationDocument = {
 };
 
 export function portalDeclarationCompletionInput(doc: { portalManaged?: boolean; providerId?: string; documentId?: string; declarationKind?: string } | null) {
+  if (doc?.portalManaged && doc.providerId && doc.documentId && doc.declarationKind === 'cash_receipt') return { action: 'completeCashReceipt', providerId: doc.providerId, receiptId: doc.documentId };
   if (!doc?.portalManaged || !doc.providerId || !doc.documentId || !['profile', 'representation', 'third_party'].includes(doc.declarationKind || '')) return null;
   return { action: 'completeDeclaration', providerId: doc.providerId, declarationId: doc.documentId };
 }

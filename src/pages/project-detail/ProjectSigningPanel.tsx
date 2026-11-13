@@ -1,7 +1,7 @@
 import { RefreshCw, FileSignature, FileText, Download, LoaderCircle, ExternalLink, CircleCheck, Clock3, FilePenLine, CircleX } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { matchesSmartSearch } from '../../lib/smartSearch';
-import { documentCategory, signingDocumentMatchesProvider, type CatalogDocument } from '../../lib/projectDocumentCatalog';
+import { documentCategory, signingDocumentCategory, signingDocumentMatchesProvider, DOCUMENT_CATEGORIES, type DocumentCategory, type CatalogDocument } from '../../lib/projectDocumentCatalog';
 
 export type ProjectSigningDocument = {
   id: string; source?: string; title: string; providerId?: string; status?: string;
@@ -12,23 +12,26 @@ export type ProjectSigningDocument = {
 export type ProjectSigningState = { connected?: boolean; url?: string; documents: ProjectSigningDocument[] };
 const declarations: Record<string, string> = {
   pending_review: 'Firma guardada · falta aplicar', active: 'Vigente', revoked: 'Revocada', rejected: 'Rechazada', pending_signature: 'Pendiente de firma', preparing: 'Preparando documento',
+  cancelled: 'Anulado', replaced: 'Pago modificado · antecedente', signed: 'Firmado', requested: 'Pendiente de firma',
 };
 
-export function ProjectSigningPanel({ state, documents, manualDocuments = [], search = '', providers = [], busy, downloading, error, notice, onRefresh, onDownload, onPrepare }: {
+export function ProjectSigningPanel({ state, documents, category = 'contratos', manualDocuments = [], search = '', providers = [], busy, downloading, error, notice, onRefresh, onDownload, onPrepare }: {
+  category?: DocumentCategory;
   state: ProjectSigningState | null; documents: ProjectSigningDocument[]; manualDocuments?: CatalogDocument[]; search?: string; providers?: any[]; busy: 'refresh' | null;
   downloading: string; error: string; notice: string; onRefresh: () => void;
   onDownload: (document: ProjectSigningDocument, artifact: string) => void; onPrepare?: (document: CatalogDocument) => void;
 }) {
-  const manual = manualDocuments.filter(document => documentCategory(document) === 'contratos');
+  const label = DOCUMENT_CATEGORIES.find(item => item.id === category)?.label || 'Documentos';
+  const manual = category === 'contratos' ? manualDocuments.filter(document => documentCategory(document) === 'contratos') : [];
   const prepared = new Set(documents.map(document => document.sourceDocumentId).filter(Boolean));
   const rows = [
-    ...documents.map(signing => ({ id: `sign-${signing.source}-${signing.id}`, signing, manual: signing.sourceDocumentId ? manual.find(document => document.sourceDocumentId === signing.sourceDocumentId) : undefined })),
+    ...documents.filter(document => signingDocumentCategory(document) === category).map(signing => ({ id: `sign-${signing.source}-${signing.id}`, signing, manual: signing.sourceDocumentId ? manual.find(document => document.sourceDocumentId === signing.sourceDocumentId) : undefined })),
     ...manual.filter(document => !prepared.has(document.sourceDocumentId)).map(document => ({ id: document.id, manual: document, signing: undefined as ProjectSigningDocument | undefined })),
   ].filter(row => !search.trim() || (row.manual && matchesSmartSearch(search, row.manual.providerName)) || (row.signing && (signingDocumentMatchesProvider(row.signing, search, providers)
     || matchesSmartSearch(search, ...(row.signing.providerBindings || []).map(binding => binding.name)))));
-  return <section aria-label="Contratos del proyecto" className="project-contracts overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+  return <section aria-label={`${label} del proyecto`} className="project-contracts overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
     <header className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
-      <h3 className="text-sm font-semibold text-slate-900">Contratos</h3>
+      <h3 className="text-sm font-semibold text-slate-900">{label}</h3>
       <button type="button" onClick={onRefresh} disabled={Boolean(busy)}
         className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:cursor-wait disabled:opacity-60">
         <RefreshCw className={cn('h-4 w-4', busy === 'refresh' && 'animate-spin')} />{busy === 'refresh' ? 'Actualizando…' : 'Actualizar firmas'}
@@ -40,7 +43,7 @@ export function ProjectSigningPanel({ state, documents, manualDocuments = [], se
       const document = row.signing;
       const complete = document?.status === 'completed' && document.artifactsReady;
       const inactive = document && ['revoked', 'rejected', 'cancelled', 'replaced'].includes(document.declarationStatus || document.status || '');
-      const status = !document ? 'No preparado para firmar' : inactive ? declarations[document.declarationStatus || ''] || 'Contrato sin vigencia'
+      const status = !document ? 'No preparado para firmar' : inactive ? declarations[document.declarationStatus || document.status || ''] || 'Documento sin vigencia'
         : complete ? 'Firmado' : document.status === 'partially_signed' ? 'Firma parcial' : document.status === 'completed' ? 'Firmado · PDF pendiente' : 'Pendiente de firma';
       const tooltip = [status, document?.declarationStatus && !inactive ? declarations[document.declarationStatus] || document.declarationStatus : ''].filter(Boolean).join(' · ');
       const StatusIcon = !document ? FilePenLine : inactive ? CircleX : complete ? CircleCheck : Clock3;
@@ -80,6 +83,6 @@ export function ProjectSigningPanel({ state, documents, manualDocuments = [], se
         </div>
       </article>;
     })}</div>
-    {rows.length === 0 && !error && <p className="px-4 py-6 text-sm text-slate-500">{busy ? 'Consultando contratos…' : search ? 'No hay contratos de este proveedor.' : 'Cargá un contrato para preparar su firma o conservar el archivo firmado a mano.'}</p>}
+    {rows.length === 0 && !error && <p className="px-4 py-6 text-sm text-slate-500">{busy ? 'Consultando documentos…' : search ? 'No hay documentos de este proveedor.' : category === 'contratos' ? 'Cargá un contrato para preparar su firma o conservar el archivo firmado a mano.' : category === 'recibos' ? 'Solicitá un recibo desde el historial de un pago con caja en efectivo.' : 'Las autorizaciones firmadas por los proveedores aparecerán acá.'}</p>}
   </section>;
 }

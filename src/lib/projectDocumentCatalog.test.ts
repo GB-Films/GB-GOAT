@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { DOCUMENT_CATEGORIES, documentCategory, filterProjectDocuments, signingDocumentMatchesProvider, type CatalogDocument } from './projectDocumentCatalog';
+import { DOCUMENT_CATEGORIES, UPLOAD_DOCUMENT_CATEGORIES, documentCategory, filterProjectDocuments, signingDocumentCategory, signingDocumentMatchesProvider, type CatalogDocument } from './projectDocumentCatalog';
 import { ProjectDocumentsView } from '../pages/project-detail/ProjectDocumentsView';
 import { ProjectDocumentUpload } from '../pages/project-detail/ProjectDocumentUpload';
 import { ProjectSigningPanel } from '../pages/project-detail/ProjectSigningPanel';
@@ -35,14 +35,14 @@ test('signing documents can be found by provider id or a matching signer account
   assert.equal(signingDocumentMatchesProvider({ signatures: [{ email: 'other@example.com' }] }, 'catering', providers), false);
 });
 
-test('the view exposes only contracts and insurance, retains signing, and hides financial rows', () => {
+test('the view separates contracts, insurance, receipts and authorizations, hiding financial uploads', () => {
   const documents: CatalogDocument[] = [
     { id: 'ret', family: 'finanzas', type: 'Retención', providerName: 'María', fileName: 'retencion.pdf', description: '', amount: 100, url: 'https://example.test/ret' },
     { id: 'policy', family: 'seguros', type: 'Póliza', providerName: 'María', fileName: 'poliza.pdf', description: '', amount: 0, url: 'https://example.test/policy' },
   ];
   const props = { documents, onCategoryChange() {}, search: '', onSearchChange() {}, onUpload() {}, signingSection: 'Signature section' };
   const html = renderToStaticMarkup(createElement(ProjectDocumentsView, { ...props, category: 'seguros' }));
-  assert.equal(html.match(/aria-pressed=/g)?.length, 2);
+  assert.equal(html.match(/aria-pressed=/g)?.length, 4);
   assert.match(html, /Contratos/); assert.match(html, /Seguros/); assert.match(html, /Buscar por proveedor/);
   assert.match(html, /poliza.pdf/); assert.match(html, /Cargar seguro/);
   assert.doesNotMatch(html, /Comprobantes|retencion.pdf|Retención|Monto|Familia|Finanzas|Locaciones|<select|Signature section/);
@@ -52,12 +52,25 @@ test('the view exposes only contracts and insurance, retains signing, and hides 
 });
 
 test('upload offers only contract and insurance categories, with no financial document types', () => {
-  for (const category of DOCUMENT_CATEGORIES) {
+  for (const category of UPLOAD_DOCUMENT_CATEGORIES) {
     const html = renderToStaticMarkup(createElement(ProjectDocumentUpload, { initialCategory: category.id, providers: [], areas: [], busy: false, onClose() {}, onSubmit() {} }));
     assert.match(html, /value="contratos"/); assert.match(html, /value="seguros"/);
     assert.match(html, new RegExp(`name="family" value="${category.id}"`));
     assert.doesNotMatch(html, /comprobantes|finanzas|Factura|Comprobante de pago|Retención|Otro comprobante/);
     assert.match(html, category.id === 'contratos' ? /Contrato proveedor/ : /Seguro técnico/);
+  }
+});
+
+test('generated receipts and third-party permissions have their own read-only categories', () => {
+  const documents = [{ id: 'c', title: 'Contrato prueba', source: 'sign_project' }, { id: 'r', title: 'Recibo prueba', source: 'cash_receipt', declarationStatus: 'replaced' }, { id: 't', title: 'Permiso prueba', source: 'portal_declaration' }];
+  assert.deepEqual(documents.map(signingDocumentCategory), ['contratos', 'recibos', 'terceros']);
+  for (const category of ['recibos', 'terceros'] as const) {
+    const panel = renderToStaticMarkup(createElement(ProjectSigningPanel, { category, state: { documents }, documents, busy: null, downloading: '', error: '', notice: '', onRefresh() {}, onDownload() {} }));
+    assert.equal(panel.match(/<article/g)?.length, 1);
+    assert.doesNotMatch(panel, /Contrato prueba|Preparar firma/);
+    assert.match(panel, category === 'recibos' ? /Recibo prueba|Pago modificado/ : /Permiso prueba/);
+    const html = renderToStaticMarkup(createElement(ProjectDocumentsView, { category, documents: [], search: '', onSearchChange() {}, onCategoryChange() {}, onUpload() {}, signingSection: panel }));
+    assert.doesNotMatch(html, /Cargar contrato|Cargar seguro/);
   }
 });
 

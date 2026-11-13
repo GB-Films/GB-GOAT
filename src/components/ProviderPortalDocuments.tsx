@@ -1,7 +1,7 @@
 import { CheckCircle2, ChevronRight, Clock3, Download, FileText, FolderOpen, PenLine, RefreshCw } from 'lucide-react';
 import { ProviderDeclarationCard } from './ProviderDeclarationCard';
 import { declarationDocument, declarationPresentation, portalDeclarationCompletionInput, type DeclarationDocument } from '../lib/providerDeclarationUi';
-import { groupPortalDocumentsByProject, needsPortalSignature } from '../lib/providerPortalUi';
+import { groupPortalDocumentsByProject, needsPortalSignature, portalDocumentCategory } from '../lib/providerPortalUi';
 import { outdatedProfileDeclaration } from '../lib/providerProfileForm';
 
 export function ProviderPortalDocuments({ documents, declarations, providerId, providerType, provider, busy, loading, loaded, notice, onRefresh, onSign, onDownload, onRecover, onApply, onApplyDocument, onReviewData, onReviewCompany, onRevoke, labels }: {
@@ -11,8 +11,7 @@ export function ProviderPortalDocuments({ documents, declarations, providerId, p
   onApplyDocument: (doc: any) => Promise<void>;
   onReviewData: () => void; onReviewCompany: () => void; onRevoke: (id: string) => void;
 }) {
-  const contracts = documents.filter(doc => !declarations.some(d => declarationDocument(d, [doc], providerId)));
-  const pending = contracts.filter(needsPortalSignature), remaining = contracts.filter(doc => !needsPortalSignature(doc));
+  const standalone = documents.filter(doc => !declarations.some(d => declarationDocument(d, [doc], providerId)));
   const declarationCards = declarations.map(d => ({ d, doc: declarationDocument(d, documents, providerId) }));
   const activeDeclarations = declarationCards.filter(({ d, doc }) => !(provider && outdatedProfileDeclaration(d, provider)) && (declarationPresentation(d, providerType, doc).action || d.applicationIssue));
   const history = declarationCards.filter(item => !activeDeclarations.includes(item));
@@ -22,10 +21,10 @@ export function ProviderPortalDocuments({ documents, declarations, providerId, p
       <div className="flex flex-wrap items-start gap-3">
         <div className={`rounded-xl p-2.5 ${pending ? 'bg-amber-50 text-amber-700' : 'bg-slate-50 text-slate-500'}`}><FileText className="h-5 w-5" aria-hidden="true" /></div>
         <div className="min-w-[10rem] flex-1"><h3 className="break-words font-semibold text-slate-900">{doc.title}</h3>
-          <p className="mt-1 text-xs text-slate-500">{doc.declarationKind ? 'Declaración' : 'Contrato'}</p></div>
+          <p className="mt-1 text-xs text-slate-500">{doc.declarationKind === 'cash_receipt' ? 'Recibo de efectivo' : doc.declarationKind ? 'Declaración' : 'Contrato'}</p></div>
         <span className={`portal-status ${pending ? 'portal-status-pending' : doc.signed ? 'portal-status-signed' : ''}`}>
           {pending ? <Clock3 className="h-3.5 w-3.5" aria-hidden="true" /> : doc.signed ? <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" /> : null}
-          {pending ? 'Pendiente de tu firma' : doc.signed ? 'Firmado por vos' : ({ cancelled: 'Anulado', revoked: 'Revocado', rejected: 'Rechazado', replaced: 'Reemplazado' } as Record<string, string>)[doc.status] || 'Sin firma pendiente'}
+          {pending ? 'Pendiente de tu firma' : ({ cancelled: 'Anulado', revoked: 'Revocado', rejected: 'Rechazado', replaced: 'Pago modificado · antecedente' } as Record<string, string>)[doc.status] || (doc.signed ? 'Firmado por vos' : 'Sin firma pendiente')}
         </span>
       </div>
       {doc.signed && (doc.status === 'partially_signed' || !doc.artifactsReady) && <p className="text-sm text-slate-500">{doc.status === 'partially_signed' ? 'Esperando las otras firmas.' : 'El PDF firmado se está preparando.'}</p>}
@@ -33,7 +32,7 @@ export function ProviderPortalDocuments({ documents, declarations, providerId, p
         {pending && <button disabled={busy} className="portal-button portal-button-primary" onClick={() => onSign(doc)}><PenLine className="h-4 w-4" aria-hidden="true" />Revisar y firmar</button>}
         <button disabled={busy} className="portal-button" onClick={() => void onDownload(doc, 'original')}><FileText className="h-4 w-4" aria-hidden="true" />Original</button>
         {doc.signed && !doc.artifactsReady && <button disabled={busy} className="portal-button" onClick={() => void onRecover(doc)}>Completar PDF firmado</button>}
-        {doc.signed && portalDeclarationCompletionInput(doc) && !['applied', 'active', 'rejected', 'revoked'].includes(doc.declarationStatus) && !(doc.declarationKind === 'representation' && doc.declarationVersion !== 'company-representation-v4') && <button disabled={busy} className="portal-button" onClick={() => void onApplyDocument(doc)}>Aplicar declaración firmada</button>}
+        {doc.signed && portalDeclarationCompletionInput(doc) && !['applied', 'active', 'signed', 'rejected', 'revoked', 'cancelled', 'replaced'].includes(doc.declarationStatus) && !['cancelled', 'replaced'].includes(doc.status) && !(doc.declarationKind === 'representation' && doc.declarationVersion !== 'company-representation-v4') && <button disabled={busy} className="portal-button" onClick={() => void onApplyDocument(doc)}>{doc.declarationKind === 'cash_receipt' ? 'Confirmar recibo firmado' : 'Aplicar declaración firmada'}</button>}
         {doc.artifactsReady && ['signed', 'certificate'].map(artifact => <button disabled={busy} key={artifact} className="portal-button" onClick={() => void onDownload(doc, artifact)}><Download className="h-4 w-4" aria-hidden="true" />{artifact === 'signed' ? 'PDF firmado' : 'Certificado de evidencia'}</button>)}
         {doc.declarationKind === 'representation' && doc.declarationVersion !== 'company-representation-v4' && providerType === 'empresa' && <button disabled={busy} className="portal-button" onClick={onReviewCompany}>Actualizar representación</button>}
       </div>
@@ -65,9 +64,26 @@ export function ProviderPortalDocuments({ documents, declarations, providerId, p
       <button disabled={busy || loading} className="portal-button" onClick={onRefresh}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />Actualizar</button></div>
     {notice && <p role="status" className="rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800">{notice}</p>}
     {!loaded && loading && <p role="status" className="portal-panel text-sm text-slate-500">Buscando tus documentos…</p>}
-    {!!(pending.length || activeDeclarations.length) && <section className="space-y-3" aria-label="Documentos pendientes"><h3 className="text-sm font-semibold text-amber-900">Necesitan tu atención</h3>{projects(pending)}{activeDeclarations.map(declarationCard)}</section>}
-    {!!remaining.length && <section className="space-y-3" aria-label="Documentos guardados"><h3 className="text-sm font-semibold text-slate-500">Contratos y constancias</h3>{projects(remaining)}</section>}
-    {!!history.length && <details className="portal-details portal-panel"><summary>Historial de declaraciones <span className="ml-2 text-slate-400">{history.length}</span></summary><div className="mt-4 space-y-3">{history.map(declarationCard)}</div></details>}
+    {[
+      { key: 'contracts', title: 'Contratos', docs: standalone.filter(doc => portalDocumentCategory(doc) === 'contracts'), statements: [] as typeof declarationCards },
+      { key: 'cash-receipts', title: 'Recibos', docs: standalone.filter(doc => portalDocumentCategory(doc) === 'cash-receipts'), statements: [] as typeof declarationCards },
+      { key: 'third-party', title: 'Permisos a terceros', docs: standalone.filter(doc => portalDocumentCategory(doc) === 'third-party'), statements: declarationCards.filter(item => item.d.kind === 'third_party') },
+      { key: 'profile', title: 'Datos y representación', docs: standalone.filter(doc => portalDocumentCategory(doc) === 'profile'), statements: declarationCards.filter(item => item.d.kind !== 'third_party') },
+    ].map(category => {
+      const needs = category.docs.filter(needsPortalSignature), done = category.docs.filter(doc => !needsPortalSignature(doc));
+      const active = category.statements.filter(item => activeDeclarations.includes(item)), old = category.statements.filter(item => history.includes(item));
+      const total = category.docs.length + category.statements.length, attention = needs.length + active.length;
+      if (!total && category.key === 'profile') return null;
+      return <details key={category.key} id={`provider-documents-${category.key}`} aria-label={category.title} open={attention > 0 || undefined} className="portal-details portal-panel">
+        <summary className="flex flex-wrap items-center gap-2"><span className="flex-1 font-semibold">{category.title}</span><span className="portal-status">{total}</span>{attention > 0 && <span className="portal-status portal-status-pending">{attention} pendientes</span>}</summary>
+        <div className="mt-4 space-y-4">
+          {!!attention && <section className="space-y-3" aria-label="Documentos pendientes"><h3 className="text-sm font-semibold text-amber-900">Necesitan tu atención</h3>{projects(needs)}{active.map(declarationCard)}</section>}
+          {!!done.length && <div className="space-y-3">{projects(done)}</div>}
+          {!!old.length && <details className="portal-details"><summary>Historial de declaraciones <span className="ml-2 text-slate-400">{old.length}</span></summary><div className="mt-3 space-y-3">{old.map(declarationCard)}</div></details>}
+          {!total && <p className="text-sm text-slate-500">Todavía no hay {category.title.toLowerCase()}.</p>}
+        </div>
+      </details>;
+    })}
     {loaded && !documents.length && !declarations.length && <div className="portal-panel py-12 text-center"><FileText className="mx-auto mb-3 h-8 w-8 text-slate-300" aria-hidden="true" /><h3 className="font-medium">Todavía no tenés documentos</h3><p className="mt-1 text-sm text-slate-500">Los documentos que te asignen aparecerán acá.</p></div>}
   </section>;
 }
