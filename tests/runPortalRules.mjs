@@ -13,6 +13,7 @@ const cli =
       ));
 const cases = [
   ["categoryBudgets", "demo-goat-category-budgets", "firestore"],
+  ["crmProjectImport", "demo-goat-crm-import", "firestore"],
   ["projectPins", "demo-goat-project-pins", "firestore"],
   ["providerIntake", "demo-goat-provider-intake", "firestore"],
   ["projectCommercialRules", "demo-gb-goat-commercial", "firestore"],
