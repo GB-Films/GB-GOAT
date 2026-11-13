@@ -47,3 +47,10 @@ Verificación local: 165 pruebas, tipos/reglas y build. A 320/390/430/1280 px co
 Equipo prioriza integrantes con acceso, nombre/email, rol, áreas, subcategorías y pestañas permitidas. Los proveedores de filas no se presentan como usuarios con acceso. Agregar persona abre una ventana con las mismas opciones y autorizaciones previas; Editar permisos abre la gestión existente. No se incorporan personas ni se cambian roles automáticamente por esta reorganización.
 
 Cajas muestra Caja General (sólo para quienes ya podían verla) y responsables con movimientos o saldo, incluyendo pendientes claramente separados del saldo disponible. Elegir una caja muestra su detalle; registrar entregas, transferencias o devoluciones está en un panel desplegable. Se conservan confirmaciones, enlaces a gastos y restricciones vigentes. Quienes dejaron el equipo permanecen como responsables históricos cuando tienen movimientos; no se los habilita como destinatarios de nuevas entregas ni se les otorgan permisos. Caja General muestra salida neta, no un saldo inicial inventado.
+
+
+## Vista temporal de trabajo
+
+Áreas y Presu Ppal conservan la vista en memoria de la página, por UID y proyecto, mientras se navega por GOAT. Se recuerda la pestaña abierta, las categorías/áreas y subcategorías colapsadas, la selección del filtro de Áreas, las búsquedas y el orden de sus gastos. Los colapsados de Presu Ppal y Áreas son independientes. Un enlace con pestaña explícita tiene prioridad sobre la pestaña recordada.
+
+Salir y volver al proyecto mantiene esa vista. Recargar la página o abrir otra pestaña empieza con la vista inicial, sin escribir en Firestore, localStorage ni sessionStorage. Las selecciones permanentes antiguas de Áreas se ignoran. Quitar una categoría del filtro sólo la oculta para esa persona durante ese uso; no elimina categorías ni afecta los datos o vistas de otros usuarios. Las áreas visibles siguen limitadas por los permisos vigentes, y limpiar la selección se conserva como una selección vacía.
