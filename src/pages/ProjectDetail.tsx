@@ -123,6 +123,7 @@ import { resolveCashMovementTarget } from '../lib/cashMovementTargets';
 import { resolveCashReturnRecipientEmail } from '../lib/cashReturnRecipient';
 import { canChangePaymentCash, assertCanChangePaymentCash } from '../lib/paymentCashAccess';
 import { assertCashPaymentLink, buildUnpaidAmountCorrectionAudit, findCurrentPayment, hasRecordedPayment, hasActiveExpensePayments, isUnpaidAmountCorrection, prepareExpenseEdit, sameExpenseVersion, samePaymentTarget } from '../lib/expenseEdits';
+import { canDeleteUnpaidAreaExpense, deleteUnpaidExpenseWithConfirmation, unpaidExpenseDeletionErrorMessage } from '../lib/expenseDeletion';
 import { collapseAroundDraggedRow, type StructureDragLayout } from '../lib/dragPointerAnchor';
 import { runAreaStructureChange, areaStructureErrorMessage, areaGroupBudgetVersion, type AreaStructureChange, type AreaStructureAttempt } from '../lib/areaStructureChanges';
 import { applyAreaLocations, optimisticAreaExpenseMove, reconcileAreaExpenseSnapshot, liveAreaProjectPatch, compareManualAreaExpenses, type AreaLocationChange, type AreaStructureView } from '../lib/areaStructureLive';
@@ -743,6 +744,9 @@ export default function ProjectDetail() {
   const [structureDragLayout, setStructureDragLayout] = useState<StructureDragLayout | null>(null);
   const [isSavingAreaStructure, setIsSavingAreaStructure] = useState(false);
   const areaStructureAttempts = useRef(new Map<string, AreaStructureAttempt>());
+  const areaDeletionPending = useRef(false);
+  const areaDeletionScope = useRef(loadScope);
+  areaDeletionScope.current = loadScope;
   const structureScope = useRef(loadScope);
   const structureRevision = useRef(0);
   if (structureScope.current !== loadScope) { structureScope.current = loadScope; structureRevision.current = 0; areaStructureAttempts.current = new Map(); }
@@ -2369,23 +2373,24 @@ export default function ProjectDetail() {
   };
 
   const deleteAreaExpense = async (expenseId: string) => {
+    if (areaDeletionPending.current) return;
     const currentExpense = areaExpenses.find(e => e.id === expenseId);
-    const itemLabel = currentExpense?.description || currentExpense?.providerName || 'este gasto';
-    const itemTotal = Number(currentExpense?.total) || 0;
     if (!id || !currentExpense || !canDeleteAreaExpense(currentExpense)) {
-      if (currentExpense && !isProjectAdmin) {
-        alert('Este gasto recibió un pago y forma parte del historial financiero. Sólo puede eliminarlo un administrador del proyecto.');
-      }
+      if (currentExpense) alert('Esta fila tiene pagos registrados o no tenés permiso para eliminarla.');
       return;
     }
-    if (!confirm(`¿Eliminar "${itemLabel}" de Gestión por Áreas?\n\nÁrea: ${currentExpense.area || 'Sin área'}\nTotal: $${itemTotal.toLocaleString()}\nEsta acción no se puede deshacer.`)) return;
+    areaDeletionPending.current = true;
+    const deletionScope = loadScope;
     try {
-      await deleteExpenseRows([currentExpense], 'areaExpenses');
-      setAreaExpenses(areaExpenses.filter(e => e.id !== expenseId));
+      const deleted = await deleteUnpaidExpenseWithConfirmation({ projectId: id, itemId: expenseId, request: providerFinanceRequest,
+        confirm, isCurrent: () => areaDeletionScope.current === deletionScope });
+      if (!deleted) return;
+      setAreaExpenses(items => items.filter(e => e.id !== expenseId));
       showExpenseConfirmation('Gasto eliminado.');
     } catch (e) {
       console.error("Error deleting area expense:", e);
-    }
+      if (areaDeletionScope.current === deletionScope) alert(unpaidExpenseDeletionErrorMessage(e));
+    } finally { areaDeletionPending.current = false; }
   };
 
   const uploadInvoiceForExpense = async (expense: any, file?: File | null, collectionName: PaymentCollection = 'areaExpenses') => {
@@ -3754,7 +3759,7 @@ export default function ProjectDetail() {
   const canOrganizeSubcategory = (area: string, subcategory: string) => canOrganizeProjectSubcategory(isProjectAdmin, userPermissions, area, subcategory);
   const canDeleteAreaExpense = (expense?: any | null) => {
     if (!expense || !canEditAreaExpense(expense)) return false;
-    return !hasRecordedPayment(expense);
+    return canDeleteUnpaidAreaExpense(expense, isProjectAdmin);
   };
   const canEditPaymentDateForItem = (item?: any | null, collectionName?: PaymentCollection) => {
     if (!item || !collectionName) return false;

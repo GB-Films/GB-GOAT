@@ -3,6 +3,7 @@ const { createHash } = require('node:crypto');
 const { projectFinanceAccess } = require('./projectFinanceAccess');
 const { hasTeamWorkAccess } = require('./teamWorkAccess');
 const { isInternalBudgetEstimate } = require('./internalBudgetEstimate');
+const { activeRecordAllocations } = require('./providerFinanceAllocations');
 const list = value => Array.isArray(value) ? value : [];
 const clean = value => String(value || '').trim() === 'Sin subcategoria' ? '' : String(value || '').trim();
 const groupKey = (area, subcategory) => `${area}||${clean(subcategory)}`;
@@ -196,7 +197,7 @@ function createAreaStructureChange({ db, timestamp }) {
         const allocations = list(record.allocations).map(patchAllocation);
         const settlements = Object.fromEntries(Object.entries(object(record.settlements)).map(([key, rows]) => [key, list(rows).map(patchAllocation)]));
         enqueue(snapshot.ref, { allocations, ...(record.settlements ? { settlements } : {}), updatedAt: now });
-        Object.defineProperty(records, snapshot.id, { value: allocations.filter(row => row.projectId === projectId).map(row => ({ area: row.area, collectionName: row.collectionName })), enumerable: true, configurable: true, writable: true });
+        Object.defineProperty(records, snapshot.id, { value: activeRecordAllocations({ ...record, allocations }).filter(row => row.projectId === projectId).map(row => ({ area: row.area, collectionName: row.collectionName })), enumerable: true, configurable: true, writable: true });
       }
       if (activeRecords.length) {
         enqueue(indexRef, { records, managedAreas: [...new Set(Object.values(records).flat().filter(row => row.collectionName === 'areaExpenses').map(row => row.area))],
