@@ -85,6 +85,16 @@ sus pagos y la visibilidad en otras filas/proyectos. No anula la factura fiscal,
 no borra el archivo compartido ni cancela pagos. La operación es idempotente.
 Las referencias retiradas no se cuentan entre los documentos de la celda.
 
+### Borrar una fila sin pagos con facturas
+
+En Áreas, la presencia de facturas no impide borrar una fila sin pagos vigentes. La confirmación informa cuántas facturas se quitarán de esa fila y advierte que no se puede deshacer. Administración puede borrar una fila que conserve `paymentLocked` por un historial anterior, siempre que no tenga pagos, reintegros de caja ni aplicaciones de pago a sus facturas. Los editores mantienen el borrado de filas ordinarias dentro de las áreas y subcategorías permitidas; los vínculos fiscales nativos, las autorizaciones a terceros y las filas históricas mantienen su control administrativo.
+
+El servidor obtiene una vista previa actual y vuelve a validarla en la transacción de borrado. Si cambian la fila, sus facturas, permisos o pagos después de la advertencia, detiene la operación con el motivo correspondiente. Guarda una copia completa de la fila en actividad inmutable. No hace pruebas ni borrados sobre registros reales para validar el cambio.
+
+Un original compartido se conserva para auditoría y en sus otras filas. Sus aplicaciones originales e importes fiscales permanecen intactos; `detachedExpenseKeys` identifica únicamente la fila eliminada. Los contadores y los accesos usan las aplicaciones vigentes, y la anulación posterior de la factura sigue funcionando aunque esa fila ya no exista. Tampoco se rehabilita el vínculo al mover otra fila de área. Los archivos de respaldo se conservan; no hay un borrado físico de originales ni una anulación fiscal automática. No se modifica ningún pago, caja, regla, IAM o cuenta de acceso.
+
+Esta corrección requiere backend `manageProviderFinance` y el lector `providerPortal` compatibles antes de publicar la web. Es independiente de la PR96 de recibos y no la publica ni la reemplaza.
+
 Publicación de estos controles: primero `manageProviderFinance`, luego las
 reglas de Firestore y finalmente la web. Storage, IAM y roles no cambian. No hay
 migración de documentos ni operaciones productivas para probar la corrección.

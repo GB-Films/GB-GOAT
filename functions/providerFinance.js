@@ -8,6 +8,8 @@ const { projectFinanceAccess, linkedAllocation } = require('./projectFinanceAcce
 const { createOwnPaymentCorrection } = require('./ownPaymentCorrection');
 const { distinctInvoiceExpenseCount } = require('./providerInvoiceMetadata');
 const { createRemoveExpenseInvoiceFile } = require('./removeExpenseInvoiceFile');
+const { activeRecordAllocations } = require('./providerFinanceAllocations');
+const { createDeleteUnpaidAreaExpense } = require('./deleteUnpaidAreaExpense');
 
 const fail = message => { throw new HttpsError('failed-precondition', message); };
 const text = (value, max = 500) => String(value || '').trim().slice(0, max);
@@ -96,6 +98,10 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, ver
     const user = await db.doc(`users/${request.auth.uid}`).get();
     const input = request.data || {};
     const actor = { uid: request.auth.uid, email: String(request.auth.token.email).trim().toLowerCase() };
+    if (['previewDeleteUnpaidAreaExpense', 'deleteUnpaidAreaExpense'].includes(input.action)) {
+      if (request.auth.token.email_verified !== true) throw new HttpsError('permission-denied', 'Verificá tu correo.');
+      return createDeleteUnpaidAreaExpense({ db, timestamp })(actor, input);
+    }
     if (input.action === 'reclassifyAreaExpenses') {
       if (request.auth.token.email_verified !== true) throw new HttpsError('permission-denied', 'Verificá tu correo.');
       return require('./areaStructureChange').createAreaStructureChange({ db, timestamp })(actor, input);
@@ -145,13 +151,13 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, ver
       const records = await Promise.all(ids.map(async recordId => {
         const record = { ...(await db.doc(`providerFinancialRecords/${recordId}`).get()).data(), id: recordId };
         if (record.status !== 'active' || !record.file) return null;
-        const allocations = list(record.allocations).filter(row => row.projectId === projectId);
+        const allocations = activeRecordAllocations(record).filter(row => row.projectId === projectId);
         const linked = await Promise.all(allocations.map(async row => ['areaExpenses', 'budgetItems'].includes(row.collectionName)
           && linkedAllocation(record, projectId, row.itemId, row.collectionName,
             (await db.doc(`projects/${projectId}/${row.collectionName}/${id(row.itemId)}`).get()).data())));
         if (!linked.some(Boolean)) throw new HttpsError('permission-denied', 'Comprobante ajeno al proyecto.');
         return { id: recordId, kind: record.kind, status: record.status, number: record.number || '',
-          distinctExpenseCount: distinctInvoiceExpenseCount(record.allocations),
+          distinctExpenseCount: distinctInvoiceExpenseCount(activeRecordAllocations(record)),
           ...(record.kind === 'invoice' ? { issuerName: text(record.issuerName), issuerCuit: text(record.issuerCuit).replace(/\D/g, '') } : {}),
           file: { fileName: record.file.fileName }, allocations: allocations.filter((_, index) => linked[index]).map(row => ({ projectId, collectionName: row.collectionName, itemId: row.itemId })) };
       }));
@@ -187,11 +193,12 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, ver
         if (record.kind === 'payment' && record.method === 'cash') assertGeneralCash();
         if (record.status === 'cancelled') return { id: recordId, status: 'cancelled' };
         if (record.kind === 'invoice' && Object.keys(record.settlements || {}).length) fail('Primero anulá los pagos aplicados a esta factura.');
-        const refs = record.allocations.map(row => db.doc(`projects/${key(row)}`));
+        const allocations = activeRecordAllocations(record);
+        const refs = allocations.map(row => db.doc(`projects/${key(row)}`));
         const rows = await Promise.all(refs.map(ref => tx.get(ref)));
-        const invoiceIds = [...new Set(record.allocations.map(row => row.invoiceId).filter(Boolean))];
+        const invoiceIds = [...new Set(allocations.map(row => row.invoiceId).filter(Boolean))];
         const invoices = await Promise.all(invoiceIds.map(value => tx.get(db.doc(`providerFinancialRecords/${value}`))));
-        const projectIds = [...new Set(record.allocations.map(row => row.projectId))];
+        const projectIds = [...new Set(allocations.map(row => row.projectId))];
         const indices = await Promise.all(projectIds.map(value => tx.get(db.doc(`providerFinanceProjectIndex/${value}`))));
         const cashRef = record.cashProjectId && record.kind === 'payment' && record.method === 'cash'
           ? db.doc(`projects/${record.cashProjectId}/cashMovements/shared-${recordId}`) : null;
@@ -214,7 +221,7 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, ver
             updates.paymentLocked = true;
           }
           tx.update(refs[index], updates);
-          tx.set(db.doc(`projects/${record.allocations[index].projectId}/activityLog/${recordId}-cancel-${record.allocations[index].itemId}`), {
+          tx.set(db.doc(`projects/${allocations[index].projectId}/activityLog/${recordId}-cancel-${allocations[index].itemId}`), {
             action: 'shared_supplier_record_cancelled', recordId, reason, actor, createdAt: now,
           });
         });
@@ -298,7 +305,7 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, ver
         if (record.kind === 'invoice' && (expense.invoice?.url || expense.invoice?.path || list(expense.invoices).some(invoice => invoice.url || invoice.path))) fail('Este gasto tiene una factura anterior. Revisá y retirala antes de reemplazarla por una compartida.');
         if (allocation.invoiceId) {
           const invoice = invoiceMap.get(allocation.invoiceId);
-          const original = invoice?.allocations.find(row => key(row) === key(allocation));
+          const original = activeRecordAllocations(invoice).find(row => key(row) === key(allocation));
           const settled = Object.values(invoice?.settlements || {}).flat().filter(row => key(row) === key(allocation)).reduce((sum, row) => sum + row.amountCents, 0);
           if (record.kind !== 'payment' || invoice?.kind !== 'invoice' || invoice.providerId !== record.providerId
             || invoice.status !== 'active' || !original || settled + allocation.amountCents > original.amountCents) fail('La aplicación supera el saldo de la factura vinculada.');

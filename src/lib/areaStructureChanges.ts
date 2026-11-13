@@ -11,20 +11,25 @@ export const areaGroupBudgetVersion = (entry: any) => JSON.stringify(entry === u
 type StructureInput = AreaStructureChange & { action: 'reclassifyAreaExpenses'; projectId: string; expectedRevision: number };
 export type AreaStructureAttempt = { operationId: string; input: StructureInput };
 
-export async function runAreaStructureChange({ input, attempts, call, refresh, onRefreshError, newId = () => crypto.randomUUID() }: {
+export async function runAreaStructureChange({ input, attempts, call, refresh, applyCommitted, onRefreshError, newId = () => crypto.randomUUID() }: {
   input: StructureInput;
   attempts: Map<string, AreaStructureAttempt>; call: (input: Record<string, unknown>) => Promise<unknown>;
   refresh: () => Promise<void>; onRefreshError: () => void; newId?: () => string;
+  applyCommitted?: (result: any) => boolean;
 }) {
   const key = JSON.stringify({ ...input, expectedRevision: 0 });
   const attempt = attempts.get(key) || { operationId: newId(), input: { ...input, ...(input.budget ? { budget: { ...input.budget } } : {}) } };
   attempts.set(key, attempt);
-  try { await call({ ...attempt.input, operationId: attempt.operationId }); }
+  let result: any;
+  try { result = await call({ ...attempt.input, operationId: attempt.operationId }); }
   catch (error) {
     const code = (error as { code?: string })?.code;
     if (code && ['functions/failed-precondition', 'functions/permission-denied', 'functions/invalid-argument', 'functions/not-found'].includes(code)) attempts.delete(key);
     throw error;
   }
+  try {
+    if (applyCommitted?.(result)) { attempts.delete(key); return; }
+  } catch { /* Recover the acknowledged state through the live/server refresh below. */ }
   // A refresh failure must not masquerade as a failed write or roll back the UI.
   // Reusing this attempt retrieves the existing audit rather than moving twice.
   try { await refresh(); attempts.delete(key); } catch { onRefreshError(); }

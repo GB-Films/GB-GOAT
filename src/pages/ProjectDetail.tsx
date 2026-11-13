@@ -122,8 +122,10 @@ import { resolveCashMovementTarget } from '../lib/cashMovementTargets';
 import { resolveCashReturnRecipientEmail } from '../lib/cashReturnRecipient';
 import { canChangePaymentCash, assertCanChangePaymentCash } from '../lib/paymentCashAccess';
 import { assertCashPaymentLink, buildUnpaidAmountCorrectionAudit, findCurrentPayment, hasRecordedPayment, hasActiveExpensePayments, isUnpaidAmountCorrection, prepareExpenseEdit, sameExpenseVersion, samePaymentTarget } from '../lib/expenseEdits';
+import { canDeleteUnpaidAreaExpense, deleteUnpaidExpenseWithConfirmation, unpaidExpenseDeletionErrorMessage } from '../lib/expenseDeletion';
 import { collapseAroundDraggedRow, type StructureDragLayout } from '../lib/dragPointerAnchor';
 import { runAreaStructureChange, areaStructureErrorMessage, areaGroupBudgetVersion, type AreaStructureChange, type AreaStructureAttempt } from '../lib/areaStructureChanges';
+import { applyAreaLocations, optimisticAreaExpenseMove, reconcileAreaExpenseSnapshot, liveAreaProjectPatch, compareManualAreaExpenses, type AreaLocationChange, type AreaStructureView } from '../lib/areaStructureLive';
 import { ExpenseGroupDropTarget } from './project-detail/ExpenseGroupDropTarget';
 import { areaExpenseGroupDroppableId, areaExpenseAreaDroppableId, parseAreaExpenseDroppableId } from '../lib/areaExpenseDropTargets';
 
@@ -306,9 +308,7 @@ const subcategoryBudgetFingerprint = (entries: Record<string, any>) => JSON.stri
 const sortAreaExpenses = (expenses: AreaExpense[], sortKey: AreaExpenseSortKey) => {
   return [...expenses].sort((a, b) => {
     if (sortKey === 'manual') {
-      const orderDiff = (Number(a.order) || 0) - (Number(b.order) || 0);
-      if (orderDiff !== 0) return orderDiff;
-      return getDateTimestamp(a.createdAt) - getDateTimestamp(b.createdAt);
+      return compareManualAreaExpenses(a, b);
     }
     if (sortKey === 'provider') {
       const providerDiff = String(a.providerName || '').localeCompare(String(b.providerName || ''), 'es', { sensitivity: 'base' });
@@ -744,6 +744,15 @@ export default function ProjectDetail() {
   const [structureDragLayout, setStructureDragLayout] = useState<StructureDragLayout | null>(null);
   const [isSavingAreaStructure, setIsSavingAreaStructure] = useState(false);
   const areaStructureAttempts = useRef(new Map<string, AreaStructureAttempt>());
+  const areaDeletionPending = useRef(false);
+  const areaDeletionScope = useRef(loadScope);
+  areaDeletionScope.current = loadScope;
+  const structureScope = useRef(loadScope);
+  const structureRevision = useRef(0);
+  if (structureScope.current !== loadScope) { structureScope.current = loadScope; structureRevision.current = 0; areaStructureAttempts.current = new Map(); }
+  const [pendingAreaMove, setPendingAreaMove] = useState<{ scope: string; changes: AreaLocationChange[] } | null>(null);
+  const displayedAreaExpenses = React.useMemo(() => pendingAreaMove?.scope === loadScope ? applyAreaLocations(areaExpenses, pendingAreaMove.changes) : areaExpenses, [areaExpenses, pendingAreaMove, loadScope]);
+  useEffect(() => { setPendingAreaMove(null); setIsSavingAreaStructure(false); }, [loadScope]);
   const [isCompactAreas, setIsCompactAreas] = useState(() => (
     typeof window !== 'undefined' && Boolean(window.matchMedia?.('(max-width: 767px)').matches)
   ));
@@ -868,7 +877,7 @@ export default function ProjectDetail() {
               allowedCategories: safeArray(rawPerms.allowedCategories),
               allowedSubcategories: safeArray(rawPerms.allowedSubcategories),
               excludedSubcategories: safeArray(rawPerms.excludedSubcategories),
-              canEditBudgetAreas: rawPerms.canEditBudgetAreas ?? true,
+              canEditBudgetAreas: rawPerms.canEditBudgetAreas === true,
               canViewBudgetTotals: rawPerms.canViewBudgetTotals ?? role === 'admin',
             };
             setUserPermissions(perms);
@@ -909,6 +918,47 @@ export default function ProjectDetail() {
     return () => { cancelled = true; };
   }, [loadScope]);
 
+  useEffect(() => {
+    if (!id || !user || loadedProjectScope !== loadScope || projectLoadError) return;
+    let cancelled = false, rootData: any = project;
+    let permissions: Collaborator[] = [], permissionsReady = false;
+    const applyPermissions = () => {
+      if (cancelled) return;
+      if (!permissionsReady) return;
+      const own = permissions.find(col => normalizeEmail(col.email) === normalizeEmail(user.email));
+      const owner = rootData?.createdBy === user.uid;
+      setUserPermissions(own || null); setIsOwner(owner);
+      setIsProjectAdmin(owner || profile?.role === 'admin' || own?.role === 'admin');
+    };
+    const failed = (error: unknown) => {
+      if (cancelled) return;
+      console.error('Error watching area structure:', error);
+      setProjectLoadError('No se pudo mantener actualizada la estructura o tus permisos. Volvé a intentar.');
+    };
+    const stopProject = onSnapshot(doc(db, 'projects', id), snapshot => {
+      if (cancelled) return;
+      if (!snapshot.exists()) { setProjectLoadError('El proyecto ya no está disponible.'); return; }
+      rootData = snapshot.data(); applyPermissions();
+      const patch = liveAreaProjectPatch(rootData), revision = Number(patch.budgetRevision) || 0;
+      if (revision < structureRevision.current) return;
+      structureRevision.current = revision;
+      setProject((current: any) => current ? { ...current, ...patch } : current);
+      setCategories(resolveBudgetCategories(rootData)); setActiveAreas(rootData.activeAreas || []);
+    }, failed);
+    const stopPermissions = onSnapshot(collection(db, 'projects', id, 'collaborators'), snapshot => {
+      if (cancelled) return;
+      permissions = snapshot.docs.map(entry => {
+        const raw = entry.data(), role = normalizeProjectRole(raw.role);
+        return { ...raw, email: normalizeEmail(raw.email || entry.id), role, allowedTabs: normalizeAllowedTabs(raw.allowedTabs, role),
+          allowedCategories: safeArray(raw.allowedCategories), allowedSubcategories: safeArray(raw.allowedSubcategories), excludedSubcategories: safeArray(raw.excludedSubcategories),
+          canEditBudgetAreas: raw.canEditBudgetAreas === true, canViewBudgetTotals: raw.canViewBudgetTotals ?? role === 'admin' } as Collaborator;
+      });
+      permissionsReady = true;
+      setCollaborators(permissions); applyPermissions();
+    }, failed);
+    return () => { cancelled = true; stopProject(); stopPermissions(); };
+  }, [loadScope, loadedProjectScope, projectLoadError]);
+
   // Start auxiliary catalogs alongside the core request, never as a prerequisite
   // for opening the project header or the financial overview.
   useEffect(() => {
@@ -919,7 +969,6 @@ export default function ProjectDetail() {
     setAuxiliaryLoad({ scope: loadScope, ready: false, error: '' });
     setProviders([]); setCollaborators([]); setManualProjectDocuments([]);
     void Promise.all([
-      getDocs(collection(db, 'projects', id, 'collaborators')),
       getDocs(collection(db, 'projects', id, 'projectDocuments')),
       new Promise<any>((resolve, reject) => {
         stopProviders = onSnapshot(collection(db, 'providers'), snapshot => {
@@ -931,18 +980,9 @@ export default function ProjectDetail() {
           reject(error);
         });
       }),
-    ]).then(([colSnap, dSnap]) => {
+    ]).then(([dSnap]) => {
       if (cancelled || providerWatchFailed) return;
       setManualProjectDocuments(dSnap.docs.map(d => ({ id: d.id, ...d.data() })));
-      setCollaborators(colSnap.docs.map(d => {
-        const data = d.data() as any;
-        const role = normalizeProjectRole(data.role);
-        return { ...data, email: normalizeEmail(data.email || d.id), role,
-          allowedTabs: normalizeAllowedTabs(data.allowedTabs, role),
-          allowedCategories: safeArray(data.allowedCategories), allowedSubcategories: safeArray(data.allowedSubcategories), excludedSubcategories: safeArray(data.excludedSubcategories),
-          canEditBudgetAreas: data.canEditBudgetAreas ?? true,
-          canViewBudgetTotals: data.canViewBudgetTotals ?? role === 'admin' } as Collaborator;
-      }));
       setAuxiliaryLoad({ scope: loadScope, ready: true, error: '' });
     }).catch(error => {
       if (cancelled) return;
@@ -988,7 +1028,7 @@ export default function ProjectDetail() {
     }, failed);
     const stopExpenses = onSnapshot(collection(db, 'projects', id, 'areaExpenses'), (snapshot) => {
       if (cancelled) return;
-      setAreaExpenses(snapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() } as AreaExpense)));
+      setAreaExpenses(current => reconcileAreaExpenseSnapshot(current, snapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() } as AreaExpense))));
       markReceived('expenses');
     }, failed);
     const stopCash = watchProjectCashMovements(db, id, user.email || '', (rows) => {
@@ -1944,21 +1984,35 @@ export default function ProjectDetail() {
 
   const changeAreaStructure = async (change: AreaStructureChange) => {
     if (!id) return;
+    const scope = loadScope;
     await runAreaStructureChange({
       input: { ...change, action: 'reclassifyAreaExpenses', projectId: id, expectedRevision: Number(project?.budgetRevision) || 0 },
       attempts: areaStructureAttempts.current,
-      call: data => httpsCallable(getFunctions(auth.app, 'us-central1'), 'manageProviderFinance')(data),
-      refresh: async () => {
-        const [freshProject, freshExpenses, freshCollaborators] = await Promise.all([
-          getDocFromServer(doc(db, 'projects', id)), getDocsFromServer(collection(db, 'projects', id, 'areaExpenses')),
-          getDocsFromServer(collection(db, 'projects', id, 'collaborators')),
-        ]);
-        if (!freshProject.exists()) throw new Error('PROJECT_MISSING');
-        setProject((current: any) => ({ ...current, ...freshProject.data() }));
-        setAreaExpenses(freshExpenses.docs.map(row => ({ ...row.data(), id: row.id } as AreaExpense)));
-        setCollaborators(freshCollaborators.docs.map(row => ({ ...row.data(), email: row.data().email || row.id } as any)));
+      call: async data => (await httpsCallable(getFunctions(auth.app, 'us-central1'), 'manageProviderFinance')(data)).data,
+      applyCommitted: result => {
+        if (structureScope.current !== scope) return true;
+        const view = result?.view as AreaStructureView | undefined;
+        if (!view?.project || !Array.isArray(view.expenses)) return false;
+        const revision = Number(view.project.budgetRevision) || 0;
+        if (revision >= structureRevision.current) {
+          structureRevision.current = revision;
+          setProject((current: any) => current ? { ...current, budgetRevision: revision,
+            areaExpenseSubcategories: view.project.areaExpenseSubcategories, areaExpenseSubcategoryBudgets: view.project.areaExpenseSubcategoryBudgets } : current);
+          setAreaExpenses(current => applyAreaLocations(current, view.expenses));
+        }
+        return true;
       },
-      onRefreshError: () => showExpenseConfirmation('El cambio se guardó. Actualizá la página para ver la ubicación nueva.', 'warning'),
+      refresh: async () => {
+        const [freshProject, freshExpenses] = await Promise.all([
+          getDocFromServer(doc(db, 'projects', id)), getDocsFromServer(collection(db, 'projects', id, 'areaExpenses')),
+        ]);
+        if (structureScope.current !== scope) return;
+        if (!freshProject.exists()) throw new Error('PROJECT_MISSING');
+        const patch = liveAreaProjectPatch(freshProject.data());
+        if (Number(patch.budgetRevision) >= structureRevision.current) { structureRevision.current = Number(patch.budgetRevision); setProject((current: any) => ({ ...current, ...patch })); }
+        setAreaExpenses(current => reconcileAreaExpenseSnapshot(current, freshExpenses.docs.map(row => ({ ...row.data(), id: row.id } as AreaExpense))));
+      },
+      onRefreshError: () => { if (structureScope.current === scope) showExpenseConfirmation('El cambio se guardó. Esperando que se restablezca la actualización en vivo.', 'warning'); },
     });
   };
 
@@ -2223,17 +2277,24 @@ export default function ProjectDetail() {
     const targetArea = nextArea || sourceArea, targetSubcategory = cleanAreaExpenseSubcategory(nextSubcategory);
     if (!canEditAreaExpense(expense) || !canEditAreaSubcategory(targetArea, targetSubcategory)) return;
     const budgetWarning = getAreaExpenseBudgetWarning(targetArea, Number(expense.total) || 0, expense.id);
+    const scope = loadScope;
     setIsSavingAreaStructure(true);
+    setAreaExpenseSort('manual');
+    setCollapsedCategories(current => ({ ...current, [targetArea]: false }));
+    setCollapsedAreaSubcategories(current => ({ ...current, [`${targetArea}__${targetSubcategory}`]: false }));
+    setSelectedAreaTabs(current => current.includes(targetArea) ? current : [...current, targetArea]);
+    setPendingAreaMove({ scope: loadScope, changes: optimisticAreaExpenseMove(areaExpenses, { kind: 'expense', itemId: expense.id,
+      fromArea: sourceArea, fromSubcategory: sourceSubcategory, targetArea, targetSubcategory, ...(beforeExpenseId ? { beforeExpenseId } : {}) }) });
     try {
       await changeAreaStructure({ kind: 'expense', itemId: expense.id, fromArea: sourceArea, fromSubcategory: sourceSubcategory,
         targetArea, targetSubcategory, ...(beforeExpenseId ? { beforeExpenseId } : {}) });
-      setAreaExpenseSort('manual');
+      if (structureScope.current !== scope) return;
       if (budgetWarning && (sourceArea !== targetArea || sourceSubcategory !== targetSubcategory)) showExpenseConfirmation(budgetWarning, 'warning');
     } catch (error) {
       console.error('Error moving area expense:', error);
-      alert(areaStructureErrorMessage(error));
+      if (structureScope.current === scope) alert(areaStructureErrorMessage(error));
     } finally {
-      setIsSavingAreaStructure(false);
+      if (structureScope.current === scope) { setPendingAreaMove(null); setIsSavingAreaStructure(false); }
     }
   };
 
@@ -2318,23 +2379,24 @@ export default function ProjectDetail() {
   };
 
   const deleteAreaExpense = async (expenseId: string) => {
+    if (areaDeletionPending.current) return;
     const currentExpense = areaExpenses.find(e => e.id === expenseId);
-    const itemLabel = currentExpense?.description || currentExpense?.providerName || 'este gasto';
-    const itemTotal = Number(currentExpense?.total) || 0;
     if (!id || !currentExpense || !canDeleteAreaExpense(currentExpense)) {
-      if (currentExpense && !isProjectAdmin) {
-        alert('Este gasto recibió un pago y forma parte del historial financiero. Sólo puede eliminarlo un administrador del proyecto.');
-      }
+      if (currentExpense) alert('Esta fila tiene pagos registrados o no tenés permiso para eliminarla.');
       return;
     }
-    if (!confirm(`¿Eliminar "${itemLabel}" de Gestión por Áreas?\n\nÁrea: ${currentExpense.area || 'Sin área'}\nTotal: $${itemTotal.toLocaleString()}\nEsta acción no se puede deshacer.`)) return;
+    areaDeletionPending.current = true;
+    const deletionScope = loadScope;
     try {
-      await deleteExpenseRows([currentExpense], 'areaExpenses');
-      setAreaExpenses(areaExpenses.filter(e => e.id !== expenseId));
+      const deleted = await deleteUnpaidExpenseWithConfirmation({ projectId: id, itemId: expenseId, request: providerFinanceRequest,
+        confirm, isCurrent: () => areaDeletionScope.current === deletionScope });
+      if (!deleted) return;
+      setAreaExpenses(items => items.filter(e => e.id !== expenseId));
       showExpenseConfirmation('Gasto eliminado.');
     } catch (e) {
       console.error("Error deleting area expense:", e);
-    }
+      if (areaDeletionScope.current === deletionScope) alert(unpaidExpenseDeletionErrorMessage(e));
+    } finally { areaDeletionPending.current = false; }
   };
 
   const uploadInvoiceForExpense = async (expense: any, file?: File | null, collectionName: PaymentCollection = 'areaExpenses') => {
@@ -3488,7 +3550,7 @@ export default function ProjectDetail() {
         ].filter(Boolean).join(' ')).includes(searchTerm);
       };
       const assigned = getCategoryBudget(project, budgetItems, area);
-      const allExpenses = areaExpenses
+      const allExpenses = displayedAreaExpenses
         .filter((item) => item.area === area)
         .filter((item) => hasFullAreaAccess || canSeeAreaSubcategory(item.area, item.subcategory))
         .sort((a, b) => getDateTimestamp(b.updatedAt || b.createdAt) - getDateTimestamp(a.updatedAt || a.createdAt));
@@ -3574,7 +3636,7 @@ export default function ProjectDetail() {
         hasSubcategories: knownSubcategories.length > 0,
       };
     })
-  ), [areaExpenseSearch, areaExpenseSort, areaExpenseSubcategoriesByArea, areaExpenses, budgetItems, isProjectAdmin, project?.categoryBudgets, project?.areaExpenseSubcategories, project?.areaExpenseSubcategoryBudgets, userAllowedSubcategories, userPermissions, visibleCategoryKey]);
+  ), [areaExpenseSearch, areaExpenseSort, areaExpenseSubcategoriesByArea, displayedAreaExpenses, budgetItems, isProjectAdmin, project?.categoryBudgets, project?.areaExpenseSubcategories, project?.areaExpenseSubcategoryBudgets, userAllowedSubcategories, userPermissions, visibleCategoryKey]);
 
   const selectedAreaDashboardRows = searchedExpenseAreas<(typeof areaDashboardRows)[number]>(areaDashboardRows, selectedVisibleAreas, areaExpenseSearchTerm);
   const areaDashboardTotals = selectedAreaDashboardRows.reduce((acc, row) => ({
@@ -3710,7 +3772,7 @@ export default function ProjectDetail() {
   const canOrganizeSubcategory = (area: string, subcategory: string) => canOrganizeProjectSubcategory(isProjectAdmin, userPermissions, area, subcategory);
   const canDeleteAreaExpense = (expense?: any | null) => {
     if (!expense || !canEditAreaExpense(expense)) return false;
-    return !hasRecordedPayment(expense);
+    return canDeleteUnpaidAreaExpense(expense, isProjectAdmin);
   };
   const canEditPaymentDateForItem = (item?: any | null, collectionName?: PaymentCollection) => {
     if (!item || !collectionName) return false;
