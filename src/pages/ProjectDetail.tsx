@@ -108,7 +108,7 @@ import { resolveResultIncidences } from '../lib/resultIncidences';
 import { filterProviderBalances } from '../lib/providerPaymentStatus';
 import { getSubcategoryBudgetCapacity } from '../lib/subcategoryBudget';
 import { moveAreaSubcategory, reorderDisplayedCategories } from '../lib/areaStructureOrder';
-import { resolveAreaSelection } from '../lib/areaSelectionPreference';
+import { resolveAreaSelection, revealMovedExpenseArea } from '../lib/areaSelectionPreference';
 import { useProjectWorkingView } from '../hooks/useProjectWorkingView';
 import { getReimbursementBalanceCents, getReimbursedCents, isThirdPartyPayment } from '../lib/reimbursements';
 import { getFileExtension, sanitizeFileName, validateSpreadsheetImport } from '../lib/files';
@@ -2276,7 +2276,7 @@ export default function ProjectDetail() {
     setAreaExpenseSort('manual');
     setCollapsedCategories(current => ({ ...current, [targetArea]: false }));
     setCollapsedAreaSubcategories(current => ({ ...current, [`${targetArea}__${targetSubcategory}`]: false }));
-    setSelectedAreaTabs(current => current.includes(targetArea) ? current : [...current, targetArea]);
+    setSelectedAreaTabs(current => revealMovedExpenseArea(current, targetArea));
     setPendingAreaMove({ scope: loadScope, changes: optimisticAreaExpenseMove(areaExpenses, { kind: 'expense', itemId: expense.id,
       fromArea: sourceArea, fromSubcategory: sourceSubcategory, targetArea, targetSubcategory, ...(beforeExpenseId ? { beforeExpenseId } : {}) }) });
     try {
