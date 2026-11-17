@@ -29,7 +29,7 @@ test('detalle conserva todas las facturas y comprobantes, ofrece historial sin d
       invoices: [{ url: 'https://example.test/invoice-one.pdf' }, { url: 'https://example.test/invoice-two.pdf' }],
       item: { paymentHistory: [{ receipt: { url: 'https://example.test/receipt.pdf' } }] } }] };
   const html = renderToStaticMarkup(createElement(ProjectProvidersView, { groups: [{ area: 'Arte', rows: [row] }], totalRows: 1, search: '', onSearchChange: () => {}, status: 'all', onStatusChange: () => {}, isProjectAdmin: false,
-    canManagePaymentForItem: () => true, openPaymentModal: () => {}, formatDate: () => '', paymentTiming: () => '' }));
+    canViewPaymentForItem: () => true, canManagePaymentForItem: () => false, openPaymentModal: () => {}, formatDate: () => '', paymentTiming: () => '' }));
   for (const path of ['invoice-one.pdf', 'invoice-two.pdf', 'receipt.pdf']) assert.ok(html.includes(path));
   assert.ok(html.includes('Ver pagos'));
   assert.ok(html.includes('Ver ficha y comprobantes'));

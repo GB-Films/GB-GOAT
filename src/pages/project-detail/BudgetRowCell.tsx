@@ -413,7 +413,7 @@ export function BudgetRowCell({ item, collectionName, providers, onUpdate, type,
             isPartial ? "bg-yellow-400 border-yellow-500" :
             "bg-rose-500 border-rose-600"
           )}
-          title={(disabledPayment || disabled) ? "No tenés permiso para gestionar pagos" : isFull ? "Pago Total" : isPartial ? "Pago Parcial" : "Sin Pago"}
+          title={(disabledPayment || disabled) ? "No tenés acceso a estos pagos" : isFull ? "Pago total · Ver pagos y comprobantes" : isPartial ? "Pago parcial · Ver pagos y comprobantes" : "Ver pagos"}
         >
           <div className={cn(
             "w-1 h-1 rounded-full opacity-0 group-hover/dot:opacity-100 transition-all",

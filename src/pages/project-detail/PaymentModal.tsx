@@ -1027,7 +1027,7 @@ export function PaymentModal({
             </form>
           )}
 
-          {canManagePayments && paymentHistory.length > 0 && (
+          {paymentHistory.length > 0 && (
             <div className="pt-4 border-t border-slate-100">
               <h3 className="text-[10px] font-bold uppercase text-slate-400 mb-3 tracking-widest flex items-center gap-2">
                  <History className="w-3 h-3" /> Historial de Pagos
