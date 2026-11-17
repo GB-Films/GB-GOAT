@@ -2957,7 +2957,7 @@ export default function ProjectDetail() {
   };
 
   const openPaymentModal = (item: any, type: PaymentCollection) => {
-    if (isInternalBudgetEstimate(item)) return;
+    if (!canViewPaymentForItem(item, type)) return;
     setSelectedItemForPayment({ ...item, __paymentCollection: type });
     setPaymentType(type);
     setIsDeletingPayment(null);
@@ -3767,6 +3767,11 @@ export default function ProjectDetail() {
     if (collectionName === 'budgetItems' && activeAreas.includes(item.area)) return false;
     return isProjectAdmin || canEditAreaSubcategory(item.area, item.subcategory);
   };
+  const canViewPaymentForItem = (item?: any | null, collectionName?: PaymentCollection) => {
+    if (!item || !collectionName || isInternalBudgetEstimate(item)) return false;
+    if (collectionName === 'budgetItems') return isProjectAdmin && !activeAreas.includes(item.area);
+    return collectionName === 'areaExpenses' && canSeeAreaSubcategory(item.area, item.subcategory);
+  };
   const canManagePaymentForItem = (item?: any | null, collectionName?: PaymentCollection) => {
     if (!item || !collectionName) return false;
     if (isInternalBudgetEstimate(item)) return false;
@@ -3902,7 +3907,7 @@ export default function ProjectDetail() {
         {renderMobileExpenseDocuments(item, collectionName)}
         <button
           type="button"
-          disabled={!canManagePaymentForItem(item, collectionName)}
+          disabled={!canViewPaymentForItem(item, collectionName)}
           onClick={() => openPaymentModal(item, collectionName)}
           className={cn('ml-auto inline-flex h-8 items-center gap-1 rounded border px-2 text-[9px] font-black uppercase tracking-widest', getPaymentTotal(item) > 0 || item.paid ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-900 bg-slate-900 text-white disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400')}
         >
@@ -6627,7 +6632,7 @@ export default function ProjectDetail() {
 
                                     <button
                                       type="button"
-                                      disabled={!canEditAreaExpense(item)}
+                                      disabled={!canViewPaymentForItem(item, 'areaExpenses')}
                                       onClick={() => openPaymentModal(item, 'areaExpenses')}
                                       className={cn('ml-auto inline-flex h-8 items-center gap-1 rounded border px-2 text-[9px] font-black uppercase tracking-widest', getPaymentTotal(item) > 0 || item.paid ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-900 bg-slate-900 text-white disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400')}
                                     >
@@ -6940,7 +6945,7 @@ export default function ProjectDetail() {
                                  onUpdate={updateAreaExpense} 
                                  type="paid"
                                  onManagePayment={(item) => openPaymentModal(item, 'areaExpenses')}
-                                 disabledPayment={!canEditAreaExpense(item)}
+                                 disabledPayment={!canViewPaymentForItem(item, 'areaExpenses')}
                                />
                                {canDeleteAreaExpense(item) && (
                                  <button 
@@ -7078,7 +7083,7 @@ export default function ProjectDetail() {
         {activeTab === 'proveedores' && (
           <div key={loadScope}><ProjectProvidersView groups={filteredProviderSaldosByArea} totalRows={providerSaldos.length}
             search={financeSearch} onSearchChange={setFinanceSearch} status={financeStatusFilter} onStatusChange={setFinanceStatusFilter}
-            isProjectAdmin={isProjectAdmin} canManagePaymentForItem={canManagePaymentForItem} openPaymentModal={openPaymentModal}
+            isProjectAdmin={isProjectAdmin} canManagePaymentForItem={canManagePaymentForItem} canViewPaymentForItem={canViewPaymentForItem} openPaymentModal={openPaymentModal}
             formatDate={formatDate} paymentTiming={date => getPaymentLeadTimeLabel(date, getShootingEndDate(project))} /></div>
         )}
 

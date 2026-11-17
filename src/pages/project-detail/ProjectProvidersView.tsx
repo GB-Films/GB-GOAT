@@ -21,7 +21,8 @@ function ProviderName({ saldo, onOpen }: { saldo: ProjectProviderBalance; onOpen
     className="text-left text-xs font-bold uppercase text-slate-900 underline decoration-slate-300 underline-offset-4 hover:text-blue-600">{saldo.name}</button>
     : <span className="text-xs font-bold uppercase text-slate-900">{saldo.name}</span>;
 }
-function EntryActions({ entry, canManage, onPayment }: { entry: ProviderBalanceEntry; canManage: boolean; onPayment: (item: any, collection: PaymentCollection) => void }) {
+function EntryActions({ entry, canView, canManage, onPayment }: { entry: ProviderBalanceEntry; canView: boolean; canManage: boolean; onPayment: (item: any, collection: PaymentCollection) => void }) {
+  if (!canView) return null;
   const appearance = invoicePaymentAppearance(entry.total, entry.paid);
   const receipts = Array.isArray(entry.item?.paymentHistory) ? entry.item.paymentHistory : [];
   const actionClass = 'inline-flex items-center gap-1 rounded border px-2 py-1 text-[10px] font-bold uppercase tracking-widest';
@@ -33,16 +34,17 @@ function EntryActions({ entry, canManage, onPayment }: { entry: ProviderBalanceE
       title={payment.receipt.originalFileName || 'Ver comprobante de pago'} className={cn(actionClass, 'border-blue-100 bg-blue-50 text-blue-700 hover:bg-blue-100')}><Paperclip className="h-3 w-3" />Comp.</a>)}
     {(entry.otherReceipts || []).filter(receipt => receipt?.url).map((receipt, index) => <a key={receipt.id || receipt.path || index} href={receipt.url} target="_blank" rel="noreferrer"
       title={receipt.originalFileName || 'Ver otro comprobante'} className={cn(actionClass, 'border-sky-100 bg-sky-50 text-sky-700 hover:bg-sky-100')}><Paperclip className="h-3 w-3" />Otro comp.</a>)}
-    {canManage && <button type="button" onClick={() => onPayment(entry.item, entry.collectionName)} className={cn(actionClass, 'border-slate-200 bg-white text-slate-600 hover:border-slate-400 hover:text-slate-900')}>
-      {entry.total - entry.paid > 0.01 ? 'Registrar pago' : 'Ver pagos'}
+    {canView && <button type="button" onClick={() => onPayment(entry.item, entry.collectionName)} className={cn(actionClass, 'border-slate-200 bg-white text-slate-600 hover:border-slate-400 hover:text-slate-900')}>
+      {canManage && entry.total - entry.paid > 0.01 ? 'Registrar pago' : 'Ver pagos'}
     </button>}
   </div>;
 }
 
-export function ProjectProvidersView({ groups, totalRows, search, onSearchChange, status, onStatusChange, isProjectAdmin, canManagePaymentForItem, openPaymentModal, formatDate, paymentTiming, onOpenProvider }: {
+export function ProjectProvidersView({ groups, totalRows, search, onSearchChange, status, onStatusChange, isProjectAdmin, canManagePaymentForItem, canViewPaymentForItem, openPaymentModal, formatDate, paymentTiming, onOpenProvider }: {
   groups: Array<{ area: string; rows: ProjectProviderBalance[] }>; totalRows: number;
   search: string; onSearchChange: (value: string) => void; status: ProviderPaymentStatus | 'all'; onStatusChange: (value: ProviderPaymentStatus | 'all') => void;
   isProjectAdmin: boolean; canManagePaymentForItem: (item: any, collection: PaymentCollection) => boolean;
+  canViewPaymentForItem: (item: any, collection: PaymentCollection) => boolean;
   openPaymentModal: (item: any, collection: PaymentCollection) => void; formatDate: (date: any) => string; paymentTiming: (date: any) => string;
   onOpenProvider?: (provider: any) => void;
 }) {
@@ -126,7 +128,7 @@ export function ProjectProvidersView({ groups, totalRows, search, onSearchChange
                                     <div className="text-[8px] font-black uppercase tracking-widest text-slate-400">Pago {formatDate(entry.item.paymentDate)}</div>
                                   )}
                                 </div>
-                                <EntryActions entry={entry} canManage={canManagePaymentForItem(entry.item, entry.collectionName)} onPayment={openPaymentModal} />
+                                <EntryActions entry={entry} canView={canViewPaymentForItem(entry.item, entry.collectionName)} canManage={canManagePaymentForItem(entry.item, entry.collectionName)} onPayment={openPaymentModal} />
                               </div>
                             );
                           })}
@@ -226,7 +228,7 @@ export function ProjectProvidersView({ groups, totalRows, search, onSearchChange
                                      Pago {formatDate(entry.item.paymentDate)} · {paymentTiming(entry.item.paymentDate)}
                                    </span>
                                  )}
-                                 <EntryActions entry={entry} canManage={canManagePaymentForItem(entry.item, entry.collectionName)} onPayment={openPaymentModal} />
+                                 <EntryActions entry={entry} canView={canViewPaymentForItem(entry.item, entry.collectionName)} canManage={canManagePaymentForItem(entry.item, entry.collectionName)} onPayment={openPaymentModal} />
                                </div>
                              );
                            })}
