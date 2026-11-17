@@ -12,6 +12,7 @@ const cli =
         "firebase-tools/lib/bin/firebase.js",
       ));
 const cases = [
+  ["providerPersonalClassification", "demo-goat-person-classification", "firestore"],
   ["categoryBudgets", "demo-goat-category-budgets", "firestore"],
   ["crmProjectImport", "demo-goat-crm-import", "firestore"],
   ["projectPins", "demo-goat-project-pins", "firestore"],
