@@ -5,6 +5,7 @@ const { hasTeamWorkAccess } = require('./teamWorkAccess');
 const { checkCompanyReview } = require('./providerRepresentation');
 const { createProviderWorkAuthorizations } = require('./providerWorkAuthorizations');
 const { createCashReceiptService } = require('./providerCashReceipts');
+const { portalPersonalClassification } = require('./providerPersonalClassificationPortal');
 
 const { COMPANY_EVIDENCE, LEGACY_COMPANY_EVIDENCE } = require('./providerEvidence');
 const { thirdPartyIsCurrent } = require('./providerThirdPartyDeclaration');
@@ -27,6 +28,7 @@ function createProviderPortalAdminHandler({
   sign,
   clock = () => new Date(),
   findAccount,
+  findAccountByUid,
 }) {
   const thirdParties = createSignedThirdPartyService({ db, timestamp, clock, sign });
   const administrative = createProviderAdministrativeRecords({ db, timestamp });
@@ -89,6 +91,10 @@ function createProviderPortalAdminHandler({
     }
     if (input.action === 'administrativeProviderState') return administrative.state(input.providerId);
     if (input.action === 'setAdministrativeProvider') return administrative.set(actor, input);
+    if (['personalClassificationPreview', 'classifyPersonalProvider'].includes(input.action)) {
+      if (request.auth.token?.firebase?.sign_in_provider !== 'google.com') throw new HttpsError('permission-denied', 'Ingresá con tu cuenta Google de administración.');
+      return portalPersonalClassification({ db, timestamp, actor, input, findAccount, findAccountByUid });
+    }
     if (['projectContractSource', 'prepareProjectContract'].includes(input.action)) {
       const projectId = id(input.projectId);
       if (!global) {

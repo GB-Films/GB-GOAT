@@ -30,6 +30,13 @@ export function pendingPortalSignatureCount(documents: SigningDocument[]) {
 export function representsAnotherProvider(member?: { type?: string; capacity?: string }) {
   return !!member && (member.type === 'empresa' || (!!member.capacity && member.capacity !== 'own'));
 }
+export function providerWorkEmptyMessage(hasLoaded: boolean, member?: { status?: string; needsClassification?: boolean }, viewLoaded = false) {
+  if (!hasLoaded) return 'Cargando tus datos…';
+  if (!member) return 'Vinculá tu ficha para ver tus trabajos.';
+  if (member.needsClassification) return 'Tu cuenta está asociada. Administración debe confirmar la clasificación de tu ficha.';
+  if (member.status !== 'active') return 'Tus trabajos aparecerán cuando se habilite tu representación.';
+  return viewLoaded ? 'Todavía no tenés trabajos asignados.' : 'Cargando tus datos…';
+}
 export function profileApplicationConflict(error: { message?: string }) {
   return /datos cambiaron|ficha cambi[oó]|datos.*modificaron|datos.*cambiado/i.test(error?.message || '');
 }
