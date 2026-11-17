@@ -94,8 +94,21 @@ test('los permisos legacy se normalizan sin reabrir Presu Ppal', () => {
   assert.equal(tabs.includes('proveedores'), true);
 });
 
-test('sólo administradores corrigen o eliminan pagos existentes', () => {
+test('editar áreas requiere habilitación explícita además del rol y el alcance', () => {
+  const reader = { role: 'jefe_produccion', allowedCategories: ['Campo'], allowedTabs: ['areas'], canEditBudgetAreas: false };
+  assert.equal(canEditProjectSubcategory(false, reader, 'Campo', 'Proveedores'), false);
+  assert.equal(canEditProjectSubcategory(false, { ...reader, canEditBudgetAreas: true }, 'Campo', 'Proveedores'), true);
+  assert.equal(canEditProjectSubcategory(false, { ...reader, canEditBudgetAreas: true }, 'Arte', 'Proveedores'), false);
+});
+
+test('un colaborador puede corregir su pago; los pagos ajenos y compartidos siguen protegidos', () => {
+  const own = { id: 'payment', createdBy: 'producer', createdByEmail: 'producer@example.test' };
   assert.equal(canEditExistingPayment(true), true);
   assert.equal(canEditExistingPayment(false), false);
+  assert.equal(canEditExistingPayment(false, own, 'producer', 'producer@example.test'), true);
+  assert.equal(canEditExistingPayment(false, { ...own, createdBy: 'admin', createdByEmail: 'admin@example.test' }, 'producer', 'producer@example.test'), false);
+  assert.equal(canEditExistingPayment(false, own, 'other', 'other@example.test'), false);
+  assert.equal(canEditExistingPayment(false, { ...own, createdByEmail: 'other@example.test' }, 'producer', 'producer@example.test'), false);
+  assert.equal(canEditExistingPayment(false, { ...own, sharedRecordId: 'shared' }, 'producer', 'producer@example.test'), false);
 });
 
