@@ -231,5 +231,7 @@ try {
   await testExpenseInvoiceControls({ db, env, call });
   const { testDeleteUnpaidAreaExpense } = await import('./deleteUnpaidAreaExpense.flow.mjs');
   await testDeleteUnpaidAreaExpense({ db, admin, call, env });
+  const { testReportedProviderPayments } = await import('./reportedProviderPayment.flow.mjs');
+  await testReportedProviderPayments({ db, admin, env });
   console.log('Shared provider finance: exact applications, idempotency, concurrent payments, cancellation, single cash outflow and private immutable files verified.');
 } finally { await env.cleanup(); await app.delete(); }

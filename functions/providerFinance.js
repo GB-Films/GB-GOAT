@@ -98,6 +98,10 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, ver
     const user = await db.doc(`users/${request.auth.uid}`).get();
     const input = request.data || {};
     const actor = { uid: request.auth.uid, email: String(request.auth.token.email).trim().toLowerCase() };
+    if (['previewReportedPayment', 'recordReportedPayment', 'reportedPaymentState'].includes(input.action)) {
+      if (request.auth.token.email_verified !== true) throw new HttpsError('permission-denied', 'Verificá tu correo.');
+      return require('./reportedProviderPayment').createReportedPaymentService({ db, timestamp, verifyFile, clock }).handle(actor, input);
+    }
     if (['previewDeleteUnpaidAreaExpense', 'deleteUnpaidAreaExpense'].includes(input.action)) {
       if (request.auth.token.email_verified !== true) throw new HttpsError('permission-denied', 'Verificá tu correo.');
       return createDeleteUnpaidAreaExpense({ db, timestamp })(actor, input);
@@ -179,7 +183,9 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, ver
         if (record.status !== 'active' || !linkedAllocation(record, projectId, itemId, collectionName, expense))
           throw new HttpsError('permission-denied', 'Comprobante ajeno o retirado del proyecto.');
       }
-      const file = record.file;
+      const fileIndex = input.fileIndex === undefined ? 0 : input.fileIndex;
+      if (!Number.isInteger(fileIndex) || fileIndex < 0 || (record.reportedPayment ? fileIndex >= record.reportedPayment.parts.length : fileIndex !== 0)) fail('Comprobante inválido.');
+      const file = record.reportedPayment ? record.reportedPayment.parts[fileIndex].file : record.file;
       if (!file || !readFile) fail('El registro no tiene un archivo descargable.');
       return { fileName: file.fileName, contentType: file.contentType, base64: await readFile(file) };
     }
@@ -190,6 +196,7 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, ver
         const snapshot = await tx.get(recordRef);
         if (!snapshot.exists) fail('No se encontró el registro.');
         const record = snapshot.data();
+        if (record.reportedPayment) fail('Este pago ya realizado se conserva como antecedente. Una corrección requiere una regularización administrativa auditada; no se puede anular desde esta opción.');
         if (record.kind === 'payment' && record.method === 'cash') assertGeneralCash();
         if (record.status === 'cancelled') return { id: recordId, status: 'cancelled' };
         if (record.kind === 'invoice' && Object.keys(record.settlements || {}).length) fail('Primero anulá los pagos aplicados a esta factura.');
