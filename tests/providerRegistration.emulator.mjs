@@ -10,7 +10,8 @@ if(!/^127\.0\.0\.1:\d+$/.test(process.env.FIRESTORE_EMULATOR_HOST || '')) throw 
 const projectId='demo-goat-provider-intake';
 const env=await initializeTestEnvironment({projectId,firestore:{rules:readFileSync('firestore.rules','utf8')}});
 const app=admin.initializeApp({projectId}),db=app.firestore();
-const portal=createProviderPortalHandler({db,timestamp:()=>admin.firestore.FieldValue.serverTimestamp()});
+const portal=createProviderPortalHandler({db,timestamp:()=>admin.firestore.FieldValue.serverTimestamp(),
+  findAccountByUid: async uid => ({ uid, email: `${uid}@example.test`, emailVerified: true, providerData: [{ providerId: 'google.com' }] })});
 const request=(data,uid='person')=>({auth:{uid,token:{email:`${uid}@example.test`,email_verified:true,firebase:{sign_in_provider:'google.com'},auth_time:Date.now()/1000}},data});
 const submit=(data,uid)=>portal(request(data,uid));
 const seed=(token,extra={})=>db.doc(`providerInvites/${token}`).set({status:'pending',used:false,expiresAt:admin.firestore.Timestamp.fromMillis(Date.now()+3600000),...extra});
