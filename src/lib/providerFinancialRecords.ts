@@ -1,3 +1,5 @@
+import { normalizeSearchText } from './identity';
+
 export type SharedProviderDocument = { id: string; kind: 'invoice' | 'payment' | 'other'; name: string };
 
 // Project rows refer to the original record; they never copy its file or amount.
@@ -9,9 +11,8 @@ export function financialDocumentsForExpense(records: any[], expense: { projectI
 }
 
 export function filterFinancialRecords(records: any[], kind: string, projectSearch: string) {
-  const normalize = (value: string) => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
-  const term = normalize(projectSearch);
-  return records.filter(record => (kind === 'all' || record.kind === kind) && (!term || record.allocations?.some((row: any) => normalize(row.projectName).includes(term))))
+  const term = normalizeSearchText(projectSearch);
+  return records.filter(record => (kind === 'all' || record.kind === kind) && (!term || record.allocations?.some((row: any) => normalizeSearchText(row.projectName).includes(term))))
     .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')) || String(a.id).localeCompare(String(b.id)));
 }
 

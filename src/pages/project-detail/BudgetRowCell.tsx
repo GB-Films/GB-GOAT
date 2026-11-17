@@ -13,6 +13,7 @@ import {
   normalizeDigits,
   normalizeProviderText,
   providerDisplayName,
+  providerMatchesLegacyReference,
   providerMatchesSearch,
 } from '../../lib/providerConstants';
 const ProviderProfileDialog = lazy(() => import('../../components/ProviderProfileDialog'));
@@ -109,7 +110,7 @@ export function BudgetRowCell({ item, collectionName, providers, onUpdate, type,
     const exactMatches = providers.filter((candidate) => normalizeProviderText(providerDisplayName(candidate)) === providerNameKey);
     if (exactMatches.length === 1) return exactMatches[0];
 
-    const searchMatches = providers.filter((candidate) => providerMatchesSearch(candidate, item.providerName));
+    const searchMatches = providers.filter((candidate) => providerMatchesLegacyReference(candidate, item.providerName));
     return searchMatches.length === 1 ? searchMatches[0] : null;
   })();
   const providerIdentifiers = inferLegacyIdentifiers(provider);

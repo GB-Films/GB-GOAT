@@ -9,7 +9,8 @@ import { useAuth } from '../context/AuthContext';
 import { canChangePaymentCash, assertCanChangePaymentCash } from '../lib/paymentCashAccess';
 import { cn } from '../lib/utils';
 import { buildPaymentCalendarDays, formatDateKey, formatPeriodLabel, formatScheduleDate, getOverdueLines, getTodayLines, getUnscheduledLines, sumDebt, type PaymentScheduleLine } from '../lib/paymentSchedule';
-import { formatIdentifier, inferLegacyIdentifiers, normalizeProviderText, providerDisplayName, providerMatchesSearch } from '../lib/providerConstants';
+import { formatIdentifier, inferLegacyIdentifiers, normalizeProviderText, providerDisplayName, providerMatchesLegacyReference } from '../lib/providerConstants';
+import { normalizeSearchText } from '../lib/identity';
 import { PaymentModal } from './project-detail/PaymentModal';
 import type { Payment, PaymentCollection } from './project-detail/types';
 import { calculateProjectFinance, calculateProjectResult, getItemTotal, getPaymentTotal, getStandaloneBudgetItems } from '../lib/projectFinance';
@@ -84,7 +85,7 @@ const findProviderForLine = (item: any, providerById: Map<string, any>, provider
   const exactMatches = providers.filter((provider) => normalizeProviderText(providerDisplayName(provider)) === providerName);
   if (exactMatches.length === 1) return exactMatches[0];
 
-  const searchMatches = providers.filter((provider) => providerMatchesSearch(provider, item.providerName || ''));
+  const searchMatches = providers.filter((provider) => providerMatchesLegacyReference(provider, item.providerName || ''));
   return searchMatches.length === 1 ? searchMatches[0] : null;
 };
 
@@ -305,10 +306,10 @@ export default function Reports() {
 
   const projectStatuses = useMemo(() => Array.from(new Set(projects.map((project) => project.status))).sort(), [projects]);
   const filteredProjects = useMemo(() => {
-    const search = projectSearch.trim().toLowerCase();
+    const search = normalizeSearchText(projectSearch);
     return projects.filter((project) => {
       const matchesStatus = projectStatusFilter === 'all' || project.status === projectStatusFilter;
-      const matchesSearch = !search || `${project.name} ${project.clientName || ''}`.toLowerCase().includes(search);
+      const matchesSearch = !search || normalizeSearchText(`${project.name} ${project.clientName || ''}`).includes(search);
       return matchesStatus && matchesSearch;
     });
   }, [projectSearch, projectStatusFilter, projects]);

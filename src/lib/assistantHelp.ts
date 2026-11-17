@@ -1,3 +1,5 @@
+import { normalizeSearchText } from './identity';
+
 export type AssistantHelpSection = {
   id: string;
   title: string;
@@ -236,12 +238,6 @@ export const ASSISTANT_HELP_SECTIONS: AssistantHelpSection[] = [
   },
 ];
 
-const normalize = (value: unknown) => String(value || '')
-  .toLowerCase()
-  .normalize('NFD')
-  .replace(/[\u0300-\u036f]/g, '')
-  .trim();
-
 export const listAssistantHelpTopics = () => ASSISTANT_HELP_SECTIONS.map((section) => ({
   id: section.id,
   titulo: section.title,
@@ -256,16 +252,16 @@ const HELP_STOPWORDS = new Set([
 
 // Devuelve las secciones que mejor responden a la consulta del usuario.
 export const searchAssistantHelp = (query: unknown, limit = 3) => {
-  const text = normalize(query);
+  const text = normalizeSearchText(query);
   if (!text) return ASSISTANT_HELP_SECTIONS.slice(0, limit);
   const words = text.split(/\s+/).filter((word) => word.length > 3 && !HELP_STOPWORDS.has(word));
 
   const scored = ASSISTANT_HELP_SECTIONS.map((section) => {
-    const title = normalize(section.title);
-    const content = normalize(section.content);
+    const title = normalizeSearchText(section.title);
+    const content = normalizeSearchText(section.content);
     let score = 0;
     if (title.includes(text)) score += 10;
-    const keywords = section.keywords.map(normalize).filter(Boolean);
+    const keywords = section.keywords.map(normalizeSearchText).filter(Boolean);
     keywords.forEach((keyword) => {
       if (keyword === text) score += 8;
       else if (keyword.length > 3 && text.includes(keyword)) score += 5;

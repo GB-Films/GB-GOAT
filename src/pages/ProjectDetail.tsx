@@ -3967,15 +3967,11 @@ export default function ProjectDetail() {
   }, [activeAreas, areaExpenseSubcategoriesByArea, categories, isProjectAdmin, project?.areaExpenseSubcategoryBudgets, userPermissions]);
 
   const filteredSourceProjects = React.useMemo(() => {
-    const term = copyBudgetSearch.trim().toLowerCase();
-    return sourceProjects.filter((sourceProject) => {
-      if (!term) return true;
-      return [sourceProject.name, sourceProject.clientName, sourceProject.status]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase()
-        .includes(term);
-    });
+    const term = normalizeSearchText(copyBudgetSearch);
+    if (!term) return sourceProjects;
+    return sourceProjects.filter((sourceProject) => normalizeSearchText(
+      [sourceProject.name, sourceProject.clientName, sourceProject.status].filter(Boolean).join(' ')
+    ).includes(term));
   }, [copyBudgetSearch, sourceProjects]);
 
   const cashResponsibles = React.useMemo(() => {

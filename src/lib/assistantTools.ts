@@ -20,7 +20,7 @@ import { hasRecordedPayment, sameExpenseVersion, samePaymentTarget } from './exp
 import { buildLinkedProviderInviteExpiration } from './providerInvites';
 import { Timestamp, updateDoc, writeBatch } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
-import { normalizeEmail } from './identity';
+import { normalizeEmail, normalizeSearchText } from './identity';
 import { storage } from './firebase';
 import { getExpenseInvoices } from './invoices';
 import { sanitizeFileName } from './files';
@@ -192,7 +192,7 @@ const matchesText = (item: AssistantBudgetItem, text: string) => (
   !text
   || [item.providerName, item.description, item.area, (item as AssistantAreaExpense).subcategory]
     .filter(Boolean)
-    .some((value) => asText(value).includes(text))
+    .some((value) => normalizeSearchText(value).includes(text))
 );
 
 const providerLabel = (provider: AssistantProvider) => (
@@ -502,10 +502,10 @@ export const buildAssistantTools = ({
         const resolved = await resolveProject(args?.proyecto);
         if ('error' in resolved) return resolved;
         const context = resolved.context;
-        const area = asText(args?.area);
-        const text = asText(args?.texto);
+        const area = normalizeSearchText(args?.area);
+        const text = normalizeSearchText(args?.texto);
         const rows = visibleBudgetItems(context)
-          .filter((item) => (!area || asText(item.area) === area) && matchesText(item, text))
+          .filter((item) => (!area || normalizeSearchText(item.area) === area) && matchesText(item, text))
           .sort((a, b) => (a.order || 0) - (b.order || 0))
           .slice(0, limitOf(args?.limite))
           .map((item) => compactItem(item));
@@ -525,13 +525,13 @@ export const buildAssistantTools = ({
         const resolved = await resolveProject(args?.proyecto);
         if ('error' in resolved) return resolved;
         const context = resolved.context;
-        const area = asText(args?.area);
-        const subcategory = cleanAreaExpenseSubcategory(args?.subcategoria);
-        const text = asText(args?.texto);
+        const area = normalizeSearchText(args?.area);
+        const subcategory = normalizeSearchText(args?.subcategoria);
+        const text = normalizeSearchText(args?.texto);
         const rows = visibleAreaExpenses(context)
           .filter((item) => (
-            (!area || asText(item.area) === area)
-            && (!subcategory || cleanAreaExpenseSubcategory(item.subcategory) === subcategory)
+            (!area || normalizeSearchText(item.area) === area)
+            && (!subcategory || normalizeSearchText(item.subcategory) === subcategory)
             && matchesText(item, text)
           ))
           .sort((a, b) => (a.order || 0) - (b.order || 0))
@@ -548,9 +548,9 @@ export const buildAssistantTools = ({
         const resolved = await resolveProject(args?.proyecto);
         if ('error' in resolved) return resolved;
         const context = resolved.context;
-        const area = asText(args?.area);
+        const area = normalizeSearchText(args?.area);
         const rows = [...visibleBudgetItems(context), ...visibleAreaExpenses(context)]
-          .filter((item) => !area || asText(item.area) === area)
+          .filter((item) => !area || normalizeSearchText(item.area) === area)
           .filter((item) => (Number(item.total) || 0) - paidAmount(item) > 0.009)
           .sort((a, b) => String(a.paymentDate || '9999').localeCompare(String(b.paymentDate || '9999')))
           .slice(0, limitOf(args?.limite))
@@ -573,7 +573,7 @@ export const buildAssistantTools = ({
         if (!context.capabilities.tabs.includes('saldos')) {
           return { error: 'El usuario no tiene acceso a la pestaña Finanzas en este proyecto.' };
         }
-        const area = asText(args?.area);
+        const area = normalizeSearchText(args?.area);
         const days = Math.max(1, Math.min(180, Number(args?.dias) || 30));
         const today = new Date();
         const limit = new Date(today.getTime() + days * 24 * 60 * 60 * 1000);
@@ -581,7 +581,7 @@ export const buildAssistantTools = ({
         const limitKey = limit.toISOString().slice(0, 10);
 
         const rows = [...visibleBudgetItems(context), ...visibleAreaExpenses(context)]
-          .filter((item) => !area || asText(item.area) === area)
+          .filter((item) => !area || normalizeSearchText(item.area) === area)
           .filter((item) => (Number(item.total) || 0) - paidAmount(item) > 0.009)
           .filter((item) => {
             const date = String(item.paymentDate || '').slice(0, 10);
@@ -636,13 +636,13 @@ export const buildAssistantTools = ({
       },
       run: async (args) => {
         const providers = await getProviders();
-        const text = asText(args?.texto);
+        const text = normalizeSearchText(args?.texto);
         const rows = providers
           .filter((provider) => (
             !text
             || [providerLabel(provider), provider.cuit, provider.category]
               .filter(Boolean)
-              .some((value) => asText(value).includes(text))
+              .some((value) => normalizeSearchText(value).includes(text))
           ))
           .slice(0, limitOf(args?.limite))
           .map((provider) => ({
@@ -2407,20 +2407,20 @@ export const buildAssistantTools = ({
       if (!context.capabilities.tabs.includes('documentos')) {
         return { error: 'El usuario no tiene acceso a la pestaña Documentos en este proyecto.' };
       }
-      const family = asText(args?.familia);
-      const type = asText(args?.tipo);
-      const area = asText(args?.area);
-      const text = asText(args?.texto);
+      const family = normalizeSearchText(args?.familia);
+      const type = normalizeSearchText(args?.tipo);
+      const area = normalizeSearchText(args?.area);
+      const text = normalizeSearchText(args?.texto);
       const today = new Date().toISOString().slice(0, 10);
 
       const rows = context.documents
         .filter((document) => (
-          (!family || asText(document.family) === family)
-          && (!type || asText(document.type) === type || asText(document.subtype) === type)
-          && (!area || asText(document.area) === area)
+          (!family || normalizeSearchText(document.family) === family)
+          && (!type || normalizeSearchText(document.type) === type || normalizeSearchText(document.subtype) === type)
+          && (!area || normalizeSearchText(document.area) === area)
           && (!text || [document.title, document.providerName, document.area, document.notes, document.originalFileName]
             .filter(Boolean)
-            .some((value) => asText(value).includes(text)))
+            .some((value) => normalizeSearchText(value).includes(text)))
         ))
         .slice(0, limitOf(args?.limite, 25, 60))
         .map((document) => ({
@@ -2463,18 +2463,18 @@ export const buildAssistantTools = ({
       },
       run: async (args) => {
         const projects = await getProjects();
-        const status = asText(args?.estado);
-        const text = asText(args?.texto);
+        const status = normalizeSearchText(args?.estado);
+        const text = normalizeSearchText(args?.texto);
         const limit = limitOf(args?.limite, 25, 40);
         const selected = projects
-          .filter((project) => !text || asText(project.name).includes(text) || asText(project.clientName || '').includes(text))
+          .filter((project) => !text || normalizeSearchText(project.name).includes(text) || normalizeSearchText(project.clientName).includes(text))
           .slice(0, limit + 1);
 
         const rows: AssistantProjectFinance[] = [];
         for (const project of selected.slice(0, limit)) {
           const finance = await loadProjectFinance(project.id);
           if (!finance) continue;
-          if (status && !asText(finance.status).includes(status)) continue;
+          if (status && !normalizeSearchText(finance.status).includes(status)) continue;
           rows.push(finance);
         }
 
@@ -2563,13 +2563,13 @@ export const buildAssistantTools = ({
       },
       run: async (args) => {
         if (!clientsCache) clientsCache = await loadClients();
-        const text = asText(args?.texto);
+        const text = normalizeSearchText(args?.texto);
         const rows = clientsCache
           .filter((client) => (
             !text
             || [client.businessName, client.contactName, client.email, client.cuit]
               .filter(Boolean)
-              .some((value) => asText(value).includes(text))
+              .some((value) => normalizeSearchText(value).includes(text))
           ))
           .slice(0, limitOf(args?.limite))
           .map((client) => ({
@@ -2596,12 +2596,12 @@ export const buildAssistantTools = ({
       },
       run: async (args) => {
         if (!usersCache) usersCache = await loadUsers();
-        const text = asText(args?.texto);
-        const role = asText(args?.rol);
+        const text = normalizeSearchText(args?.texto);
+        const role = normalizeSearchText(args?.rol);
         const rows = usersCache
           .filter((entry) => (
-            (!role || asText(entry.role) === role)
-            && (!text || [entry.displayName, entry.email].filter(Boolean).some((value) => asText(value).includes(text)))
+            (!role || normalizeSearchText(entry.role) === role)
+            && (!text || [entry.displayName, entry.email].filter(Boolean).some((value) => normalizeSearchText(value).includes(text)))
           ))
           .slice(0, limitOf(args?.limite))
           .map((entry) => ({
