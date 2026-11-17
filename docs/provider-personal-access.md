@@ -15,6 +15,11 @@ abre sesiones ni inicia login, no crea custom tokens ni usa claves o impersonaci
 Reutiliza `getAccessToken` oficial, incluido su refresco OAuth ordinario en memoria,
 como los helpers mantenidos de operación administrativa. No confunde un access
 token vencido con la necesidad de que el usuario vuelva a iniciar sesión.
+La verificación de identidad necesita `email/openid`: se reutiliza un token
+vigente que los conserve, o se refresca con los mismos cinco scopes originales
+del login oficial de Firebase CLI. Un token reducido a cloud/firebase no sirve
+para userinfo. El fallback antiguo que devuelve un refresh token como si fuera
+access token se rechaza antes de consultar identidad o Firestore.
 El cliente administrativo de Firestore usa REST y OAuth sólo en memoria.
 
 El JSON de entrada y los respaldos crudos permanecen en `LOCALAPPDATA`, fuera de

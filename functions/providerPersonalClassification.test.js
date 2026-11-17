@@ -2,6 +2,7 @@
 const test = require('node:test'), assert = require('node:assert/strict');
 const { classifyPersonalProvider, classificationInput, preserved } = require('./providerPersonalClassification');
 const { hash } = require('./providerPortalModel');
+const { officialAccessToken } = require('../scripts/classify-personal-provider.cjs');
 const input = { operationKey: 'fictitious-person-classification', providerId: 'supplier', targetUid: 'own', targetEmail: 'own@example.test',
   operatorUid: 'admin', operatorEmail: 'admin@example.test', confirmedPersonal: true, reason: 'Autorización ficticia para clasificación personal.', authorizationSha256: 'a'.repeat(64) };
 function fixture() {
@@ -103,4 +104,12 @@ test('operación estable rechaza reutilización para otro contenido y falla con 
   await assert.rejects(f.call({ ...command, reason: 'Otra autorización ficticia incompatible.' }, true), /otro contenido/);
   assert.equal(f.writes.length, 2);
   assert.equal(hash(f.rows.get(`providerPortalAudit/${result.auditId}`).changedFields), hash(['type', 'updatedAt']));
+});
+test('OAuth conserva identidad real: reutiliza token completo, restaura scopes originales y rechaza fallback de refresh token', async () => {
+  const now = 1000, full = { access_token: 'fictitious-access', refresh_token: 'fictitious-refresh', expires_at: 100000, scopes: ['email', 'openid'] };
+  let calls = 0;
+  const cli = { async getAccessToken(refresh, scopes) { calls++; assert.equal(refresh, full.refresh_token); assert(scopes.includes('email') && scopes.includes('openid')); return full; } };
+  assert.equal(await officialAccessToken(cli, { tokens: full }, now), full.access_token); assert.equal(calls, 0);
+  assert.equal(await officialAccessToken(cli, { tokens: { ...full, scopes: ['https://www.googleapis.com/auth/cloud-platform'] } }, now), full.access_token); assert.equal(calls, 1);
+  await assert.rejects(officialAccessToken({ getAccessToken: async refresh => ({ access_token: refresh }) }, { tokens: { ...full, expires_at: 0 } }, now), /access token vigente/);
 });

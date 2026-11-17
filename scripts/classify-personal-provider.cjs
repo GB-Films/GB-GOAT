@@ -6,6 +6,23 @@ const fs = require('node:fs'), path = require('node:path'), assert = require('no
 const { createRequire } = require('node:module');
 const { classifyPersonalProvider } = require('../functions/providerPersonalClassification');
 const sha = value => crypto.createHash('sha256').update(value).digest('hex');
+async function officialAccessToken(cli, account, now = Date.now()) {
+  assert(account.tokens?.refresh_token, 'Falta la sesión oficial local; no se inicia login desde esta herramienta.');
+  // Firebase CLI 15.36 auth.js SCOPES for the original interactive login.
+  // Requesting only cloud/firebase downscopes the token and userinfo returns401.
+  // Restore only those originally granted CLI scopes, never start another login.
+  const originalLoginScopes = ['email', 'openid', 'https://www.googleapis.com/auth/cloudplatformprojects.readonly',
+    'https://www.googleapis.com/auth/firebase', 'https://www.googleapis.com/auth/cloud-platform'];
+  const granted = new Set([...(account.tokens.scopes || []), ...(account.tokens.scope || '').split(' ')]);
+  const hasIdentityScope = granted.has('email') || granted.has('https://www.googleapis.com/auth/userinfo.email');
+  const oauth = account.tokens.expires_at > now + 60000 && hasIdentityScope ? account.tokens
+    : await cli.getAccessToken(account.tokens.refresh_token, originalLoginScopes);
+  // CLI's legacy CI-token fallback returns refresh_token as access_token after a
+  //400/401 refresh response. It is never an acceptable administrative identity.
+  assert(oauth.access_token && oauth.access_token !== account.tokens.refresh_token && oauth.expires_at > now + 60000,
+    'La CLI no devolvió un access token vigente para comprobar identidad. No se inicia login ni se escribe en GOAT.');
+  return oauth.access_token;
+}
 function privateDirectory(folder, localRoot = process.env.LOCALAPPDATA) {
   assert(localRoot && path.isAbsolute(folder), 'El respaldo debe estar en un directorio privado de LOCALAPPDATA.');
   const root = fs.realpathSync(localRoot), target = path.resolve(folder), relative = path.relative(root, target);
@@ -31,11 +48,7 @@ async function main() {
   const cli = require(path.join(cliRoot, 'lib/auth'));
   const account = cli.getGlobalDefaultAccount();
   assert.equal(account?.user?.email, input.operatorEmail, 'La cuenta oficial local no coincide con el operador.');
-  assert(account.tokens?.refresh_token, 'Falta la sesión oficial local; no se inicia login desde esta herramienta.');
-  // Same official getAccessToken flow used by the maintained administrative
-  // session helpers. Ordinary OAuth refresh is not a new login/session.
-  const oauth = await cli.getAccessToken(account.tokens.refresh_token, ['https://www.googleapis.com/auth/cloud-platform', 'https://www.googleapis.com/auth/firebase']);
-  const token = oauth.access_token;
+  const token = await officialAccessToken(cli, account);
   assert(token, 'Falta el acceso oficial vigente.');
   const identityResponse = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(30000) });
   assert(identityResponse.ok, 'No se pudo verificar la identidad de la sesión oficial.');
@@ -73,4 +86,4 @@ async function main() {
   } finally { await db.terminate(); }
 }
 if (require.main === module) main().catch(error => { console.error(error.code === 'ERR_ASSERTION' ? error.message : 'La operación se detuvo. Revisar el resultado privado y el estado antes de reintentar.'); process.exitCode = 1; });
-module.exports = { privateDirectory };
+module.exports = { privateDirectory, officialAccessToken };
