@@ -1,5 +1,6 @@
-export const normalizeSearch = (value: unknown) => String(value ?? '')
-  .normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+import { normalizeSearchText } from './identity';
+
+export const normalizeSearch = (value: unknown) => normalizeSearchText(String(value ?? ''))
   .replace(/[^a-z0-9]+/g, ' ').trim();
 
 // Tokens may appear in any order. Compact matching also accepts GGB0554,

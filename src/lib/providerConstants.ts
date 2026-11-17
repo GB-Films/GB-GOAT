@@ -1,3 +1,5 @@
+import { normalizeSearchText } from './identity';
+
 export const PRODUCTION_AREA_CATEGORIES = [
   'Producción',
   'Dirección',
@@ -89,7 +91,7 @@ export const providerDisplayName = (provider: any) => {
   return fullName || formatPersonName(provider?.fullName) || 'Persona sin nombre';
 };
 
-export const providerSearchText = (provider: any) => [
+const providerSearchFields = (provider: any) => [
   providerDisplayName(provider),
   provider?.name,
   provider?.lastName,
@@ -112,19 +114,20 @@ export const providerSearchText = (provider: any) => [
   provider?.categoryOther,
   provider?.bankAccount_cbu,
   provider?.bankAccount_alias,
-].filter(Boolean).join(' ').toLowerCase();
+].filter(Boolean).join(' ');
 
-export const providerMatchesSearch = (provider: any, search: string) => {
-  const terms = String(search || '')
-    .toLowerCase()
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
+const matchesProviderTerms = (haystack: string, query: string) =>
+  query.split(/\s+/).every((term) => haystack.includes(term));
 
-  if (terms.length === 0) return true;
-  const haystack = providerSearchText(provider);
-  return terms.every((term) => haystack.includes(term));
-};
+export const providerSearchText = (provider: any) => normalizeSearchText(providerSearchFields(provider));
+
+export const providerMatchesSearch = (provider: any, search: string) =>
+  matchesProviderTerms(providerSearchText(provider), normalizeSearchText(search));
+
+// Keep the existing fallback for financial rows missing a provider ID, where
+// the matched record supplies identity and bank information.
+export const providerMatchesLegacyReference = (provider: any, reference: string) =>
+  matchesProviderTerms(providerSearchFields(provider).toLowerCase(), String(reference || '').trim().toLowerCase());
 
 export const inferLegacyIdentifiers = (provider: any) => {
   const dni = normalizeDigits(provider?.dni);

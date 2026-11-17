@@ -12,6 +12,7 @@ import { cn } from '../lib/utils';
 import { PageHeader } from '../components/PageHeader';
 import { validateSpreadsheetImport } from '../lib/files';
 import { ClientProfile } from './ClientProfile';
+import { normalizeSearchText } from '../lib/identity';
 
 export default function Clients() {
   const [clients, setClients] = useState<any[]>([]);
@@ -174,8 +175,9 @@ export default function Clients() {
     }
   };
 
+  const term = normalizeSearchText(searchTerm);
   const filteredClients = clients.filter(client =>
-    `${client.businessName || ''} ${client.cuit || ''}`.toLowerCase().includes(searchTerm.toLowerCase())
+    normalizeSearchText(`${client.businessName || ''} ${client.cuit || ''}`).includes(term)
   );
 
   return (

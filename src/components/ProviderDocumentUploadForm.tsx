@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { FileText, Search, UploadCloud, X } from 'lucide-react';
+import { normalizeSearchText } from '../lib/identity';
 import { documentProjectChoices } from '../lib/providerDocumentSelection';
 
 export function ProviderDocumentUploadForm({ kind, lines, records = [], busy, uncertain, onClose, onSave }: {
@@ -13,8 +14,8 @@ export function ProviderDocumentUploadForm({ kind, lines, records = [], busy, un
   const [error, setError] = useState('');
   const input = useRef<HTMLInputElement>(null);
   const projects = documentProjectChoices(lines, kind, records);
-  const normalize = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-  const visible = projects.filter(project => normalize(project.name).includes(normalize(search.trim())));
+  const term = normalizeSearchText(search);
+  const visible = projects.filter(project => normalizeSearchText(project.name).includes(term));
   const choose = (files: File[]) => {
     if (files.length !== 1) { setError('Elegí un solo documento por carga.'); return; }
     const next = files[0];

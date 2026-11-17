@@ -5,7 +5,7 @@ import { db } from '../lib/firebase';
 import { Users, Mail, Shield, ShieldCheck, MoreVertical, Lock, Link2, Copy, CheckCircle2, Search } from 'lucide-react';
 import { useAuth, APP_OWNER_EMAIL } from '../context/AuthContext';
 import { roleSearchText } from '../lib/roles';
-import { normalizeEmail } from '../lib/identity';
+import { normalizeEmail, normalizeSearchText } from '../lib/identity';
 import { PageHeader } from '../components/PageHeader';
 import { portalAdminRequest } from '../lib/providerPortal';
 import { TeamFromProvider } from '../components/TeamFromProvider';
@@ -27,17 +27,17 @@ export default function Team() {
   const { profile, isOwner, isAdmin } = useAuth();
 
   const filteredUsers = useMemo(() => {
-    const term = searchTerm.trim().toLowerCase();
+    const term = normalizeSearchText(searchTerm);
     if (!term) return users;
 
     return users.filter((user) => {
       const role = user.role || 'colaborador';
-      return [
+      return normalizeSearchText([
         user.displayName,
         user.email,
         user.id,
         roleSearchText(role),
-      ].filter(Boolean).join(' ').toLowerCase().includes(term);
+      ].filter(Boolean).join(' ')).includes(term);
     });
   }, [users, searchTerm]);
 

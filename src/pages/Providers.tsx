@@ -35,6 +35,7 @@ import {
   inferLegacyIdentifiers,
 } from '../lib/providerConstants';
 import { hasGlobalRole, PROVIDER_ACCESS_ROLES, PROVIDER_CREATE_ROLES, PROVIDER_UPDATE_ROLES } from '../lib/roles';
+import { normalizeSearchText } from '../lib/identity';
 
 const inputClass = 'w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all';
 const labelClass = 'block text-[10px] font-bold uppercase text-slate-400 mb-2 tracking-widest';
@@ -131,7 +132,7 @@ export default function Providers() {
   const canCreateProviders = hasGlobalRole(profile?.role, PROVIDER_CREATE_ROLES);
 
   const filteredProviders = useMemo(() => {
-    const term = searchTerm.trim().toLowerCase();
+    const term = normalizeSearchText(searchTerm);
     const matches = term ? providers.filter((provider) => providerSearchText(provider).includes(term)) : providers;
     return sortProviders(matches, providerOrder);
   }, [providers, searchTerm, providerOrder]);

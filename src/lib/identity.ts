@@ -2,7 +2,7 @@ export const normalizeEmail = (email?: string | null) => (email || '').trim().to
 
 export const normalizeSearchText = (value: unknown) => String(value || '')
   .normalize('NFD')
-  .replace(/[\u0300-\u036f]/g, '')
+  .replace(/\p{M}/gu, '')
   .trim()
   .toLowerCase();
 
