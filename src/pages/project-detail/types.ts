@@ -1,6 +1,8 @@
 import type { ReimbursementRecord } from '../../lib/reimbursements';
 
 export interface Payment {
+  reportedPaymentId?: string;
+  reportedPartIndex?: number;
   sharedRecordId?: string;
   id: string;
   amount: number;

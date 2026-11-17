@@ -24,6 +24,7 @@ import { assertReimbursementAmount, assertReimbursementCashLink, getReimbursemen
 import type { Payment, PaymentCollection } from './types';
 import { SearchableSelect } from '../../components/SearchableSelect';
 import { CashPaymentReceiptButton } from '../../components/CashPaymentReceiptButton';
+import { ReportedPaymentDetails } from '../../components/ReportedPaymentDetails';
 
 const formatDate = (dateString: string | any) => {
   if (!dateString) return 'Sin fecha';
@@ -654,7 +655,7 @@ export function PaymentModal({
             </div>
           </div>
 
-          {item.thirdPartyPayoutRequired && <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"><p className="mb-2">Este trabajo tiene una declaración firmada de facturación y cobro por un tercero. Registrá el pago con su factura y la cuenta declarada desde la ficha completa.</p><ProviderProfileButton providerId={item.providerId}>Gestionar factura y pago del tercero</ProviderProfileButton></div>}
+          {item.thirdPartyPayoutRequired && <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"><p className="mb-2">Este trabajo está identificado para cobro por un tercero. Para registrar un nuevo pago, revisá desde la ficha que la autorización incluya este trabajo y su cuenta de cobro.</p><ProviderProfileButton providerId={item.providerId}>Gestionar factura y pago del tercero</ProviderProfileButton></div>}
           {canManagePayments && !item.thirdPartyPayoutRequired && (
             <form onSubmit={async (e) => {
               e.preventDefault();
@@ -1068,7 +1069,7 @@ export function PaymentModal({
                           placeholder="Detalle"
                           className="w-full px-3 py-2 bg-white border border-slate-100 rounded text-xs focus:outline-none focus:border-black"
                         />
-                        {!isExternal && canEditExistingPayments && (
+                        {!isExternal && !payment.reportedPaymentId && canEditExistingPayments && (
                           <label className="block text-xs font-bold text-amber-900">
                             Caja del pago
                             <select name="editCashBoxId" defaultValue="keep" className="mt-1 w-full rounded border border-amber-200 bg-white px-3 py-2 text-xs">
@@ -1122,6 +1123,7 @@ export function PaymentModal({
                             </div>
                           )}
                           {projectId && item?.id && item?.providerId && <CashPaymentReceiptButton key={`cash-receipt:${projectId}/${collectionName}/${item.id}/${payment.id}`} projectId={projectId} collectionName={collectionName} itemId={item.id} payment={payment} canRequest={canManagePayments} />}
+                          {projectId && item?.id && <ReportedPaymentDetails key={`reported:${payment.id}`} payment={payment} projectId={projectId} itemId={item.id} />}
                           {isExternal && (
                             <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">
                               <div className="font-bold">Pagó {payment.thirdPartyPayerName || 'persona sin identificar'}</div>
@@ -1146,7 +1148,7 @@ export function PaymentModal({
                             <Calendar className="w-2.5 h-2.5" />
                             {formatDate(payment.date)}
                           </div>
-                          {(canEditExistingPayments || canCorrectOwnPayments) && canEditPaymentRecord?.(payment, idx) && (
+                          {!payment.reportedPaymentId && (canEditExistingPayments || canCorrectOwnPayments) && canEditPaymentRecord?.(payment, idx) && (
                             <button
                               type="button"
                               onClick={() => {
@@ -1159,7 +1161,7 @@ export function PaymentModal({
                               Editar
                             </button>
                           )}
-                          {canEditExistingPayments && canEditPaymentRecord?.(payment, idx) && (!isExternal || !payment.reimbursements?.length) && (
+                          {!payment.reportedPaymentId && canEditExistingPayments && canEditPaymentRecord?.(payment, idx) && (!isExternal || !payment.reimbursements?.length) && (
                             <button
                               type="button"
                               disabled={isDeletingPayment === idx}
@@ -1193,7 +1195,7 @@ export function PaymentModal({
                             {canEditExistingPayments && <button type="button" disabled={Boolean(activeReimbursementId)} onClick={() => void deleteReimbursement(idx, reimbursement.id)} className="text-rose-600 disabled:opacity-40">Anular</button>}
                           </div>
                         ))}
-                        {canEditExistingPayments && reimbursementBalance > 0.009 && (
+                        {canEditExistingPayments && !payment.reportedPaymentId && reimbursementBalance > 0.009 && (
                           <form onSubmit={(event) => void recordReimbursement(event, idx)} className="space-y-2 rounded-lg border border-slate-200 bg-white p-3">
                             <div className="text-xs font-bold">Registrar reintegro a {payment.thirdPartyPayerName}</div>
                             <div className="grid grid-cols-2 gap-2">

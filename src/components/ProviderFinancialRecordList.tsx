@@ -40,8 +40,9 @@ export function ProviderFinancialRecordList({ records, busy, onOpen, onCancel, c
           {record.issuerCuit && <p>CUIT del emisor: {record.issuerCuit}</p>}
           {record.payeeCuit && <p>CUIT del destinatario: {record.payeeCuit}</p>}
           {record.notes && <p className="whitespace-pre-wrap break-words leading-relaxed">{record.notes}</p>}
+          {record.reportedPayment && <p className="rounded bg-amber-50 p-2 text-amber-900">Registro de un pago ya realizado. Su aceptación documental queda pendiente; el antecedente no se anula desde esta opción.</p>}
           {projects.map(project => project.descriptions.length > 0 && <p key={project.id}><b>{project.name}:</b> {project.descriptions.join(' · ')}</p>)}
-          {record.status === 'active' && (!(record.kind === 'payment' && record.method === 'cash') || canCancelGeneralCash) && <button type="button" disabled={busy || !!opening} className="inline-flex items-center gap-1 rounded px-2 py-1 text-rose-700 hover:bg-rose-50 disabled:opacity-50" onClick={async () => { setError(''); try { await onCancel(record); } catch { setError('No se pudo anular el registro.'); } }}><Ban className="h-3 w-3"/>Anular {invoice ? 'factura' : payment ? 'pago' : 'comprobante'}</button>}
+          {record.status === 'active' && !record.reportedPayment && (!(record.kind === 'payment' && record.method === 'cash') || canCancelGeneralCash) && <button type="button" disabled={busy || !!opening} className="inline-flex items-center gap-1 rounded px-2 py-1 text-rose-700 hover:bg-rose-50 disabled:opacity-50" onClick={async () => { setError(''); try { await onCancel(record); } catch { setError('No se pudo anular el registro.'); } }}><Ban className="h-3 w-3"/>Anular {invoice ? 'factura' : payment ? 'pago' : 'comprobante'}</button>}
         </div>
       </details>
     </article>;
