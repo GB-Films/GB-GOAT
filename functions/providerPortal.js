@@ -13,7 +13,8 @@ const { createThirdPartyIntake } = require("./providerIntake");
 const { createProviderRegistration } = require('./providerRegistration');
 const { rememberSignedRegistration } = require('./providerRegistrationEvidence');
 const { createProviderRegistrationLookup } = require('./providerRegistrationLookup');
-const { activatePersonalMembership, attachVerifiedIntakeMembership } = require('./providerPortalAccess');
+const { activatePersonalMembership, attachVerifiedIntakeMembership, legacyPersonalAllowed, personalIdentityMatches, verifyPortalAccount } = require('./providerPortalAccess');
+const { profileReview } = require('./providerProfileReview');
 const { DECLARED_COMPANY_EVIDENCE } = require('./providerEvidence');
 const { companyRepresentation, assertCompanyAccount, DECLARED_COMPANY_VERSION } = require('./providerRepresentation');
 const { applySignedCompanyRepresentation } = require('./signedCompanyRepresentation');
@@ -105,6 +106,10 @@ function createProviderPortalHandler({
         "No representás a este proveedor.",
       );
     await assertProviderPortalAllowed(db, providerId);
+    const provider = (await db.doc(`providers/${providerId}`).get()).data();
+    if (active && (!provider || provider.type === 'persona' && !personalIdentityMatches(provider, actor)
+      || provider.type !== 'persona' && provider.type !== 'empresa' && !await legacyPersonalAllowed({ db, read: ref => ref.get(), providerId, provider, membership: row, actor })))
+      throw new HttpsError('permission-denied', 'Administración debe confirmar la clasificación de tu ficha.');
     return row;
   };
   async function works(providerId, actor) {
@@ -234,6 +239,7 @@ function createProviderPortalHandler({
   return async (request) => {
     const actor = identity(request);
     const input = request.data || {};
+    if (['bootstrap', 'overview'].includes(input.action)) await verifyPortalAccount(findAccountByUid, actor);
     if (input.action === "internalInvoice") {
       const user = (await db.doc(`users/${actor.uid}`).get()).data();
       if (
@@ -349,10 +355,13 @@ function createProviderPortalHandler({
         const p = (await db.doc(`providers/${row.id}`).get()).data();
         if (!p) return null;
         if (isAdministrativeRecord((await administrativeRecordRef(db, row.id).get()).data(), row.id)) return null;
-        if (m.status === 'needs_confirmation' && p.type === 'persona') {
+        if (m.status === 'needs_confirmation' && p.type !== 'empresa') {
           m = await activatePersonalMembership({ db, actor, providerId: row.id, timestamp });
           if (!m || !['active', 'needs_confirmation'].includes(m.status) || m.email !== actor.email) return null;
         }
+        const personalLegacy = await legacyPersonalAllowed({ db, read: ref => ref.get(), providerId: row.id, provider: p, membership: m, actor });
+        const needsClassification = p.type !== 'persona' && p.type !== 'empresa' && !personalLegacy;
+        if (p.type === 'persona' && !personalIdentityMatches(p, actor)) return null;
         return {
           providerId: row.id,
           status: m.status,
@@ -361,7 +370,8 @@ function createProviderPortalHandler({
           ),
           cuit: text(p.cuit),
           capacity: m.representation || "",
-          type: p.type || "persona",
+          type: p.type || (personalLegacy ? 'persona' : ''),
+          needsClassification,
         };
         }));
         entries.push(...batch.filter(Boolean));
@@ -435,9 +445,11 @@ function createProviderPortalHandler({
       if (provider.registration?.status !== 'complete') await rememberSignedRegistration({db,timestamp,actor,providerId,
         declarations:declarations.docs.map(row=>({id:row.id,...row.data()}))});
       // Only this provider's scoped data leave the boundary, never arbitrary financial fields or file tokens.
+      const profileConfirmation = confirmationState(provider, membership, actor, declarations.docs.map(s => ({ id: s.id, ...s.data() })));
       return {
         provider: M.publicProfile(provider),
-        profileConfirmation: confirmationState(provider, membership, actor, declarations.docs.map(s => ({ id: s.id, ...s.data() }))),
+        profileConfirmation,
+        profileReview: profileReview(provider, profileConfirmation, declarations.docs.map(row => row.data())),
         thirdPartyDefaults: preferences?.data()?.uid === actor.uid && preferences.data().email === actor.email
           ? preferences.data().party
           : declarations.docs.map(doc => doc.data()).filter(d => d.kind === 'third_party' && d.actor.uid === actor.uid && d.actor.email === actor.email)

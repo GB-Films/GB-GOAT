@@ -21,7 +21,7 @@ import { declarationCompletionMessage, portalDeclarationCompletionInput, type De
 import { ProviderSigningGuide } from '../components/ProviderSigningGuide';
 import { ProviderPortalDocuments } from '../components/ProviderPortalDocuments';
 import { ProviderPendingSignatures } from '../components/ProviderPendingSignatures';
-import { pendingPortalSignatureCount, portalErrorMessage, representsAnotherProvider } from '../lib/providerPortalUi';
+import { pendingPortalSignatureCount, portalErrorMessage, representsAnotherProvider, providerWorkEmptyMessage } from '../lib/providerPortalUi';
 import { BriefcaseBusiness, FileText, Wallet, FolderPen, UserRound } from 'lucide-react';
 
 const tabs = [
@@ -93,7 +93,7 @@ export default function ProviderPortal() {
         b.memberships.find((m: any) => m.providerId === selectedProviderRef.current) ||
         b.memberships[0];
       if (chosen?.providerId !== selectedProviderRef.current) { selectedProviderRef.current = chosen?.providerId || ''; setProviderId(chosen?.providerId || ''); }
-      if (chosen?.status === "active") {
+      if (chosen?.status === "active" && !chosen.needsClassification) {
         const result = await portalRequest({
           action: "overview",
           providerId: chosen.providerId,
@@ -272,10 +272,10 @@ export default function ProviderPortal() {
         </div>
       )}
       {selected?.status === 'needs_confirmation' && selected?.type === 'empresa' && <div key={`${providerId}/${docs.filter(d => d.providerId === providerId && d.signed).length}`}><CompanyRepresentationForm providerId={providerId} email={user?.email || ''} busy={busy} onPrepare={input => prepare('prepareRepresentation', input)} /></div>}
-      {selected?.status === 'needs_confirmation' && selected?.type !== 'empresa' && (
-        <p role="status" className={box}>Administración debe revisar la clasificación de esta ficha para activar el acceso. No necesitás firmar una declaración de representación.</p>
+      {(selected?.needsClassification || selected?.status === 'needs_confirmation' && selected?.type !== 'empresa') && (
+        <p role="status" className={box}>Tu cuenta está asociada. Administración debe confirmar que esta ficha corresponde a una persona. No necesitás volver a asignar tu cuenta ni firmar una representación.</p>
       )}
-      {view && tab !== 'Mis datos' && <ProviderConfirmationNotice status={view.profileConfirmation?.status} onReview={reviewProfileData} />}
+      {view && <ProviderConfirmationNotice status={view.profileConfirmation?.status} review={view.profileReview} onReview={reviewProfileData} />}
       <nav
         aria-label="Secciones del proveedor"
         className="portal-tabs grid grid-cols-3 gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-sm shadow-slate-200/20 sm:flex sm:overflow-x-auto sm:rounded-2xl sm:p-1.5"
@@ -296,7 +296,7 @@ export default function ProviderPortal() {
       {tab === "Trabajos" && (
         <section className="space-y-3">
           <div><h2 className="text-lg font-semibold">Tus trabajos</h2><p className="mt-1 text-xs text-slate-500">Desplegá un proyecto para ver sus trabajos y pagos.</p></div>
-          <ProviderWorkList key={providerId} works={view?.works || []} emptyMessage={!hasLoaded || (selected?.status === 'active' && !view) ? 'Cargando tus datos…' : 'Todavía no tenés trabajos asignados.'} />
+          <ProviderWorkList key={providerId} works={view?.works || []} emptyMessage={providerWorkEmptyMessage(hasLoaded, selected, !!view)} />
         </section>
       )}
       {tab === "Facturas" && (

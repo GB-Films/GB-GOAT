@@ -1,5 +1,50 @@
 # Acceso personal y clasificación de fichas antiguas
 
+## Acceso propio y revisión son estados distintos
+
+La fila amarilla de gastos usa `expenseRegistrationState`: una ficha manual o
+importada es provisoria hasta acreditar alta propia, `personalGoogleAccount`,
+origen reconocido de alta o confirmación histórica aplicada con prueba completa.
+Las fichas administrativas explícitas son una excepción separada; carga/error de
+la comprobación no significa provisional. Una membresía de portal por sí sola no
+completa el alta y este cambio no modifica el indicador de gastos.
+
+Una cuenta Google verificada, habilitada y expresamente vinculada puede consultar
+su ficha de persona aunque falten DNI, CUIT, contacto o banco. El estado de revisión
+no bloquea los trabajos y comprobantes propios ni concede roles internos. El
+backend comprueba también la cuenta viva al cargar la cuenta y su resumen.
+
+Para una ficha antigua sin `type`, la asociación ya marcada como representación
+personal `own` permite acceso si no hay razón social, identidad verificada
+contradictoria ni aprobación/declaración empresarial vigente. Se conserva la ficha
+sin completar sus datos o alta; la advertencia incluye su clasificación pendiente.
+Una asociación genérica no es evidencia suficiente para inferir que sea persona:
+queda visible como pendiente de clasificación y no se anuncia que no tiene trabajos.
+No se infiere identidad por nombre, correo de contacto o coincidencia de banco.
+
+Administración tiene un camino por ficha: **Accesos de proveedores → Asociaciones
+y publicación de comprobantes → elegir ficha y cuenta ya asociadas → Confirmar
+ficha de persona**. La vista previa comprueba cuenta, permisos, versión y huellas;
+la confirmación explícita guarda sólo clasificación y fecha más auditoría estable,
+sin exigir ni corregir banco y sin forzar la membresía. Empresas, fichas con tipo
+ya definido, representación empresarial, revocadas o identidades distintas se
+detienen. La persona recarga su portal con su propia cuenta después de corregir
+la clasificación. Este camino nativo requiere publicar `manageProviderPortal`.
+
+El aviso amarillo **Tenés datos para revisar** nombra los campos pendientes y
+ofrece **Revisar mis datos**. También aparece para fichas manuales con todos los
+campos completos que todavía no acreditan alta/confirmación auténtica; no se
+limita a comprobar formatos. El banner no imprime números bancarios ni identidad
+fiscal, no se descarta marcando registros completos y no reemplaza la firma de
+los cambios críticos. La clasificación pendiente queda explicada. La corrección de
+datos conserva su validación y aplicación firmada existentes.
+
+Publicación mínima, después de CI y revisión: `providerPortal` (acceso/resumen y
+metadatos de revisión), `manageProviderPortal` (acción administrativa acotada), y
+después web. No cambia reglas, Auth, IAM o roles ni necesita migración masiva. El
+helper local de la sección siguiente permite la reparación puntual autorizada sin
+esperar ese despliegue; su ejecución no prueba que el nuevo banner esté publicado.
+
 ## Reparación administrativa de clasificación
 
 `scripts/classify-personal-provider.cjs` es una herramienta mantenida de uso

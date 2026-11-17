@@ -62,17 +62,18 @@ const { createPortalFileReader } = require("../functions/providerPortalFiles");
 const {
   createProviderFinanceHandler,
 } = require("../functions/providerFinance");
+const testAccountEmails = new Map();
 const deps = {
   db,
   sign,
   timestamp: () => admin.firestore.FieldValue.serverTimestamp(),
   readFile: createPortalFileReader({ db, readLocalFile: sign.readLocalFile }),
   clock: () => new Date("2026-10-26T19:00:00Z"),
-  findAccountByUid: async uid => ({ uid, email: `${uid}@example.test`, emailVerified: true, providerData: [{ providerId: 'google.com' }] }),
+  findAccountByUid: async uid => ({ uid, email: testAccountEmails.get(uid) || `${uid}@example.test`, emailVerified: true, providerData: [{ providerId: 'google.com' }] }),
 };
 const portal = createProviderPortalHandler(deps),
   manage = createProviderPortalAdminHandler(deps);
-const request = (uid, email, data) => ({
+const request = (uid, email, data) => { if (!testAccountEmails.has(uid)) testAccountEmails.set(uid, email); return ({
   auth: {
     uid,
     token: {
@@ -84,7 +85,7 @@ const request = (uid, email, data) => ({
     },
   },
   data,
-});
+}); };
 const own = (data) => portal(request("own", "own@example.test", data));
 const other = (data) => portal(request("other", "other@example.test", data));
 const adminCall = (data) =>
@@ -821,7 +822,7 @@ try {
   await assert.rejects(own({ action: "prepareThirdParty", providerId: "company-no-third", attemptId: "company-third", ...intakeParty, roles: ["payment"], workKeys: ["project/areaExpenses/new-person-work"], expiresOn: "2026-12-31" }), /empresas/);
   await db.doc("providers/unknown-type").set({ name: "Antecedente sin tipo" });
   await db.doc("providerPortalUsers/own/memberships/unknown-type").set({ email: "own@example.test", status: "active" });
-  await assert.rejects(own({ action: "prepareThirdParty", providerId: "unknown-type", attemptId: "unknown-third", ...intakeParty, roles: ["payment"], workKeys: ["project/areaExpenses/new-person-work"], expiresOn: "2026-12-31" }), /persona física/);
+  await assert.rejects(own({ action: "prepareThirdParty", providerId: "unknown-type", attemptId: "unknown-third", ...intakeParty, roles: ["payment"], workKeys: ["project/areaExpenses/new-person-work"], expiresOn: "2026-12-31" }), error => error.code === 'permission-denied' && /clasificación/.test(error.message));
   await db.doc("providerPortalDeclarations/company-pending-history").set({ kind: "third_party", providerId: "company-no-third", status: "pending_review", proof: { complete: true }, content: { roles: ["payment"], expiresOn: "2026-12-31" } });
   await assert.rejects(adminCall({ action: "review", declarationId: "company-pending-history", roles: ["payment"], decision: "approved", reason: "No permitida" }), /sin revisión administrativa/);
   assert.equal((await db.doc("providerPortalDeclarations/company-pending-history").get()).data().status, "pending_review");

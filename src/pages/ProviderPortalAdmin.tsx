@@ -7,6 +7,7 @@ export default function ProviderPortalAdmin() {
   const [approvedScope, setApprovedScope] = useState<Record<string, string>>({});
   const [applicationIssues, setApplicationIssues] = useState<any[]>([]);
   const [accessEmail, setAccessEmail] = useState("");
+  const [accessNotice, setAccessNotice] = useState('');
   const [reviews, setReviews] = useState<any[]>([]),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
@@ -169,6 +170,7 @@ export default function ProviderPortalAdmin() {
           value={providerId}
           onChange={(e) => {
             setProviderId(e.target.value);
+            setAccessNotice('');
             setFiles([]);
             setReviewedFiles({});
           }}
@@ -187,7 +189,7 @@ export default function ProviderPortalAdmin() {
               type="email"
               className="mt-1 w-full rounded border p-2"
               value={accessEmail}
-              onChange={(e) => setAccessEmail(e.target.value)}
+              onChange={(e) => { setAccessEmail(e.target.value); setAccessNotice(''); }}
             />
           </label>
           <p className="text-xs text-slate-500">
@@ -206,9 +208,11 @@ export default function ProviderPortalAdmin() {
                   email: accessEmail,
                   status: "needs_confirmation",
                 });
-                alert(
-                  "Asociación preparada; la persona confirmará y firmará su representación.",
-                );
+                const provider = providers.find(row => row.id === providerId);
+                setAccessNotice(provider?.type === 'persona'
+                  ? 'Cuenta asociada. La persona puede abrir Mi proveedor con ese correo, aunque tenga datos para revisar.'
+                  : provider?.type === 'empresa' ? 'Cuenta asociada. La persona debe completar la representación de la empresa desde Mi proveedor.'
+                    : 'Cuenta asociada. Falta confirmar la clasificación de la ficha antes de habilitarla.');
               })
             }
           >
@@ -235,6 +239,21 @@ export default function ProviderPortalAdmin() {
           >
             Revocar representación
           </button>
+          {providerId && !Object.hasOwn(providers.find(row => row.id === providerId) || {}, 'type') && <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+            <p>Esta ficha antigua no tiene clasificación. Si corresponde a una persona, podés confirmarlo sin cambiar su banco ni volver a cargar sus datos. La cuenta debe estar asociada primero.</p>
+            <button type="button" disabled={busy || !accessEmail} className="rounded-lg border border-amber-300 bg-white px-3 py-2 font-semibold hover:bg-amber-100 disabled:opacity-40" onClick={() => run(async () => {
+              const operationKey = crypto.randomUUID();
+              const command = { providerId, email: accessEmail, operationKey, confirmPersonal: true };
+              const preview = await portalAdminRequest({ action: 'personalClassificationPreview', ...command });
+              const provider = providers.find(row => row.id === providerId);
+              if (!confirm(`¿Confirmás que ${provider?.name || 'esta ficha'} corresponde a una persona y que su cuenta es ${accessEmail}? Se conservarán sus demás datos.`)) return;
+              const result = await portalAdminRequest({ action: 'classifyPersonalProvider', ...command, expectedVersion: preview.expectedVersion, expectedPreservationHash: preview.expectedPreservationHash });
+              setAccessNotice(result.verification === 'failed_after_commit' ? 'La clasificación se guardó. Administración debe verificar el resultado antes de repetir.' : 'Ficha clasificada como persona. Puede recargar Mi proveedor con su cuenta asociada. Los datos pendientes siguen por revisar.');
+              const rows = await getDocs(collection(db, 'providers'));
+              setProviders(rows.docs.map(row => ({ id: row.id, ...row.data() })));
+            })}>Confirmar ficha de persona</button>
+          </div>}
+          {accessNotice && <p role="status" className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-900">{accessNotice}</p>}
         </div>
         <button
           disabled={busy || !providerId}
