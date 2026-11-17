@@ -44,12 +44,16 @@ function createReportedPaymentService({ db, timestamp, verifyFile, clock = () =>
     const provider = (await read(db.doc(`providers/${id(row.providerId)}`))).data();
     if (!provider || provider.type !== 'persona') fail('Esta regularización requiere un prestador persona física existente.');
     const payers = await Promise.all(data.parts.map(async part => part.payerProviderId ? (await read(db.doc(`providers/${part.payerProviderId}`))).data() : null));
+    // A legacy link without its collection marker also requires reconciliation.
+    const cashQuery = db.collection(`projects/${data.projectId}/cashMovements`).where('itemId', '==', data.itemId).limit(1);
+    const cashLinks = await read(cashQuery);
     payers.forEach((payer, index) => { if (data.parts[index].source === 'personal_advance' && (!payer || payer.type !== 'persona' || !providerName(payer))) fail('Elegí la ficha existente de quien adelantó el dinero.'); });
-    return { access, ref, row, provider, payers, fingerprint: hash({ row,
+    return { access, ref, row, provider, payers, hasCashLink: !cashLinks.empty, fingerprint: hash({ row,
       provider: { name: providerName(provider), cuit: text(provider.cuit), type: provider.type },
       payers: payers.map(p => p ? { name: providerName(p), cuit: text(p.cuit), type: p.type } : null) }) };
   }
   function validateUnpaid(c, data) {
+    if (c.hasCashLink) fail('Ya hay un movimiento de caja asociado. Conciliá ese antecedente antes de registrar otro pago.');
     if (c.row.thirdPartyPayoutRequired !== true) fail('Esta opción regulariza exclusivamente un pago a un tercero pendiente de documentación.');
     if (c.row.paid === true || !Array.isArray(c.row.paymentHistory) || c.row.paymentHistory.length || list(c.row.sharedPaymentIds).length || list(c.row.sharedPaymentRecords).length) fail('El gasto ya registra pagos. Revisá el historial antes de continuar.');
     const total = data.parts.reduce((sum, p) => sum + p.amountCents, 0);
@@ -95,14 +99,18 @@ function createReportedPaymentService({ db, timestamp, verifyFile, clock = () =>
         return { id: data.id, documentaryStatus: existing.documentaryStatus, paymentHistory: current.row.paymentHistory, repeated: true };
       }
       const before = await context(actor, data);
-      if (before.row.paid === true || list(before.row.paymentHistory).length) {
+      if (before.hasCashLink || before.row.paid === true || list(before.row.paymentHistory).length) {
         const raced = (await recordRef.get()).data();
-        if (raced?.reportedPayment?.requestHash === requestHash) return { id: data.id, documentaryStatus: raced.documentaryStatus, paymentHistory: before.row.paymentHistory, repeated: true };
+        if (raced?.reportedPayment?.requestHash === requestHash) return { id: data.id, documentaryStatus: raced.documentaryStatus, paymentHistory: (await before.ref.get()).data().paymentHistory, repeated: true };
       }
       validateUnpaid(before, data);
       const files = await verified(data, before.row.providerId);
       const previewHash = hash({ requestHash, row: before.fingerprint, files });
       if (input.action === 'previewReportedPayment') return { id: data.id, previewHash, amountCents: data.parts.reduce((sum, p) => sum + p.amountCents, 0), projectName: text(before.access.project.name), providerName: providerName(before.provider), beneficiary: data.beneficiary,
+        date: data.date, actor, reason: data.reason, source: data.source,
+        parts: data.parts.map((p, index) => ({ amountCents: p.amountCents, source: p.source, method: p.method, reference: p.reference,
+          ctReference: p.ctReference, cashSourceEvidence: p.cashSourceEvidence, payerProviderId: p.payerProviderId,
+          payerName: p.payerProviderId ? providerName(before.payers[index]) : 'Gran Berta S.R.L.', fileName: p.originalFileName || files[index].fileName, sha256: files[index].sha256 })),
         message: 'Se registrará un pago ya realizado. Su aceptación documental quedará pendiente. No se transfiere dinero ni se modifica CT.' };
       if (input.action !== 'recordReportedPayment' || input.previewHash !== previewHash) fail('La fila o los originales cambiaron. Volvé a revisar el registro antes de confirmar.');
       return db.runTransaction(async tx => {

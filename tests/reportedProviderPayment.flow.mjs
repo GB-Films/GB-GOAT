@@ -49,6 +49,9 @@ export async function testReportedProviderPayments({ db, admin, env }) {
   const input = request('report-one');
   const preview = await invoke({ ...input, action: 'previewReportedPayment' });
   assert.equal(preview.amountCents, 12525);
+  assert.equal(preview.parts[1].payerName, 'Pagador Ficticio');
+  assert.equal(preview.parts[0].reference, input.parts[0].reference);
+  assert.equal(preview.parts[1].sha256, input.parts[1].proofSha256);
   assert.deepEqual((await expense.get()).data(), row, 'preview has no financial effects');
   assert.equal((await root.collection('cashMovements').get()).size, 0);
   for (const invalid of [
@@ -130,5 +133,9 @@ export async function testReportedProviderPayments({ db, admin, env }) {
   assert.equal((await root.collection('cashMovements').get()).size, 3);
   await root.collection('collaborators').doc('report-viewer@example.test').update({ allowedCategories: ['Fuera de alcance'] });
   await assert.rejects(invoke({ action: 'reportedPaymentState', id: input.id, projectId: input.projectId, itemId: input.itemId }, viewer), /No tenés acceso/);
+  await root.collection('areaExpenses').doc('orphan-cash').set(row);
+  await root.collection('cashMovements').doc('orphan-existing').set({ type: 'pago', amount: 100, collectionName: 'areaExpenses', itemId: 'orphan-cash' });
+  await assert.rejects(invoke({ ...request('must-not-duplicate-cash', 'orphan-cash'), action: 'previewReportedPayment' }), /Ya hay un movimiento de caja/);
+  assert.deepEqual((await root.collection('areaExpenses').doc('orphan-cash').get()).data(), row);
   console.log('PASS reported payments: reviewed historical fact, exact cents and origins, proof/operation/CT/work dedup, idempotency, audit, scoped read, protected native history and preserved unrelated DDJJ/invoices/honoraria; no CT or signature writes.');
 }
