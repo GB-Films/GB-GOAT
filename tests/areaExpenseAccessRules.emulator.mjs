@@ -78,6 +78,64 @@ try {
     await assertFails(getDoc(doc(outsiderDb, projectPath(id))));
     await assertFails(updateDoc(doc(outsiderDb, expensePath(id, 'new')), { total: 2000 }));
   }
+  // The creator of an unpaid row is independent of the producer's editing grant.
+  // Reproduce a producer with assigned areas but read-only access, then enable
+  // only that grant, without changing scopes, roles, or the administrator's row.
+  const producerEmail = 'producer@example.test';
+  const producerDb = env.authenticatedContext('producer', { email_verified: true, email: producerEmail }).firestore();
+  const producerProject = 'producer-edit-grant';
+  const collaboratorPath = `projects/${producerProject}/collaborators/${producerEmail}`;
+  const originalRow = expense(producerProject, {
+    subcategory: 'Proveedores', description: 'Servicio ficticio',
+    quantity: 2, unitPrice: 500, total: 1000,
+    createdBy: 'admin', createdByEmail: 'admin@example.test',
+  });
+  const adminPayment = { id: 'admin-payment', amount: 100, createdBy: 'admin', createdByEmail: 'admin@example.test' };
+  const originalAccess = {
+    uid: 'producer', email: producerEmail, role: 'jefe_produccion', canEditBudgetAreas: false,
+    allowedCategories: ['Producción'], allowedSubcategories: [],
+    excludedSubcategories: ['Producción||Reservada'], allowedTabs: ['areas', 'cajas', 'resumen'],
+  };
+  await env.withSecurityRulesDisabled(async context => {
+    const db = context.firestore();
+    await setDoc(doc(db, 'users/producer'), { email: producerEmail, role: 'colaborador' });
+    await setDoc(doc(db, projectPath(producerProject)), { activeAreas: ['Producción', 'Arte'], collaboratorEmails: [producerEmail] });
+    await setDoc(doc(db, collaboratorPath), originalAccess);
+    await setDoc(doc(db, expensePath(producerProject, 'admin-created')), originalRow);
+    await setDoc(doc(db, expensePath(producerProject, 'outside')), { ...originalRow, area: 'Arte' });
+    await setDoc(doc(db, expensePath(producerProject, 'excluded')), { ...originalRow, subcategory: 'Reservada' });
+    await setDoc(doc(db, expensePath(producerProject, 'admin-paid')), { ...originalRow, paymentLocked: true, paymentHistory: [adminPayment], paymentAuthorIds: ['admin'] });
+  });
+  const adminCreatedRef = doc(producerDb, expensePath(producerProject, 'admin-created'));
+  await assertSucceeds(getDoc(adminCreatedRef));
+  const amountUpdate = { quantity: 3, unitPrice: 600, total: 1800, updatedAt: serverTimestamp() };
+  await assertFails(updateDoc(adminCreatedRef, amountUpdate));
+  await assertFails(updateDoc(doc(producerDb, collaboratorPath), { canEditBudgetAreas: true }));
+  await env.withSecurityRulesDisabled(async context => {
+    await updateDoc(doc(context.firestore(), collaboratorPath), { canEditBudgetAreas: true });
+  });
+  const { canEditBudgetAreas, ...preservedAccess } = (await getDoc(doc(producerDb, collaboratorPath))).data();
+  assert.equal(canEditBudgetAreas, true);
+  const { canEditBudgetAreas: priorGrant, ...priorAccess } = originalAccess;
+  assert.equal(priorGrant, false);
+  assert.deepEqual(preservedAccess, priorAccess);
+  await assertSucceeds(runTransaction(producerDb, async transaction => {
+    assert.equal((await transaction.get(adminCreatedRef)).data().total, 1000);
+    transaction.update(adminCreatedRef, amountUpdate);
+  }));
+  const { quantity, unitPrice, total, updatedAt, ...preservedRow } = (await getDoc(adminCreatedRef)).data();
+  assert.deepEqual({ quantity, unitPrice, total }, { quantity: 3, unitPrice: 600, total: 1800 });
+  assert.ok(updatedAt.toMillis() > date.toMillis());
+  const { quantity: priorQuantity, unitPrice: priorPrice, total: priorTotal, updatedAt: priorUpdatedAt, ...priorRow } = originalRow;
+  assert.deepEqual(preservedRow, priorRow, 'creator, provider and financial history are preserved');
+  await assertFails(updateDoc(doc(producerDb, expensePath(producerProject, 'outside')), amountUpdate));
+  await assertFails(updateDoc(doc(producerDb, expensePath(producerProject, 'excluded')), amountUpdate));
+  const adminPaidRef = doc(producerDb, expensePath(producerProject, 'admin-paid'));
+  await assertFails(updateDoc(adminPaidRef, amountUpdate));
+  await assertFails(updateDoc(adminPaidRef, { paymentHistory: [] }));
+  await assertFails(updateDoc(adminPaidRef, { paymentHistory: [{ ...adminPayment, amount: 50 }] }));
+  assert.deepEqual((await getDoc(adminPaidRef)).data().paymentHistory, [adminPayment]);
+
   // A missing owner never grants ownership; an actual legacy owner keeps existing rights.
   await assertFails(getDoc(doc(ownerDb, 'projectCommercial/imported')));
   await assertFails(updateDoc(doc(ownerDb, expensePath('imported', 'new')), { total: 2000 }));

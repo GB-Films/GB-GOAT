@@ -10,11 +10,17 @@ export async function testOwnPaymentCorrections({ db, call, snapshot }) {
   const other = { id: 'other', amount: 40, date: '2026-10-20', detail: 'Otro autor', method: 'otro', createdBy: 'admin', createdByEmail: 'admin@example.test' };
   const own = { id: 'own', amount: 20, date: '2026-10-20', detail: 'Original', method: 'otro', createdBy: 'editor', createdByEmail: 'editor@example.test' };
   const expenseRef = root.collection('areaExpenses').doc('expense');
-  await expenseRef.set({ providerId: 'supplier', area: 'Post', subcategory: '', total: 100, paymentHistory: [other, own], paymentLocked: true, paymentAuthorIds: ['admin', 'editor'] });
+  await expenseRef.set({ providerId: 'supplier', area: 'Post', subcategory: '', total: 100,
+    createdBy: 'admin', createdByEmail: 'admin@example.test',
+    paymentHistory: [other, own], paymentLocked: true, paymentAuthorIds: ['admin', 'editor'] });
   const request = { action: 'correctOwnPayment', projectId, collectionName: 'areaExpenses', itemId: 'expense', paymentId: 'own', attemptId: 'first', expected: snapshot(own), amount: 30, date: '2026-10-29', detail: 'Corregido' };
   const invoke = (input = request, uid = 'editor') => call({ auth: auth(uid), data: input });
+  await root.collection('collaborators').doc('editor@example.test').update({ canEditBudgetAreas: false });
+  await assert.rejects(invoke(), /área/, 'a role and an assigned category do not bypass read-only access');
+  await root.collection('collaborators').doc('editor@example.test').update({ canEditBudgetAreas: true });
   const corrected = await invoke();
   assert.equal(corrected.paymentHistory[1].amount, 30); assert.deepEqual(corrected.paymentHistory[0], other);
+  assert.equal((await expenseRef.get()).data().createdBy, 'admin', 'own payment correction does not change the expense creator');
   assert.equal((await invoke()).repeated, true);
   const audit = (await root.collection('activityLog').doc('own-payment-first').get()).data();
   assert.equal(audit.before.createdBy, 'editor'); assert.equal(audit.after.createdBy, 'editor'); assert.equal(audit.oldAmount, 20); assert.equal(audit.amount, 30);
