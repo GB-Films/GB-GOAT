@@ -61,6 +61,7 @@ export default function ProviderPortal() {
   const [documentsLoading, setDocumentsLoading] = useState(false), [documentsLoaded, setDocumentsLoaded] = useState(false);
   const [profileNotice, setProfileNotice] = useState('');
   const [invoiceNotice, setInvoiceNotice] = useState('');
+  const [downloadNotice, setDownloadNotice] = useState('');
   const [members, setMembers] = useState<any[]>([]),
     [providerId, setProviderId] = useState(() => searchParams.get("provider") || ""),
     [view, setView] = useState<any>(null),
@@ -176,9 +177,15 @@ export default function ProviderPortal() {
   }
   async function download(input: any) {
     await run(async () => {
-      downloadPortalFile(
-        await portalRequest({ action: "download", providerId, ...input }),
-      );
+      setDownloadNotice('');
+      const result = await portalRequest({ action: 'download', providerId, ...input, requestIfPending: true });
+      if (result.status === 'pending_review') {
+        setDownloadNotice('La descarga quedó solicitada a Gran Berta. Podés volver a intentar desde este mismo comprobante cuando esté habilitado.');
+      } else if (result.status === 'closed') {
+        setDownloadNotice('Este archivo todavía no está disponible. Contactá a Gran Berta si necesitás una copia.');
+      } else {
+        downloadPortalFile(result);
+      }
     });
   }
   function reviewCompanyRepresentation() {
@@ -219,7 +226,7 @@ export default function ProviderPortal() {
                 setView(null);
                 setSigning(null);
                 preparationRevision.current++;
-                setProfileNotice(''); setInvoiceNotice('');
+                setProfileNotice(''); setInvoiceNotice(''); setDownloadNotice('');
                 setError('');
                 setProviderId(e.target.value);
                 selectedProviderRef.current = e.target.value;
@@ -286,7 +293,7 @@ export default function ProviderPortal() {
             type="button"
             aria-current={tab === t ? 'page' : undefined}
             aria-label={pending ? `Documentos: ${pendingCount} pendientes de tu firma` : t}
-            onClick={() => { setError(''); setTab(t); }}
+            onClick={() => { setError(''); setDownloadNotice(''); setTab(t); }}
             className={`flex min-h-10 min-w-0 items-center justify-center gap-1 whitespace-nowrap rounded-lg px-2 py-1.5 text-xs sm:min-h-11 sm:gap-2 sm:rounded-xl sm:py-2 sm:text-sm font-medium transition-colors sm:px-4 ${pending ? `bg-amber-100 text-amber-950 hover:bg-amber-200 ${tab === t ? 'ring-2 ring-inset ring-amber-400' : ''}` : tab === t ? 'bg-slate-900 text-white hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'}`}
           >
             <Icon className="h-4 w-4 shrink-0" aria-hidden="true" /><span className="sm:hidden">{t === "Pagos y retenciones" ? "Pagos" : t}</span><span className="hidden sm:inline">{t}</span>{pending && <span className="flex min-w-5 items-center justify-center rounded-full bg-amber-400 px-1.5 text-xs font-bold leading-5 text-amber-950" aria-hidden="true">{pendingCount}</span>}
@@ -299,6 +306,7 @@ export default function ProviderPortal() {
           <ProviderWorkList key={providerId} works={view?.works || []} emptyMessage={providerWorkEmptyMessage(hasLoaded, selected, !!view)} />
         </section>
       )}
+      {downloadNotice && ['Facturas', 'Pagos y retenciones'].includes(tab) && <p role="status" className="portal-panel text-sm text-amber-900">{downloadNotice}</p>}
       {tab === "Facturas" && (
         <section className="space-y-3">
           <div><h2 className="text-lg font-semibold">Tus facturas</h2><p className="mt-1 text-sm text-slate-500">Adjuntá tu factura al trabajo correspondiente.</p></div>
