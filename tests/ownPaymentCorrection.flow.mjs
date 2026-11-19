@@ -14,7 +14,9 @@ export async function testOwnPaymentCorrections({ db, call, snapshot }) {
   const request = { action: 'correctOwnPayment', projectId, collectionName: 'areaExpenses', itemId: 'expense', paymentId: 'own', attemptId: 'first', expected: snapshot(own), amount: 30, date: '2026-10-29', detail: 'Corregido' };
   const invoke = (input = request, uid = 'editor') => call({ auth: auth(uid), data: input });
   const corrected = await invoke();
-  assert.equal(corrected.paymentHistory[1].amount, 30); assert.deepEqual(corrected.paymentHistory[0], other);
+  assert.equal(corrected.paymentHistory[1].amount, 30);
+  const { correctionVersion: _version, ...unmodified } = corrected.paymentHistory[0];
+  assert.deepEqual(unmodified, other);
   assert.equal((await invoke()).repeated, true);
   const audit = (await root.collection('activityLog').doc('own-payment-first').get()).data();
   assert.equal(audit.before.createdBy, 'editor'); assert.equal(audit.after.createdBy, 'editor'); assert.equal(audit.oldAmount, 20); assert.equal(audit.amount, 30);

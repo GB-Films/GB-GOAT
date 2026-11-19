@@ -1,16 +1,18 @@
 const { HttpsError } = require('firebase-functions/v2/https');
-const { id, list } = require('./providerPortalModel');
+const { id, list, hash } = require('./providerPortalModel');
+const { paymentCorrectionSnapshot } = require('./paymentCorrectionSnapshot');
 const { projectFinanceAccess, linkedAllocation } = require('./projectFinanceAccess');
 const { activeRecordAllocations } = require('./providerFinanceAllocations');
 const { canAccessGeneralCash, canReadPersonalCashMovement } = require('./generalCashAccess');
-const { deny, projectTabs, canReadTab, fullArea, canReadArea, canReadExpense, canReadDocument } = require('./projectReadScope');
+const { hasTeamWorkAccess } = require('./teamWorkAccess');
+const { deny, projectTabs, canReadTab, fullArea, canReadArea, canReadExpenseArea, canReadExpense, canReadDocument } = require('./projectReadScope');
 
 const fields = (row, keys) => Object.fromEntries(keys.filter(key => row?.[key] !== undefined).map(key => [key, row[key]]));
-const header = row => fields(row, ['name', 'projectCode', 'status', 'location', 'shootingDate', 'shootingStartDate', 'shootingEndDate', 'createdAt', 'updatedAt']);
+const header = row => fields(row, ['name', 'projectCode', 'status', 'location', 'shootingDate', 'shootingStartDate', 'shootingEndDate', 'createdAt', 'updatedAt', 'archived', 'archivedAt', 'budgetRevision']);
 const wire = value => value?.toDate ? { seconds: value.seconds, nanoseconds: value.nanoseconds } : value instanceof Date ? value.toISOString()
   : Array.isArray(value) ? value.map(wire) : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([k, v]) => [k, wire(v)])) : value;
 const providerFields = ['id', 'type', 'name', 'lastName', 'businessName', 'alias', 'fullName', 'email', 'phone', 'dni', 'cuit', 'cuitNormalized',
-  'bankAccount_cbu', 'bankAccount_alias', 'bankAccount_holder', 'bankAccount', 'source', 'provisional', 'administrativeRegistrationExempt'];
+  'bankAccount_cbu', 'bankAccount_alias', 'bankAccount_holder', 'source', 'provisional', 'administrativeRegistrationExempt', 'createdAt', 'updatedAt', 'category'];
 
 async function rows(query, max = 1500) {
   const snap = await query.limit(max + 1).get();
@@ -23,8 +25,8 @@ function projectProjection(access) {
   if (access.admin) return project;
   const scope = access.collaborator || {};
   const areas = [...new Set([...list(project.categories), ...list(project.activeAreas), ...list(scope.allowedCategories),
-    ...list(scope.allowedSubcategories).map(key => key.split('||')[0])])].filter(area => fullArea(access, area)
-    || list(scope.allowedCategories).includes(area) || list(scope.allowedSubcategories).some(key => key.startsWith(area + '||')
+    ...list(scope.allowedSubcategories).filter(key => typeof key === 'string').map(key => key.split('||')[0])])].filter(area => fullArea(access, area)
+    || list(scope.allowedCategories).includes(area) || list(scope.allowedSubcategories).some(key => typeof key === 'string' && key.startsWith(area + '||')
       && canReadArea(access, area, key.split('||')[1])));
   return { ...header(project), categories: areas, executiveCategoryDefaultApplied: true,
     activeAreas: list(project.activeAreas).filter(area => areas.includes(area)),
@@ -40,18 +42,22 @@ function projectProjection(access) {
 
 function scopedPeer(access, row) {
   if (access.admin) return row;
-  const categories = list(row.allowedCategories).filter(area => fullArea(access, area));
-  const canSeeKey = key => canReadArea(access, ...key.split('||'));
+  const ownCategories = list(access.collaborator?.allowedCategories);
+  const categories = list(row.allowedCategories).filter(area => ownCategories.includes(area));
+  const canSeeKey = key => typeof key === 'string' && canReadArea(access, ...key.split('||'));
   const subs = list(row.allowedSubcategories).filter(canSeeKey);
   if (!categories.length && !subs.length) return null;
   return { ...fields(row, ['id', 'email', 'uid', 'displayName', 'photoURL', 'role']),
-    allowedCategories: categories, allowedSubcategories: subs, excludedSubcategories: list(row.excludedSubcategories).filter(canSeeKey) };
+    allowedCategories: categories, allowedSubcategories: subs,
+      excludedSubcategories: list(row.excludedSubcategories).filter(key => canSeeKey(key) && typeof key === 'string'),
+      scopeEditable: categories.length === list(row.allowedCategories).length
+        && list(row.allowedSubcategories).every(key => list(access.collaborator?.allowedSubcategories).includes(key)) };
 }
 
 function scopedCashMovement(access, actor, movement, item) {
   const participant = canReadPersonalCashMovement(actor.email, movement);
   if (!participant && !canAccessGeneralCash(actor.email)) return null;
-  if (access.admin || canReadExpense(access, movement.collectionName, item)) return movement;
+  if (access.admin || canReadExpenseArea(access, movement.collectionName, item)) return movement;
   if (!participant) return null;
   // A personal handover/payment still affects the user's custodial balance.
   return { ...fields(movement, ['id', 'type', 'cashAccount', 'subdelivery', 'receiptVersion', 'date', 'amount', 'fromUserEmail',
@@ -60,12 +66,20 @@ function scopedCashMovement(access, actor, movement, item) {
 }
 
 const token = args => 'goat-file:' + encodeURIComponent(JSON.stringify(args));
-const attachmentFields = ['id', 'contentType', 'uploadedAt', 'uploadedBy', 'uploadedByEmail', 'uploadedByName', 'uploadedByRole'];
+const attachmentFields = ['id', 'contentType'];
+const expenseFields = ['id', 'projectId', 'area', 'subcategory', 'order', 'areaStructureRevision', 'unit', 'quantity', 'unitPrice', 'total',
+  'paid', 'paymentDate', 'paymentLocked', 'paymentAuthorIds', 'createdBy', 'createdByEmail', 'createdAt', 'updatedAt', 'providerId',
+  'providerName', 'providerInviteLink', 'description', 'operationalNote', 'invoiceStatus', 'sourceBudgetItemId',
+  'sharedPaymentIds', 'economicNature', 'thirdPartyPayoutRequired'];
+const paymentFields = ['id', 'amount', 'date', 'method', 'type', 'detail', 'cashAccount', 'cashBoxLabel', 'cashMovementId',
+  'createdBy', 'createdByEmail', 'createdByName', 'createdByRole', 'paidByEmail', 'paidByName', 'thirdPartyPayerId',
+  'thirdPartyPayerName', 'reimbursedAmount'];
+const reimbursementFields = ['id', 'amount', 'date', 'cashMovementId', 'createdBy', 'createdByEmail', 'createdByName', 'detail'];
 function scopedFiles(projectId, collectionName, item) {
   const marker = (file, kind, index = 0, nestedIndex = 0) => file && (file.path || file.url)
     ? { ...fields(file, attachmentFields), fileName: ['invoice', 'invoices'].includes(kind) ? 'Factura' : 'Comprobante',
       url: token({ projectId, collectionName, itemId: item.id, kind, index, nestedIndex }) } : null;
-  const { sharedPaymentRecords: _rawHistory, ...next } = item;
+  const next = fields(item, expenseFields);
   for (const field of ['sharedInvoices', 'sharedReceipts']) {
     if (Array.isArray(item[field])) next[field] = item[field].map(reference => fields(reference, ['id', 'amountCents', 'fileHidden']));
   }
@@ -75,9 +89,9 @@ function scopedFiles(projectId, collectionName, item) {
   if (Array.isArray(item.paymentHistory)) next.paymentHistory = item.paymentHistory.map((payment, index) => ({
     ...(payment.sharedRecordId
       ? fields(payment, ['id', 'sharedRecordId', 'amount', 'date', 'method', 'type', 'createdBy', 'createdByEmail'])
-      : payment), ...(payment.receipt && !payment.sharedRecordId ? { receipt: marker(payment.receipt, 'payment', index) } : {}),
+      : { ...fields(payment, paymentFields), correctionVersion: hash(paymentCorrectionSnapshot(payment)) }), ...(payment.receipt && !payment.sharedRecordId ? { receipt: marker(payment.receipt, 'payment', index) } : {}),
     ...(!payment.sharedRecordId && Array.isArray(payment.reimbursements) ? { reimbursements: payment.reimbursements.map((refund, sub) => ({
-      ...refund, ...(refund.receipt ? { receipt: marker(refund.receipt, 'reimbursement', index, sub) } : {}),
+      ...fields(refund, reimbursementFields), ...(refund.receipt ? { receipt: marker(refund.receipt, 'reimbursement', index, sub) } : {}),
     })) } : {}),
   }));
   return next;
@@ -143,12 +157,13 @@ async function boundAttachment({ db, actor, access, projectId, collectionName, r
   if (parts[2] === collectionName && parts[3] === itemId) {
     if (parts.length === 5) return ['invoice', 'invoices'].includes(kind);
     if (parts.length === 6 && parts[4] === 'otros-comprobantes') return kind === 'other';
-    if (parts.length !== 6 || parts[4] !== 'comprobantes' || !['payment', 'reimbursement'].includes(kind)) return false;
+    if (parts.length !== 6 || parts[4] !== 'comprobantes' || !['payment', 'reimbursement', 'other'].includes(kind)) return false;
   } else if (parts.length !== 6 || parts[2] !== 'areas' || parts[4] !== 'facturas' || !['invoice', 'invoices'].includes(kind)) {
     return false;
   }
   const metadata = await readMetadata?.(path);
   if (metadata?.projectId !== projectId || metadata.collectionName !== collectionName || (metadata.itemId || metadata.expenseId) !== itemId) return false;
+  if (kind === 'other') return !metadata.paymentId;
   if (kind === 'payment' || kind === 'reimbursement') {
     const payment = list(row.paymentHistory)[index];
     return Boolean(payment?.id && metadata.paymentId === payment.id
@@ -157,7 +172,7 @@ async function boundAttachment({ db, actor, access, projectId, collectionName, r
   return true;
 }
 
-function createProjectScopedReads({ db, readFile, bucketName, readMetadata }) {
+function createProjectScopedReads({ db, readFile, bucketName, readMetadata, timestamp }) {
   async function projectList(actor) {
     const base = db.collection('projects');
     const visible = await Promise.all([rows(base.where('createdBy', '==', actor.uid), 500), rows(base.where('collaboratorEmails', 'array-contains', actor.email), 500)]);
@@ -170,20 +185,23 @@ function createProjectScopedReads({ db, readFile, bucketName, readMetadata }) {
     return projects.filter(Boolean);
   }
 
-  async function snapshot(access, projectId, providerOnly = false) {
+  async function snapshot(access, projectId, purpose) {
+    if (purpose && !canReadTab(access, purpose)) return { project: { ...header(access.project), id: projectId }, budgetItems: [], areaExpenses: [], providers: [], documents: [], collaborators: [] };
+    const auxiliary = !purpose;
     const collection = name => db.collection(`projects/${projectId}/${name}`);
     const [budget, areas, docs, peers] = await Promise.all([
       canReadTab(access, 'resumen', 'presupuesto', 'areas', 'saldos', 'proveedores') ? rows(collection('budgetItems')) : [],
       canReadTab(access, 'resumen', 'areas', 'saldos', 'proveedores') ? rows(collection('areaExpenses')) : [],
-      !providerOnly && canReadTab(access, 'documentos') ? rows(collection('projectDocuments')) : [],
-      !providerOnly && canReadTab(access, 'permisos') ? rows(collection('collaborators'), 300) : [],
+      auxiliary && canReadTab(access, 'documentos') ? rows(collection('projectDocuments')) : [],
+      auxiliary && canReadTab(access, 'permisos') ? rows(collection('collaborators'), 300) : [],
     ]);
     const budgetItems = budget.filter(row => canReadExpense(access, 'budgetItems', row));
     const areaExpenses = areas.filter(row => canReadExpense(access, 'areaExpenses', row));
     const providerIds = [...new Set([...budgetItems, ...areaExpenses].flatMap(row => [row.providerId, ...list(row.paymentHistory).map(p => p.thirdPartyPayerId)])
       .filter(value => typeof value === 'string' && /^[\w-]{1,160}$/.test(value)))];
     const providers = (providerIds.length ? await db.getAll(...providerIds.map(pid => db.doc(`providers/${pid}`))) : [])
-      .filter(row => row.exists).map(row => ({ ...fields(row.data(), providerFields), id: row.id }));
+      .filter(row => row.exists).map(row => ({ ...fields(row.data(), providerFields),
+        ...(row.data().registration?.status === 'complete' ? { registration: { status: 'complete' } } : {}), id: row.id }));
     const projectedRows = (items, name) => access.admin ? items : items.map(row => scopedFiles(projectId, name, row));
     return {
       project: { ...projectProjection(access), id: projectId }, admin: access.admin,
@@ -205,24 +223,105 @@ function createProjectScopedReads({ db, readFile, bucketName, readMetadata }) {
       const allowed = new Map();
       for (const project of projects) {
         const access = await projectFinanceAccess({ db, actor, projectId: project.id });
-        for (const provider of (await snapshot(access, project.id, true)).providers) allowed.set(provider.id, provider);
+        for (const provider of (await snapshot(access, project.id, 'proveedores')).providers) allowed.set(provider.id, provider);
       }
       return wire({ providers: [...allowed.values()] });
     }
     const projectId = id(input.projectId);
     const access = await projectFinanceAccess({ db, actor, projectId });
-    if (input.action === 'projectScopedSnapshot') return wire(await snapshot(access, projectId));
+    if (input.action === 'projectAccess') return { admin: access.admin };
+    if (['projectTeamCandidate', 'projectAssignCollaborator'].includes(input.action)) {
+      const email = String(input.email || '').trim().toLowerCase();
+      if (email.length > 254 || !/^[^\s/@]+@[^\s/@]+\.[^\s/@]+$/.test(email)) return { candidate: null };
+      const root = db.doc(`projects/${projectId}`);
+      const candidateRef = root.collection('collaborators').doc(email);
+      const authorize = scope => {
+        if (!scope.admin && (scope.collaborator?.role !== 'jefe_produccion' || !canReadTab(scope, 'permisos')
+          || !list(scope.collaborator.allowedCategories).length)) deny();
+      };
+      authorize(access);
+      const find = async tx => {
+        const read = ref => tx ? tx.get(ref) : ref.get();
+        const users = await read(db.collection('users').where('email', '==', email).limit(2));
+        const chosen = users.size === 1 ? users.docs[0] : null;
+        const gate = (await read(db.doc(`teamAccessEmails/${email}`))).data();
+        return chosen && hasTeamWorkAccess(chosen.data()) && gate?.status !== 'pending' ? chosen : null;
+      };
+      if (input.action === 'projectTeamCandidate') {
+        const user = await find();
+        if (!user || user.id === access.project.createdBy || (await candidateRef.get()).exists
+          || list(access.project.collaboratorEmails).includes(email)) return { candidate: null };
+        return { candidate: { ...fields(user.data(), ['displayName', 'photoURL']), email, uid: user.id } };
+      }
+      return db.runTransaction(async tx => {
+        const live = await projectFinanceAccess({ db, transaction: tx, actor, projectId });
+        authorize(live);
+        const uid = id(input.uid), role = input.role, categories = [...new Set(list(input.categories))];
+        if (!['jefe_area', 'jefe_produccion'].includes(role) || !categories.length || categories.length > 80
+          || categories.some(area => typeof area !== 'string' || !list(live.collaborator?.allowedCategories).includes(area) && !live.admin)) deny();
+        const [user, existing] = await Promise.all([find(tx), tx.get(candidateRef)]);
+        if (!user || user.id !== uid || uid === live.project.createdBy || existing.exists || list(live.project.collaboratorEmails).includes(email)
+          || list(live.project.teamOnboardingBlockedEmails).includes(email)) deny();
+        const now = timestamp();
+        const collaborator = { uid, email, ...fields(user.data(), ['displayName', 'photoURL']), role,
+          allowedCategories: categories, allowedSubcategories: [], excludedSubcategories: list(live.collaborator?.excludedSubcategories),
+          allowedTabs: projectTabs({ collaborator: { role } }), canEditBudgetAreas: true, canViewBudgetTotals: false };
+        tx.create(candidateRef, { ...collaborator, createdAt: now, updatedAt: now });
+        tx.update(root, { collaboratorEmails: [...list(live.project.collaboratorEmails), email], updatedAt: now });
+        return { collaborator };
+      });
+    }
+    if (input.action === 'projectCreateDocument') {
+      if (!access.admin && (access.collaborator?.role !== 'jefe_produccion' || !canReadTab(access, 'documentos'))) deny();
+      const itemId = id(input.itemId);
+      const file = input.document || {};
+      if (!canReadDocument(access, file) || !['contratos', 'seguros'].includes(file.family)) deny();
+      const path = objectPath(file);
+      const parts = path.split('/');
+      if (parts.length !== 5 || parts[0] !== 'projects' || parts[1] !== projectId || parts[2] !== 'documents'
+        || parts[3] !== itemId || parts[4] !== file.fileName) deny();
+      const metadata = await readMetadata?.(path);
+      if (metadata?.projectId !== projectId || metadata.family !== file.family || metadata.uploadedBy !== actor.email) deny();
+      const data = Object.fromEntries(['family', 'title', 'area', 'subcategory', 'expirationDate', 'notes', 'providerId', 'providerName',
+        'type', 'subtype', 'fileName', 'originalFileName', 'contentType'].map(key => [key, String(file[key] || '').slice(0, key === 'notes' ? 2000 : 400)]));
+      const now = timestamp(), ref = db.doc(`projects/${projectId}/projectDocuments/${itemId}`);
+      await db.runTransaction(async tx => {
+        const live = await projectFinanceAccess({ db, actor, transaction: tx, projectId });
+        if (!canReadDocument(live, data) || !live.admin && live.collaborator?.role !== 'jefe_produccion') deny();
+        if (data.providerId && !live.admin) {
+          const name = await tx.get(db.doc(`providers/${id(data.providerId)}`));
+          const matching = await tx.get(db.collection(`projects/${projectId}/areaExpenses`).where('providerId', '==', data.providerId).where('area', '==', data.area).limit(100));
+          if (!name.exists || !matching.docs.some(row => canReadExpenseArea(live, 'areaExpenses', row.data()))) deny();
+          const provider = name.data();
+          data.providerName = provider.businessName || [provider.name, provider.lastName].filter(Boolean).join(' ');
+        }
+        tx.create(ref, { ...data, path, url: token({ projectId, collectionName: 'projectDocuments', itemId, kind: 'document' }),
+          source: 'Carga manual', uploadedBy: actor.email, createdAt: now, updatedAt: now });
+      });
+      return { id: itemId };
+    }
+    if (input.action === 'projectScopedSnapshot') {
+      const purpose = ['resumen', 'proveedores'].includes(input.purpose) ? input.purpose : undefined;
+      return wire(await snapshot(access, projectId, purpose));
+    }
     if (input.action === 'projectScopedAttachment') {
       const { collectionName, kind } = input, itemId = id(input.itemId);
       if (!['areaExpenses', 'budgetItems', 'projectDocuments'].includes(collectionName)) deny();
       const row = (await db.doc(`projects/${projectId}/${collectionName}/${itemId}`).get()).data();
       let file;
-      const index = Number(input.index ?? 0), nestedIndex = Number(input.nestedIndex ?? 0);
+      let index = Number(input.index ?? 0);
+      const nestedIndex = Number(input.nestedIndex ?? 0);
       if (collectionName === 'projectDocuments') {
         if (!canReadDocument(access, row) || kind !== 'document') deny();
         file = row;
       } else {
         if (!canReadExpense(access, collectionName, row)) deny();
+        if (input.fileId !== undefined) {
+          const fileId = id(input.fileId);
+          const entries = kind === 'invoices' ? list(row.invoices) : kind === 'other' ? list(row.otherReceipts)
+            : kind === 'payment' ? list(row.paymentHistory) : [];
+          index = entries.findIndex(entry => entry?.id === fileId);
+        }
         if (![index, nestedIndex].every(value => Number.isInteger(value) && value >= 0 && value <= 500)) deny();
         file = attachedFile(row, kind, index, nestedIndex);
         const payment = ['payment', 'reimbursement'].includes(kind) ? list(row.paymentHistory)[index] : null;
@@ -237,4 +336,4 @@ function createProjectScopedReads({ db, readFile, bucketName, readMetadata }) {
   };
 }
 
-module.exports = { createProjectScopedReads, projectProjection, scopedCashMovement, canReadRecordOriginal };
+module.exports = { createProjectScopedReads, projectProjection, scopedCashMovement, canReadRecordOriginal, scopedFiles };

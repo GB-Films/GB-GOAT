@@ -35,7 +35,6 @@ export function watchProjectCashMovements(db: Firestore, projectId: string, emai
   }, onError);
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  let scheduled: ReturnType<typeof setTimeout> | undefined;
   let refreshing = false;
   let repeat = false;
   const refresh = async () => {
@@ -47,9 +46,7 @@ export function watchProjectCashMovements(db: Firestore, projectId: string, emai
       const rows = await readProjectCashMovements(db, projectId, email);
       if (!stopped) {
         onRows(rows);
-        // Current movements refresh from the listeners below; the fallback also
-        // catches updates to historical rows with no cashAccount field.
-        timer = setTimeout(refresh, 60000);
+        timer = setTimeout(refresh, 12000);
       }
     } catch (error) { if (!stopped) onError(error as Error); }
     finally {
@@ -57,10 +54,7 @@ export function watchProjectCashMovements(db: Firestore, projectId: string, emai
       if (repeat && !stopped) { repeat = false; void refresh(); }
     }
   };
-  const stops = personalCashRefreshQueries(db, projectId, email).map(q => onSnapshot(q, () => {
-    clearTimeout(scheduled);
-    scheduled = setTimeout(refresh, 50);
-  }, error => { if (!stopped) onError(error); }));
+  window.addEventListener('focus', refresh);
   void refresh();
-  return () => { stopped = true; clearTimeout(timer); clearTimeout(scheduled); stops.forEach(stop => stop()); };
+  return () => { stopped = true; clearTimeout(timer); window.removeEventListener('focus', refresh); };
 }

@@ -3,8 +3,8 @@ import { Upload } from 'lucide-react';
 import { UPLOAD_DOCUMENT_CATEGORIES, DOCUMENT_UPLOAD_TYPES, type DocumentCategory } from '../../lib/projectDocumentCatalog';
 import { ProjectDialog } from './ProjectDialog';
 
-export function ProjectDocumentUpload({ initialCategory, providers, areas, busy, onClose, onSubmit }: {
-  initialCategory: DocumentCategory; providers: Array<{ id: string; label: string }>; areas: string[]; busy: boolean;
+export function ProjectDocumentUpload({ initialCategory, providers, areas, allowGeneral = true, busy, onClose, onSubmit }: {
+  initialCategory: DocumentCategory; providers: Array<{ id: string; label: string }>; areas: string[]; allowGeneral?: boolean; busy: boolean;
   onClose: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   const [category, setCategory] = useState<DocumentCategory>(initialCategory === 'seguros' ? 'seguros' : 'contratos');
@@ -23,7 +23,7 @@ export function ProjectDocumentUpload({ initialCategory, providers, areas, busy,
       <label className={label}>Proveedor<select name="providerId" className={input}>
         <option value="">Sin proveedor</option>{providers.map(provider => <option key={provider.id} value={provider.id}>{provider.label}</option>)}
       </select></label>
-      <label className={label}>Área<select name="area" className={input}><option value="">General</option>{areas.map(area => <option key={area} value={area}>{area}</option>)}</select></label>
+      <label className={label}>Área<select name="area" className={input}>{allowGeneral && <option value="">General</option>}{areas.map(area => <option key={area} value={area}>{area}</option>)}</select></label>
       <label className={`${label} sm:col-span-2`}>Archivo<input name="file" type="file" accept="application/pdf,image/jpeg,image/png,image/webp,.pdf,.jpg,.jpeg,.png,.webp" required className={input} /></label>
       <label className={label}>Vencimiento (opcional)<input name="expirationDate" type="date" className={input} /></label>
       <label className={label}>Notas (opcional)<input name="notes" className={input} /></label>

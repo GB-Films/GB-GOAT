@@ -49,7 +49,8 @@ export async function testExpenseInvoiceControls({ db, env, call }) {
   await assertSucceeds(setDoc(doc(editorDb, `invoiceUploadInvites/${token}`), { token, projectId, expenseId: 'row', collectionName: 'areaExpenses', area: 'Post', subcategory: '', providerId: 'supplier', status: 'pending', used: false }));
   const publicFile = { ...attachment('public'), uploadedBy: 'provider_public_link' };
   await assertSucceeds(uploadBytes(ref(anonymous.storage(), publicFile.path), new Uint8Array([37, 80, 68, 70]), { contentType: 'application/pdf', customMetadata: { token, projectId, expenseId: 'row', collectionName: 'areaExpenses', area: 'Post', areaFolder: 'Post', providerId: 'supplier' } }));
-  publicFile.url = await getDownloadURL(ref(anonymous.storage(), publicFile.path));
+  await assertFails(getDownloadURL(ref(anonymous.storage(), publicFile.path)));
+  publicFile.url = 'goat-file:' + encodeURIComponent(JSON.stringify({ projectId, collectionName: 'areaExpenses', itemId: 'row', kind: 'invoices', fileId: publicFile.id }));
   const publicAppend = (overrides = {}) => {
     const batch = writeBatch(anonymous.firestore());
     batch.update(doc(anonymous.firestore(), target.path), { invoices: [publicFile], invoiceStatus: 'pendiente', publicInvoiceUpload: { token }, updatedAt: serverTimestamp(), ...overrides });

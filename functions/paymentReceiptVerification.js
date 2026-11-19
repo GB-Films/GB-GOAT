@@ -9,11 +9,15 @@ function createPaymentReceiptVerifier(bucket) {
     if (fields.projectId !== scope.projectId || fields.collectionName !== scope.collectionName || fields.itemId !== scope.itemId || fields.paymentId !== scope.paymentId
       || !['application/pdf', 'image/jpeg', 'image/png', 'image/webp'].includes(metadata.contentType) || Number(metadata.size) <= 0 || Number(metadata.size) > 2 * 1024 * 1024)
       throw new HttpsError('invalid-argument', 'El comprobante no corresponde al pago o excede el tamaño permitido.');
-    let url;
-    try { url = new URL(input.url); } catch { throw new HttpsError('invalid-argument', 'Enlace de comprobante inválido.'); }
-    if (url.protocol !== 'https:' || url.hostname !== 'firebasestorage.googleapis.com' || url.pathname !== `/v0/b/${bucket.name}/o/${encodeURIComponent(input.path)}`)
-      throw new HttpsError('invalid-argument', 'Enlace de comprobante ajeno.');
-    return { path: input.path, url: url.toString(), fileName: input.path.slice(prefix.length), originalFileName: String(fields.originalFileName || 'Comprobante').slice(0, 200),
+    const url = 'goat-file:' + encodeURIComponent(JSON.stringify({ projectId: scope.projectId, collectionName: scope.collectionName,
+      itemId: scope.itemId, kind: 'payment', fileId: scope.paymentId }));
+    if (input.url !== url) {
+      let legacy;
+      try { legacy = new URL(input.url); } catch { throw new HttpsError('invalid-argument', 'Enlace de comprobante inválido.'); }
+      if (legacy.protocol !== 'https:' || legacy.hostname !== 'firebasestorage.googleapis.com' || legacy.pathname !== `/v0/b/${bucket.name}/o/${encodeURIComponent(input.path)}`)
+        throw new HttpsError('invalid-argument', 'Enlace de comprobante ajeno.');
+    }
+    return { path: input.path, url, fileName: input.path.slice(prefix.length), originalFileName: String(fields.originalFileName || 'Comprobante').slice(0, 200),
       contentType: metadata.contentType, size: Number(metadata.size) };
   };
 }

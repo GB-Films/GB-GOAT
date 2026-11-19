@@ -1,4 +1,4 @@
-import { handlePortalInvoiceLink } from '../lib/portalInvoiceLink';
+import { handlePortalInvoiceLink, projectAttachmentHref } from '../lib/portalInvoiceLink';
 import { FileText, Paperclip } from 'lucide-react';
 import type { ExpenseInvoiceDocument } from '../lib/invoices';
 import { invoicePaymentAppearance } from '../lib/providerPaymentStatus';
@@ -18,7 +18,7 @@ export function ProviderDocumentLinks({ documents = [], kind, compact = false, i
   return <div className="flex flex-wrap justify-center gap-1">
     {documents.map((document, index) => {
       const fileName = document.originalFileName || document.fileName || `${label} ${index + 1}`;
-      return <a key={document.path || document.url || index} href={document.url || '#'} onClick={e=>handlePortalInvoiceLink(e,document)} target="_blank" rel="noopener noreferrer"
+      return <a key={document.path || document.url || index} href={projectAttachmentHref(document.url || '#')} onClick={e=>handlePortalInvoiceLink(e,document)} target="_blank" rel="noopener noreferrer"
         title={appearance ? `${appearance.label} · ${fileName}` : fileName} aria-label={`${appearance?.label || label}: ${fileName}`}
         className={`inline-flex items-center gap-1 rounded border px-2 ${compact ? 'py-1' : 'py-1.5'} text-[9px] font-bold transition-colors ${appearance ? '' : 'hover:text-white'} ${tone}`}>
         {kind === 'invoice' ? <FileText className="h-3 w-3" /> : <Paperclip className="h-3 w-3" />}

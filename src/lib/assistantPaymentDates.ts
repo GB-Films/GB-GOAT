@@ -2,6 +2,7 @@ import { doc, runTransaction, serverTimestamp, type Firestore } from 'firebase/f
 import type { AssistantProjectContext } from './assistantTools';
 import { canAssistantEditSubcategory } from './assistantCapabilities';
 import { isInternalBudgetEstimate } from './internalBudgetEstimate';
+import { providerTimestamp } from './providerOrdering';
 
 export const MAX_ASSISTANT_PAYMENT_DATES = 200;
 type Source = 'budgetItems' | 'areaExpenses';
@@ -9,7 +10,9 @@ type DateTarget = { id: string; source: Source; date: string; expected: string; 
 export type PaymentDatePlan = { projectId: string; projectName: string; targets: DateTarget[]; summary: string };
 const fail = (message: string): never => { throw new Error(message); };
 const label = (item: any) => [item.providerName, item.description].filter(Boolean).join(' · ') || item.id;
-const version = (item: any) => JSON.stringify([item.updatedAt || null, item.area || '', item.subcategory || '', item.providerId || '', item.providerName || '', item.description || '', item.total || 0, item.paymentDate || '', item.paymentHistory || [], item.paid || false, item.paymentLocked || false]);
+const version = (item: any) => JSON.stringify([providerTimestamp(item.updatedAt), item.area || '', item.subcategory || '', item.providerId || '', item.providerName || '',
+  item.description || '', item.total || 0, item.paymentDate || '', (Array.isArray(item.paymentHistory) ? item.paymentHistory : [])
+    .map((payment: any) => [payment.id || '', payment.amount, providerTimestamp(payment.date)]), item.paid || false, item.paymentLocked || false]);
 const managed = (source: Source, item: any, activeAreas: string[]) => source === 'areaExpenses' ? activeAreas.includes(item.area) : !activeAreas.includes(item.area);
 const allowed = (context: AssistantProjectContext, source: Source, item: any) => !isInternalBudgetEstimate(item)
   && managed(source, item, context.activeAreas)
@@ -48,14 +51,15 @@ export function preparePaymentDatePlan(context: AssistantProjectContext, input: 
 export async function applyPaymentDatePlan(db: Firestore, plan: PaymentDatePlan, context: AssistantProjectContext) {
   if (context.projectId !== plan.projectId || !plan.targets.length || plan.targets.length > MAX_ASSISTANT_PAYMENT_DATES) fail('Volvé a preparar la programación.');
   const changed = await runTransaction(db, async tx => {
-    const project = await tx.get(doc(db, 'projects', plan.projectId));
-    if (!project.exists()) fail('El proyecto ya no está disponible.');
+    const project = context.capabilities.isProjectAdmin ? await tx.get(doc(db, 'projects', plan.projectId)) : null;
+    if (project && !project.exists()) fail('El proyecto ya no está disponible.');
+    const activeAreas = project ? project.data().activeAreas || [] : context.activeAreas;
     const snapshots = await Promise.all(plan.targets.map(target => tx.get(doc(db, 'projects', plan.projectId, target.source, target.id))));
     let count = 0;
     for (let index = 0; index < snapshots.length; index++) {
       const snapshot = snapshots[index], target = plan.targets[index];
       if (!snapshot.exists() || version(snapshot.data()) !== target.expected) fail(`Cambió el gasto «${target.label}». No se aplicó el lote; revisalo y preparalo nuevamente.`);
-      if (!managed(target.source, snapshot.data(), project.data().activeAreas || []) || !allowed(context, target.source, snapshot.data())) fail('Cambió la gestión o el permiso de un gasto. No se aplicó el lote.');
+      if (!managed(target.source, snapshot.data(), activeAreas) || !allowed(context, target.source, snapshot.data())) fail('Cambió la gestión o el permiso de un gasto. No se aplicó el lote.');
     }
     snapshots.forEach((snapshot, index) => {
       if ((snapshot.data().paymentDate || '') === plan.targets[index].date) return;

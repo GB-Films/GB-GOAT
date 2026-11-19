@@ -1,7 +1,9 @@
+import { handleProjectAttachmentLink, projectAttachmentHref } from '../../lib/portalInvoiceLink';
 import { canAccessGeneralCash } from '../../lib/generalCashAccess';
+import { projectAttachmentLink } from '../../lib/projectScopedData';
 import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { collection, doc, runTransaction, serverTimestamp } from 'firebase/firestore';
-import { deleteObject, getDownloadURL, ref, uploadBytes } from 'firebase/storage';
+import { deleteObject, ref, uploadBytes } from 'firebase/storage';
 import { Calendar, DollarSign, ExternalLink, History, Loader2, Paperclip, Plus, Trash2, Wallet } from 'lucide-react';
 import { motion } from 'motion/react';
 import { db, storage } from '../../lib/firebase';
@@ -270,7 +272,7 @@ export function PaymentModal({
           },
         });
 
-        const url = await getDownloadURL(storageRef);
+        const url = projectAttachmentLink(projectId, collectionName, item.id, 'payment', currentPayment.id);
         nextReceipt = {
           fileName,
           originalFileName: editReceipt.name,
@@ -295,7 +297,8 @@ export function PaymentModal({
       };
       if (!canEditExistingPayments && canCorrectOwnPayments) {
         const input = { action: 'correctOwnPayment', projectId, collectionName, itemId: item.id,
-          paymentId: currentPayment.id, expected: paymentCorrectionSnapshot(currentPayment),
+          paymentId: currentPayment.id, ...(currentPayment.correctionVersion ? { expectedVersion: currentPayment.correctionVersion }
+            : { expected: paymentCorrectionSnapshot(currentPayment) }),
           amount: nextAmount, date: nextDate, detail: nextDetail, ...(editReceipt && nextReceipt ? { receipt: nextReceipt } : {}) };
         const key = JSON.stringify(input);
         if (ownCorrectionAttempt.current?.key !== key) ownCorrectionAttempt.current = { key, id: crypto.randomUUID() };
@@ -758,7 +761,7 @@ export function PaymentModal({
                     },
                   });
 
-                  const url = await getDownloadURL(storageRef);
+                  const url = projectAttachmentLink(projectId, collectionName, currentItemId, 'payment', paymentId);
                   newPayment.receipt = {
                     fileName,
                     originalFileName: receiptFile.name,
@@ -1131,7 +1134,7 @@ export function PaymentModal({
                           {payment.sharedRecordId && projectId && <div className="mt-2"><SharedProviderFileButton id={payment.sharedRecordId} scope={{ projectId, collectionName, itemId: item.id }} /></div>}
                           {payment.receipt?.url && (
                             <a
-                              href={payment.receipt.url}
+                              href={projectAttachmentHref(payment.receipt.url)} onClick={event => handleProjectAttachmentLink(event, payment.receipt.url)}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="mt-2 inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-widest text-blue-600 hover:underline"

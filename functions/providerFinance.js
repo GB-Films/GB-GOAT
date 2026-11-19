@@ -95,13 +95,13 @@ function normalizeRecord(input) {
 }
 
 function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, bucketName, readMetadata, verifyPaymentReceipt, clock=()=>new Date() }) {
-  const readProject = createProjectScopedReads({ db, readFile, bucketName, readMetadata });
+  const readProject = createProjectScopedReads({ db, readFile, bucketName, readMetadata, timestamp });
   return async request => {
     if (!request.auth?.uid || !request.auth.token?.email) throw new HttpsError('unauthenticated', 'Iniciá sesión.');
     const user = await db.doc(`users/${request.auth.uid}`).get();
     const input = request.data || {};
     const actor = { uid: request.auth.uid, email: String(request.auth.token.email).trim().toLowerCase() };
-    if (['projectSummaries', 'projectScopedSnapshot', 'projectScopedAttachment', 'scopedProviderCatalog'].includes(input.action)) {
+    if (['projectSummaries', 'projectAccess', 'projectScopedSnapshot', 'projectScopedAttachment', 'scopedProviderCatalog', 'projectTeamCandidate', 'projectAssignCollaborator', 'projectCreateDocument'].includes(input.action)) {
       if (request.auth.token.email_verified !== true) deny();
       return readProject(actor, input);
     }
@@ -127,6 +127,11 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, buc
       const projectId = id(input.projectId);
       const access = await projectFinanceAccess({ db, actor, projectId });
       if (!canReadTab(access, 'cajas', 'areas', 'saldos')) return { movements: [] };
+      if (access.admin && canAccessGeneralCash(actor.email) && input.includeGeneral === true) {
+        const snap = await db.collection(`projects/${projectId}/cashMovements`).limit(2001).get();
+        if (snap.size > 2000) fail('La caja requiere revisión por su volumen de movimientos.');
+        return { movements: snap.docs.map(row => ({ ...row.data(), id: row.id })) };
+      }
       const ledger = db.collection(`projects/${projectId}/cashMovements`);
       const parts = await Promise.all(['fromUserEmail', 'toUserEmail'].map(field => ledger.where(field, '==', actor.email).limit(2001).get()));
       const rows = [...new Map(parts.flatMap(part => part.docs).map(row => [row.id, row])).values()];

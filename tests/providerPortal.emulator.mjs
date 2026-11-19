@@ -706,7 +706,7 @@ try {
   await assertSucceeds(
     getDoc(doc(producer, "projects/project/areaExpenses/work")),
   );
-  await assertSucceeds(getDoc(doc(producer, "providers/supplier")));
+  await assertFails(getDoc(doc(producer, "providers/supplier")));
   const signContext = signEnv.authenticatedContext("sign-own", {
     email_verified: true,
     email: "own@example.test",

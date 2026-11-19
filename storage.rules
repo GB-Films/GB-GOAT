@@ -75,20 +75,6 @@ service firebase.storage {
       return isProjectAdmin(projectId) || isProjectCollaborator(projectId);
     }
 
-    // Storage permits at most two distinct Firestore document reads per request.
-    function canReadProjectFile(projectId) {
-      return isSignedIn()
-        && (
-          isAppAdmin()
-          || isProjectOwner(projectId)
-          || (
-            projectDoc(projectId).keys().hasAny(['collaboratorEmails'])
-            && userEmail() in projectDoc(projectId).collaboratorEmails
-            && !(userEmail() in projectDoc(projectId).get('teamOnboardingBlockedEmails', []))
-          )
-        );
-    }
-
     function canWriteProjectDocument(projectId) {
       return isProjectAdmin(projectId)
         || (
@@ -313,15 +299,8 @@ service firebase.storage {
         && firestore.get(/databases/(default)/documents/invoiceUploadInvites/$(request.resource.metadata.token)).data.providerId == request.resource.metadata.providerId;
     }
 
-    function publicInvoiceUploadInviteCanRead(projectId) {
-      return request.auth == null
-        && resource.metadata.token is string
-        && firestore.exists(/databases/(default)/documents/invoiceUploadInvites/$(resource.metadata.token))
-        && firestore.get(/databases/(default)/documents/invoiceUploadInvites/$(resource.metadata.token)).data.projectId == projectId;
-    }
-
     match /projects/{projectId}/areas/{areaFolder}/facturas/{fileName} {
-      allow read: if canReadProjectFile(projectId) || publicInvoiceUploadInviteCanRead(projectId);
+      allow read: if isProjectAdmin(projectId);
       allow create: if (
           canWriteInvoiceFromRequest(projectId, areaFolder)
           || publicInvoiceUploadInviteIsPending(projectId, areaFolder)
@@ -332,7 +311,7 @@ service firebase.storage {
     }
 
     match /projects/{projectId}/{collectionName}/{itemId}/comprobantes/{fileName} {
-      allow read: if hasProjectAccess(projectId);
+      allow read: if isProjectAdmin(projectId);
       allow create: if canWritePaymentReceiptFromRequest(projectId, collectionName, itemId)
         && request.resource.size <= 2 * 1024 * 1024
         && (
@@ -345,7 +324,7 @@ service firebase.storage {
     }
 
     match /projects/{projectId}/areaExpenses/{expenseId}/otros-comprobantes/{fileName} {
-      allow read: if hasProjectAccess(projectId);
+      allow read: if isProjectAdmin(projectId);
       allow create: if canWritePaymentReceipt(projectId, 'areaExpenses', expenseId)
         && request.resource.size <= 2 * 1024 * 1024
         && (
@@ -358,8 +337,8 @@ service firebase.storage {
     }
 
     match /projects/{projectId}/documents/{documentId}/{fileName} {
-      allow read: if hasProjectAccess(projectId);
-      allow create, update: if canWriteProjectDocument(projectId)
+      allow read: if isProjectAdmin(projectId);
+      allow create: if canWriteProjectDocument(projectId)
         && request.resource.size <= 2 * 1024 * 1024
         && (
           request.resource.contentType == 'application/pdf'
@@ -367,7 +346,7 @@ service firebase.storage {
           || request.resource.contentType == 'image/png'
           || request.resource.contentType == 'image/webp'
         );
-      allow delete: if isProjectAdmin(projectId);
+      allow update, delete: if isProjectAdmin(projectId);
     }
 
     match /administration/projects/{projectId}/{documentId}/{fileName} {
@@ -403,7 +382,7 @@ service firebase.storage {
 
     // Legacy path kept so previously uploaded invoices can still be managed.
     match /projects/{projectId}/areaExpenses/{expenseId}/{fileName} {
-      allow read: if hasProjectAccess(projectId);
+      allow read: if isProjectAdmin(projectId);
       allow create, update: if canWritePaymentReceipt(projectId, 'areaExpenses', expenseId)
         && request.resource.size <= 2 * 1024 * 1024
         && request.resource.contentType == 'application/pdf';

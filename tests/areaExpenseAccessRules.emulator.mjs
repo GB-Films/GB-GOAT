@@ -51,7 +51,7 @@ try {
   });
 
   for (const id of ['imported', 'legacy']) {
-    await assertSucceeds(getDoc(doc(leadDb, projectPath(id))));
+    await assertFails(getDoc(doc(leadDb, projectPath(id))));
     // The UI creates an empty row without a `paid` field, then edits its amount in a transaction.
     await assertSucceeds(setDoc(doc(leadDb, expensePath(id, 'created')), expense(id, {
       createdAt: serverTimestamp(), updatedAt: serverTimestamp(),

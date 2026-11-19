@@ -5,6 +5,8 @@ const { hasTeamWorkAccess } = require('./teamWorkAccess');
 const { checkCompanyReview } = require('./providerRepresentation');
 const { createProviderWorkAuthorizations } = require('./providerWorkAuthorizations');
 const { createCashReceiptService } = require('./providerCashReceipts');
+const { projectFinanceAccess } = require('./projectFinanceAccess');
+const { canReadExpenseArea, canReadTab, canReadDocument, deny } = require('./projectReadScope');
 const { portalPersonalClassification } = require('./providerPersonalClassificationPortal');
 
 const { COMPANY_EVIDENCE, LEGACY_COMPANY_EVIDENCE } = require('./providerEvidence');
@@ -66,28 +68,36 @@ function createProviderPortalAdminHandler({
       "projectContractSource",
       "prepareProjectContract",
     ].includes(input.action);
-    if (!global) {
-      if (!projectAction)
-        throw new HttpsError("permission-denied", "Sólo administración.");
-      const projectId = id(input.projectId),
-        p = (await db.doc(`projects/${projectId}`).get()).data(),
-        c = (
-          await db
-            .doc(`projects/${projectId}/collaborators/${actor.email}`)
-            .get()
-        ).data();
-      if (
-        !(
-          p?.createdBy === actor.uid ||
-          c?.role === "admin" ||
-          (c?.role === "jefe_produccion" &&
-            list(c.allowedTabs).includes("documentos"))
-        )
-      )
-        throw new HttpsError(
-          "permission-denied",
-          "No administrás documentos de este proyecto.",
-        );
+    if (!global && !projectAction) throw new HttpsError('permission-denied', 'Sólo administración.');
+    const signProjectId = projectAction ? id(input.projectId) : '';
+    const signAccess = projectAction ? await projectFinanceAccess({ db, actor, projectId: signProjectId }) : null;
+    if (signAccess && (!canReadTab(signAccess, 'documentos')
+      || !signAccess.admin && !['projectDocuments', 'projectFile'].includes(input.action))) deny();
+    async function readableSignDocument(document) {
+      if (signAccess.admin) return true;
+      const documentId = id(document.id);
+      if (document.source === 'cash_receipt') {
+        const receipt = (await db.doc(`providerCashReceipts/${documentId}`).get()).data();
+        const scope = receipt?.scope;
+        if (scope?.projectId !== signProjectId || !['areaExpenses', 'budgetItems'].includes(scope.collectionName)) return false;
+        const row = (await db.doc(`projects/${signProjectId}/${scope.collectionName}/${id(scope.itemId)}`).get()).data();
+        return row?.providerId === receipt.providerId && canReadExpenseArea(signAccess, scope.collectionName, row);
+      }
+      if (document.source === 'portal_declaration') {
+        const statement = (await db.doc(`providerPortalDeclarations/${documentId}`).get()).data();
+        const work = list(statement?.content?.workKeys);
+        return work.length > 0 && (await Promise.all(work.map(async key => {
+          const [p, name, itemId, extra] = String(key).split('/');
+          if (p !== signProjectId || !['areaExpenses', 'budgetItems'].includes(name) || extra !== undefined) return false;
+          const item = (await db.doc(`projects/${signProjectId}/${name}/${id(itemId)}`).get()).data();
+          return item?.providerId === statement.providerId && canReadExpenseArea(signAccess, name, item);
+        }))).every(Boolean);
+      }
+      if (document.source === 'sign_project' && document.sourceDocumentId) {
+        const manual = (await db.doc(`projects/${signProjectId}/projectDocuments/${id(document.sourceDocumentId)}`).get()).data();
+        return canReadDocument(signAccess, manual);
+      }
+      return false;
     }
     if (input.action === 'administrativeProviderState') return administrative.state(input.providerId);
     if (input.action === 'setAdministrativeProvider') return administrative.set(actor, input);
@@ -97,15 +107,16 @@ function createProviderPortalAdminHandler({
     }
     if (['projectContractSource', 'prepareProjectContract'].includes(input.action)) {
       const projectId = id(input.projectId);
-      if (!global) {
-        const p = (await db.doc(`projects/${projectId}`).get()).data();
-        const c = (await db.doc(`projects/${projectId}/collaborators/${actor.email}`).get()).data();
-        if (p?.createdBy !== actor.uid && c?.role !== 'admin') throw new HttpsError('permission-denied', 'Sólo administración puede preparar contratos para firma.');
-      }
       if (input.action === 'projectContractSource') return sign.projectContractSource(projectId, id(input.documentId));
       return sign.prepareProjectContract({ ...input, projectId, documentId: id(input.documentId) }, actor);
     }
     if (input.action === "projectFile") {
+      if (!signAccess.admin) {
+        const { documents } = await sign.projectDocuments(signProjectId);
+        const source = input.source || 'sign_project';
+        const approved = documents.find(document => document.id === input.documentId && document.source === source);
+        if (!approved || !await readableSignDocument(approved)) deny();
+      }
       if (input.source === 'cash_receipt') {
         const receipt = (await db.doc(`providerCashReceipts/${id(input.documentId)}`).get()).data();
         if (!receipt || receipt.scope.projectId !== id(input.projectId)) fail('Recibo fuera del alcance de este proyecto.');
@@ -362,6 +373,14 @@ function createProviderPortalAdminHandler({
     if (input.action === "projectDocuments") {
       const projectId = id(input.projectId);
       const result = await sign.projectDocuments(projectId);
+      if (!signAccess.admin) {
+        const visible = await Promise.all(result.documents.map(async document => await readableSignDocument(document) ? {
+          id: document.id, source: document.source, sourceDocumentId: document.sourceDocumentId || null,
+          title: document.title, status: document.status, declarationStatus: document.declarationStatus || null,
+          artifactsReady: document.artifactsReady === true, fileAvailable: document.fileAvailable !== false,
+        } : null));
+        return { connected: false, documents: visible.filter(Boolean) };
+      }
       return {
         ...result,
         documents: result.documents.map((d) => ({

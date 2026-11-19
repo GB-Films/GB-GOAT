@@ -769,9 +769,9 @@ export const buildAssistantTools = ({
       area: string,
       subcategory?: string,
     ) => {
-      const snapshot = await getDocs(collection(db, 'projects', projectId, collectionName));
-      const orders = snapshot.docs
-        .map((entry) => entry.data() as AssistantBudgetItem & { subcategory?: string })
+      const loaded = await getProjectContext(projectId);
+      const rows = collectionName === 'areaExpenses' ? loaded?.areaExpenses : loaded?.budgetItems;
+      const orders = (rows || [])
         .filter((item) => item.area === area
           && (subcategory === undefined || cleanAreaExpenseSubcategory(item.subcategory) === subcategory))
         .map((item) => Number(item.order) || 0);
@@ -1100,10 +1100,8 @@ export const buildAssistantTools = ({
           }
         }
 
-        const snapshot = await getDocs(collection(db, 'projects', context.projectId, 'areaExpenses'));
         const nextOrder = new Map<string, number>();
-        snapshot.docs.forEach((entry) => {
-          const item = entry.data() as AssistantAreaExpense;
+        context.areaExpenses.forEach((item) => {
           const key = `${item.area}||${cleanAreaExpenseSubcategory(item.subcategory)}`;
           nextOrder.set(key, Math.max(nextOrder.get(key) ?? -1, Number(item.order) || 0));
         });

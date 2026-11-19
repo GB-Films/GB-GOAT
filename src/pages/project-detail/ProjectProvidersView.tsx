@@ -1,3 +1,4 @@
+import { handleProjectAttachmentLink, projectAttachmentHref } from '../../lib/portalInvoiceLink';
 import { lazy, Suspense, useState } from 'react';
 import React from 'react';
 import { FileText, Paperclip } from 'lucide-react';
@@ -27,12 +28,12 @@ function EntryActions({ entry, canView, canManage, onPayment }: { entry: Provide
   const receipts = Array.isArray(entry.item?.paymentHistory) ? entry.item.paymentHistory : [];
   const actionClass = 'inline-flex items-center gap-1 rounded border px-2 py-1 text-[10px] font-bold uppercase tracking-widest';
   return <div className="flex flex-wrap items-center gap-1.5">
-    {entry.invoices.filter(invoice => invoice.url).map((invoice, index) => <a key={invoice.id || invoice.path || invoice.url || index} href={invoice.url} target="_blank" rel="noreferrer"
+    {entry.invoices.filter(invoice => invoice.url).map((invoice, index) => <a key={invoice.id || invoice.path || invoice.url || index} href={projectAttachmentHref(invoice.url)} onClick={event => handleProjectAttachmentLink(event, invoice.url)} target="_blank" rel="noreferrer"
       title={`${appearance.label} · ${invoice.fileName || invoice.originalFileName || 'Ver factura'}`} aria-label={`${appearance.label}: ${invoice.fileName || invoice.originalFileName || 'Factura'}`}
       className={cn(actionClass, appearance.className)}><FileText className="h-3 w-3" />Factura{entry.invoices.length > 1 ? ` ${index + 1}` : ''}</a>)}
-    {receipts.filter((payment: any) => payment.receipt?.url).map((payment: any, index: number) => <a key={payment.id || index} href={payment.receipt.url} target="_blank" rel="noreferrer"
+    {receipts.filter((payment: any) => payment.receipt?.url).map((payment: any, index: number) => <a key={payment.id || index} href={projectAttachmentHref(payment.receipt.url)} onClick={event => handleProjectAttachmentLink(event, payment.receipt.url)} target="_blank" rel="noreferrer"
       title={payment.receipt.originalFileName || 'Ver comprobante de pago'} className={cn(actionClass, 'border-blue-100 bg-blue-50 text-blue-700 hover:bg-blue-100')}><Paperclip className="h-3 w-3" />Comp.</a>)}
-    {(entry.otherReceipts || []).filter(receipt => receipt?.url).map((receipt, index) => <a key={receipt.id || receipt.path || index} href={receipt.url} target="_blank" rel="noreferrer"
+    {(entry.otherReceipts || []).filter(receipt => receipt?.url).map((receipt, index) => <a key={receipt.id || receipt.path || index} href={projectAttachmentHref(receipt.url)} onClick={event => handleProjectAttachmentLink(event, receipt.url)} target="_blank" rel="noreferrer"
       title={receipt.originalFileName || 'Ver otro comprobante'} className={cn(actionClass, 'border-sky-100 bg-sky-50 text-sky-700 hover:bg-sky-100')}><Paperclip className="h-3 w-3" />Otro comp.</a>)}
     {canView && <button type="button" onClick={() => onPayment(entry.item, entry.collectionName)} className={cn(actionClass, 'border-slate-200 bg-white text-slate-600 hover:border-slate-400 hover:text-slate-900')}>
       {canManage && entry.total - entry.paid > 0.01 ? 'Registrar pago' : 'Ver pagos'}

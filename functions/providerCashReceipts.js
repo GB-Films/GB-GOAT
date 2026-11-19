@@ -1,5 +1,6 @@
 const { HttpsError } = require('firebase-functions/v2/https');
 const { projectFinanceAccess } = require('./projectFinanceAccess');
+const { canReadExpense, deny } = require('./projectReadScope');
 const { hasTeamWorkAccess } = require('./teamWorkAccess');
 const { assertProviderPortalAllowed } = require('./providerAdministrativeRecords');
 const { companySigningAuthority } = require('./providerRepresentation');
@@ -49,6 +50,7 @@ function createCashReceiptService({ db, sign, timestamp, clock = () => new Date(
     if (actor.email !== 'info@granbertafilms.com' && (!hasTeamWorkAccess(access.user) || email(access.user.email) !== actor.email)) fail('Necesitás una cuenta del equipo habilitada.', 'permission-denied');
     const row = (await read(db.doc(`projects/${scope.projectId}/${scope.collectionName}/${scope.itemId}`))).data();
     if (!row || (scope.collectionName === 'areaExpenses') !== list(access.project.activeAreas).includes(row.area)) fail('El trabajo cambió de gestión. Actualizá la página.');
+    if (!canReadExpense(access, scope.collectionName, row)) deny();
     const fact = cashPayment(row, scope.paymentId);
     const cash = (await read(db.doc(`projects/${scope.projectId}/cashMovements/${id(fact.cashMovementId)}`))).data();
     if (!cash || cash.collectionName !== scope.collectionName || cash.itemId !== scope.itemId) fail('No se encontró el movimiento de caja vinculado.');
@@ -155,7 +157,14 @@ function createCashReceiptService({ db, sign, timestamp, clock = () => new Date(
         const ref = db.doc(`providerCashReceipts/${id(input.receiptId)}`), record = (await ref.get()).data();
         if (!record) fail('Recibo inexistente.');
         const access = await projectFinanceAccess({ db, actor, projectId: record.scope.projectId });
-        if (input.action === 'cashReceiptFile') return sign.declarationFile(record.signing, input.artifact || 'original');
+        if (input.action === 'cashReceiptFile') {
+          if (!access.admin) {
+            const scope = tuple(record.scope);
+            const item = (await db.doc(`projects/${scope.projectId}/${scope.collectionName}/${scope.itemId}`).get()).data();
+            if (item?.providerId !== record.providerId || !canReadExpense(access, scope.collectionName, item)) deny();
+          }
+          return sign.declarationFile(record.signing, input.artifact || 'original');
+        }
         const reason = text(input.reason, 300);
         if (!reason) fail('Indicá el motivo de anulación.');
         await db.runTransaction(async tx => {

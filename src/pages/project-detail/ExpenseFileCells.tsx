@@ -1,4 +1,4 @@
-import { handlePortalInvoiceLink } from '../../lib/portalInvoiceLink';
+import { handlePortalInvoiceLink, projectAttachmentHref, handleProjectAttachmentLink } from '../../lib/portalInvoiceLink';
 import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { FileText, Link as LinkIcon, Paperclip, Plus, X } from 'lucide-react';
@@ -68,7 +68,7 @@ export function ExpenseInvoiceCell({
       {invoiceCount === 1 && singleInvoice ? (
         <>
           <a
-            href={singleInvoice.url || '#'} onClick={e=>handlePortalInvoiceLink(e,singleInvoice)}
+            href={projectAttachmentHref(singleInvoice.url || '#')} onClick={e=>handlePortalInvoiceLink(e,singleInvoice)}
             target="_blank"
             rel="noreferrer"
             className={cn('flex h-7 w-7 shrink-0 items-center justify-center rounded border transition-all', invoiceColors)}
@@ -171,7 +171,7 @@ export function ExpenseInvoiceCell({
                       {invoice.contentType || 'Documento'}{invoice.size ? ` · ${Math.ceil(invoice.size / 1024)} KB` : ''}
                     </div>
                   </div>
-                  <a href={invoice.url || '#'} onClick={e=>handlePortalInvoiceLink(e,invoice)} target="_blank" rel="noreferrer" className="rounded border border-emerald-100 bg-emerald-50 px-3 py-2 text-[9px] font-black uppercase tracking-widest text-emerald-700 hover:bg-emerald-600 hover:text-white">
+                  <a href={projectAttachmentHref(invoice.url || '#')} onClick={e=>handlePortalInvoiceLink(e,invoice)} target="_blank" rel="noreferrer" className="rounded border border-emerald-100 bg-emerald-50 px-3 py-2 text-[9px] font-black uppercase tracking-widest text-emerald-700 hover:bg-emerald-600 hover:text-white">
                     Abrir
                   </a>
                   {canRemove && (
@@ -258,7 +258,7 @@ export function ExpenseReceiptsCell({
       {receipts.map((receipt: any, receiptIndex: number) => (
         <div key={receipt.id || receipt.path || receipt.url || receiptIndex} className="flex items-center">
           <a
-            href={receipt.url}
+            href={projectAttachmentHref(receipt.url)} onClick={event => handleProjectAttachmentLink(event, receipt.url)}
             target="_blank"
             rel="noreferrer"
             className={cn(

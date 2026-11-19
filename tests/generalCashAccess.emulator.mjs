@@ -57,7 +57,7 @@ try {
   await assertFails(updateDoc(doc(db('admin'), root, 'cashMovements', 'old-received-general'), { status: 'confirmed', confirmedBy: 'admin', confirmedByEmail: people.admin, confirmedByName: 'Admin', confirmedAt: serverTimestamp(), updatedAt: serverTimestamp() }));
   const personalReader = async projectId => (await call(request('admin', { action: 'personalCashMovements', projectId, email: people.tomas }))).movements;
   const own = await readProjectCashMovements(db('admin'), 'scope', people.admin, personalReader);
-  for (const q of personalCashRefreshQueries(db('admin'), 'scope', people.admin)) await assertSucceeds(getDocs(q));
+  for (const q of personalCashRefreshQueries(db('admin'), 'scope', people.admin)) await assertFails(getDocs(q));
   await assertSucceeds(getDoc(doc(db('admin'), root, 'cashMovements', 'personal-legacy')));
   await assert.rejects(call(request('admin', { action: 'personalCashMovements', projectId: 'scope' }, false)), /Verificá/);
   assert.deepEqual(own.map(row => row.id).sort(), ['personal-delivery', 'personal-legacy']);

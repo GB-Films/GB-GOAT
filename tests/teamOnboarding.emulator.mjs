@@ -7,6 +7,7 @@ const require = createRequire(new URL('../functions/package.json', import.meta.u
 const admin = require('firebase-admin');
 const { createTeamOnboarding } = require('../functions/teamOnboarding');
 const { createProviderPortalHandler } = require('../functions/providerPortal');
+const { createProviderFinanceHandler } = require('../functions/providerFinance');
 const { hasTeamWorkAccess } = require('../functions/teamWorkAccess');
 if (!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_STORAGE_EMULATOR_HOST) throw Error('Local emulators required');
 const projectId = 'demo-goat-team-onboarding';
@@ -15,6 +16,8 @@ const app = admin.initializeApp({ projectId });
 const db = app.firestore();
 const deps = { db, timestamp: () => admin.firestore.FieldValue.serverTimestamp(), findAccount: async email => ({uid:email.split('@')[0],email}) };
 const service = createTeamOnboarding(deps);
+const finance = createProviderFinanceHandler(deps);
+const projectSummaries = uid => finance({ auth: { uid, token: { email: actor(uid).email, email_verified: true } }, data: { action: 'projectSummaries' } });
 const actor = uid => ({ uid, email: `${uid}@example.test`, name: 'Equipo' });
 const ctx = uid => env.authenticatedContext(uid, { email_verified: true, email: actor(uid).email });
 const form = (uid, number) => ({ type:'persona', name:'Nombre', lastName:'Apellido', dni:String(30000000 + number), cuit:String(20000000000 + number), email:actor(uid).email, phone:'123456', address:'Calle 123', category:'Producción', bankAccount_alias:'cuenta.propia', bankAccount_cbu:'', birthDate:'', dietaryRestriction:'', categoryOther:'' });
@@ -38,8 +41,8 @@ try {
   await check('legacy access preserved', async()=>{
     await seed('legacy',null,true); await db.doc('users/legacy').set({...actor('legacy'),role:'colaborador'});
     assert.equal((await boot('legacy')).status,'legacy');
-    await assertSucceeds(getDoc(doc(ctx('legacy').firestore(),'projects/project_legacy')));
-    await assertSucceeds(getDocs(query(collection(ctx('legacy').firestore(),'projects'),where('collaboratorEmails','array-contains',actor('legacy').email))));
+    await assertFails(getDoc(doc(ctx('legacy').firestore(),'projects/project_legacy')));
+    assert.deepEqual((await projectSummaries('legacy')).projects.map(project => project.id), ['project_legacy']);
     await assertSucceeds(upload('legacy'));
   });
   await check('existing provider links once and preserves invoice data', async()=>{
@@ -92,7 +95,7 @@ try {
     await assertFails(upload('prior'));
     await submit('prior',5);
     await assertSucceeds(upload('prior'));
-    await assertSucceeds(getDoc(doc(ctx('prior').firestore(),'projects/project_prior')));
+    assert.deepEqual((await projectSummaries('prior')).projects.map(project => project.id), ['project_prior']);
     assert.equal((await db.doc(`projects/project_prior/collaborators/${actor('prior').email}`).get()).data().role,'jefe_area');
   });
   await check('SDK cannot forge onboarding, invitation or pending assignment', async()=>{
@@ -109,8 +112,8 @@ try {
     const adb=ctx('admin').firestore();
     await assertSucceeds(setDoc(doc(adb,`projects/project_legacy/collaborators/${actor('known').email}`),{uid:'known',email:actor('known').email,role:'colaborador'}));
     await assertSucceeds(updateDoc(doc(adb,'projects/project_legacy'),{collaboratorEmails:[actor('legacy').email,actor('known').email]}));
-    const projects=await assertSucceeds(getDocs(query(collection(ctx('known').firestore(),'projects'),where('collaboratorEmails','array-contains',actor('known').email))));
-    assert.equal(projects.size,1);
+    const { projects } = await projectSummaries('known');
+    assert.deepEqual(projects.map(project => project.id), ['project_legacy']);
   });
   await check('cancelled pending invitation can be replaced without stranding its profile', async()=>{
     const first=await service.admin(actor('admin'),{action:'teamCreateInvite',email:actor('renew').email});

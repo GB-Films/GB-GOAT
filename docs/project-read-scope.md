@@ -1,0 +1,17 @@
+# Alcance de lectura de colaboradores
+
+Las pestañas habilitadas controlan la navegación. Las categorías y subcategorías asignadas controlan las filas que el servidor devuelve. Una categoría incluye sus subcategorías, salvo las exclusiones explícitas. Una lista de pestañas guardada se respeta tal como está. Las configuraciones que carecen del campo conservan los valores predeterminados del rol.
+
+- Resumen, Áreas, Presu Ppal, Finanzas y Proveedores calculan los importes con las filas disponibles al colaborador. El presupuesto de una categoría completa requiere acceso a toda la categoría. Un gasto identificado por categoría y sin subcategoría queda cubierto por el permiso de la categoría. Las filas sin categoría, documentos generales, documentos históricos sin asociación válida, Resultado y Administración conservan acceso administrativo.
+- El archivo de una factura o un pago compartido se entrega si corresponden todas sus aplicaciones. Si una aplicación queda fuera del alcance, entre los movimientos sigue figurando el importe aplicado al gasto visible. Los datos, importes totales y archivos del original compartido permanecen restringidos.
+- Los saldos de caja personal contemplan las entregas y los pagos de la propia persona. Si hay un movimiento propio asociado a un gasto fuera de su alcance, se devuelve el importe necesario para conciliar su saldo con una descripción genérica. La Caja General requiere su permiso específico y administración del proyecto.
+- Los adjuntos nuevos usan referencias sin credenciales. El servidor verifica el vínculo actual con el gasto, pago o documento y busca el archivo en la ubicación admitida. El portal de cada proveedor conserva su acceso por ficha y su validación de originales.
+- Las personas con Permisos pueden consultar las asignaciones dentro de su ámbito. Un jefe de producción habilitado puede buscar por correo exacto a alguien ya dado de alta y asignarle categorías que él mismo tiene. La asignación registra las exclusiones que debe respetar.
+
+## Verificación y publicación
+
+Las pruebas `projectScopeRules` y `projectScopedFiles` usan datos ficticios. Cubren lecturas y ediciones autorizadas, exclusiones, cambios de permisos, presupuestos, proveedores, documentos individuales y compartidos, vínculos históricos y saldo personal.
+
+Publicar las funciones compatibles antes del cliente que las invoca. Coordinar el cliente y las reglas de Firestore y Storage en la misma ventana. La web anterior dependía de consultas amplias y deja de funcionar para roles restringidos si se endurecen las reglas antes de desplegarla. Las pestañas, invitaciones, cargas, pagos y vistas de proveedores deben comprobarse durante la publicación con las identidades de prueba.
+
+Los vínculos de descarga con token emitidos anteriormente por Storage siguen funcionando mientras ese token siga vigente. Antes del cierre, identificar los originales históricos de los proyectos y sus referencias legítimas, comprobar que cada uno puede abrirse con la nueva lectura autenticada y retirar los tokens previamente emitidos. Verificar también los metadatos copiados en filas con comprobantes históricos que el cliente todavía lee para editar. El portal de proveedores vincula las autorizaciones de descargas históricas a la referencia y los bytes. Si se necesita cambiar una referencia durante ese trabajo, comprobar y preservar la autorización correspondiente. Toda operación sobre datos reales requiere un plan revisado y autorización propia.
