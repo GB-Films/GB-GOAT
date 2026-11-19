@@ -29,7 +29,9 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          npm ci
+          npm ci --prefix functions
 
       - name: Validate types and Firebase rules
         run: npm run lint
@@ -53,9 +55,7 @@ jobs:
         run: npx --yes firebase-tools@15.22.1 emulators:exec --only firestore --project demo-goat-area-access "node tests/areaExpenseAccessRules.emulator.mjs"
 
       - name: Validate project integration functions
-        run: |
-          npm ci --prefix functions
-          npm test --prefix functions
+        run: npm test --prefix functions
 
       - name: Verify shared supplier invoices, payments and private documents
         run: npx --yes firebase-tools@15.22.1 emulators:exec --only firestore,storage --project demo-goat-provider-finance "node tests/providerFinance.emulator.mjs"
