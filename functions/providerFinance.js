@@ -101,7 +101,7 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, buc
     const user = await db.doc(`users/${request.auth.uid}`).get();
     const input = request.data || {};
     const actor = { uid: request.auth.uid, email: String(request.auth.token.email).trim().toLowerCase() };
-    if (['projectSummaries', 'projectAccess', 'projectScopedSnapshot', 'projectScopedAttachment', 'scopedProviderCatalog', 'projectTeamCandidate', 'projectAssignCollaborator', 'projectCreateDocument'].includes(input.action)) {
+    if (['projectSummaries', 'projectAccess', 'projectScopedSnapshot', 'projectScopedAttachment', 'projectAdminAttachment', 'scopedProviderCatalog', 'projectTeamCandidate', 'projectAssignCollaborator', 'projectCreateDocument'].includes(input.action)) {
       if (request.auth.token.email_verified !== true) deny();
       return readProject(actor, input);
     }

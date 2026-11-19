@@ -5,7 +5,7 @@ const { projectFinanceAccess, linkedAllocation } = require('./projectFinanceAcce
 const { activeRecordAllocations } = require('./providerFinanceAllocations');
 const { canAccessGeneralCash, canReadPersonalCashMovement } = require('./generalCashAccess');
 const { hasTeamWorkAccess } = require('./teamWorkAccess');
-const { deny, projectTabs, canReadTab, fullArea, canReadArea, canReadExpenseArea, canReadExpense, canReadDocument } = require('./projectReadScope');
+const { deny, projectTabs, canReadTab, fullArea, canReadArea, canReadExpenseArea, canReadExpense, canReadDocumentArea, canReadDocument } = require('./projectReadScope');
 
 const fields = (row, keys) => Object.fromEntries(keys.filter(key => row?.[key] !== undefined).map(key => [key, row[key]]));
 const header = row => fields(row, ['name', 'projectCode', 'status', 'location', 'shootingDate', 'shootingStartDate', 'shootingEndDate', 'createdAt', 'updatedAt', 'archived', 'archivedAt', 'budgetRevision']);
@@ -137,7 +137,7 @@ async function canReadRecordOriginal({ db, actor, access, projectId, record }) {
   return readable.every(Boolean);
 }
 
-async function boundAttachment({ db, actor, access, projectId, collectionName, row, itemId, kind, index, nestedIndex, file, path, readMetadata }) {
+async function boundAttachment({ db, actor, access, projectId, collectionName, row, itemId, kind, index, nestedIndex, file, path, bucket, readMetadata }) {
   const parts = path.split('/');
   if (parts[0] === 'providerFinance' && parts.length === 4 && parts[1] === row.providerId) {
     const recordId = id(parts[2]);
@@ -154,22 +154,78 @@ async function boundAttachment({ db, actor, access, projectId, collectionName, r
   }
   if (parts[0] !== 'projects' || parts[1] !== projectId) return false;
   if (kind === 'document') return parts.length === 5 && parts[2] === 'documents' && parts[3] === itemId;
+  const invoice = ['invoice', 'invoices'].includes(kind);
   if (parts[2] === collectionName && parts[3] === itemId) {
-    if (parts.length === 5) return ['invoice', 'invoices'].includes(kind);
+    if (parts.length === 5) return invoice;
     if (parts.length === 6 && parts[4] === 'otros-comprobantes') return kind === 'other';
-    if (parts.length !== 6 || parts[4] !== 'comprobantes' || !['payment', 'reimbursement', 'other'].includes(kind)) return false;
-  } else if (parts.length !== 6 || parts[2] !== 'areas' || parts[4] !== 'facturas' || !['invoice', 'invoices'].includes(kind)) {
+    if (parts.length !== 6 || !(parts[4] === 'comprobantes' || invoice && parts[4] === 'facturas')) return false;
+    if (!invoice && !['payment', 'reimbursement', 'other'].includes(kind)) return false;
+  } else if (parts.length !== 6 || parts[2] !== 'areas' || parts[4] !== 'facturas' || !invoice) {
     return false;
   }
   const metadata = await readMetadata?.(path);
-  if (metadata?.projectId !== projectId || metadata.collectionName !== collectionName || (metadata.itemId || metadata.expenseId) !== itemId) return false;
+  if (metadata?.projectId !== projectId || (metadata.itemId || metadata.expenseId) !== itemId) return false;
+  if (metadata.collectionName !== collectionName) {
+    if (metadata.collectionName || !['invoice', 'invoices', 'other'].includes(kind)) return false;
+    // Older uploads kept project + row IDs but did not keep a collection.
+    // Resolve the row only when its ID is unique across both expense collections.
+    const alternative = collectionName === 'areaExpenses' ? 'budgetItems' : 'areaExpenses';
+    if ((await db.doc(`projects/${projectId}/${alternative}/${itemId}`).get()).exists) return false;
+  }
   if (kind === 'other') return !metadata.paymentId;
   if (kind === 'payment' || kind === 'reimbursement') {
     const payment = list(row.paymentHistory)[index];
+    if (kind === 'payment' && !metadata.paymentId) {
+      // Some historical receipts predate payment IDs in Storage. A unique live
+      // reference on the already verified row identifies that receipt.
+      return list(row.paymentHistory).flatMap(entry => [entry.receipt, ...list(entry.reimbursements).map(refund => refund.receipt)])
+        .filter(reference => {
+          try { return objectPath(reference, bucket) === path; } catch { return false; }
+        }).length === 1;
+    }
     return Boolean(payment?.id && metadata.paymentId === payment.id
       && (kind !== 'reimbursement' || metadata.reimbursementId && metadata.reimbursementId === list(payment.reimbursements)[nestedIndex]?.id));
   }
   return true;
+}
+
+async function historicalAttachmentAlias(context) {
+  const { db, access, projectId, collectionName, itemId, kind, path, bucket, readMetadata } = context;
+  const [namespace, parent, folder, sourceId, ...rest] = path.split('/');
+  if (namespace !== 'projects' || parent !== projectId) return false;
+  const sameObject = file => {
+    try { return objectPath(file, bucket) === path; } catch { return false; }
+  };
+  if (folder === 'documents' && rest.length === 1 && ['invoice', 'invoices', 'other'].includes(kind)) {
+    const source = (await db.doc(`projects/${projectId}/projectDocuments/${id(sourceId)}`).get()).data();
+    return canReadDocumentArea(access, source) && sameObject(source);
+  }
+  if (!['document', 'invoice', 'invoices', 'other'].includes(kind)) return false;
+  const metadata = await readMetadata?.(path);
+  const sourceCollection = metadata?.collectionName;
+  const sourceExpense = metadata?.itemId || metadata?.expenseId;
+  if (metadata?.projectId !== projectId || !['areaExpenses', 'budgetItems'].includes(sourceCollection)
+    || !sourceExpense || sourceCollection === collectionName && sourceExpense === itemId) return false;
+  const row = (await db.doc(`projects/${projectId}/${sourceCollection}/${id(sourceExpense)}`).get()).data();
+  if (!canReadExpenseArea(access, sourceCollection, row)) return false;
+
+  // A second legacy reference can use an original retained by another
+  // authorized row. Both associations must exist and remain readable.
+  const candidates = [
+    { kind: 'invoice', file: row.invoice },
+    ...list(row.invoices).map((file, index) => ({ kind: 'invoices', file, index })),
+    ...list(row.otherReceipts).map((file, index) => ({ kind: 'other', file, index })),
+    ...list(row.paymentHistory).flatMap((payment, index) => [
+      ...(!payment.sharedRecordId ? [{ kind: 'payment', file: payment.receipt, index }] : []),
+      ...(!payment.sharedRecordId ? list(payment.reimbursements).map((refund, nestedIndex) =>
+        ({ kind: 'reimbursement', file: refund.receipt, index, nestedIndex })) : []),
+    ]),
+  ];
+  for (const original of candidates) {
+    if (sameObject(original.file) && await boundAttachment({ ...context, ...original,
+      collectionName: sourceCollection, itemId: sourceExpense, row, readMetadata: async () => metadata })) return true;
+  }
+  return false;
 }
 
 function createProjectScopedReads({ db, readFile, bucketName, readMetadata, timestamp }) {
@@ -304,6 +360,15 @@ function createProjectScopedReads({ db, readFile, bucketName, readMetadata, time
       const purpose = ['resumen', 'proveedores'].includes(input.purpose) ? input.purpose : undefined;
       return wire(await snapshot(access, projectId, purpose));
     }
+    if (input.action === 'projectAdminAttachment') {
+      if (!access.admin || !readFile) deny();
+      const path = objectPath({ path: input.path });
+      const [namespace, parent, ...parts] = path.split('/');
+      // A project admin already reads project files directly in Storage. The
+      // authenticated adapter preserves that access after old links are retired.
+      if (namespace !== 'projects' || parent !== projectId || parts.length < 3) deny();
+      return readFile({ path, projectAttachment: true });
+    }
     if (input.action === 'projectScopedAttachment') {
       const { collectionName, kind } = input, itemId = id(input.itemId);
       if (!['areaExpenses', 'budgetItems', 'projectDocuments'].includes(collectionName)) deny();
@@ -328,9 +393,11 @@ function createProjectScopedReads({ db, readFile, bucketName, readMetadata, time
         if (payment?.sharedRecordId && !String(file?.path || '').startsWith('providerFinance/')) deny();
       }
       if (!file || !readFile) deny();
-      const path = objectPath(file, bucketName?.());
-      if (!await boundAttachment({ db, actor, access, projectId, collectionName, row, itemId, kind, index, nestedIndex, file, path, readMetadata })) deny();
-      return { fileName: file.originalFileName || file.fileName || path.split('/').pop(), contentType: file.contentType || 'application/pdf', base64: await readFile({ path }) };
+      const bucket = bucketName?.(), path = objectPath(file, bucket);
+      const binding = { db, actor, access, projectId, collectionName, row, itemId, kind, index, nestedIndex, file, path, bucket, readMetadata };
+      if (!await boundAttachment(binding) && !await historicalAttachmentAlias(binding)) deny();
+      const original = await readFile({ path, projectAttachment: true });
+      return { ...original, fileName: file.originalFileName || file.fileName || original.fileName };
     }
     deny();
   };

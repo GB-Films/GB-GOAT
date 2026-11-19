@@ -32,9 +32,11 @@ const canReadExpenseArea = (access, collectionName, item) => !!item && (
 );
 const canReadExpense = (access, collectionName, item) => canReadTab(access, ...(collectionName === 'budgetItems' ? budgetTabs : areaTabs))
   && canReadExpenseArea(access, collectionName, item);
-const canReadDocument = (access, item) => !!item && canReadTab(access, 'documentos') && (
+const canReadDocumentArea = (access, item) => !!item && (
   access.admin || !!item.area && item.area !== 'General'
     && (item.subcategory ? canReadArea(access, item.area, item.subcategory) : fullArea(access, item.area))
 );
 
-module.exports = { deny, projectTabs, canReadTab, fullArea, canReadArea, canReadExpenseArea, canReadExpense, canReadDocument };
+const canReadDocument = (access, item) => canReadTab(access, 'documentos') && canReadDocumentArea(access, item);
+
+module.exports = { deny, projectTabs, canReadTab, fullArea, canReadArea, canReadExpenseArea, canReadExpense, canReadDocumentArea, canReadDocument };

@@ -34,7 +34,8 @@ const row = (area, subcategory, providerId) => ({
   total: 100, paymentHistory: [], paymentLocked: false, paymentAuthorIds: [], createdBy: 'owner', createdByEmail: adminEmail,
 });
 const filePath = 'projects/p/areaExpenses/hidden/comprobantes/native.pdf';
-const finance = createProviderFinanceHandler({ db, timestamp, readFile: async () => 'JVBERg==',
+const finance = createProviderFinanceHandler({ db, timestamp, readFile: async file =>
+  file.projectAttachment ? { base64: 'JVBERg==', contentType: 'application/pdf', fileName: file.path.split('/').pop() } : 'JVBERg==',
   readMetadata: async () => ({ projectId: 'p', family: 'seguros', uploadedBy: producerEmail }) });
 const call = (action, input = {}) => finance({ auth, data: { action, projectId: 'p', ...input } });
 const signing = createProviderPortalAdminHandler({ db, timestamp, sign: {
@@ -83,6 +84,14 @@ try {
   await assertSucceeds(getBytes(ref(owner.storage(bucket), filePath)));
   await assertFails(getBytes(ref(producer.storage(bucket), filePath)));
   await assertFails(getBytes(ref(outsider.storage(bucket), filePath)));
+  const readHistorical = (path, projectId = 'p') => finance({
+    auth: { uid: 'owner', token: claims(adminEmail) },
+    data: { action: 'projectAdminAttachment', projectId, path },
+  });
+  assert.equal((await readHistorical(filePath)).base64, 'JVBERg==');
+  await assert.rejects(call('projectAdminAttachment', { path: filePath }), { code: 'permission-denied' });
+  await assert.rejects(readHistorical('providerFinance/supplier/record/native.pdf'), { code: 'permission-denied' });
+  await assert.rejects(readHistorical('projects/other/areaExpenses/work/comprobantes/native.pdf'), { code: 'permission-denied' });
   await assertSucceeds(runTransaction(dbProducer, async transaction => {
     const reference = doc(dbProducer, 'projects/p/areaExpenses/visible');
     const item = (await transaction.get(reference)).data();

@@ -38,9 +38,13 @@ exports.manageProviderFinance = onCall({ timeoutSeconds: 60, maxInstances: 2 }, 
   readFile: async file => {
     const source = admin.storage().bucket().file(file.path);
     const [metadata] = await source.getMetadata();
-    if (Number(metadata.size) > 2 * 1024 * 1024) throw new HttpsError('failed-precondition', 'El documento supera el tamaño permitido.');
+    const limit = file.projectAttachment ? 10 : 2;
+    if (Number(metadata.size) > limit * 1024 * 1024) throw new HttpsError('failed-precondition', 'El documento supera el tamaño permitido.');
+    if (file.projectAttachment && !['application/pdf', 'image/jpeg', 'image/png', 'image/webp'].includes(metadata.contentType))
+      throw new HttpsError('failed-precondition', 'El comprobante tiene un tipo de archivo no admitido.');
     const [bytes] = await source.download();
-    return bytes.toString('base64');
+    const base64 = bytes.toString('base64');
+    return file.projectAttachment ? { base64, contentType: metadata.contentType, fileName: file.path.split('/').pop() } : base64;
   },
 }));
 // On-demand only. Server-only state uses collections denied to browser SDKs by default.

@@ -16,13 +16,18 @@ test('scoped finance releases only verified originals whose applications are all
   const singleInvoice = 'providerFinance/supplier/singleInvoice/single.pdf';
   const unrelated = 'projects/p/areaExpenses/hidden/comprobantes/secret.pdf';
   const portalInvoice = 'providerPortalUploads/supplier/upload/invoice.pdf';
+  const historicalDocument = 'projects/p/documents/manual/original.pdf';
   const originalReads = [];
+  let invoiceCollection = 'areaExpenses', paymentId = 'native';
   const scoped = createProviderFinanceHandler({
     db, timestamp: FieldValue.serverTimestamp, bucketName: () => 'fake-bucket',
-    readFile: async ({ path }) => { originalReads.push(path); return 'JVBERg=='; },
+    readFile: async ({ path, projectAttachment }) => {
+      originalReads.push(path);
+      return projectAttachment ? { base64: 'JVBERg==', contentType: 'application/pdf', fileName: path.split('/').pop() } : 'JVBERg==';
+    },
     readMetadata: async path => path === ownInvoice
-      ? { projectId: 'p', collectionName: 'areaExpenses', expenseId: 'visible' }
-      : path === ownPayment ? { projectId: 'p', collectionName: 'areaExpenses', itemId: 'visible', paymentId: 'native' } : null,
+      ? { projectId: 'p', collectionName: invoiceCollection, expenseId: 'visible' }
+      : path === ownPayment ? { projectId: 'p', collectionName: 'areaExpenses', itemId: 'visible', paymentId } : null,
   });
   const call = (action, fields = {}) => scoped({
     auth: { uid: 'producer', token: { email: 'producer@example.test', email_verified: true } },
@@ -83,6 +88,36 @@ test('scoped finance releases only verified originals whose applications are all
       assert.equal(result.path, undefined);
     }
     assert.deepEqual(originalReads, [ownInvoice, singleInvoice, portalInvoice, ownPayment]);
+    invoiceCollection = undefined;
+    assert.equal((await open('invoices', 0)).base64, 'JVBERg==');
+    await db.doc('projects/p/budgetItems/visible').set({ ...row, area: 'Producción' });
+    await assert.rejects(open('invoices', 0), { code: 'permission-denied' });
+    invoiceCollection = 'budgetItems';
+    await assert.rejects(open('invoices', 0), { code: 'permission-denied' });
+
+    paymentId = undefined;
+    assert.equal((await open('payment', 1)).base64, 'JVBERg==');
+    const original = (await rowRef('visible').get()).data();
+    await rowRef('visible').update({
+      invoices: [...original.invoices, file(ownPayment)],
+      paymentHistory: [...original.paymentHistory, payment('second-reference', null, file(ownPayment))],
+    });
+    assert.equal((await open('invoices', original.invoices.length)).base64, 'JVBERg==');
+    await assert.rejects(open('payment', 1), { code: 'permission-denied' });
+
+    const acl = db.doc('projects/p/collaborators/producer@example.test');
+    await acl.update({ allowedTabs: ['areas', 'documentos'] });
+    invoiceCollection = 'areaExpenses';
+    await db.doc('projects/p/projectDocuments/insurance').set({ ...file(ownInvoice), area: 'Arte', family: 'seguros' });
+    const openInsurance = () => call('projectScopedAttachment', { collectionName: 'projectDocuments', itemId: 'insurance', kind: 'document' });
+    assert.equal((await openInsurance()).base64, 'JVBERg==');
+    await rowRef('visible').update({ area: 'Producción' });
+    await assert.rejects(openInsurance(), { code: 'permission-denied' });
+    await rowRef('visible').update({ area: 'Arte', invoices: [...original.invoices, file(historicalDocument)] });
+    await db.doc('projects/p/projectDocuments/manual').set({ ...file(historicalDocument), area: 'Arte', family: 'seguros' });
+    assert.equal((await open('invoices', original.invoices.length)).base64, 'JVBERg==');
+    await db.doc('projects/p/projectDocuments/manual').update({ area: 'Producción' });
+    await assert.rejects(open('invoices', original.invoices.length), { code: 'permission-denied' });
   } finally {
     await db.terminate();
   }
