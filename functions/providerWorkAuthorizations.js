@@ -7,7 +7,7 @@ const { isInternalBudgetEstimate } = require('./internalBudgetEstimate');
 
 // Read-only: never applies, approves or repairs a declaration while showing bank data.
 function createProviderWorkAuthorizations({ db, sign, clock = () => new Date() }) {
-  return async (actor, input, global) => {
+  return async (actor, input) => {
     const projectId = id(input.projectId), itemId = id(input.itemId);
     if (!['areaExpenses', 'budgetItems'].includes(input.collectionName)) fail('Elegí un gasto válido.');
     const access = await projectFinanceAccess({ db, actor, projectId });

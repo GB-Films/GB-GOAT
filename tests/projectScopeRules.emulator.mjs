@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { randomUUID } from 'node:crypto';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
 import { collection, doc, getDoc, getDocs, runTransaction, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { getBytes, ref, uploadBytes } from 'firebase/storage';
@@ -53,7 +54,7 @@ try {
     db.doc('users/candidate').set({ role: 'colaborador', email: 'candidate@example.test', displayName: 'Cuenta ficticia' }),
     projectRef.set({ name: 'Prueba', createdBy: 'owner', collaboratorEmails: [producerEmail], categories: ['Arte', 'Post'],
       activeAreas: ['Arte'], categoryBudgets: { Arte: 500, Post: 991199 }, budgetTotal: 911123,
-      areaExpenseSubcategories: { Arte: ['Utilería', 'Vestuario'], Post: ['Render'] } }),
+      budgetRevision: 1, areaExpenseSubcategories: { Arte: ['Utilería', 'Vestuario'], Post: ['Render'] } }),
     acl.set({ role: 'jefe_produccion', allowedTabs: ['areas', 'documentos', 'cajas', 'proveedores'], allowedCategories: ['Arte'], excludedSubcategories: ['Arte||Vestuario'], canEditBudgetAreas: true }),
     projectRef.collection('areaExpenses').doc('visible').set(row('Arte', 'Utilería', 'supplier')),
     projectRef.collection('areaExpenses').doc('hidden').set(row('Arte', 'Vestuario', 'elsewhere')),
@@ -119,7 +120,17 @@ try {
   const newDoc = { family: 'seguros', area: 'Arte', subcategory: 'Utilería', fileName: 'ficticio.pdf', path: 'projects/p/documents/new-doc/ficticio.pdf' };
   await assert.rejects(call('projectCreateDocument', { itemId: 'new-doc', document: { ...newDoc, subcategory: 'Vestuario' } }), { code: 'permission-denied' });
   assert.deepEqual(await call('projectCreateDocument', { itemId: 'new-doc', document: newDoc }), { id: 'new-doc' });
-  await acl.update({ allowedTabs: ['documentos'] });
+  const groupRow = projectRef.collection('areaExpenses').doc('delete-group');
+  await groupRow.set({ ...row('Arte', 'Temporal', 'supplier'), paid: true });
+  const removeGroup = () => call('reclassifyAreaExpenses', { kind: 'deleteSubcategory', operationId: randomUUID(), expectedRevision: 1,
+    fromArea: 'Arte', targetArea: 'Arte', fromSubcategory: 'Temporal', targetSubcategory: '' });
+  await assert.rejects(removeGroup(), { code: 'permission-denied' });
+  await acl.update({ excludedSubcategories: [] });
+  await assert.rejects(removeGroup(), /pagos registrados/);
+  await groupRow.update({ paid: false });
+  assert.equal((await removeGroup()).view.expenses[0].after.subcategory, '');
+  assert.equal((await groupRow.get()).data().subcategory, '');
+  await acl.update({ allowedTabs: ['documentos'], excludedSubcategories: ['Arte||Vestuario'] });
   await assertFails(getDoc(doc(dbProducer, 'projects/p/areaExpenses/visible')));
   const documentOnly = await call('projectScopedSnapshot');
   assert.deepEqual(documentOnly.areaExpenses, []);

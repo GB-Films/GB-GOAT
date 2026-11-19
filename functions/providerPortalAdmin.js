@@ -60,7 +60,7 @@ function createProviderPortalAdminHandler({
       actor.email === "info@granbertafilms.com";
     if (['cashReceiptSource', 'requestCashReceipt', 'cashReceiptFile', 'cancelCashReceipt'].includes(input.action)) return cashReceipts.admin(actor, input);
     if (['workAuthorizations', 'workAuthorizationFile'].includes(input.action))
-      return createProviderWorkAuthorizations({ db, sign, clock })(actor, input, global);
+      return createProviderWorkAuthorizations({ db, sign, clock })(actor, input);
     const projectAction = [
       "projectDocuments",
       "projectFile",

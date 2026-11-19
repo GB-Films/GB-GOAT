@@ -1,6 +1,6 @@
 import { DEFAULT_RESULT_INCIDENCES } from '../lib/resultIncidences';
 import React, { useState, useEffect } from 'react';
-import { collection, query, getDocs, getDoc, setDoc, addDoc, serverTimestamp, where, or, doc, runTransaction, onSnapshot } from 'firebase/firestore';
+import { collection, query, getDocs, getDoc, setDoc, addDoc, serverTimestamp, doc, runTransaction, onSnapshot } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { handleFirestoreError } from '../lib/firestoreUtils';
 import { useAuth } from '../context/AuthContext';

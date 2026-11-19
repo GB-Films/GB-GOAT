@@ -1,4 +1,4 @@
-import { collection, query, getDocs, or, where } from 'firebase/firestore';
+import { collection, query, getDocs, where } from 'firebase/firestore';
 import { db } from './firebase';
 import { getPaymentTotal } from './projectFinance';
 import { getProviderExpenseDocuments, uniqueProviderDocuments } from './providerDocuments';

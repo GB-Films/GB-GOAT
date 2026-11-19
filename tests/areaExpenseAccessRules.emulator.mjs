@@ -1,10 +1,17 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
 import { doc, getDoc, runTransaction, serverTimestamp, setDoc, Timestamp, updateDoc } from 'firebase/firestore';
 
+const projectId = 'demo-goat-area-access';
+const require = createRequire(new URL('../functions/package.json', import.meta.url));
+const firebase = require('firebase-admin');
+const app = firebase.initializeApp({ projectId });
+const { createProviderFinanceHandler } = require('../functions/providerFinance');
+const finance = createProviderFinanceHandler({ db: app.firestore(), timestamp: firebase.firestore.FieldValue.serverTimestamp });
 const env = await initializeTestEnvironment({
-  projectId: 'demo-goat-area-access',
+  projectId,
   firestore: { rules: readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8') },
 });
 const leadUid = 'area-lead', leadEmail = 'lead@example.test';
@@ -102,7 +109,10 @@ try {
   await assertFails(updateDoc(doc(leadDb, scopeRef), { excludedSubcategories: [] }));
   const target = { uid: 'target', email: 'target@example.test', role: 'jefe_area', allowedTabs: ['areas'], canEditBudgetAreas: true, allowedCategories: ['Producción'], allowedSubcategories: [] };
   await assertFails(setDoc(doc(leadDb, targetRef), target));
-  await assertSucceeds(setDoc(doc(leadDb, targetRef), { ...target, excludedSubcategories: ['Producción||Seguros'] }));
+  await assertFails(setDoc(doc(leadDb, targetRef), { ...target, excludedSubcategories: ['Producción||Seguros'] }));
+  const assigned = await finance({ auth: { uid: leadUid, token: { email: leadEmail, email_verified: true } }, data: {
+    action: 'projectAssignCollaborator', projectId: 'imported', email: target.email, uid: target.uid, role: target.role, categories: target.allowedCategories } });
+  assert.deepEqual(assigned.collaborator.excludedSubcategories, ['Producción||Seguros']);
   await assertFails(updateDoc(doc(leadDb, targetRef), { excludedSubcategories: [] }));
   await assertSucceeds(updateDoc(doc(leadDb, targetRef), { allowedCategories: [], allowedSubcategories: ['Producción||Nueva'] }));
   await assertFails(updateDoc(doc(leadDb, targetRef), { allowedSubcategories: ['Producción||Seguros'] }));
@@ -114,4 +124,5 @@ try {
   console.log('Area expense access: legacy/inherited scopes, explicit exclusions, delegation and privilege boundaries verified');
 } finally {
   await env.cleanup();
+  await app.delete();
 }

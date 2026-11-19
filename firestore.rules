@@ -237,14 +237,6 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/users/$(request.resource.data.uid)).data.email == email;
     }
 
-    function canWriteProjectDocument(projectId) {
-      return isProjectAdmin(projectId)
-        || (
-          isProjectProductionLead(projectId)
-          && 'documentos' in collaboratorDoc(projectId).allowedTabs
-        );
-    }
-
     function isAppProductionLead() {
       return isSignedIn()
         && exists(/databases/$(database)/documents/users/$(request.auth.uid))

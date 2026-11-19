@@ -1,5 +1,5 @@
 export type AreaStructureChange = {
-  kind: 'expense' | 'subcategory' | 'subcategoryBudget'; fromArea: string; fromSubcategory: string; targetArea: string; targetSubcategory: string;
+  kind: 'expense' | 'subcategory' | 'subcategoryBudget' | 'deleteSubcategory'; fromArea: string; fromSubcategory: string; targetArea: string; targetSubcategory: string;
   itemId?: string; beforeExpenseId?: string; beforeSubcategory?: string | null;
   budget?: { assigned: boolean; amount: number; notes: string; expected: string };
 };

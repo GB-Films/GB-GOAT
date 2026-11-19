@@ -2234,6 +2234,15 @@ export default function ProjectDetail() {
       'Tambien se quitaran los permisos asignados a esta subcategoria.'
     );
     if (!secondConfirmation) return;
+    if (!isProjectAdmin) {
+      setIsSavingSubcategoryBudget(true);
+      try {
+        await changeAreaStructure({ kind: 'deleteSubcategory', fromArea: area, targetArea: area, fromSubcategory: subcategory, targetSubcategory: '' });
+        setSubcategoryBudgetDraft(null);
+      } catch (error) { alert(areaStructureErrorMessage(error)); }
+      finally { setIsSavingSubcategoryBudget(false); }
+      return;
+    }
 
     const existing = getStoredAreaSubcategories(area);
     const nextSubcategories = existing.filter((item) => item.toLowerCase() !== subcategory.toLowerCase());
