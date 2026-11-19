@@ -170,20 +170,6 @@ service cloud.firestore {
       return collaboratorDoc(projectId).get('excludedSubcategories', []).hasOnly(request.resource.data.get('excludedSubcategories', []));
     }
 
-    function canReadAssignedExpense(projectId, row) {
-      let c = collaboratorDoc(projectId);
-      let area = row.get('area', '');
-      let storedSubcategory = row.get('subcategory', '');
-      let subcategory = storedSubcategory == 'Sin subcategoria' ? '' : storedSubcategory;
-      let key = areaSubcategoryKey(area, subcategory);
-      let tabs = c.get('allowedTabs', ['resumen', 'areas', 'cajas', 'saldos', 'documentos', 'proveedores']);
-      return hasCollaboratorDoc(projectId) && teamNotPending() && isProjectCollaborator(projectId)
-        && area is string && area != '' && subcategory is string
-        && tabs.hasAny(['resumen', 'areas', 'saldos', 'proveedores'])
-        && !(key in c.get('excludedSubcategories', []))
-        && (area in c.get('allowedCategories', []) || subcategory != '' && key in c.get('allowedSubcategories', []));
-    }
-
     function canWriteAssignedAreaExpense(projectId, area, subcategory) {
       let access = collaboratorDoc(projectId);
       return hasCollaboratorDoc(projectId)
@@ -1679,7 +1665,9 @@ service cloud.firestore {
 
       match /areaExpenses/{expenseId} {
         allow list: if isProjectAdmin(projectId);
-        allow get: if isProjectAdmin(projectId) || canReadAssignedExpense(projectId, resource.data);
+        // Expense documents contain private payment and invoice data. Scoped
+        // collaborators receive the projection from manageProviderFinance.
+        allow get: if isProjectAdmin(projectId);
         allow create: if !request.resource.data.keys().hasAny(['sharedInvoices', 'sharedReceipts', 'sharedPaymentIds', 'sharedPaymentRecords', 'thirdPartyPayoutRequired']) && (isProjectAdmin(projectId)
           || canWriteAreaExpense(projectId, request.resource.data.area, request.resource.data.subcategory))
             && request.resource.data.createdBy == request.auth.uid

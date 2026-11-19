@@ -86,7 +86,7 @@ import { PaymentModal } from './project-detail/PaymentModal';
 import { ExpenseInvoiceCell, ExpenseReceiptsCell, InvoiceDropOverlay } from './project-detail/ExpenseFileCells';
 import { SharedInvoiceRecordsProvider } from '../components/SharedExpenseInvoices';
 import { providerFinanceRequest } from '../lib/providerFinance';
-import { projectAttachmentLink, readProjectAccess, readScopedCash, readScopedProject, readScopedProviders } from '../lib/projectScopedData';
+import { editScopedAreaExpense, projectAttachmentLink, readProjectAccess, readScopedCash, readScopedProject, readScopedProviders } from '../lib/projectScopedData';
 import type { AreaExpense, BudgetItem, CashMovement, Collaborator, Payment, PaymentCollection } from './project-detail/types';
 import { formatIdentifier, inferLegacyIdentifiers, normalizeDigits, providerDisplayName } from '../lib/providerConstants';
 import { normalizeEmail, normalizeSearchText } from '../lib/identity';
@@ -1931,6 +1931,12 @@ export default function ProjectDetail() {
       if (!canEditAreaExpense(currentExpense) || !canEditAreaSubcategory(nextArea, nextSubcategory)) { if (propagateFailure) throw new Error('No tenés permiso para editar este gasto.'); return; }
       const nextTotal = submittedUpdates.total !== undefined ? Number(submittedUpdates.total) : Number(currentExpense.total) || 0;
       const budgetWarning = getAreaExpenseBudgetWarning(nextArea, nextTotal, expenseId);
+      if (!isProjectAdmin) {
+        const saved = await editScopedAreaExpense(id, expenseId, currentExpense.updatedAt, submittedUpdates);
+        setAreaExpenses(expenses => expenses.map(e => e.id === expenseId ? saved : e));
+        if (budgetWarning) showExpenseConfirmation(budgetWarning, 'warning');
+        return;
+      }
       const docRef = doc(db, 'projects', id, 'areaExpenses', expenseId);
       const auditRef = paidProviderCorrection ? doc(collection(db, 'projects', id, 'activityLog')) : null;
       const amountAuditRef = doc(collection(db, 'projects', id, 'activityLog'));
@@ -2486,10 +2492,18 @@ export default function ProjectDetail() {
           area: expense.area || '',
           areaFolder,
           originalFileName: file.name,
+          uploaderUid: user?.uid || '',
           uploadedBy: user?.email || user?.uid || 'unknown',
         },
       });
       fileUploaded = true;
+
+      if (!isProjectAdmin) {
+        const result = await providerFinanceRequest({ action: 'attachScopedAreaExpenseFile', projectId: id, itemId: expense.id,
+          kind: 'invoice', fileId: invoiceId, path }) as { expense: AreaExpense };
+        setAreaExpenses(expenses => expenses.map(e => e.id === expense.id ? result.expense : e));
+        return;
+      }
 
       const url = projectAttachmentLink(id, collectionName, expense.id, 'invoices', invoiceId);
       const invoice = {
@@ -2774,11 +2788,18 @@ export default function ProjectDetail() {
             : isOwner ? 'project_owner' : isProjectAdmin ? 'project_admin' : 'area_editor',
           area: expense.area || '',
           originalFileName: file.name,
+          uploaderUid: user?.uid || '',
           uploadedBy: user?.email || user?.uid || 'unknown',
           uploadedByRole,
         },
       });
 
+      if (!isProjectAdmin) {
+        const result = await providerFinanceRequest({ action: 'attachScopedAreaExpenseFile', projectId: id, itemId: expense.id,
+          kind: 'other', fileId: receiptId, path }) as { expense: AreaExpense };
+        setAreaExpenses(expenses => expenses.map(e => e.id === expense.id ? result.expense : e));
+        return;
+      }
       const url = projectAttachmentLink(id, collectionName, expense.id, 'other', receiptId);
       const receipt = {
         id: receiptId,

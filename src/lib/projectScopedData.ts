@@ -5,6 +5,12 @@ export function projectAttachmentLink(projectId: string, collectionName: string,
   return 'goat-file:' + encodeURIComponent(JSON.stringify({ projectId, collectionName, itemId, kind, fileId }));
 }
 
+export async function editScopedAreaExpense(projectId: string, itemId: string, updatedAt: unknown, updates: Record<string, unknown>) {
+  const version = updatedAt as { seconds?: number; nanoseconds?: number } | null | undefined;
+  const expectedUpdatedAt = Number.isInteger(version?.seconds) ? [version?.seconds, version?.nanoseconds || 0] : null;
+  return (await providerFinanceRequest({ action: 'editScopedAreaExpense', projectId, itemId, expectedUpdatedAt, updates }) as { expense: AreaExpense }).expense;
+}
+
 export type ScopedProjectSnapshot = {
   project: any;
   admin: boolean;

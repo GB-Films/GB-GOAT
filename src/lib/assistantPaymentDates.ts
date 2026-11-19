@@ -42,18 +42,28 @@ export function preparePaymentDatePlan(context: AssistantProjectContext, input: 
     const key = `${source}/${item.id}`;
     if (used.has(key)) fail(`El gasto «${label(item)}» está repetido. Dejá una sola fecha por gasto.`);
     used.add(key);
-    return { id: item.id, source, date, expected: version(item), label: label(item) };
+    const expected = !context.capabilities.isProjectAdmin && source === 'areaExpenses' && item.paymentDatesVersion
+      ? item.paymentDatesVersion : version(item);
+    return { id: item.id, source, date, expected, label: label(item) };
   });
   return { projectId: context.projectId, projectName: context.projectName, targets,
     summary: `Programar fechas en ${context.projectName} (${targets.length} gastos):\n${targets.map(row => `• ${row.label}: ${row.date ? row.date.split('-').reverse().join('/') : 'Sin fecha'}`).join('\n')}` };
 }
 
-export async function applyPaymentDatePlan(db: Firestore, plan: PaymentDatePlan, context: AssistantProjectContext) {
+export async function applyPaymentDatePlan(db: Firestore, plan: PaymentDatePlan, context: AssistantProjectContext,
+  request?: (input: Record<string, unknown>) => Promise<unknown>) {
   if (context.projectId !== plan.projectId || !plan.targets.length || plan.targets.length > MAX_ASSISTANT_PAYMENT_DATES) fail('Volvé a preparar la programación.');
+  const result = (changed: number) => ({ ok: true, fechasActualizadas: changed, gastosSeleccionados: plan.targets.length, mensaje: 'Fechas programadas. No se registraron pagos ni movimientos de caja.' });
+  if (!context.capabilities.isProjectAdmin) {
+    if (!request || plan.targets.some(target => target.source !== 'areaExpenses')) fail('Volvé a preparar la programación de Áreas.');
+    const { changed } = await request({ action: 'scheduleScopedAreaExpenseDates', projectId: plan.projectId,
+      targets: plan.targets.map(({ id, date, expected }) => ({ id, date, expected })) }) as { changed: number };
+    return result(changed);
+  }
   const changed = await runTransaction(db, async tx => {
-    const project = context.capabilities.isProjectAdmin ? await tx.get(doc(db, 'projects', plan.projectId)) : null;
-    if (project && !project.exists()) fail('El proyecto ya no está disponible.');
-    const activeAreas = project ? project.data().activeAreas || [] : context.activeAreas;
+    const project = await tx.get(doc(db, 'projects', plan.projectId));
+    if (!project.exists()) return fail('El proyecto ya no está disponible.');
+    const activeAreas = project.data().activeAreas || [];
     const snapshots = await Promise.all(plan.targets.map(target => tx.get(doc(db, 'projects', plan.projectId, target.source, target.id))));
     let count = 0;
     for (let index = 0; index < snapshots.length; index++) {
@@ -68,5 +78,5 @@ export async function applyPaymentDatePlan(db: Firestore, plan: PaymentDatePlan,
     });
     return count;
   });
-  return { ok: true, fechasActualizadas: changed, gastosSeleccionados: plan.targets.length, mensaje: 'Fechas programadas. No se registraron pagos ni movimientos de caja.' };
+  return result(changed);
 }

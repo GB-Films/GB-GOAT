@@ -32,6 +32,8 @@ const canReadExpenseArea = (access, collectionName, item) => !!item && (
 );
 const canReadExpense = (access, collectionName, item) => canReadTab(access, ...(collectionName === 'budgetItems' ? budgetTabs : areaTabs))
   && canReadExpenseArea(access, collectionName, item);
+const canEditAreaExpense = (access, item) => !!item && (access.admin || access.collaborator?.canEditBudgetAreas === true
+  && list(access.collaborator.allowedTabs).includes('areas') && canReadExpenseArea(access, 'areaExpenses', item));
 const canReadDocumentArea = (access, item) => !!item && (
   access.admin || !!item.area && item.area !== 'General'
     && (item.subcategory ? canReadArea(access, item.area, item.subcategory) : fullArea(access, item.area))
@@ -39,4 +41,4 @@ const canReadDocumentArea = (access, item) => !!item && (
 
 const canReadDocument = (access, item) => canReadTab(access, 'documentos') && canReadDocumentArea(access, item);
 
-module.exports = { deny, projectTabs, canReadTab, fullArea, canReadArea, canReadExpenseArea, canReadExpense, canReadDocumentArea, canReadDocument };
+module.exports = { deny, projectTabs, canReadTab, fullArea, canReadArea, canReadExpenseArea, canReadExpense, canEditAreaExpense, canReadDocumentArea, canReadDocument };

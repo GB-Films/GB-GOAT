@@ -141,6 +141,7 @@ export function PaymentModal({
   const [receiptPreviewUrl, setReceiptPreviewUrl] = useState('');
   const ownCorrectionAttempt = useRef<{ key: string; id: string } | null>(null);
   const ownCorrectionUpload = useRef<{ file: File; paymentId: string; receipt: Payment['receipt'] } | null>(null);
+  const scopedRegistration = useRef<{ key: string; id: string; date: Date; file: File | null; uploaded: boolean } | null>(null);
   const [isReceiptDragOver, setIsReceiptDragOver] = useState(false);
   const [paymentDateInput, setPaymentDateInput] = useState(() => toDateInputValue());
   const [editingPaymentIndex, setEditingPaymentIndex] = useState<number | null>(null);
@@ -267,6 +268,7 @@ export function PaymentModal({
             collectionName,
             itemId: item.id,
             ...(uploadAccessScope ? { uploadAccessScope } : {}),
+            uploaderUid: currentUserId,
             paymentId: currentPayment.id || '',
             originalFileName: editReceipt.name,
           },
@@ -705,14 +707,26 @@ export function PaymentModal({
               }
 
               const currentItemId = item.id;
+              const collectionName: PaymentCollection = item.__paymentCollection || paymentType;
+              const scopedPayment = !canEditExistingPayments && collectionName === 'areaExpenses';
               const isRemainingBalance = toMoneyCents(amount) === remainingBalanceCents;
-              const paymentId = crypto.randomUUID();
+              const detail = String(formData.get('detail') || '');
+              const expected = { id: currentItemId, area: item.area, subcategory: item.subcategory, providerId: item.providerId,
+                providerName: item.providerName, description: item.description, unit: item.unit, quantity: item.quantity, unitPrice: item.unitPrice, total: item.total };
+              const attemptKey = JSON.stringify([projectId, expected, amount, detail, customDate || '', paymentFundingMode,
+                useCashBox ? selectedCashBox?.id : '', useThirdParty ? thirdPartyPayer?.id : '']);
+              const previousAttempt = scopedRegistration.current;
+              const attempt = scopedPayment && previousAttempt?.key === attemptKey && previousAttempt.file === receiptFile ? previousAttempt : {
+                key: attemptKey, id: crypto.randomUUID(), date: customDate ? new Date(customDate + 'T12:00:00') : new Date(), file: receiptFile, uploaded: false,
+              };
+              if (scopedPayment) scopedRegistration.current = attempt;
+              const paymentId = attempt.id, paymentDate = attempt.date;
 
               const newPayment: Payment = {
                 id: paymentId,
                 amount,
-                detail: formData.get('detail') as string,
-                date: customDate ? new Date(customDate + 'T12:00:00') : new Date(),
+                detail,
+                date: paymentDate,
                 type: isRemainingBalance ? 'total' : 'partial',
                 method: useThirdParty ? 'tercero' : useCashBox ? 'caja_efectivo' : 'otro',
                 ...(useThirdParty && thirdPartyPayer ? {
@@ -731,9 +745,10 @@ export function PaymentModal({
                 createdByRole: currentUserRole,
               };
 
-              const collectionName: PaymentCollection = item.__paymentCollection || paymentType;
               const docRef = doc(db, 'projects', projectId, collectionName, currentItemId);
-              const cashMovementRef = useCashBox ? doc(collection(db, 'projects', projectId, 'cashMovements')) : null;
+              const cashMovementRef = useCashBox ? (scopedPayment
+                ? doc(db, 'projects', projectId, 'cashMovements', `payment-${paymentId}`)
+                : doc(collection(db, 'projects', projectId, 'cashMovements'))) : null;
               
               setIsSubmittingPayment(true);
               setPaymentError('');
@@ -749,17 +764,19 @@ export function PaymentModal({
                   const path = `projects/${projectId}/${collectionName}/${currentItemId}/comprobantes/${fileName}`;
                   const storageRef = ref(storage, path);
 
-                  await uploadBytes(storageRef, receiptFile, {
+                  if (!scopedPayment || !attempt.uploaded) await uploadBytes(storageRef, receiptFile, {
                     contentType: receiptFile.type,
                     customMetadata: {
                       projectId,
                       collectionName,
                       itemId: currentItemId,
                       ...(uploadAccessScope ? { uploadAccessScope } : {}),
+                      uploaderUid: currentUserId,
                       paymentId,
                       originalFileName: receiptFile.name,
                     },
                   });
+                  attempt.uploaded = true;
 
                   const url = projectAttachmentLink(projectId, collectionName, currentItemId, 'payment', paymentId);
                   newPayment.receipt = {
@@ -774,7 +791,6 @@ export function PaymentModal({
                   };
                 }
 
-                const paymentDate = customDate ? new Date(customDate + 'T12:00:00') : new Date();
                 const movement = useCashBox && selectedCashBox && cashMovementRef ? {
                     type: 'pago',
                     cashAccount: selectedCashBox.account,
@@ -788,14 +804,22 @@ export function PaymentModal({
                     itemId: currentItemId,
                     paymentId,
                     description: item.description || '',
-                    notes: formData.get('detail') as string || '',
+                    notes: detail,
                     createdByEmail: selectedCashBox.ownerEmail,
                     createdByName: selectedCashBox.ownerName,
                     createdAt: serverTimestamp(),
                     updatedAt: serverTimestamp(),
                   } : null;
 
-                const result = await runTransaction(db, async (transaction) => {
+                const result = scopedPayment ? await (async () => {
+                  const { expense } = await providerFinanceRequest({ action: 'registerScopedAreaExpensePayment', projectId,
+                    itemId: currentItemId, paymentId, expected, amount, detail: newPayment.detail, date: paymentDate.toISOString(),
+                    method: newPayment.method, cashAccount: newPayment.cashAccount, thirdPartyPayerId: newPayment.thirdPartyPayerId, path: newPayment.receipt?.path }) as {
+                    expense: { paymentHistory: Payment[]; paid: boolean; paymentLocked: boolean; paymentAuthorIds: string[] };
+                  };
+                  return { updatedHistory: expense.paymentHistory, isFullyPaid: expense.paid,
+                    audit: { paymentLocked: expense.paymentLocked, paymentAuthorIds: expense.paymentAuthorIds } };
+                })() : await runTransaction(db, async (transaction) => {
                   const latestItemSnap = await transaction.get(docRef);
                   if (!latestItemSnap.exists()) throw new Error('ITEM_NOT_FOUND');
 
@@ -831,6 +855,7 @@ export function PaymentModal({
                 }
 
                 onPaymentStateChange(currentItemId, collectionName, result.updatedHistory, result.isFullyPaid, result.audit);
+                if (scopedPayment) scopedRegistration.current = null;
                 
                 (e.target as HTMLFormElement).reset();
                 setAmountInput('');
@@ -840,7 +865,7 @@ export function PaymentModal({
                 setThirdPartyPayerId('');
               } catch (err: any) {
                 console.error("Error updating payment:", err);
-                if (newPayment.receipt?.path) deleteObject(ref(storage, newPayment.receipt.path)).catch(() => {});
+                if (!scopedPayment && newPayment.receipt?.path) deleteObject(ref(storage, newPayment.receipt.path)).catch(() => {});
                 if (err?.message === 'PAYMENT_EXCEEDS_TOTAL') {
                   setPaymentError('No se registró el pago porque el gasto ya alcanzó su valor total. Actualizá y revisá el historial.');
                   return;

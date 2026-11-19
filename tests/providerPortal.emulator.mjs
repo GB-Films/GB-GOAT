@@ -703,7 +703,7 @@ try {
       status: "active",
     }),
   );
-  await assertSucceeds(
+  await assertFails(
     getDoc(doc(producer, "projects/project/areaExpenses/work")),
   );
   await assertFails(getDoc(doc(producer, "providers/supplier")));

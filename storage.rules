@@ -141,6 +141,7 @@ service firebase.storage {
                 && collaboratorDoc(projectId).role == 'admin')
               || (request.resource.metadata.uploadAccessScope == 'area_editor'
                 && collectionName == 'areaExpenses'
+                && request.resource.metadata.uploaderUid == request.auth.uid
                 && hasCollaboratorDoc(projectId)
                 && collaboratorDoc(projectId).canEditBudgetAreas == true
                 && 'areas' in collaboratorDoc(projectId).allowedTabs
@@ -233,6 +234,7 @@ service firebase.storage {
             || (
               request.resource.metadata.uploadAccessScope == 'area_editor'
               && request.resource.metadata.collectionName == 'areaExpenses'
+              && request.resource.metadata.uploaderUid == request.auth.uid
               && firestore.exists(/databases/(default)/documents/projects/$(projectId)/areaExpenses/$(request.resource.metadata.expenseId))
               && hasCollaboratorDoc(projectId)
               && collaboratorDoc(projectId).canEditBudgetAreas == true

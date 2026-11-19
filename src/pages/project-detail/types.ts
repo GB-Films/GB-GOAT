@@ -54,6 +54,7 @@ export interface BudgetItem {
   paid?: boolean;
   paymentDate?: string;
   paymentHistory?: Payment[];
+  paymentDatesVersion?: string;
   paymentLocked?: boolean;
   paymentAuthorIds?: string[];
   createdBy?: string;

@@ -75,11 +75,16 @@ const paymentFields = ['id', 'amount', 'date', 'method', 'type', 'detail', 'cash
   'createdBy', 'createdByEmail', 'createdByName', 'createdByRole', 'paidByEmail', 'paidByName', 'thirdPartyPayerId',
   'thirdPartyPayerName', 'reimbursedAmount'];
 const reimbursementFields = ['id', 'amount', 'date', 'cashMovementId', 'createdBy', 'createdByEmail', 'createdByName', 'detail'];
+function paymentDatesVersion(row) {
+  return hash(wire({ ...fields(row, ['updatedAt', 'area', 'subcategory', 'providerId', 'providerName', 'description', 'total', 'paymentDate', 'paid', 'paymentLocked']),
+    payments: list(row.paymentHistory).map(payment => fields(payment, ['id', 'amount', 'date'])) }));
+}
 function scopedFiles(projectId, collectionName, item) {
   const marker = (file, kind, index = 0, nestedIndex = 0) => file && (file.path || file.url)
     ? { ...fields(file, attachmentFields), fileName: ['invoice', 'invoices'].includes(kind) ? 'Factura' : 'Comprobante',
       url: token({ projectId, collectionName, itemId: item.id, kind, index, nestedIndex }) } : null;
   const next = fields(item, expenseFields);
+  next.paymentDatesVersion = paymentDatesVersion(item);
   for (const field of ['sharedInvoices', 'sharedReceipts']) {
     if (Array.isArray(item[field])) next[field] = item[field].map(reference => fields(reference, ['id', 'amountCents', 'fileHidden']));
   }
@@ -403,4 +408,4 @@ function createProjectScopedReads({ db, readFile, bucketName, readMetadata, time
   };
 }
 
-module.exports = { createProjectScopedReads, projectProjection, scopedCashMovement, canReadRecordOriginal, scopedFiles };
+module.exports = { createProjectScopedReads, projectProjection, scopedCashMovement, canReadRecordOriginal, paymentDatesVersion, scopedFiles, wire };

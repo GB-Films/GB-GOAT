@@ -23,6 +23,7 @@ const metadata = (scope, overrides = {}) => ({
   itemId: expenseId,
   paymentId: 'payment-1',
   uploadAccessScope: scope,
+  ...(scope === 'area_editor' ? { uploaderUid: 'area-editor' } : {}),
   originalFileName: 'comprobante.pdf',
   ...overrides,
 });
@@ -70,10 +71,11 @@ try {
   await assertFails(upload(editor, metadata('area_editor', { itemId: 'different-expense' })));
   await assertFails(upload(editor, metadata('project_admin')));
   assert.equal(nextFile, 7);
+  await assertFails(upload(editor, metadata('area_editor', { uploaderUid: 'outsider' })));
   const { uploadAccessScope, ...legacyMetadata } = metadata('area_editor');
   const uploadInvoice = () => editor.storage().ref(`projects/${projectId}/areas/produccion/facturas/invoice-${++nextFile}.pdf`)
     .put(new Uint8Array([37, 80, 68, 70]), { contentType: 'application/pdf', customMetadata: {
-      projectId, area: 'Producción', areaFolder: 'produccion', collectionName: 'areaExpenses', expenseId, uploadAccessScope: 'area_editor',
+      projectId, area: 'Producción', areaFolder: 'produccion', collectionName: 'areaExpenses', expenseId, uploadAccessScope: 'area_editor', uploaderUid: 'area-editor',
     } });
   await assertSucceeds(uploadInvoice());
   await assertSucceeds(upload(editor, legacyMetadata));
@@ -112,7 +114,7 @@ try {
     await assertFails(uploadRowReceipt(admin, collectionName, { ...rowMetadata, uploadAccessScope: 'global_admin', itemId: 'wrong-row' }));
   }
   await assertSucceeds(uploadRowReceipt(editor, 'areaExpenses', {
-    ...oldFields, collectionName: 'areaExpenses', itemId: expenseId, paymentId: '', uploadAccessScope: 'area_editor',
+    ...oldFields, collectionName: 'areaExpenses', itemId: expenseId, paymentId: '', uploadAccessScope: 'area_editor', uploaderUid: 'area-editor',
   }));
   await assertFails(uploadRowReceipt(editor, 'budgetItems', {
     ...oldFields, itemId: expenseId, paymentId: '', uploadAccessScope: 'area_editor',

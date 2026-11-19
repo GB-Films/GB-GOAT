@@ -94,8 +94,9 @@ function normalizeRecord(input) {
   return result;
 }
 
-function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, bucketName, readMetadata, verifyPaymentReceipt, clock=()=>new Date() }) {
+function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, bucketName, readMetadata, inspectUpload, verifyPaymentReceipt, clock=()=>new Date() }) {
   const readProject = createProjectScopedReads({ db, readFile, bucketName, readMetadata, timestamp });
+  const editAreaExpense = require('./scopedAreaExpenseEdits').createScopedAreaExpenseEdits({ db, inspectUpload });
   return async request => {
     if (!request.auth?.uid || !request.auth.token?.email) throw new HttpsError('unauthenticated', 'Iniciá sesión.');
     const user = await db.doc(`users/${request.auth.uid}`).get();
@@ -112,6 +113,10 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, buc
     if (input.action === 'reclassifyAreaExpenses') {
       if (request.auth.token.email_verified !== true) throw new HttpsError('permission-denied', 'Verificá tu correo.');
       return require('./areaStructureChange').createAreaStructureChange({ db, timestamp })(actor, input);
+    }
+    if (['editScopedAreaExpense', 'attachScopedAreaExpenseFile', 'registerScopedAreaExpensePayment', 'scheduleScopedAreaExpenseDates'].includes(input.action)) {
+      if (request.auth.token.email_verified !== true) deny();
+      return editAreaExpense(actor, input);
     }
     const admin = actor.email === 'info@granbertafilms.com' || user.data()?.role === 'admin' && require('./teamWorkAccess').hasTeamWorkAccess(user.data());
     if (input.action === 'removeExpenseInvoiceFile') {

@@ -34,7 +34,7 @@ async function seed(uid, provider, project=false) {
   }
 }
 const boot = uid => service.bootstrap(actor(uid), {inviteToken:`invite_${uid}`});
-const upload = (uid, scope='area_editor') => ctx(uid).storage().ref(`projects/project_${uid}/areaExpenses/expense/comprobantes/test.pdf`).put(new Uint8Array([37,80,68,70]),{contentType:'application/pdf',customMetadata:{projectId:`project_${uid}`,collectionName:'areaExpenses',itemId:'expense',paymentId:'payment',uploadAccessScope:scope,originalFileName:'test.pdf'}});
+const upload = (uid, scope='area_editor') => ctx(uid).storage().ref(`projects/project_${uid}/areaExpenses/expense/comprobantes/test.pdf`).put(new Uint8Array([37,80,68,70]),{contentType:'application/pdf',customMetadata:{projectId:`project_${uid}`,collectionName:'areaExpenses',itemId:'expense',paymentId:'payment',uploadAccessScope:scope,uploaderUid:uid,originalFileName:'test.pdf'}});
 try {
   await db.doc('users/admin').set({uid:'admin',email:actor('admin').email,role:'admin'});
   await db.doc('providerPortalConfig/current').set({enabled:true});

@@ -19,6 +19,14 @@ exports.manageProviderFinance = onCall({ timeoutSeconds: 60, maxInstances: 2 }, 
   timestamp: () => admin.firestore.FieldValue.serverTimestamp(),
   bucketName: () => admin.storage().bucket().name,
   readMetadata: async path => (await admin.storage().bucket().file(path).getMetadata())[0].metadata,
+  inspectUpload: async path => {
+    try {
+      return (await admin.storage().bucket().file(path).getMetadata())[0];
+    } catch (error) {
+      if (Number(error.code) === 404) throw new HttpsError('failed-precondition', 'No se encontró el comprobante cargado.');
+      throw error;
+    }
+  },
   verifyPaymentReceipt: (...args) => require('./paymentReceiptVerification').createPaymentReceiptVerifier(admin.storage().bucket())(...args),
   verifyFile: async (providerId, recordId, input, options = {}) => {
     const prefix = `providerFinance/${providerId}/${recordId}/`;
