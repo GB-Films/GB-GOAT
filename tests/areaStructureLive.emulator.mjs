@@ -46,13 +46,31 @@ try {
   for (const uid of ['admin', 'editor']) {
     const client = env.authenticatedContext(uid, { email: `${uid}@example.test`, email_verified: true }).firestore();
     const view = { revision: -1, expenses: [], permissions: [] }; observers.push(view);
+    if (uid === 'editor') {
+      let stopped = false, timer;
+      const refresh = async () => {
+        try {
+          const scoped = await handler({ auth: { uid, token: { email: `${uid}@example.test`, email_verified: true } },
+            data: { action: 'projectScopedSnapshot', projectId: 'live' } });
+          if (stopped) return;
+          view.revision = scoped.project.budgetRevision;
+          view.expenses = reconcileAreaExpenseSnapshot(view.expenses, scoped.areaExpenses);
+          view.permissions = scoped.permissions ? [{ ...scoped.permissions, id: `${uid}@example.test` }] : [];
+          changed();
+          timer = setTimeout(refresh, 150);
+        } catch (error) { if (!stopped) failed(error); }
+      };
+      void refresh();
+      stops.push(() => { stopped = true; clearTimeout(timer); });
+      continue;
+    }
     stops.push(onSnapshot(doc(client, 'projects/live'), snapshot => { view.revision = liveAreaProjectPatch(snapshot.data()).budgetRevision; changed(); }, failed));
     stops.push(onSnapshot(collection(client, 'projects/live/areaExpenses'), snapshot => {
       view.expenses = reconcileAreaExpenseSnapshot(view.expenses, snapshot.docs.map(row => ({ ...row.data(), id: row.id }))); changed();
     }, failed));
     stops.push(onSnapshot(collection(client, 'projects/live/collaborators'), snapshot => { view.permissions = snapshot.docs.map(row => ({ ...row.data(), id: row.id })); changed(); }, failed));
   }
-  await waitFor(() => observers.every(view => view.revision === 0 && view.expenses.length === 2 && view.permissions.length === 2));
+  await waitFor(() => observers.every((view, index) => view.revision === 0 && view.expenses.length === 2 && view.permissions.length === (index === 0 ? 2 : 1)));
   const destinations = [['Arte', 'Vestuario'], ['Arte', 'Utilería'], ['Campo', 'Comidas']];
   let fromArea = 'Arte', fromGroup = 'Vestuario';
   for (let index = 0; index < destinations.length; index++) {
@@ -62,9 +80,12 @@ try {
     assert.equal(actor.expenses.find(row => row.id === 'paid').area, area, 'the actor can apply the committed response immediately');
     await waitFor(() => observers.every(view => view.revision === index + 1 && view.expenses.find(row => row.id === 'paid')?.area === area
       && view.expenses.find(row => row.id === 'paid')?.subcategory === group && view.expenses.find(row => row.id === 'paid')?.areaStructureRevision === index + 1));
-    for (const view of observers) {
+    for (const [observer, view] of observers.entries()) {
       const row = view.expenses.find(row => row.id === 'paid');
-      assert.equal(row.paymentHistory[0].id, 'original'); assert.equal(row.invoice.path, 'synthetic.pdf'); assert.equal(row.total, 100);
+      assert.equal(row.paymentHistory[0].id, 'original');
+      if (observer === 0) assert.equal(row.invoice.path, 'synthetic.pdf');
+      else { assert.equal(row.invoice.path, undefined); assert.match(row.invoice.url, /^goat-file:/); }
+      assert.equal(row.total, 100);
     }
     fromArea = area; fromGroup = group;
   }
