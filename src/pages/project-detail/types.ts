@@ -2,6 +2,7 @@ import type { ReimbursementRecord } from '../../lib/reimbursements';
 
 export interface Payment {
   sharedRecordId?: string;
+  correctionVersion?: string;
   id: string;
   amount: number;
   detail: string;
@@ -53,6 +54,7 @@ export interface BudgetItem {
   paid?: boolean;
   paymentDate?: string;
   paymentHistory?: Payment[];
+  paymentDatesVersion?: string;
   paymentLocked?: boolean;
   paymentAuthorIds?: string[];
   createdBy?: string;
@@ -141,6 +143,7 @@ export interface Collaborator {
   excludedSubcategories?: string[];
   canEditBudgetAreas?: boolean;
   canViewBudgetTotals?: boolean;
+  scopeEditable?: boolean;
   createdAt?: any;
   updatedAt?: any;
 }

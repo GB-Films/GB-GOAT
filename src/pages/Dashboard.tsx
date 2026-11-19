@@ -4,6 +4,7 @@ import { motion } from 'motion/react';
 import { collection, getDocs, updateDoc, doc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { readAuthorizedProject } from '../lib/projectCommercial';
+import { readProjectSummaries, readScopedProject } from '../lib/projectScopedData';
 import { loadDashboardData } from '../lib/dashboardLoad';
 import { dashboardProjectsQuery, sortDashboardProjects } from '../lib/dashboardProjects';
 import { Link, Navigate } from 'react-router-dom';
@@ -212,6 +213,7 @@ export default function Dashboard() {
 
         await loadDashboardData({
           loadProjects: async () => {
+            if (role !== 'admin') return sortDashboardProjects((await readProjectSummaries()).filter(project => !isArchivedProject(project)));
             const pSnap = await getDocs(pq);
             return sortDashboardProjects(await Promise.all(pSnap.docs.filter(projectDoc => !isArchivedProject(projectDoc.data())).map(async projectDoc => ({
               ...await readAuthorizedProject(db, { ...projectDoc.data(), id: projectDoc.id }, { uid, email, isAppAdmin: role === 'admin' }),
@@ -224,6 +226,10 @@ export default function Dashboard() {
             setLoading(false);
           },
           loadFinance: async (project) => {
+            if (role !== 'admin') {
+              const scoped = await readScopedProject(project.id, 'resumen');
+              return buildProjectFinance(scoped.project, scoped.budgetItems, scoped.areaExpenses);
+            }
             const [budgetSnap, expensesSnap] = await Promise.all([
               getDocs(collection(db, 'projects', project.id, 'budgetItems')),
               getDocs(collection(db, 'projects', project.id, 'areaExpenses')),

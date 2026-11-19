@@ -1,6 +1,9 @@
 const { HttpsError } = require('firebase-functions/v2/https');
 const { createHash } = require('node:crypto');
 const { projectFinanceAccess } = require('./projectFinanceAccess');
+const { canReadArea } = require('./projectReadScope');
+const { hasPayments } = require('./deleteUnpaidAreaExpense');
+const { projectProjection } = require('./projectScopedReads');
 const { hasTeamWorkAccess } = require('./teamWorkAccess');
 const { isInternalBudgetEstimate } = require('./internalBudgetEstimate');
 const { activeRecordAllocations } = require('./providerFinanceAllocations');
@@ -53,19 +56,22 @@ function checkBudget(project, items, budgets, area, ownKey, amount) {
 function createAreaStructureChange({ db, timestamp }) {
   return async (actor, input) => {
     const keys = ['action', 'operationId', 'projectId', 'kind', 'fromArea', 'fromSubcategory', 'targetArea', 'targetSubcategory', 'itemId', 'beforeExpenseId', 'beforeSubcategory', 'budget', 'expectedRevision'];
-    if (!input || typeof input !== 'object' || Array.isArray(input) || input.action !== 'reclassifyAreaExpenses' || Object.keys(input).some(key => !keys.includes(key)) || !['expense', 'subcategory'].includes(input.kind)
+    if (!input || typeof input !== 'object' || Array.isArray(input) || input.action !== 'reclassifyAreaExpenses' || Object.keys(input).some(key => !keys.includes(key)) || !['expense', 'subcategory', 'subcategoryBudget', 'deleteSubcategory'].includes(input.kind)
       || typeof input.operationId !== 'string' || !/^[a-f0-9-]{36}$/i.test(input.operationId)
       || !Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0) fail('La solicitud de movimiento no es válida.', 'invalid-argument');
     const projectId = id(input.projectId), fromArea = name(input.fromArea), targetArea = name(input.targetArea);
     const fromSubcategory = name(input.fromSubcategory, true), targetSubcategory = name(input.targetSubcategory, true);
+    const budgetMode = input.kind === 'subcategoryBudget', deleteMode = input.kind === 'deleteSubcategory';
     const expenseMode = input.kind === 'expense', itemId = expenseMode ? id(input.itemId) : '';
     if (input.beforeExpenseId !== undefined) id(input.beforeExpenseId);
     if (input.beforeSubcategory !== undefined && input.beforeSubcategory !== null) name(input.beforeSubcategory, true);
     if (expenseMode && (input.budget !== undefined || input.beforeSubcategory !== undefined)
       || !expenseMode && (input.itemId !== undefined || input.beforeExpenseId !== undefined
         || fromArea !== targetArea && fromSubcategory !== targetSubcategory
-        || fromSubcategory !== targetSubcategory && !targetSubcategory)) fail('Destino inválido.', 'invalid-argument');
-    if (input.budget !== undefined && (expenseMode || fromArea !== targetArea || fromSubcategory === targetSubcategory
+        || !deleteMode && fromSubcategory !== targetSubcategory && !targetSubcategory)) fail('Destino inválido.', 'invalid-argument');
+    if (deleteMode && (!fromSubcategory || targetSubcategory || fromArea !== targetArea || input.budget || input.beforeSubcategory !== undefined)) fail('Subcategoría inválida.', 'invalid-argument');
+    if (budgetMode && (!input.budget || !targetSubcategory || fromArea !== targetArea || fromSubcategory !== targetSubcategory || input.beforeSubcategory !== undefined)) fail('Presupuesto de subcategoría inválido.', 'invalid-argument');
+    if (input.budget !== undefined && (expenseMode || fromArea !== targetArea || (!budgetMode && fromSubcategory === targetSubcategory)
       || !input.budget || typeof input.budget !== 'object' || Array.isArray(input.budget)
       || Object.keys(input.budget).some(key => !['assigned', 'amount', 'notes', 'expected'].includes(key))
       || typeof input.budget.expected !== 'string' || input.budget.expected.length > 5000
@@ -86,15 +92,20 @@ function createAreaStructureChange({ db, timestamp }) {
       const canManageBudget = access.admin || access.collaborator?.role === 'jefe_produccion'
         && list(access.collaborator.allowedCategories).includes(fromArea)
         && !list(access.collaborator.excludedSubcategories).some(key => key.startsWith(`${fromArea}||`));
-      if (input.budget && !canManageBudget) fail('Podés renombrar o mover la subcategoría conservando su presupuesto. No tenés permiso para modificar la asignación.', 'permission-denied');
+      const scopeView = projectData => {
+        const view = projectProjection({ ...access, project: projectData });
+        return { budgetRevision: Number(projectData.budgetRevision) || 0, areaExpenseSubcategories: view.areaExpenseSubcategories || {}, areaExpenseSubcategoryBudgets: view.areaExpenseSubcategoryBudgets || {} };
+      };
+      if (input.beforeSubcategory && !canEdit(access, targetArea, clean(input.beforeSubcategory))) fail('El destino no está en tus subcategorías asignadas.', 'permission-denied');
+      if ((input.budget || deleteMode) && !canManageBudget) fail('Podés renombrar o mover la subcategoría conservando su presupuesto. No tenés permiso para modificar la asignación.', 'permission-denied');
       const prior = await tx.get(audit);
       if (prior.exists) {
         if (prior.data().fingerprint !== fingerprint) fail('Este intento ya corresponde a otro cambio.');
         const ids = list(prior.data().changes).map(change => change.id);
         const currentRows = ids.length ? await tx.getAll(...ids.map(value => root.collection('areaExpenses').doc(id(value)))) : [];
         return { repeated: true, revision: prior.data().revision, view: {
-          project: { budgetRevision: revision, areaExpenseSubcategories: project.areaExpenseSubcategories || {}, areaExpenseSubcategoryBudgets: project.areaExpenseSubcategoryBudgets || {} },
-          expenses: currentRows.map(row => ({ id: row.id, after: row.exists ? { area: row.data().area, subcategory: clean(row.data().subcategory), order: Number(row.data().order) || 0, areaStructureRevision: Number(row.data().areaStructureRevision) || 0 } : null })),
+          project: scopeView(project),
+          expenses: currentRows.filter(row => row.exists && canReadArea(access, row.data().area, clean(row.data().subcategory))).map(row => ({ id: row.id, after: row.exists ? { area: row.data().area, subcategory: clean(row.data().subcategory), order: Number(row.data().order) || 0, areaStructureRevision: Number(row.data().areaStructureRevision) || 0 } : null })),
         } };
       }
       if (revision !== input.expectedRevision) fail('La estructura del proyecto cambió. Actualizá la página y volvé a intentar.');
@@ -109,7 +120,27 @@ function createAreaStructureChange({ db, timestamp }) {
       const time = value => value?.toMillis?.() || Date.parse(value || '') || 0;
       const byOrder = (a, b) => (Number(a.order) || 0) - (Number(b.order) || 0)
         || time(a.createdAt) - time(b.createdAt) || a.id.localeCompare(b.id);
-      if (expenseMode) {
+      if (deleteMode) {
+        const existing = groupNames(project, expenses, fromArea);
+        if (!existing.includes(fromSubcategory)) fail('La subcategoría ya no existe. Actualizá la página.');
+        const affected = expenses.filter(row => row.area === fromArea && clean(row.subcategory) === fromSubcategory);
+        if (affected.some(hasPayments)) fail('Hay gastos con pagos registrados en esta subcategoría.');
+        affected.forEach(row => patches.set(row.id, { area: fromArea, subcategory: '' }));
+        nextLists[fromArea] = existing.filter(value => value !== fromSubcategory).map(value => value || 'Sin subcategoria');
+        delete nextBudgets[oldKey];
+      } else if (budgetMode) {
+        const existing = groupNames(project, expenses, fromArea);
+        if (existing.some(value => value !== targetSubcategory && value.toLowerCase() === targetSubcategory.toLowerCase())) fail('Ya existe una subcategoría con ese nombre.');
+        nextLists[fromArea] = [...new Set([...existing, targetSubcategory])].map(value => value || 'Sin subcategoria');
+        const amount = input.budget.assigned ? input.budget.amount : 0;
+        if (amount) {
+          const items = await tx.get(root.collection('budgetItems').limit(2001));
+          if (items.size > 2000) fail('El presupuesto requiere revisión antes de guardar la subcategoría.');
+          checkBudget(project, items.docs.map(doc => doc.data()), nextBudgets, targetArea, newKey, amount);
+        }
+        nextBudgets[newKey] = { area: fromArea, subcategory: targetSubcategory, budget: amount, budgetAssigned: input.budget.assigned,
+          notes: input.budget.notes.trim(), updatedByEmail: actor.email };
+      } else if (expenseMode) {
         const expense = rowsById.get(itemId);
         if (!expense || expense.area !== fromArea || clean(expense.subcategory) !== fromSubcategory) fail('El gasto cambió de ubicación. Actualizá la página antes de moverlo.');
         if (targetSubcategory && !groupNames(project, expenses, targetArea).includes(targetSubcategory)) fail('La subcategoría de destino ya no existe. Actualizá la página.');
@@ -209,7 +240,8 @@ function createAreaStructureChange({ db, timestamp }) {
         if (patch) enqueue(snapshot.ref, { area: patch.area, subcategory: patch.subcategory, updatedAt: now });
       }
       for (const snapshot of collaborators?.docs || []) {
-        const c = snapshot.data(), change = values => [...new Set(list(values).map(value => value === oldKey ? newKey : value))];
+        const c = snapshot.data(), change = values => deleteMode ? list(values).filter(value => value !== oldKey)
+          : [...new Set(list(values).map(value => value === oldKey ? newKey : value))];
         if (list(c.allowedSubcategories).includes(oldKey) || list(c.excludedSubcategories).includes(oldKey)) enqueue(snapshot.ref, {
           allowedSubcategories: change(c.allowedSubcategories), excludedSubcategories: change(c.excludedSubcategories), updatedAt: now,
         });
@@ -222,8 +254,8 @@ function createAreaStructureChange({ db, timestamp }) {
       tx.create(audit, { action: 'area_structure_changed', kind: input.kind, actor, fingerprint, revision: revision + 1,
         fromArea, fromSubcategory, targetArea, targetSubcategory, changes, relatedMetadataPaths: writes.filter(w => !w.ref.path.includes('/areaExpenses/')).map(w => w.ref.path), createdAt: now });
       return { repeated: false, revision: revision + 1, affectedExpenses: patches.size, view: {
-        project: { budgetRevision: revision + 1, areaExpenseSubcategories: nextLists, areaExpenseSubcategoryBudgets: nextBudgets },
-        expenses: [...patches].map(([id, patch]) => ({ id, after: { area: patch.area, subcategory: patch.subcategory,
+        project: scopeView({ ...project, budgetRevision: revision + 1, areaExpenseSubcategories: nextLists, areaExpenseSubcategoryBudgets: nextBudgets }),
+        expenses: [...patches].filter(([, patch]) => canReadArea(access, patch.area, patch.subcategory)).map(([id, patch]) => ({ id, after: { area: patch.area, subcategory: patch.subcategory,
           order: Number(patch.order ?? rowsById.get(id).order) || 0, areaStructureRevision: revision + 1 } })),
       } };
     });

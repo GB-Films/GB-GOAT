@@ -2,6 +2,8 @@ const { HttpsError } = require("firebase-functions/v2/https");
 const logger = require('firebase-functions/logger');
 const M = require("./providerPortalModel");
 const { activeRecordAllocations } = require('./providerFinanceAllocations');
+const { projectFinanceAccess } = require('./projectFinanceAccess');
+const { canReadExpense, deny } = require('./projectReadScope');
 const { createPortalReimbursements, ownAdvanceFile } = require("./providerPortalReimbursements");
 const { createPortalInvoiceUpload, createPortalInvoiceRemoval, portalInvoiceRows } = require("./providerPortalInvoice");
 const { confirmationContent, confirmationState } = require('./providerProfileConfirmation');
@@ -237,8 +239,21 @@ function createProviderPortalHandler({
     });
   }
   return async (request) => {
-    const actor = identity(request);
     const input = request.data || {};
+    if (input.action === 'linkedInviteTargetStatus') {
+      const token = id(input.inviteToken);
+      const invite = (await db.doc(`providerInvites/${token}`).get()).data();
+      if (!invite || invite.used || invite.status !== 'pending' || (invite.expiresAt && invite.expiresAt.toDate?.() <= clock())) fail('Este enlace ya no está disponible.');
+      if (!invite.projectId || !invite.expenseId || invite.provisionalProviderId) return { issue: null };
+      const collectionName = invite.collectionName || 'areaExpenses';
+      if (!['areaExpenses', 'budgetItems'].includes(collectionName)) fail('El trabajo del link no es válido.');
+      const target = (await db.doc(`projects/${id(invite.projectId)}/${collectionName}/${id(invite.expenseId)}`).get()).data();
+      if (!target) return { issue: 'TARGET_EXPENSE_NOT_FOUND' };
+      if (target.providerId || target.providerName) return { issue: 'TARGET_EXPENSE_ALREADY_ASSIGNED' };
+      const paid = target.paid === true || list(target.paymentHistory).length > 0 || list(target.sharedPaymentIds).length > 0;
+      return { issue: paid ? 'TARGET_EXPENSE_HAS_PAYMENTS' : null };
+    }
+    const actor = identity(request);
     if (['bootstrap', 'overview'].includes(input.action)) await verifyPortalAccount(findAccountByUid, actor);
     if (input.action === "internalInvoice") {
       const user = (await db.doc(`users/${actor.uid}`).get()).data();
@@ -252,23 +267,12 @@ function createProviderPortalHandler({
       ).data();
       if (!upload) fail("Carga inexistente.");
       const [projectId, c, itemId] = upload.workKey.split("/");
-      const project = (await db.doc(`projects/${projectId}`).get()).data();
-      const collab = await db
-        .doc(`projects/${projectId}/collaborators/${actor.email}`)
-        .get();
-      if (
-        !(
-          user?.role === "admin" ||
-          actor.email === "info@granbertafilms.com" ||
-          project?.createdBy === actor.uid ||
-          list(project?.collaboratorEmails).includes(actor.email) ||
-          collab.exists
-        )
-      )
-        throw new HttpsError("permission-denied", "Proyecto ajeno.");
+      if (!['budgetItems', 'areaExpenses'].includes(c)) deny();
+      const access = await projectFinanceAccess({ db, actor, projectId });
       const e = (
         await db.doc(`projects/${projectId}/${c}/${itemId}`).get()
       ).data();
+      if (!canReadExpense(access, c, e) || e.providerId !== upload.providerId) deny();
       const file = list(e?.invoices).find(
         (f) => f.portalUploadId === input.uploadId,
       );

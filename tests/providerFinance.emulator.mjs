@@ -43,11 +43,11 @@ try {
   const scope = { projectId: 'project0', collectionName: 'areaExpenses', itemId: 'expense' };
   assert.equal((await scopedEditor({ action: 'download', id: 'invoice1', ...scope })).base64, 'JVBERg==');
   const visible = await scopedEditor({ action: 'projectDocuments', projectId: 'project0', recordIds: ['invoice1'] });
-  assert.equal(visible.records[0].distinctExpenseCount, 3, 'global count includes the two projects omitted from this scoped projection');
+  assert.equal(visible.records[0].distinctExpenseCount, 3, 'all applied rows are in the reader’s scope');
   assert.equal(visible.records[0].issuerCuit, invoice.issuerCuit);
   assert.equal(visible.records.length, 1); assert.equal(visible.records[0].allocations.length, 1);
   assert.equal(visible.records[0].file.path, undefined, 'shared metadata does not return a permanent link or raw storage path');
-  await assert.rejects(scopedEditor({ action: 'download', id: 'invoice1', ...scope, itemId: 'foreign' }), /ajeno/);
+  await assert.rejects(scopedEditor({ action: 'download', id: 'invoice1', ...scope, itemId: 'foreign' }), { code: 'permission-denied' });
   await assert.rejects(call({ auth: { uid: 'stranger', token: { email: 'stranger@example.test', email_verified: true } }, data: { action: 'download', id: 'invoice1', ...scope } }), /acceso/);
   assert.deepEqual(await call(request(invoice)), { id: 'invoice1', status: 'active' });
   await assert.rejects(call(request({ ...invoice, id: 'duplicate' })), /ya está registrada/);
@@ -198,24 +198,21 @@ try {
   await assertFails(uploadBytes(file, new Uint8Array([2]), metadata));
   await db.doc('providerFinancialRecords/staged').set({ providerId: 'supplier', status: 'active' });
   await assertFails(deleteObject(file));
-  // All shared document kinds are readable by a project member, but the
-  // original/global record and unrelated projects remain private.
+  // A shared file with an application outside the reader’s scope is withheld.
   await db.doc('projects/document-scope').set({ collaboratorEmails: ['editor@example.test'] });
+  await db.doc('projects/document-scope/collaborators/editor@example.test').set({ role: 'jefe_produccion', allowedTabs: ['areas'], allowedCategories: ['Post'] });
   const documentExpense = db.doc('projects/document-scope/areaExpenses/row');
-  await documentExpense.set({ providerId: 'supplier', sharedInvoices: [{ id: 'scope-invoice' }], sharedReceipts: [{ id: 'scope-other' }], paymentHistory: [{ id: 'scope-payment', sharedRecordId: 'scope-payment', amount: 1 }] });
+  await documentExpense.set({ area: 'Post', providerId: 'supplier', sharedInvoices: [{ id: 'scope-invoice' }], sharedReceipts: [{ id: 'scope-other' }], paymentHistory: [{ id: 'scope-payment', sharedRecordId: 'scope-payment', amount: 1 }] });
   for (const kind of ['invoice', 'payment', 'other']) {
     const recordId = `scope-${kind}`;
     await db.doc(`providerFinancialRecords/${recordId}`).set({ providerId: 'supplier', status: 'active', kind, file: { path: `mock-${kind}`, fileName: `${kind}.pdf`, contentType: 'application/pdf' },
       allocations: [{ projectId: 'document-scope', collectionName: 'areaExpenses', itemId: 'row' }, { projectId: 'private-other-project', collectionName: 'areaExpenses', itemId: 'private' }] });
     const input = { action: 'download', id: recordId, projectId: 'document-scope', collectionName: 'areaExpenses', itemId: 'row' };
-    assert.equal((await scopedEditor(input)).base64, 'JVBERg==');
-    await assert.rejects(scopedEditor({ ...input, projectId: 'project0' }), /ajeno/);
+    await assert.rejects(scopedEditor(input), { code: 'permission-denied' });
+    await assert.rejects(scopedEditor({ ...input, projectId: 'project0' }), { code: 'permission-denied' });
   }
   const scopedList = await scopedEditor({ action: 'projectDocuments', projectId: 'document-scope', recordIds: ['scope-invoice', 'scope-payment', 'scope-other'] });
-  assert.equal(scopedList.records.length, 3);
-  assert(scopedList.records.every(record => record.allocations.length === 1 && record.allocations[0].projectId === 'document-scope'));
-  assert(scopedList.records.every(record => record.distinctExpenseCount === 2), 'invoice, payment and receipt counts include native rows outside the visible project');
-  assert(!JSON.stringify(scopedList).includes('private-other-project'), 'the aggregate count must not expose foreign project or expense identifiers');
+  assert.deepEqual(scopedList.records, []);
   for (const kind of ['invoice', 'payment', 'other']) {
     const recordId = `scope-${kind}`, visible = { projectId: 'document-scope', collectionName: 'areaExpenses', itemId: 'row' };
     await db.doc(`providerFinancialRecords/${recordId}`).update({ allocations: [visible, visible] });
@@ -223,6 +220,7 @@ try {
     assert.equal(single.records[0].distinctExpenseCount, 1, 'repeated applications of one expense do not create a multi-row document link');
   }
   await db.doc('projects/document-scope').update({ collaboratorEmails: [] });
+  await db.doc('projects/document-scope/collaborators/editor@example.test').delete();
   await assert.rejects(scopedEditor({ action: 'download', id: 'scope-payment', projectId: 'document-scope', collectionName: 'areaExpenses', itemId: 'row' }), /acceso/);
   const { testOwnPaymentCorrections } = await import('./ownPaymentCorrection.flow.mjs');
   const { paymentCorrectionSnapshot } = require('../functions/paymentCorrectionSnapshot');

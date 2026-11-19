@@ -19,7 +19,11 @@ import { buildPaymentCalendarDays, getOverdueLines, getTodayLines, getUnschedule
 import { hasRecordedPayment, sameExpenseVersion, samePaymentTarget } from './expenseEdits';
 import { buildLinkedProviderInviteExpiration } from './providerInvites';
 import { Timestamp, updateDoc, writeBatch } from 'firebase/firestore';
-import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
+import { ref, uploadBytes } from 'firebase/storage';
+import { editScopedAreaExpense, projectAttachmentLink } from './projectScopedData';
+import { providerFinanceRequest } from './providerFinance';
+import { deleteUnpaidExpenseWithConfirmation } from './expenseDeletion';
+import { areaGroupBudgetVersion } from './areaStructureChanges';
 import { normalizeEmail, normalizeSearchText } from './identity';
 import { storage } from './firebase';
 import { getExpenseInvoices } from './invoices';
@@ -52,7 +56,7 @@ export type AssistantBudgetItem = {
   providerInviteLink?: { token?: string; link?: string; status?: string } | null;
 };
 
-export type AssistantAreaExpense = AssistantBudgetItem & { subcategory?: string };
+export type AssistantAreaExpense = AssistantBudgetItem & { subcategory?: string; paymentDatesVersion?: string };
 
 export type AssistantCashMovement = {
   id: string;
@@ -748,7 +752,7 @@ export const buildAssistantTools = ({
         try {
           const context = await loadProject(plan.projectId);
           if (!context) return { error: 'Ya no tenés acceso al proyecto.' };
-          const result = await applyPaymentDatePlan(db, plan, context);
+          const result = await applyPaymentDatePlan(db, plan, context, providerFinanceRequest);
           datePlans.delete(args.planId); projectCache.delete(plan.projectId);
           return result;
         } catch (e: any) { return { error: e.code === 'permission-denied' ? 'Ya no tenés permiso para modificar esos gastos. No se aplicó el lote.' : e.message || 'No se pudo confirmar el lote. Actualizá el proyecto antes de reintentarlo.' }; }
@@ -769,9 +773,9 @@ export const buildAssistantTools = ({
       area: string,
       subcategory?: string,
     ) => {
-      const snapshot = await getDocs(collection(db, 'projects', projectId, collectionName));
-      const orders = snapshot.docs
-        .map((entry) => entry.data() as AssistantBudgetItem & { subcategory?: string })
+      const loaded = await getProjectContext(projectId);
+      const rows = collectionName === 'areaExpenses' ? loaded?.areaExpenses : loaded?.budgetItems;
+      const orders = (rows || [])
         .filter((item) => item.area === area
           && (subcategory === undefined || cleanAreaExpenseSubcategory(item.subcategory) === subcategory))
         .map((item) => Number(item.order) || 0);
@@ -1100,10 +1104,8 @@ export const buildAssistantTools = ({
           }
         }
 
-        const snapshot = await getDocs(collection(db, 'projects', context.projectId, 'areaExpenses'));
         const nextOrder = new Map<string, number>();
-        snapshot.docs.forEach((entry) => {
-          const item = entry.data() as AssistantAreaExpense;
+        context.areaExpenses.forEach((item) => {
           const key = `${item.area}||${cleanAreaExpenseSubcategory(item.subcategory)}`;
           nextOrder.set(key, Math.max(nextOrder.get(key) ?? -1, Number(item.order) || 0));
         });
@@ -1239,6 +1241,12 @@ export const buildAssistantTools = ({
         }
         if (Object.keys(updates).length === 0) return { error: 'No hay cambios para aplicar.' };
 
+        if (collectionName === 'areaExpenses' && !context.capabilities.isProjectAdmin) {
+          const saved = await editScopedAreaExpense(context.projectId, item.id, item.updatedAt, updates);
+          projectCache.delete(context.projectId);
+          return { ok: true, mensaje: `Fila editada: ${rowLabel(saved, saved.subcategory)}.`, cambios: updates };
+        }
+
         const rowRef = doc(db, 'projects', context.projectId, collectionName, item.id);
         await runTransaction(db, async (transaction) => {
           const projectRef = doc(db, 'projects', context.projectId);
@@ -1350,6 +1358,13 @@ export const buildAssistantTools = ({
         if (!canAssistantEditSubcategory(context.capabilities, area, subcategory)) {
           return { error: `El usuario no tiene permiso para cargar en ${area}${subcategory ? ` › ${subcategory}` : ''}.` };
         }
+        if (!context.capabilities.isProjectAdmin) {
+          await providerFinanceRequest({ action: 'reclassifyAreaExpenses', operationId: crypto.randomUUID(), projectId: context.projectId, kind: 'expense',
+            expectedRevision: context.meta.budgetRevision || 0, itemId: item.id, fromArea: item.area, fromSubcategory: cleanAreaExpenseSubcategory(item.subcategory),
+            targetArea: area, targetSubcategory: subcategory });
+          projectCache.delete(context.projectId);
+          return { ok: true, mensaje: `${rowLabel(item, item.subcategory)} se movió a ${area}${subcategory ? ` › ${subcategory}` : ''}.` };
+        }
         const order = await nextOrder(context.projectId, 'areaExpenses', area, subcategory);
         const rowRef = doc(db, 'projects', context.projectId, 'areaExpenses', item.id);
         await runTransaction(db, async (transaction) => {
@@ -1380,6 +1395,13 @@ export const buildAssistantTools = ({
         }
         if (hasRecordedPayment(item)) {
           return { error: 'Esa fila tiene pagos registrados: no se puede borrar. Sólo un administrador puede corregir o eliminar el pago primero.' };
+        }
+        if (collectionName === 'areaExpenses' && !context.capabilities.isProjectAdmin) {
+          const deleted = await deleteUnpaidExpenseWithConfirmation({ projectId: context.projectId, itemId: item.id,
+            request: providerFinanceRequest, confirm: window.confirm.bind(window), isCurrent: () => true });
+          if (!deleted) return { error: 'Se canceló la eliminación.' };
+          projectCache.delete(context.projectId);
+          return { ok: true, mensaje: `Se eliminó ${rowLabel(item, item.subcategory)}.` };
         }
         const rowRef = doc(db, 'projects', context.projectId, collectionName, item.id);
         if (collectionName === 'budgetItems') {
@@ -1465,6 +1487,12 @@ export const buildAssistantTools = ({
           updates.providerName = providerLabel(provider);
         }
 
+        if (collectionName === 'areaExpenses' && !context.capabilities.isProjectAdmin) {
+          await editScopedAreaExpense(context.projectId, item.id, item.updatedAt, updates);
+          projectCache.delete(context.projectId);
+          return { ok: true, mensaje: args?.quitar ? `Se quitó el proveedor de ${rowLabel(item, item.subcategory)}.`
+            : `Proveedor ${updates.providerName} asignado a ${rowLabel(item, item.subcategory)}.` };
+        }
         const rowRef = doc(db, 'projects', context.projectId, collectionName, item.id);
         const pendingInvite = (item as any).providerInviteLink;
         const inviteRef = pendingInvite?.status === 'pending' && pendingInvite.token
@@ -1838,6 +1866,15 @@ export const buildAssistantTools = ({
         if (budgetAssigned && capacity.exceeds(budget)) {
           return { error: `El presupuesto de las subcategorías supera el de ${area}. Disponible para esta subcategoría: $${capacity.available.toLocaleString('es-AR')}.` };
         }
+        if (!context.capabilities.isProjectAdmin) {
+          await providerFinanceRequest({ action: 'reclassifyAreaExpenses', operationId: crypto.randomUUID(), projectId: context.projectId,
+            kind: isRename ? 'subcategory' : 'subcategoryBudget', expectedRevision: context.meta.budgetRevision || 0,
+            fromArea: area, fromSubcategory: isRename ? original : name, targetArea: area, targetSubcategory: name,
+            budget: { assigned: budgetAssigned, amount: budget, notes: String(args?.notas || '').trim(), expected: areaGroupBudgetVersion(previousBudget) } });
+          projectCache.delete(context.projectId);
+          return { ok: true, mensaje: isRename ? `Subcategoría "${original}" renombrada a "${name}" en ${area}.`
+            : `Subcategoría "${name}" guardada en ${area}.` };
+        }
         if (isRename) delete currentBudgets[subcategoryKeyOf(area, original)];
         const nextBudgets = {
           ...currentBudgets,
@@ -1934,6 +1971,13 @@ export const buildAssistantTools = ({
         ));
         if (affectedExpenses.some((expense) => hasRecordedPayment(expense))) {
           return { error: `La subcategoría "${subcategory}" tiene gastos con pagos registrados: no se puede eliminar.` };
+        }
+        if (!context.capabilities.isProjectAdmin) {
+          await providerFinanceRequest({ action: 'reclassifyAreaExpenses', operationId: crypto.randomUUID(), projectId: context.projectId,
+            kind: 'deleteSubcategory', expectedRevision: context.meta.budgetRevision || 0, fromArea: area, fromSubcategory: subcategory,
+            targetArea: area, targetSubcategory: '' });
+          projectCache.delete(context.projectId);
+          return { ok: true, mensaje: `Subcategoría "${subcategory}" eliminada de ${area}.` };
         }
         const permissionKey = subcategoryKeyOf(area, subcategory);
         const collaboratorsToUpdate = context.collaborators.filter((collaborator) => (
@@ -2219,10 +2263,17 @@ export const buildAssistantTools = ({
             area: item.area || '',
             areaFolder,
             originalFileName: file.name,
+            uploaderUid: userId,
             uploadedBy: userEmail,
           },
         });
-        const url = await getDownloadURL(storageRef);
+        if (!context.capabilities.isProjectAdmin) {
+          await providerFinanceRequest({ action: 'attachScopedAreaExpenseFile', projectId: context.projectId, itemId: item.id,
+            kind: 'invoice', fileId: invoiceId, path });
+          projectCache.delete(context.projectId);
+          return { ok: true, mensaje: `Factura adjuntada a ${rowLabel(item, item.subcategory)}.` };
+        }
+        const url = projectAttachmentLink(context.projectId, collectionName, item.id, 'invoices', invoiceId);
         const invoice = {
           id: invoiceId,
           fileName,

@@ -1,6 +1,6 @@
 import { DEFAULT_RESULT_INCIDENCES } from '../lib/resultIncidences';
 import React, { useState, useEffect } from 'react';
-import { collection, query, getDocs, getDoc, setDoc, addDoc, serverTimestamp, where, or, doc, runTransaction, onSnapshot } from 'firebase/firestore';
+import { collection, query, getDocs, getDoc, setDoc, addDoc, serverTimestamp, doc, runTransaction, onSnapshot } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { handleFirestoreError } from '../lib/firestoreUtils';
 import { useAuth } from '../context/AuthContext';
@@ -16,6 +16,7 @@ import { SearchableSelect } from '../components/SearchableSelect';
 import { matchesSmartSearch } from '../lib/smartSearch';
 import { splitProjectCommercial } from '../lib/projectCommercialFields';
 import { readAuthorizedProject } from '../lib/projectCommercial';
+import { readProjectSummaries } from '../lib/projectScopedData';
 import { publishProgressiveProjects } from '../lib/progressiveProjects';
 import { matchesProjectScope, type ProjectScope } from '../lib/projects';
 
@@ -80,15 +81,17 @@ export default function Projects() {
     }
     setLoading(true);
     const projectsRef = collection(db, 'projects');
-    const q = profile.role === 'admin'
-      ? query(projectsRef)
-      : query(
-          projectsRef,
-          or(
-            where('createdBy', '==', profile.uid),
-            where('collaboratorEmails', 'array-contains', normalizeEmail(profile.email))
-          )
-        );
+    if (profile.role !== 'admin') {
+      let cancelled = false;
+      void readProjectSummaries().then(rows => {
+        if (!cancelled) { setProjects(rows); setDetailsStatus('ready'); setLoading(false); }
+      }, error => {
+        console.error('No se pudieron leer los proyectos asignados:', error);
+        if (!cancelled) { setProjects([]); setDetailsStatus('partial'); setLoading(false); }
+      });
+      return () => { cancelled = true; };
+    }
+    const q = query(projectsRef);
     let currentRead = 0;
     const unsubscribe = onSnapshot(q, querySnapshot => {
       const read = ++currentRead;

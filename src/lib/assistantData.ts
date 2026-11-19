@@ -1,5 +1,5 @@
 import { readProjectCashMovements } from './projectCashQueries';
-import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
 import { db } from './firebase';
 import { normalizeEmail, normalizeSearchText } from './identity';
 import { buildAssistantCapabilities } from './assistantCapabilities';
@@ -7,6 +7,7 @@ import type { AssistantProjectContext, AssistantProvider } from './assistantTool
 import { calculateProjectFinance, getItemTotal, getPaymentTotal, getStandaloneBudgetItems } from './projectFinance';
 import { getReimbursedCents, isThirdPartyPayment } from './reimbursements';
 import { readAuthorizedProject, readProjectCommercial } from './projectCommercial';
+import { readProjectSummaries, readScopedCash, readScopedProject, readScopedProviders } from './projectScopedData';
 
 export type AssistantProjectHandle = {
   id: string;
@@ -56,7 +57,6 @@ export const listAssistantProjects = async ({
   isAppAdmin?: boolean;
 }): Promise<AssistantProjectHandle[]> => {
   const results = new Map<string, AssistantProjectHandle>();
-  const normalizedEmail = normalizeEmail(email);
   const collect = async (docs: Array<{ id: string; data: () => any }>) => {
     await Promise.all(docs.map(async entry => {
       const data = await readAuthorizedProject(db, { ...entry.data(), id: entry.id }, { uid, email, isAppAdmin });
@@ -68,34 +68,10 @@ export const listAssistantProjects = async ({
     }));
   };
 
-  // Los administradores de la aplicación ven todos los proyectos, igual que en
-  // la pantalla de Proyectos; el resto ve los propios y los compartidos.
-  if (isAppAdmin) {
-    try {
-      const all = await getDocs(collection(db, 'projects'));
-      await collect(all.docs);
-      return Array.from(results.values()).sort((a, b) => a.name.localeCompare(b.name, 'es'));
-    } catch (error) {
-      console.warn('No pude listar todos los proyectos para el asistente:', error);
-    }
-  }
-
-  if (uid) {
-    try {
-      const owned = await getDocs(query(collection(db, 'projects'), where('createdBy', '==', uid)));
-      await collect(owned.docs);
-    } catch (error) {
-      console.warn('No pude listar los proyectos propios para el asistente:', error);
-    }
-  }
-  if (normalizedEmail) {
-    try {
-      const shared = await getDocs(query(collection(db, 'projects'), where('collaboratorEmails', 'array-contains', normalizedEmail)));
-      await collect(shared.docs);
-    } catch (error) {
-      console.warn('No pude listar los proyectos compartidos para el asistente:', error);
-    }
-  }
+  if (isAppAdmin) await collect((await getDocs(collection(db, 'projects'))).docs);
+  else for (const project of await readProjectSummaries()) results.set(project.id, {
+    id: project.id, name: String(project.name || 'Proyecto sin nombre'), clientName: project.clientName || '',
+  });
 
   return Array.from(results.values()).sort((a, b) => a.name.localeCompare(b.name, 'es'));
 };
@@ -118,23 +94,16 @@ export const loadAssistantProjectContext = async ({
   globalRole?: string | null;
 }): Promise<AssistantProjectContext | null> => {
   try {
-    const projectSnap = await getDoc(doc(db, 'projects', projectId));
-    if (!projectSnap.exists()) return null;
-    let project = projectSnap.data() || {};
-
+    const scoped = globalRole === 'admin' ? null : await readScopedProject(projectId);
     const normalizedEmail = normalizeEmail(email);
-    let collaborator: any = null;
-    try {
-      const collaboratorSnap = await getDoc(doc(db, 'projects', projectId, 'collaborators', normalizedEmail));
-      collaborator = collaboratorSnap.exists() ? collaboratorSnap.data() : null;
-    } catch (error) {
-      collaborator = null;
-    }
+    let project = scoped?.project || (await getDoc(doc(db, 'projects', projectId))).data();
+    if (!project) return null;
+    const collaborator = scoped?.permissions || null;
 
     const capabilities = buildAssistantCapabilities({
       projectId,
       projectName: String(project.name || ''),
-      projectCreatedBy: String(project.createdBy || ''),
+      projectCreatedBy: String(scoped?.admin ? uid : project.createdBy || ''),
       categories: project.categories,
       activeAreas: project.activeAreas,
       userId: uid,
@@ -145,20 +114,20 @@ export const loadAssistantProjectContext = async ({
     if (!capabilities.can.viewProject) return null;
     project = await readProjectCommercial(db, { ...project, id: projectId }, capabilities.isProjectAdmin);
 
-    const [budgetSnap, areaSnap, cashSnap] = await Promise.all([
-      getDocs(collection(db, 'projects', projectId, 'budgetItems')),
-      getDocs(collection(db, 'projects', projectId, 'areaExpenses')),
-      readProjectCashMovements(db, projectId, normalizedEmail),
+    const [budgetItems, areaExpenses, cashSnap] = await Promise.all([
+      scoped ? scoped.budgetItems : getDocs(collection(db, 'projects', projectId, 'budgetItems')).then(snap => mapDocs(snap.docs)),
+      scoped ? scoped.areaExpenses : getDocs(collection(db, 'projects', projectId, 'areaExpenses')).then(snap => mapDocs(snap.docs)),
+      scoped && !scoped.admin ? readScopedCash(projectId) : readProjectCashMovements(db, projectId, normalizedEmail),
     ]);
 
     const canSeeCollaborators = capabilities.can.manageCollaborators
       || capabilities.can.assignCollaboratorAreas
       || capabilities.tabs.includes('permisos');
     const collaborators = canSeeCollaborators
-      ? mapDocs((await getDocs(collection(db, 'projects', projectId, 'collaborators'))).docs)
+      ? scoped?.collaborators || mapDocs((await getDocs(collection(db, 'projects', projectId, 'collaborators'))).docs)
       : [];
     const documents = capabilities.tabs.includes('documentos')
-      ? mapDocs((await getDocs(collection(db, 'projects', projectId, 'projectDocuments'))).docs)
+      ? scoped?.documents || mapDocs((await getDocs(collection(db, 'projects', projectId, 'projectDocuments'))).docs)
       : [];
 
     return {
@@ -190,8 +159,8 @@ export const loadAssistantProjectContext = async ({
       },
       categories: Array.isArray(project.categories) ? project.categories : [],
       activeAreas: Array.isArray(project.activeAreas) ? project.activeAreas : [],
-      budgetItems: mapDocs(budgetSnap.docs),
-      areaExpenses: mapDocs(areaSnap.docs),
+      budgetItems,
+      areaExpenses,
       cashMovements: cashSnap,
       collaborators,
       documents,
@@ -205,15 +174,14 @@ export const loadAssistantProjectContext = async ({
 // Cálculo liviano por proyecto para el resumen general (mismo criterio que el Dashboard).
 export const loadAssistantProjectFinance = async (projectId: string, actor: { uid: string; email: string; isAppAdmin: boolean }): Promise<AssistantProjectFinance | null> => {
   try {
-    const projectSnap = await getDoc(doc(db, 'projects', projectId));
-    if (!projectSnap.exists()) return null;
-    const project = await readAuthorizedProject(db, { ...projectSnap.data(), id: projectId }, actor);
-    const [budgetSnap, areaSnap] = await Promise.all([
-      getDocs(collection(db, 'projects', projectId, 'budgetItems')),
-      getDocs(collection(db, 'projects', projectId, 'areaExpenses')),
+    const scoped = actor.isAppAdmin ? null : await readScopedProject(projectId, 'resumen');
+    const projectData = scoped?.project || (await getDoc(doc(db, 'projects', projectId))).data();
+    if (!projectData) return null;
+    const project = scoped?.project || await readAuthorizedProject(db, { ...projectData, id: projectId }, actor);
+    const [budgetItems, areaExpenses] = await Promise.all([
+      scoped ? scoped.budgetItems : getDocs(collection(db, 'projects', projectId, 'budgetItems')).then(snap => mapDocs(snap.docs)),
+      scoped ? scoped.areaExpenses : getDocs(collection(db, 'projects', projectId, 'areaExpenses')).then(snap => mapDocs(snap.docs)),
     ]);
-    const budgetItems = mapDocs(budgetSnap.docs);
-    const areaExpenses = mapDocs(areaSnap.docs);
     const finance = calculateProjectFinance(project, budgetItems, areaExpenses);
     const projectName = String(project.name || 'Proyecto sin nombre');
     const payableLines: AssistantPayableLine[] = [
@@ -288,8 +256,8 @@ export const loadAssistantProjectFinance = async (projectId: string, actor: { ui
 
 export const loadAssistantProviders = async (): Promise<AssistantProvider[]> => {
   try {
-    const snapshot = await getDocs(collection(db, 'providers'));
-    return mapDocs(snapshot.docs);
+    try { return mapDocs((await getDocs(collection(db, 'providers'))).docs); }
+    catch { return await readScopedProviders(); }
   } catch (error) {
     console.warn('No pude cargar los proveedores para el asistente:', error);
     return [];

@@ -1,21 +1,29 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { initializeTestEnvironment } from '@firebase/rules-unit-testing';
+import { createRequire } from 'node:module';
+import { assertFails, initializeTestEnvironment } from '@firebase/rules-unit-testing';
 import { collection, doc, getDoc, getDocs, setDoc, updateDoc } from 'firebase/firestore';
 import { buildAssistantCapabilities } from '../src/lib/assistantCapabilities.ts';
 import { applyPaymentDatePlan, preparePaymentDatePlan } from '../src/lib/assistantPaymentDates.ts';
 if (!process.env.FIRESTORE_EMULATOR_HOST) throw Error('Local emulator required');
-const env = await initializeTestEnvironment({ projectId: 'demo-goat-assistant-dates', firestore: { rules: readFileSync('firestore.rules', 'utf8') } });
+const projectId = 'demo-goat-assistant-dates';
+const env = await initializeTestEnvironment({ projectId, firestore: { rules: readFileSync('firestore.rules', 'utf8') } });
+const require = createRequire(new URL('../functions/package.json', import.meta.url));
+const admin = require('firebase-admin');
+const { createProviderFinanceHandler } = require('../functions/providerFinance');
+const app = admin.initializeApp({ projectId });
+const finance = createProviderFinanceHandler({ db: app.firestore(), timestamp: admin.firestore.FieldValue.serverTimestamp });
 const auth = uid => env.authenticatedContext(uid, { email: `${uid}@example.test`, email_verified: true }).firestore();
+const request = data => finance({ auth: { uid: 'producer', token: { email: 'producer@example.test', email_verified: true } }, data });
 const root = 'projects/p';
 const scope = { role: 'jefe_produccion', allowedTabs: ['areas', 'saldos'], allowedCategories: ['Arte'], canEditBudgetAreas: true, excludedSubcategories: ['Arte||Secreta'] };
 const seed = async (path, value) => env.withSecurityRulesDisabled(c => setDoc(doc(c.firestore(), path), value));
 const row = changes => ({ area: 'Arte', subcategory: 'General', providerId: 'person', providerName: 'Persona ficticia', description: 'Servicio', total: 100, paymentDate: '2026-11-10', paymentHistory: [], ...changes });
 const load = async (uid = 'producer', access = scope) => {
-  const db = auth(uid), project = (await getDoc(doc(db, root))).data();
-  const rows = async name => (await getDocs(collection(db, root, name))).docs.map(s => ({ ...s.data(), id: s.id }));
+  const { project, budgetItems, areaExpenses } = await finance({ auth: { uid, token: { email: `${uid}@example.test`, email_verified: true } },
+    data: { action: 'projectScopedSnapshot', projectId: 'p' } });
   return { projectId: 'p', projectName: 'Proyecto de prueba', userEmail: `${uid}@example.test`, activeAreas: project.activeAreas, categories: ['Arte', 'Campo'], meta: {}, cashMovements: [], documents: [], collaborators: [],
-    capabilities: buildAssistantCapabilities({ projectId: 'p', userId: uid, globalRole: uid === 'admin' ? 'admin' : 'colaborador', activeAreas: project.activeAreas, categories: ['Arte', 'Campo'], collaborator: access }), budgetItems: await rows('budgetItems'), areaExpenses: await rows('areaExpenses') };
+    capabilities: buildAssistantCapabilities({ projectId: 'p', userId: uid, globalRole: uid === 'admin' ? 'admin' : 'colaborador', activeAreas: project.activeAreas, categories: ['Arte', 'Campo'], collaborator: access }), budgetItems, areaExpenses };
 };
 const input = (second = 'two') => ({ fecha: '2026-11-20', asignaciones: [{ fila: 'one' }, { fila: second }] });
 try {
@@ -29,19 +37,20 @@ try {
   await seed(`${root}/areaExpenses/secret`, row({ subcategory: 'Secreta' }));
   await seed(`${root}/budgetItems/main`, { ...row({ area: 'Campo', subcategory: '' }), paymentLocked: false });
   const context = await load();
-  const result = await applyPaymentDatePlan(auth('producer'), preparePaymentDatePlan(context, input()), context);
+  const result = await applyPaymentDatePlan(auth('producer'), preparePaymentDatePlan(context, input()), context, request);
   assert.equal(result.fechasActualizadas, 2);
-  const paid = (await getDoc(doc(auth('producer'), root, 'areaExpenses/two'))).data();
+  await assertFails(getDoc(doc(auth('producer'), root, 'areaExpenses/two')));
+  const paid = (await getDoc(doc(auth('admin'), root, 'areaExpenses/two'))).data();
   assert.deepEqual(paid.paymentHistory, history); assert.equal(paid.total, 100); assert.equal(paid.paymentLocked, true); assert.equal(paid.paymentDate, '2026-11-20');
-  assert.throws(() => preparePaymentDatePlan(context, input('secret')), /permiso/);
-  assert.throws(() => preparePaymentDatePlan(context, { fecha: '2026-11-20', asignaciones: [{ fila: 'main' }] }), /permiso/);
+  assert.throws(() => preparePaymentDatePlan(context, input('secret')), /No encontré/);
+  assert.throws(() => preparePaymentDatePlan(context, { fecha: '2026-11-20', asignaciones: [{ fila: 'main' }] }), /No encontré/);
   const current = await load(); const stale = preparePaymentDatePlan(current, { ...input(), fecha: '2026-11-25' });
   await env.withSecurityRulesDisabled(c => updateDoc(doc(c.firestore(), root, 'areaExpenses/two'), { description: 'Cambió mientras confirmaba' }));
-  await assert.rejects(applyPaymentDatePlan(auth('producer'), stale, current), /Cambió el gasto/);
-  assert.equal((await getDoc(doc(auth('producer'), root, 'areaExpenses/one'))).data().paymentDate, '2026-11-20', 'stale batch must not partially apply');
+  await assert.rejects(applyPaymentDatePlan(auth('producer'), stale, current, request), /Cambió el gasto/);
+  assert.equal((await getDoc(doc(auth('admin'), root, 'areaExpenses/one'))).data().paymentDate, '2026-11-20', 'stale batch must not partially apply');
   const beforeRevocation = await load(); const revoked = preparePaymentDatePlan(beforeRevocation, { ...input(), fecha: '2026-11-26' });
   await seed(`${root}/collaborators/producer@example.test`, { ...scope, canEditBudgetAreas: false });
-  await assert.rejects(applyPaymentDatePlan(auth('producer'), revoked, beforeRevocation), /permission-denied|PERMISSION_DENIED|Missing or insufficient permissions/);
+  await assert.rejects(applyPaymentDatePlan(auth('producer'), revoked, beforeRevocation, request), { code: 'permission-denied' });
   assert.equal((await getDoc(doc(auth('admin'), root, 'areaExpenses/one'))).data().paymentDate, '2026-11-20');
   const adminContext = await load('admin');
   await applyPaymentDatePlan(auth('admin'), preparePaymentDatePlan(adminContext, { fecha: '', asignaciones: [{ fila: 'main' }] }), adminContext);
@@ -49,4 +58,4 @@ try {
   await env.withSecurityRulesDisabled(async c => assert.equal((await getDocs(collection(c.firestore(), root, 'cashMovements'))).size, 0));
   assert.equal((await getDocs(collection(auth('admin'), root, 'activityLog'))).size, 0);
   console.log('PASS assistant payment dates: scoped atomic metadata-only scheduling, paid history preserved, stale/revoked batches denied, no cash or payments created.');
-} finally { await env.cleanup(); }
+} finally { await env.cleanup(); await app.delete(); }

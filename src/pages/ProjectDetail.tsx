@@ -1,3 +1,4 @@
+import { handleProjectAttachmentLink, projectAttachmentHref } from '../lib/portalInvoiceLink';
 import { canAccessGeneralCash } from '../lib/generalCashAccess';
 import { readProjectCashMovements, watchProjectCashMovements } from '../lib/projectCashQueries';
 import { ProjectScopePermissions } from '../components/ProjectScopePermissions';
@@ -6,7 +7,7 @@ import { flushSync } from 'react-dom';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { doc, getDoc, getDocFromServer, collection, query, getDocs, getDocsFromServer, onSnapshot, addDoc, serverTimestamp, deleteDoc, updateDoc, setDoc, writeBatch, runTransaction, Timestamp, type Transaction } from 'firebase/firestore';
-import { deleteObject, getDownloadURL, ref, uploadBytes } from 'firebase/storage';
+import { deleteObject, ref, uploadBytes } from 'firebase/storage';
 import { db, storage, auth } from '../lib/firebase';
 import { handleFirestoreError } from '../lib/firestoreUtils';
 import { useAuth } from '../context/AuthContext';
@@ -85,6 +86,7 @@ import { PaymentModal } from './project-detail/PaymentModal';
 import { ExpenseInvoiceCell, ExpenseReceiptsCell, InvoiceDropOverlay } from './project-detail/ExpenseFileCells';
 import { SharedInvoiceRecordsProvider } from '../components/SharedExpenseInvoices';
 import { providerFinanceRequest } from '../lib/providerFinance';
+import { editScopedAreaExpense, projectAttachmentLink, readProjectAccess, readScopedCash, readScopedProject, readScopedProviders } from '../lib/projectScopedData';
 import type { AreaExpense, BudgetItem, CashMovement, Collaborator, Payment, PaymentCollection } from './project-detail/types';
 import { formatIdentifier, inferLegacyIdentifiers, normalizeDigits, providerDisplayName } from '../lib/providerConstants';
 import { normalizeEmail, normalizeSearchText } from '../lib/identity';
@@ -715,10 +717,16 @@ export default function ProjectDetail() {
   const retryProjectLoad = () => setReloadAttempt(attempt => attempt + 1);
   const [showMobileProjectDetails, setShowMobileProjectDetails] = useState(false);
   const [searchParams] = useSearchParams();
-  const [activeTab, setActiveTab] = useProjectWorkingView(user?.uid, id, 'activeTab', () => {
+  const [userPermissions, setUserPermissions] = useState<Collaborator | null>(null);
+  const [isProjectAdmin, setIsProjectAdmin] = useState(false);
+  const [storedTab, setActiveTab] = useProjectWorkingView(user?.uid, id, 'activeTab', () => {
     const requestedTab = searchParams.get('tab') || '';
     return tabs.some((tab) => tab.id === requestedTab) ? requestedTab : 'resumen';
   });
+  const acceptsTab = (tab: { id: string }) => tab.id === 'administracion' ? profile?.role === 'admin'
+    : isProjectAdmin || tab.id !== 'resultado' && safeArray(userPermissions?.allowedTabs).includes(tab.id);
+  const visibleTabs = tabs.filter(acceptsTab);
+  const activeTab = visibleTabs.find(tab => tab.id === storedTab)?.id || visibleTabs[0]?.id || '';
   const requestedTab = searchParams.get('tab') || '';
   useEffect(() => {
     if (tabs.some(tab => tab.id === requestedTab)) setActiveTab(requestedTab);
@@ -779,9 +787,7 @@ export default function ProjectDetail() {
   const [selectedCashBox, setSelectedCashBox] = useState('');
   const [newCollaboratorRole, setNewCollaboratorRole] = useState<Collaborator['role']>('jefe_produccion');
   const [newCollaboratorCategories, setNewCollaboratorCategories] = useState<string[]>([]);
-  const [userPermissions, setUserPermissions] = useState<Collaborator | null>(null);
   const [isOwner, setIsOwner] = useState(false);
-  const [isProjectAdmin, setIsProjectAdmin] = useState(false);
   const [showEditProjectModal, setShowEditProjectModal] = useState(false);
   const [showCopyBudgetModal, setShowCopyBudgetModal] = useState(false);
   const [sourceProjectsLoading, setSourceProjectsLoading] = useState(false);
@@ -844,7 +850,10 @@ export default function ProjectDetail() {
       setIsOwner(false);
       setIsProjectAdmin(false);
       setUserPermissions(null);
+      setFinancialLoad({ scope: loadScope, ready: false, error: '' });
+      setAuxiliaryLoad({ scope: loadScope, ready: false, error: '' });
       try {
+        if (profile?.role !== 'admin' && !(await readProjectAccess(id)).admin) return;
         const docRef = doc(db, 'projects', id);
         const userEmailKey = normalizeEmail(user.email);
         const readPermissions = async () => {
@@ -919,7 +928,7 @@ export default function ProjectDetail() {
   }, [loadScope]);
 
   useEffect(() => {
-    if (!id || !user || loadedProjectScope !== loadScope || projectLoadError) return;
+    if (!id || !user || loadedProjectScope !== loadScope || projectLoadError || !isProjectAdmin) return;
     let cancelled = false, rootData: any = project;
     let permissions: Collaborator[] = [], permissionsReady = false;
     const applyPermissions = () => {
@@ -957,12 +966,47 @@ export default function ProjectDetail() {
       setCollaborators(permissions); applyPermissions();
     }, failed);
     return () => { cancelled = true; stopProject(); stopPermissions(); };
-  }, [loadScope, loadedProjectScope, projectLoadError]);
+  }, [loadScope, loadedProjectScope, projectLoadError, isProjectAdmin]);
+
+  useEffect(() => {
+    if (!id || !user || loading || loadedProjectScope !== loadScope || projectLoadError || isProjectAdmin) return;
+    let stopped = false;
+    let refreshing = false;
+    const refresh = async () => {
+      if (refreshing || stopped) return;
+      refreshing = true;
+      try {
+        const [data, cash] = await Promise.all([readScopedProject(id), readScopedCash(id)]);
+        if (stopped) return;
+        if (data.admin) { setReloadAttempt(attempt => attempt + 1); return; }
+        const permissions = data.permissions;
+        setUserPermissions(permissions ? { ...permissions, email: normalizeEmail(user.email),
+          role: normalizeProjectRole(permissions.role), allowedTabs: normalizeAllowedTabs(permissions.allowedTabs, permissions.role) } : null);
+        setProject(data.project); setLocationDraft(current => current || data.project.location || '');
+        setActiveAreas(safeArray(data.project.activeAreas)); setCategories(safeArray(data.project.categories));
+        setBudgetItems(data.budgetItems); setAreaExpenses(current => reconcileAreaExpenseSnapshot(current, data.areaExpenses));
+        setProviders(data.providers); setManualProjectDocuments(data.documents); setCollaborators(data.collaborators); setCashMovements(cash);
+        setAuxiliaryLoad({ scope: loadScope, ready: true, error: '' });
+        setFinancialLoad({ scope: loadScope, ready: true, error: '' });
+      } catch (error) {
+        if (!stopped) {
+          setProject(null); setUserPermissions(null); setProviders([]); setCollaborators([]);
+          setBudgetItems([]); setAreaExpenses([]); setManualProjectDocuments([]); setCashMovements([]);
+          setProjectLoadError('No se pudo verificar tu acceso al proyecto. Volvé a intentar.');
+        }
+      } finally { refreshing = false; }
+    };
+    void refresh();
+    const timer = window.setInterval(refresh, 12_000);
+    window.addEventListener('focus', refresh);
+    const own = onSnapshot(doc(db, 'projects', id, 'collaborators', normalizeEmail(user.email)), refresh, () => {});
+    return () => { stopped = true; window.clearInterval(timer); window.removeEventListener('focus', refresh); own(); };
+  }, [loadScope, loadedProjectScope, loading, isProjectAdmin, projectLoadError]);
 
   // Start auxiliary catalogs alongside the core request, never as a prerequisite
   // for opening the project header or the financial overview.
   useEffect(() => {
-    if (!id || !user) return;
+    if (!id || !user || !isProjectAdmin || loadedProjectScope !== loadScope) return;
     let cancelled = false;
     let stopProviders = () => {};
     let providerWatchFailed = false;
@@ -970,7 +1014,9 @@ export default function ProjectDetail() {
     setProviders([]); setCollaborators([]); setManualProjectDocuments([]);
     void Promise.all([
       getDocs(collection(db, 'projects', id, 'projectDocuments')),
-      new Promise<any>((resolve, reject) => {
+      !isGlobalAdmin && profile?.role !== 'ayudante_admin' ? readScopedProviders().then(items => {
+        if (!cancelled) setProviders(items);
+      }) : new Promise<any>((resolve, reject) => {
         stopProviders = onSnapshot(collection(db, 'providers'), snapshot => {
           if (!cancelled) setProviders(snapshot.docs.map(d => ({ id:d.id, ...d.data() })));
           resolve(snapshot);
@@ -990,7 +1036,7 @@ export default function ProjectDetail() {
       setAuxiliaryLoad({ scope: loadScope, ready: false, error: 'No se pudieron cargar equipo, proveedores o documentos. Los datos financieros no se modificaron.' });
     });
     return () => { cancelled = true; stopProviders(); };
-  }, [loadScope]);
+  }, [loadScope, loadedProjectScope, isProjectAdmin]);
 
   useEffect(() => {
     setClients([]);
@@ -1005,7 +1051,7 @@ export default function ProjectDetail() {
   // Keep financial rows current across browsers. Transactions below still validate
   // the stored version because a listener cannot prevent an in-flight race.
   useEffect(() => {
-    if (!id || !user) return;
+    if (!id || !user || !isProjectAdmin || loadedProjectScope !== loadScope) return;
     let cancelled = false;
     const received = new Set<string>();
     setBudgetItems([]); setAreaExpenses([]); setCashMovements([]);
@@ -1037,10 +1083,10 @@ export default function ProjectDetail() {
       markReceived('cash');
     }, failed);
     return () => { cancelled = true; stopBudget(); stopExpenses(); stopCash(); };
-  }, [loadScope]);
+  }, [loadScope, loadedProjectScope, isProjectAdmin]);
 
   useEffect(() => {
-    if (!id || !user) return;
+    if (!id || !user || loadedProjectScope !== loadScope || !isProjectAdmin) return;
     let cancelled = false;
     setAvailableUsers([]);
     const fetchUsers = async () => {
@@ -1054,7 +1100,7 @@ export default function ProjectDetail() {
 
     fetchUsers();
     return () => { cancelled = true; };
-  }, [loadScope]);
+  }, [loadScope, loadedProjectScope, isProjectAdmin]);
 
   useEffect(() => {
     if (!isProjectAdmin || !id || !showCopyBudgetModal) return;
@@ -1885,6 +1931,12 @@ export default function ProjectDetail() {
       if (!canEditAreaExpense(currentExpense) || !canEditAreaSubcategory(nextArea, nextSubcategory)) { if (propagateFailure) throw new Error('No tenés permiso para editar este gasto.'); return; }
       const nextTotal = submittedUpdates.total !== undefined ? Number(submittedUpdates.total) : Number(currentExpense.total) || 0;
       const budgetWarning = getAreaExpenseBudgetWarning(nextArea, nextTotal, expenseId);
+      if (!isProjectAdmin) {
+        const saved = await editScopedAreaExpense(id, expenseId, currentExpense.updatedAt, submittedUpdates);
+        setAreaExpenses(expenses => expenses.map(e => e.id === expenseId ? saved : e));
+        if (budgetWarning) showExpenseConfirmation(budgetWarning, 'warning');
+        return;
+      }
       const docRef = doc(db, 'projects', id, 'areaExpenses', expenseId);
       const auditRef = paidProviderCorrection ? doc(collection(db, 'projects', id, 'activityLog')) : null;
       const amountAuditRef = doc(collection(db, 'projects', id, 'activityLog'));
@@ -1997,6 +2049,14 @@ export default function ProjectDetail() {
         return true;
       },
       refresh: async () => {
+        if (!isProjectAdmin) {
+          const data = await readScopedProject(id);
+          if (structureScope.current === scope) {
+            setProject(data.project);
+            setAreaExpenses(current => reconcileAreaExpenseSnapshot(current, data.areaExpenses));
+          }
+          return;
+        }
         const [freshProject, freshExpenses] = await Promise.all([
           getDocFromServer(doc(db, 'projects', id)), getDocsFromServer(collection(db, 'projects', id, 'areaExpenses')),
         ]);
@@ -2008,25 +2068,6 @@ export default function ProjectDetail() {
       },
       onRefreshError: () => { if (structureScope.current === scope) showExpenseConfirmation('El cambio se guardó. Esperando que se restablezca la actualización en vivo.', 'warning'); },
     });
-  };
-
-  const saveAreaSubcategories = async (area: string, subcategories: string[]) => {
-    if (!id || !canEditArea(area)) return;
-    const normalized = Array.from(new Set(
-      subcategories
-        .map(cleanAreaExpenseSubcategory)
-        .filter(Boolean)
-    ));
-    const nextMap = {
-      ...(project?.areaExpenseSubcategories || {}),
-      [area]: normalized,
-    };
-
-    await updateDoc(doc(db, 'projects', id), {
-      areaExpenseSubcategories: nextMap,
-      updatedAt: serverTimestamp(),
-    });
-    setProject((current: any) => current ? { ...current, areaExpenseSubcategories: nextMap } : current);
   };
 
   const openAreaExpenseSubcategoryModal = (area: string, subcategory = '', editDefault = false) => {
@@ -2115,6 +2156,13 @@ export default function ProjectDetail() {
         setSubcategoryBudgetDraft(null);
         return;
       }
+      if (!isProjectAdmin) {
+        await changeAreaStructure({ kind: 'subcategoryBudget', fromArea: area, targetArea: area, fromSubcategory: name, targetSubcategory: name,
+          budget: { assigned: subcategoryBudgetDraft.assignBudget, amount: budget, notes: subcategoryBudgetDraft.notes.trim(),
+            expected: subcategoryBudgetDraft.originalBudgetVersion } });
+        setSubcategoryBudgetDraft(null);
+        return;
+      }
       const projectRef = doc(db, 'projects', id);
       const [serverProject, serverBudgetItems] = await Promise.all([
         getDocFromServer(projectRef),
@@ -2192,6 +2240,15 @@ export default function ProjectDetail() {
       'Tambien se quitaran los permisos asignados a esta subcategoria.'
     );
     if (!secondConfirmation) return;
+    if (!isProjectAdmin) {
+      setIsSavingSubcategoryBudget(true);
+      try {
+        await changeAreaStructure({ kind: 'deleteSubcategory', fromArea: area, targetArea: area, fromSubcategory: subcategory, targetSubcategory: '' });
+        setSubcategoryBudgetDraft(null);
+      } catch (error) { alert(areaStructureErrorMessage(error)); }
+      finally { setIsSavingSubcategoryBudget(false); }
+      return;
+    }
 
     const existing = getStoredAreaSubcategories(area);
     const nextSubcategories = existing.filter((item) => item.toLowerCase() !== subcategory.toLowerCase());
@@ -2435,12 +2492,20 @@ export default function ProjectDetail() {
           area: expense.area || '',
           areaFolder,
           originalFileName: file.name,
+          uploaderUid: user?.uid || '',
           uploadedBy: user?.email || user?.uid || 'unknown',
         },
       });
       fileUploaded = true;
 
-      const url = await getDownloadURL(storageRef);
+      if (!isProjectAdmin) {
+        const result = await providerFinanceRequest({ action: 'attachScopedAreaExpenseFile', projectId: id, itemId: expense.id,
+          kind: 'invoice', fileId: invoiceId, path }) as { expense: AreaExpense };
+        setAreaExpenses(expenses => expenses.map(e => e.id === expense.id ? result.expense : e));
+        return;
+      }
+
+      const url = projectAttachmentLink(id, collectionName, expense.id, 'invoices', invoiceId);
       const invoice = {
         id: invoiceId,
         fileName,
@@ -2723,12 +2788,19 @@ export default function ProjectDetail() {
             : isOwner ? 'project_owner' : isProjectAdmin ? 'project_admin' : 'area_editor',
           area: expense.area || '',
           originalFileName: file.name,
+          uploaderUid: user?.uid || '',
           uploadedBy: user?.email || user?.uid || 'unknown',
           uploadedByRole,
         },
       });
 
-      const url = await getDownloadURL(storageRef);
+      if (!isProjectAdmin) {
+        const result = await providerFinanceRequest({ action: 'attachScopedAreaExpenseFile', projectId: id, itemId: expense.id,
+          kind: 'other', fileId: receiptId, path }) as { expense: AreaExpense };
+        setAreaExpenses(expenses => expenses.map(e => e.id === expense.id ? result.expense : e));
+        return;
+      }
+      const url = projectAttachmentLink(id, collectionName, expense.id, 'other', receiptId);
       const receipt = {
         id: receiptId,
         fileName,
@@ -2743,12 +2815,13 @@ export default function ProjectDetail() {
         uploadedByName: currentUserName,
         uploadedByRole,
       };
-      const currentReceipts = Array.isArray(expense.otherReceipts) ? expense.otherReceipts : [];
-      const nextReceipts = [...currentReceipts, receipt];
-
-      await updateDoc(doc(db, 'projects', id, collectionName, expense.id), {
-        otherReceipts: nextReceipts,
-        updatedAt: serverTimestamp(),
+      const expenseRef = doc(db, 'projects', id, collectionName, expense.id);
+      const nextReceipts = await runTransaction(db, async transaction => {
+        const stored = (await transaction.get(expenseRef)).data();
+        if (!stored) throw Error('La fila de gasto ya no existe.');
+        const entries = [...(Array.isArray(stored.otherReceipts) ? stored.otherReceipts : []), receipt];
+        transaction.update(expenseRef, { otherReceipts: entries, updatedAt: serverTimestamp() });
+        return entries;
       });
 
       updateItemCollectionState(collectionName, expense.id, {
@@ -2829,10 +2902,10 @@ export default function ProjectDetail() {
           projectId: id,
           family,
           subtype,
-          uploadedBy: user?.email || '',
+          uploadedBy: currentUserEmail,
         },
       });
-      const url = await getDownloadURL(storageRef);
+      const url = projectAttachmentLink(id, 'projectDocuments', docRef.id, 'document');
       const payload = {
         family,
         type: subtype,
@@ -2855,7 +2928,9 @@ export default function ProjectDetail() {
         uploadedBy: user?.email || '',
       };
 
-      await setDoc(docRef, payload);
+      if (isProjectAdmin) await setDoc(docRef, payload);
+      else await providerFinanceRequest({ action: 'projectCreateDocument', projectId: id, itemId: docRef.id,
+        document: { ...payload, createdAt: undefined, updatedAt: undefined } });
       setManualProjectDocuments((current) => [{ id: docRef.id, ...payload, createdAt: new Date(), updatedAt: new Date() }, ...current]);
       setDocumentCategoryFilter(family);
       setDocumentSearch('');
@@ -3436,21 +3511,6 @@ export default function ProjectDetail() {
     }
   };
 
-  // Filtered views based on permissions
-  const visibleTabs = tabs.filter(tab => {
-    if (tab.id === 'administracion') return isGlobalAdmin;
-    if (tab.id === 'resultado') return isProjectAdmin;
-    if (tab.id === 'permisos' && userPermissions?.role === 'jefe_produccion') return true;
-    if (isProjectAdmin) return true;
-    return safeArray(userPermissions?.allowedTabs).includes(tab.id);
-  });
-
-  useEffect(() => {
-    if (loadedProjectScope === loadScope && !loading && visibleTabs.length > 0 && !visibleTabs.some(tab => tab.id === activeTab)) {
-      setActiveTab(visibleTabs[0].id);
-    }
-  }, [activeTab, loading, visibleTabs, loadedProjectScope, loadScope, setActiveTab]);
-
   const userAllowedSubcategories = safeArray(userPermissions?.allowedSubcategories);
   const canSeeAssignedSubcategoryInArea = (area?: string | null) => (
     Boolean(area)
@@ -3731,13 +3791,13 @@ export default function ProjectDetail() {
   const isProductionLead = userPermissions?.role === 'jefe_produccion';
   const canEditProjectOperations = isProjectAdmin || isProductionLead;
   const canManageProjectRoles = isProjectAdmin;
-  const canAssignProjectAreas = isProjectAdmin || isProductionLead;
-  const canManageProjectAccess = isProjectAdmin || isProductionLead;
-  const canUploadProjectDocuments = isProjectAdmin || (
-    isProductionLead && safeArray(userPermissions?.allowedTabs).includes('documentos')
-  );
-  const canManageProjectSignatures = canUploadProjectDocuments || profile?.role === 'ayudante_admin'
-    || normalizeEmail(user?.email) === 'info@granbertafilms.com';
+  const canAssignProjectAreas = isProjectAdmin || isProductionLead && activeTab === 'permisos';
+  const canManageProjectAccess = canAssignProjectAreas;
+  const uploadDocumentAreas = isProjectAdmin ? categories : safeArray(userPermissions?.allowedCategories)
+    .filter(area => hasFullProjectAreaAccess(false, userPermissions, area));
+  const canUploadProjectDocuments = isProjectAdmin || (isProductionLead && uploadDocumentAreas.length > 0
+    && safeArray(userPermissions?.allowedTabs).includes('documentos'));
+  const canManageProjectSignatures = isProjectAdmin || safeArray(userPermissions?.allowedTabs).includes('documentos');
   const canSeeFullPayroll = isProjectAdmin || isProductionLead;
   const roleOptionsForCurrentUser = isProjectAdmin ? PROJECT_ADMIN_ROLE_OPTIONS : PRODUCTION_LEAD_ROLE_OPTIONS;
   const assignableAreaOptions = isProjectAdmin ? categories : safeArray(userPermissions?.allowedCategories);
@@ -3932,7 +3992,20 @@ export default function ProjectDetail() {
   const visiblePermissionCollaborators = isProjectAdmin
     ? collaborators
     : collaborators.filter((col) => col.role === 'jefe_area' || col.role === 'jefe_produccion');
-  const filteredAvailableUsers = availableUsers
+  const [scopedTeamCandidate, setScopedTeamCandidate] = useState<any>(null);
+  useEffect(() => {
+    setScopedTeamCandidate(null);
+    const email = normalizeEmail(newCollaboratorSearch);
+    if (!id || isProjectAdmin || !showAddCollaborator || !canManageProjectAccess || !email.includes('@')) return;
+    let stopped = false;
+    const timer = window.setTimeout(() => {
+      void providerFinanceRequest({ action: 'projectTeamCandidate', projectId: id, email }).then(result => {
+        if (!stopped) setScopedTeamCandidate((result as { candidate: any }).candidate);
+      }).catch(() => { if (!stopped) setScopedTeamCandidate(null); });
+    }, 300);
+    return () => { stopped = true; window.clearTimeout(timer); };
+  }, [id, isProjectAdmin, showAddCollaborator, canManageProjectAccess, newCollaboratorSearch]);
+  const filteredAvailableUsers = (isProjectAdmin ? availableUsers : scopedTeamCandidate ? [scopedTeamCandidate] : [])
     .filter((candidate) => {
       const email = normalizeEmail(candidate.email);
       if (!email) return false;
@@ -4820,7 +4893,7 @@ export default function ProjectDetail() {
     }
     setIsCreatingCashReturn(true);
     try {
-      const movements = await readProjectCashMovements(db, id, currentUserEmail) as CashMovement[];
+      const movements = isProjectAdmin ? await readProjectCashMovements(db, id, currentUserEmail) as CashMovement[] : await readScopedCash(id);
       const balance = calculateCashBalances(movements).get(currentUserEmail) || 0;
       const reserved = movements.filter((movement) => movement.type === 'devolucion'
         && movement.status === 'pending' && normalizeEmail(movement.fromUserEmail) === currentUserEmail)
@@ -5020,6 +5093,11 @@ export default function ProjectDetail() {
 
     try {
       setAddingCollaborator(true);
+      if (!isProjectAdmin) {
+        const { collaborator } = await providerFinanceRequest({ action: 'projectAssignCollaborator', projectId: id, email,
+          uid: newCol.uid, role: newCollaboratorRole, categories: selectedCategories }) as { collaborator: Collaborator };
+        setCollaborators(current => [...current, collaborator]);
+      } else {
       const newEmails = Array.from(new Set([...(project?.collaboratorEmails || []), email].map(normalizeEmail).filter(Boolean)));
       const batch = writeBatch(db);
       batch.set(doc(db, 'projects', id, 'collaborators', email), newCol);
@@ -5031,6 +5109,7 @@ export default function ProjectDetail() {
 
       setCollaborators([...collaborators, { ...newCol, createdAt: new Date(), updatedAt: new Date() }]);
       setProject({ ...project, collaboratorEmails: newEmails });
+      }
       setSelectedUserToAdd(null);
       setNewCollaboratorSearch('');
       setNewCollaboratorRole('jefe_area');
@@ -5074,7 +5153,7 @@ export default function ProjectDetail() {
   const updateCollaboratorPermissions = async (col: Collaborator, updates: Partial<Collaborator>) => {
     if (!id) return;
     if (!isProjectAdmin) {
-      if (col.role !== 'jefe_area' && col.role !== 'jefe_produccion') return;
+      if (!canAssignProjectAreas || !col.scopeEditable || col.role !== 'jefe_area' && col.role !== 'jefe_produccion') return;
       const updateKeys = Object.keys(updates);
       if (updateKeys.some((key) => key !== 'allowedCategories' && key !== 'allowedSubcategories' && key !== 'excludedSubcategories')) return;
       updates = { ...updates, excludedSubcategories: Array.from(new Set([...safeArray(updates.excludedSubcategories === undefined ? col.excludedSubcategories : updates.excludedSubcategories), ...safeArray(userPermissions?.excludedSubcategories)])) };
@@ -5268,7 +5347,7 @@ export default function ProjectDetail() {
     </>
   );
 
-  if (loading || loadedProjectScope !== loadScope) return <div className="p-8 text-center text-slate-500 font-mono text-xs uppercase tracking-widest">Analizando proyecto...</div>;
+  if (loading || loadedProjectScope !== loadScope || !project && !projectLoadError) return <div className="p-8 text-center text-slate-500 font-mono text-xs uppercase tracking-widest">Analizando proyecto...</div>;
   if (projectLoadError) return <div role="alert" className="p-8 text-center text-sm text-slate-600">
     <p>{projectLoadError}</p>
     <button type="button" onClick={retryProjectLoad} className="mt-3 rounded-lg border border-slate-300 px-4 py-2 font-bold">Volver a intentar</button>
@@ -7523,10 +7602,10 @@ export default function ProjectDetail() {
                             <div className="flex flex-wrap gap-2 pt-1">
                               {projectLine.invoice?.url && (
                                 <a
-                                  href={projectLine.invoice.url}
+                                  href={projectAttachmentHref(projectLine.invoice.url)}
                                   target="_blank"
                                   rel="noreferrer"
-                                  onClick={(event) => event.stopPropagation()}
+                                  onClick={event => { event.stopPropagation(); handleProjectAttachmentLink(event, projectLine.invoice.url); }}
                                   className="inline-flex items-center gap-1 rounded border border-emerald-100 bg-emerald-50 px-2 py-1.5 text-[9px] font-black uppercase tracking-widest text-emerald-700 hover:bg-emerald-600 hover:text-white"
                                 >
                                   <FileText className="w-3 h-3" />
@@ -7577,7 +7656,7 @@ export default function ProjectDetail() {
               canPrepare={isProjectAdmin || profile?.role === 'ayudante_admin' || normalizeEmail(user?.email) === 'info@granbertafilms.com'} /> : undefined} />
         )}
 
-        {activeTab === 'permisos' && canAssignProjectAreas && (
+        {activeTab === 'permisos' && (
           <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm sm:p-4">
             <div className="space-y-3">
               <header className="flex flex-wrap items-center justify-between gap-2">
@@ -7670,8 +7749,10 @@ export default function ProjectDetail() {
                             </div>
                             )}
 
-                            <ProjectScopePermissions access={col} areas={isProjectAdmin ? categories : safeArray(userPermissions?.allowedCategories)}
-                              subcategories={assignableSubcategoryOptions} onChange={updates => void updateCollaboratorPermissions(col, updates)} />
+                            <fieldset className="contents" disabled={!isProjectAdmin && (!canAssignProjectAreas || !col.scopeEditable)}>
+                              <ProjectScopePermissions access={col} areas={isProjectAdmin ? categories : safeArray(userPermissions?.allowedCategories)}
+                                subcategories={assignableSubcategoryOptions} onChange={updates => void updateCollaboratorPermissions(col, updates)} />
+                            </fieldset>
 
                             {canManageProjectRoles && (
                             <div className="flex flex-wrap gap-1.5 lg:col-span-2">
@@ -7711,7 +7792,8 @@ export default function ProjectDetail() {
         )}
 
 
-        {(activeTab !== 'resumen' && activeTab !== 'presupuesto' && activeTab !== 'areas' && activeTab !== 'saldos' && activeTab !== 'administracion' && activeTab !== 'documentos' && activeTab !== 'resultado' && activeTab !== 'proveedores' && activeTab !== 'permisos') && (
+        {!activeTab && <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-600">Este proyecto todavía no tiene pestañas habilitadas para tu cuenta.</div>}
+        {(activeTab && activeTab !== 'resumen' && activeTab !== 'presupuesto' && activeTab !== 'areas' && activeTab !== 'saldos' && activeTab !== 'administracion' && activeTab !== 'documentos' && activeTab !== 'resultado' && activeTab !== 'proveedores' && activeTab !== 'permisos') && (
            <div className="py-32 text-center border border-dashed border-slate-200 rounded-2xl bg-white">
               <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest animate-pulse">Integrando módulo {activeTab}...</span>
            </div>
@@ -7733,7 +7815,7 @@ export default function ProjectDetail() {
                         setNewCollaboratorSearch(event.target.value);
                         setSelectedUserToAdd(null);
                       }}
-                      placeholder="Nombre o email..."
+                      placeholder={isProjectAdmin ? 'Nombre o email...' : 'Correo de la cuenta registrada'}
                       className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded text-sm focus:border-black focus:outline-none transition-all"
                     />
                   </div>
@@ -7741,7 +7823,7 @@ export default function ProjectDetail() {
                   <div className="max-h-64 overflow-y-auto bg-white border border-slate-200 rounded-xl divide-y divide-slate-100">
                     {filteredAvailableUsers.length === 0 ? (
                       <div className="p-5 text-center text-[10px] font-bold uppercase tracking-widest text-slate-300">
-                        {availableUsers.length === 0 ? 'No hay usuarios disponibles' : 'Sin resultados'}
+                        {!isProjectAdmin ? 'Ingresá el correo completo de la persona' : availableUsers.length === 0 ? 'No hay usuarios disponibles' : 'Sin resultados'}
                       </div>
                     ) : filteredAvailableUsers.map((candidate) => {
                       const candidateEmail = normalizeEmail(candidate.email);
@@ -8176,8 +8258,8 @@ export default function ProjectDetail() {
           )))}
           onCashMovementDeleted={(movementId) => setCashMovements((current) => current.filter((movement) => movement.id !== movementId))}
         />
-        {showDocumentUploadModal && <ProjectDocumentUpload initialCategory={documentCategoryFilter}
-          providers={providers.map(provider => ({ id: provider.id, label: providerDisplayName(provider) }))} areas={categories}
+        {showDocumentUploadModal && canUploadProjectDocuments && <ProjectDocumentUpload initialCategory={documentCategoryFilter}
+          providers={providers.map(provider => ({ id: provider.id, label: providerDisplayName(provider) }))} areas={uploadDocumentAreas} allowGeneral={isProjectAdmin}
           busy={isUploadingProjectDocument} onClose={() => setShowDocumentUploadModal(false)} onSubmit={uploadProjectDocument} />}
         {showEditProjectModal && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[200] flex items-center justify-center p-4">

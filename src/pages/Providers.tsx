@@ -1,5 +1,6 @@
 import { ProviderDetailModal } from '../components/ProviderDetailModal';
 import { loadProviderDetail } from '../lib/providerDetail';
+import { readScopedProviders } from '../lib/projectScopedData';
 import { ProviderDataExportDialog } from '../components/ProviderDataExportDialog';
 import { ProviderSortSelect } from '../components/ProviderSortSelect';
 import { providerRegistrationLabel, sortProviders, type ProviderSortOrder } from '../lib/providerOrdering';
@@ -188,9 +189,9 @@ export default function Providers() {
     if (!profile) return;
     const fetchProviders = async () => {
       try {
-        const q = query(collection(db, 'providers'), orderBy('updatedAt', 'desc'));
-        const querySnapshot = await getDocs(q);
-        const items = querySnapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
+        const items = profile.role === 'admin' || profile.role === 'ayudante_admin'
+          ? (await getDocs(query(collection(db, 'providers'), orderBy('updatedAt', 'desc')))).docs.map(item => ({ id: item.id, ...item.data() }))
+          : await readScopedProviders();
         setProviders(items);
         if (canEditProviders) void syncProviderIdentifiers(items);
       } catch (error: any) {

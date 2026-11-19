@@ -42,30 +42,9 @@ export const normalizeAllowedTabs = (allowedTabs: unknown, role?: ProjectRole | 
     (PROJECT_TAB_IDS as readonly string[]).includes(tabId)
   ));
 
-  if (normalizedRole === 'admin') return normalized.length ? normalized : [...PROJECT_TAB_IDS];
-  if (normalizedRole === 'jefe_produccion' && normalized.length === 0) return [...DEFAULT_PRODUCTION_LEAD_TABS];
-
-  const looksLikeLegacyDefault = normalized.includes('presupuesto') && !normalized.includes('saldos');
-  if (looksLikeLegacyDefault) {
-    return Array.from(new Set([
-      ...normalized.filter((tabId) => tabId !== 'presupuesto'),
-      'saldos',
-      'documentos',
-      'proveedores',
-    ]));
-  }
-
-  const looksLikeCurrentDefault = normalized.includes('areas')
-    && normalized.includes('saldos')
-    && !normalized.includes('presupuesto');
-  if (looksLikeCurrentDefault && (!normalized.includes('proveedores') || !normalized.includes('documentos'))) {
-    return Array.from(new Set([...normalized, 'documentos', 'proveedores']));
-  }
-  if (looksLikeCurrentDefault && !normalized.includes('cajas')) {
-    return Array.from(new Set([...normalized, 'cajas']));
-  }
-
-  return normalized.length ? normalized : [...DEFAULT_AREA_LEAD_TABS];
+  if (normalizedRole === 'admin') return [...PROJECT_TAB_IDS];
+  if (Array.isArray(allowedTabs)) return [...new Set(normalized)];
+  return [...(normalizedRole === 'jefe_produccion' ? DEFAULT_PRODUCTION_LEAD_TABS : DEFAULT_AREA_LEAD_TABS)];
 };
 
 export const getDefaultCollaboratorPermissions = (

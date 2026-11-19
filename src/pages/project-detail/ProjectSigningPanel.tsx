@@ -1,3 +1,4 @@
+import { handleProjectAttachmentLink, projectAttachmentHref } from '../../lib/portalInvoiceLink';
 import { RefreshCw, FileSignature, FileText, Download, LoaderCircle, ExternalLink, CircleCheck, Clock3, FilePenLine, CircleX } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { matchesSmartSearch } from '../../lib/smartSearch';
@@ -67,7 +68,7 @@ export function ProjectSigningPanel({ state, documents, category = 'contratos', 
             className={cn('max-w-full cursor-help truncate rounded-full px-2.5 py-1 text-xs focus-visible:outline-blue-500', !document ? 'bg-blue-50 text-blue-700' : signed ? 'bg-emerald-50 text-emerald-700' : inactive ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-800')}>{email}</span>;
         })}{emails.length === 0 && row.manual?.providerName && <span className="truncate text-xs text-slate-500" title={row.manual.providerName}>{row.manual.providerName}</span>}</div>
         <div className="contract-actions flex flex-wrap items-center gap-1.5 whitespace-nowrap">
-          {!document && row.manual?.url && <a href={row.manual.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50">Abrir archivo<ExternalLink className="h-3.5 w-3.5" /></a>}
+          {!document && row.manual?.url && <a href={projectAttachmentHref(row.manual.url)} onClick={event => handleProjectAttachmentLink(event, row.manual.url)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50">Abrir archivo<ExternalLink className="h-3.5 w-3.5" /></a>}
           {!document && row.manual?.sourceDocumentId && onPrepare && <button type="button" onClick={() => onPrepare(row.manual!)}
             disabled={Boolean(state === null) || Boolean(row.manual.contentType && row.manual.contentType !== 'application/pdf')}
             title={row.manual.contentType && row.manual.contentType !== 'application/pdf' ? 'La firma electrónica requiere un archivo PDF.' : undefined}

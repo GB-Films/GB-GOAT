@@ -1,0 +1,31 @@
+# Alcance de lectura de colaboradores
+
+Las pestañas habilitadas controlan la navegación. Las categorías y subcategorías asignadas controlan las filas que el servidor devuelve. Una categoría incluye sus subcategorías, salvo las exclusiones explícitas. Una lista de pestañas guardada se respeta tal como está. Las configuraciones que carecen del campo conservan los valores predeterminados del rol.
+
+- Resumen, Áreas, Presu Ppal, Finanzas y Proveedores calculan los importes con las filas disponibles al colaborador. El presupuesto de una categoría completa requiere acceso a toda la categoría. Un gasto identificado por categoría y sin subcategoría queda cubierto por el permiso de la categoría. Las filas sin categoría, documentos generales, documentos históricos sin asociación válida, Resultado y Administración conservan acceso administrativo.
+- El archivo de una factura o un pago compartido se entrega si corresponden todas sus aplicaciones. Si una aplicación queda fuera del alcance, entre los movimientos sigue figurando el importe aplicado al gasto visible. Los datos, importes totales y archivos del original compartido permanecen restringidos.
+- Los saldos de caja personal contemplan las entregas y los pagos de la propia persona. Si hay un movimiento propio asociado a un gasto fuera de su alcance, se devuelve el importe necesario para conciliar su saldo con una descripción genérica. La Caja General requiere su permiso específico y administración del proyecto.
+- Los adjuntos nuevos usan referencias sin credenciales. El servidor verifica el vínculo actual con el gasto, pago o documento y busca el archivo en la ubicación admitida. El portal de cada proveedor conserva su acceso por ficha y su validación de originales.
+- Las personas con Permisos pueden consultar las asignaciones dentro de su ámbito. Un jefe de producción habilitado puede buscar por correo exacto a alguien ya dado de alta y asignarle categorías que él mismo tiene. La asignación registra las exclusiones que debe respetar.
+
+## Verificación y publicación
+
+Las pruebas `projectScopeRules` y `projectScopedFiles` usan datos ficticios. Cubren lecturas y ediciones autorizadas, exclusiones, cambios de permisos, presupuestos, proveedores, documentos individuales y compartidos, vínculos históricos y saldo personal.
+
+Las filas completas de Áreas quedan reservadas a administración. El servicio vuelve a comprobar la categoría, subcategoría y permisos vigentes en la transacción de cada edición, adjunto, pago o lote de fechas. Devuelve la misma vista acotada que el listado. Las referencias de comprobantes compartidos conservan el importe aplicado. Las cuentas, los comprobantes de otras aplicaciones y el detalle compartido quedan fuera de esa respuesta.
+
+Publicar las funciones compatibles antes del cliente que las invoca. Coordinar el cliente y las reglas de Firestore y Storage en la misma ventana. La web anterior dependía de consultas amplias y deja de funcionar para roles restringidos si se endurecen las reglas antes de desplegarla. Las pestañas, invitaciones, cargas, pagos y vistas de proveedores deben comprobarse durante la publicación con las identidades de prueba.
+
+Los vínculos de descarga con token emitidos anteriormente por Storage siguen funcionando mientras ese token siga vigente. Antes del cierre, identificar los originales históricos de los proyectos y sus referencias legítimas, comprobar que cada uno puede abrirse con la nueva lectura autenticada y retirar los tokens previamente emitidos. Verificar también los metadatos copiados en filas con comprobantes históricos que el cliente todavía lee para editar. El portal de proveedores vincula las autorizaciones de descargas históricas a la referencia y los bytes. Si se necesita cambiar una referencia durante ese trabajo, comprobar y preservar la autorización correspondiente. Toda operación sobre datos reales requiere un plan revisado y autorización propia.
+
+### Transición de adjuntos históricos
+
+Administración abre los enlaces históricos de proyectos por la ruta autenticada, incluso desde Reportes. Se verifica que el proyecto del archivo esté bajo su administración. Para una descarga por categoría, los archivos antiguos con colección omitida deben identificar el proyecto y un gasto cuyo ID sea único entre ambas colecciones. Si un original está enlazado a dos filas o también a Seguros, se comprueba la referencia original y el acceso a ambas asociaciones. Un vínculo que carece de esa prueba queda pendiente de conciliación.
+
+Antes de la publicación, guardar las revisiones activas de funciones, los dos conjuntos de reglas y la versión web para poder restablecerlos. Completar el inventario de referencias, confirmar las ausencias preexistentes y resolver los vínculos sin asociación demostrable. Congelar la lista de objetos a modificar con su generación, metageneración y huella. Probar con datos ficticios los accesos permitidos y denegados, incluidas las vistas de administración y del proveedor.
+
+Cuando un original se debe reasociar a la ruta de su documento o gasto, conservar los bytes y metadatos de origen que controlan el portal. Excluir los tokens de la copia. Leer de vuelta su huella antes de actualizar la referencia con la versión del registro que se verificó. Conservar los objetos originales y las autorizaciones del proveedor. Una diferencia en la huella, la versión o los permisos detiene el paso.
+
+Publicar las funciones compatibles y comprobar que respondan. Coordinar el paso de la web autenticada y las reglas nuevas. Cuando el cliente y las reglas estén activos y verificados, retirar únicamente el metadato `firebaseStorageDownloadTokens` de los objetos inventariados. Aplicar las precondiciones de generación y metageneración en cada actualización y pausar el lote si cambia un objeto. Comprobar que sus bytes, generación y demás metadatos se conservaron. El informe compartido registra las huellas y resultados de cada lote. Cualquier respaldo que contenga tokens queda cifrado localmente.
+
+Si surge una incompatibilidad, detener el lote y conservar la ruta de descargas autenticadas mientras se revierte la parte afectada. Restaurar un token volvería a habilitar su URL previa, por lo que requiere una decisión explícita. Los archivos originales, las autorizaciones del proveedor y las asignaciones de colaboradores se conservan.

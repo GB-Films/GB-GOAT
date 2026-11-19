@@ -193,31 +193,16 @@ service cloud.firestore {
     }
 
     function canAssignAreasAsProductionLead(projectId) {
-      return isProjectProductionLead(projectId)
+      return isProjectProductionLead(projectId) && 'permisos' in collaboratorDoc(projectId).get('allowedTabs', [])
         && resource.data.role in ['jefe_produccion', 'jefe_area']
+        && resource.data.get('allowedCategories', []).hasOnly(collaboratorDoc(projectId).get('allowedCategories', []))
+        && resource.data.get('allowedSubcategories', []).hasOnly(collaboratorDoc(projectId).get('allowedSubcategories', []))
         && request.resource.data.role == resource.data.role
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['allowedCategories', 'allowedSubcategories', 'excludedSubcategories', 'updatedAt'])
         && request.resource.data.allowedCategories is list
         && request.resource.data.allowedCategories.hasOnly(collaboratorDoc(projectId).allowedCategories)
         && canDelegateSubcategories(projectId, resource.data.get('allowedSubcategories', []))
         && preservesDelegatedExclusions(projectId);
-    }
-
-    function canAppendCollaboratorEmailAsProductionLead(projectId) {
-      let oldCount = resource.data.collaboratorEmails.size();
-      let newEmail = request.resource.data.collaboratorEmails[oldCount];
-      let newCollaboratorPath = /databases/$(database)/documents/projects/$(projectId)/collaborators/$(newEmail);
-      return isProjectProductionLead(projectId)
-        && resource.data.collaboratorEmails is list
-        && request.resource.data.collaboratorEmails is list
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['collaboratorEmails', 'updatedAt'])
-        && request.resource.data.collaboratorEmails.size() == oldCount + 1
-        && request.resource.data.collaboratorEmails.hasAll(resource.data.collaboratorEmails)
-        && newEmail is string
-        && existsAfter(newCollaboratorPath)
-        && getAfter(newCollaboratorPath).data.role in ['jefe_produccion', 'jefe_area']
-        && getAfter(newCollaboratorPath).data.allowedCategories is list
-        && getAfter(newCollaboratorPath).data.allowedCategories.hasOnly(collaboratorDoc(projectId).allowedCategories);
     }
 
     function canUpdateProjectOperations(projectId) {
@@ -231,39 +216,11 @@ service cloud.firestore {
         ]);
     }
 
-    function canUpdateAreaExpenseSubcategories(projectId) {
-      return isProjectProductionLead(projectId)
-        && collaboratorDoc(projectId).canEditBudgetAreas == true
-        && 'areas' in collaboratorDoc(projectId).allowedTabs
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'areaExpenseSubcategories',
-          'areaExpenseSubcategoryBudgets',
-          'updatedAt'
-        ]);
-    }
-
-    function canCreateCollaboratorAsProductionLead(projectId) {
-      return isProjectProductionLead(projectId)
-        && request.resource.data.role in ['jefe_produccion', 'jefe_area']
-        && request.resource.data.allowedCategories is list
-        && request.resource.data.allowedCategories.hasOnly(collaboratorDoc(projectId).allowedCategories)
-        && canDelegateSubcategories(projectId, [])
-        && preservesDelegatedExclusions(projectId);
-    }
-
     function collaboratorIdentityIsValid(email) {
       return request.resource.data.email == email
         && request.resource.data.uid is string
         && exists(/databases/$(database)/documents/users/$(request.resource.data.uid))
         && get(/databases/$(database)/documents/users/$(request.resource.data.uid)).data.email == email;
-    }
-
-    function canWriteProjectDocument(projectId) {
-      return isProjectAdmin(projectId)
-        || (
-          isProjectProductionLead(projectId)
-          && 'documentos' in collaboratorDoc(projectId).allowedTabs
-        );
     }
 
     function isAppProductionLead() {
@@ -999,7 +956,7 @@ service cloud.firestore {
     }
 
     function canReadProjectCash(projectId) {
-      return hasProjectAccess(projectId) && (hasGeneralCashAccess()
+      return hasProjectAccess(projectId) && (isProjectAdmin(projectId) && hasGeneralCashAccess()
         || (resource.data.type == 'entrega'
           ? resource.data.get('toUserEmail', '') == userEmail().lower()
           : resource.data.type == 'devolucion'
@@ -1395,23 +1352,6 @@ service cloud.firestore {
         && providerInviteTargetsItem(projectId, collectionName, itemId, request.resource.data.providerInviteAssignment.token);
     }
 
-    // La pantalla pública de alta necesita leer el gasto destino mientras el
-    // link siga pendiente, para poder explicar por qué no puede asignarse el
-    // proveedor (ya tiene proveedor, tiene pagos o fue eliminado). No expone
-    // filas ya resueltas ni habilita listados anónimos.
-    function publicProviderInviteTargetIsOpen() {
-      return (request.auth == null || isVerifiedGoogleIntake())
-        && (
-          resource == null
-          || (
-            resource.data.keys().hasAny(['providerInviteLink'])
-            && resource.data.providerInviteLink.status == 'pending'
-            && (!resource.data.keys().hasAny(['providerId']) || resource.data.providerId == '')
-            && (!resource.data.keys().hasAny(['providerName']) || resource.data.providerName == '')
-          )
-        );
-    }
-
     function userInviteIsPending(token) {
       return token is string
         && exists(/databases/$(database)/documents/userInvites/$(token))
@@ -1674,12 +1614,9 @@ service cloud.firestore {
     match /projects/{projectId} {
       allow list: if isAppAdmin() || (
         isSignedIn() && teamNotPending()
-        && (
-          resource.data.createdBy == request.auth.uid
-          || userEmail() in resource.data.collaboratorEmails
-        )
+        && resource.data.get('createdBy', '') == request.auth.uid
       );
-      allow get: if hasProjectAccess(projectId);
+      allow get: if isProjectAdmin(projectId);
       allow create: if isAppAdmin() && request.resource.data.createdBy == request.auth.uid
         && !request.resource.data.keys().hasAny(['generalCashDeliveryBlockedEmails', 'cashSubdeliveryRevision'])
         && !request.resource.data.keys().hasAny(commercialFieldNames().concat(['teamOnboardingBlockedEmails']))
@@ -1690,16 +1627,15 @@ service cloud.firestore {
         && preservesSharedExpenseManagement(projectId)
         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['generalCashDeliveryBlockedEmails', 'cashSubdeliveryRevision'])
         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(commercialFieldNames()) && (isProjectAdmin(projectId)
-        || canAppendCollaboratorEmailAsProductionLead(projectId)
-        || canUpdateProjectOperations(projectId)
-        || canUpdateAreaExpenseSubcategories(projectId));
+        || canUpdateProjectOperations(projectId));
       allow delete: if isAppAdmin()
         && !exists(/databases/$(database)/documents/providerFinanceProjectIndex/$(projectId));
 
       match /collaborators/{email} {
-        allow read: if hasProjectAccess(projectId);
+        allow list: if isProjectAdmin(projectId);
+        allow get: if isProjectAdmin(projectId) || (isSignedIn() && teamNotPending() && email == userEmail());
         allow create: if validSubcategoryExclusions(request.resource.data) && collaboratorIdentityIsValid(email)
-          && (isProjectAdmin(projectId) || canCreateCollaboratorAsProductionLead(projectId)) && teamTargetReady(email)
+          && isProjectAdmin(projectId) && teamTargetReady(email)
           && !request.resource.data.keys().hasAny(['teamOnboardingBlockedEmail']);
         allow update: if validSubcategoryExclusions(request.resource.data) && (isProjectAdmin(projectId) || canAssignAreasAsProductionLead(projectId)) && teamTargetReady(email)
           && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['teamOnboardingBlockedEmail']);
@@ -1707,8 +1643,8 @@ service cloud.firestore {
       }
 
       match /budgetItems/{itemId} {
-        allow list: if hasProjectAccess(projectId);
-        allow get: if hasProjectAccess(projectId) || publicProviderInviteTargetIsOpen();
+        allow list: if isProjectAdmin(projectId);
+        allow get: if isProjectAdmin(projectId);
         allow create: if !request.resource.data.keys().hasAny(['sharedInvoices', 'sharedReceipts', 'sharedPaymentIds', 'sharedPaymentRecords', 'thirdPartyPayoutRequired']) && isProjectAdmin(projectId)
           && !(request.resource.data.area in getAfter(/databases/$(database)/documents/projects/$(projectId)).data.get('activeAreas', []))
           && budgetMembershipAdvancesRevision(projectId)
@@ -1728,8 +1664,10 @@ service cloud.firestore {
       }
 
       match /areaExpenses/{expenseId} {
-        allow list: if hasProjectAccess(projectId);
-        allow get: if hasProjectAccess(projectId) || publicProviderInviteTargetIsOpen();
+        allow list: if isProjectAdmin(projectId);
+        // Expense documents contain private payment and invoice data. Scoped
+        // collaborators receive the projection from manageProviderFinance.
+        allow get: if isProjectAdmin(projectId);
         allow create: if !request.resource.data.keys().hasAny(['sharedInvoices', 'sharedReceipts', 'sharedPaymentIds', 'sharedPaymentRecords', 'thirdPartyPayoutRequired']) && (isProjectAdmin(projectId)
           || canWriteAreaExpense(projectId, request.resource.data.area, request.resource.data.subcategory))
             && request.resource.data.createdBy == request.auth.uid
@@ -1743,33 +1681,33 @@ service cloud.firestore {
       }
 
       match /expenses/{expenseId} {
-        allow read: if hasProjectAccess(projectId);
+        allow read: if isProjectAdmin(projectId);
         allow write: if isProjectAdmin(projectId);
       }
 
       match /milestones/{milestoneId} {
-        allow read: if hasProjectAccess(projectId);
+        allow read: if isProjectAdmin(projectId);
         allow write: if isProjectAdmin(projectId);
       }
 
       match /teamMembers/{memberId} {
-        allow read: if hasProjectAccess(projectId);
+        allow read: if isProjectAdmin(projectId);
         allow write: if isProjectAdmin(projectId);
       }
 
       match /payments/{paymentId} {
-        allow read: if hasProjectAccess(projectId);
+        allow read: if isProjectAdmin(projectId);
         allow write: if isProjectAdmin(projectId);
       }
 
       match /invoices/{invoiceId} {
-        allow read: if hasProjectAccess(projectId);
+        allow read: if isProjectAdmin(projectId);
         allow write: if isProjectAdmin(projectId);
       }
 
       match /projectDocuments/{documentId} {
-        allow read: if hasProjectAccess(projectId);
-        allow create: if canWriteProjectDocument(projectId);
+        allow read: if isProjectAdmin(projectId);
+        allow create: if isProjectAdmin(projectId);
         allow update, delete: if isProjectAdmin(projectId);
       }
 
@@ -1806,7 +1744,8 @@ service cloud.firestore {
       }
 
       match /cashMovements/{movementId} {
-        allow read: if canReadProjectCash(projectId);
+        allow list: if isProjectAdmin(projectId) && hasGeneralCashAccess();
+        allow get: if canReadProjectCash(projectId) && (isProjectAdmin(projectId) || resource.data.get('itemId', '') == '');
         allow create: if canCreateCashMovement(projectId, movementId);
         allow update: if resource.data.get('sharedRecordId', '') == '' && canUpdateCashMovement(projectId, movementId);
         allow delete: if resource.data.get('sharedRecordId', '') == '' && canDeleteCashMovement(projectId, movementId);
@@ -1829,7 +1768,7 @@ service cloud.firestore {
     }
 
     match /providers/{providerId} {
-      allow read: if isInternalUser();
+      allow read: if isAppAdmin() || isAppAdminAssistant();
       // Public intake now runs in providerPortal.registerProvider. The server
       // resolves legacy/provisional identities before committing atomically.
       // Old clients must not bypass that resolution by creating a second ficha.

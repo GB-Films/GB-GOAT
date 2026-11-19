@@ -111,8 +111,9 @@ export async function testDeleteUnpaidAreaExpense({ db, admin, call, env }) {
   assert.deepEqual((await indexRef.get()).data().records[recordId], [{ area: 'Post', collectionName }]);
   assert.equal((await indexRef.get()).data().extraPreserved, true);
   assert.equal((await invoke({ action: 'projectDocuments', projectId, recordIds: [recordId] })).records[0].distinctExpenseCount, 1);
-  await assert.rejects(invoke({ action: 'download', id: recordId, projectId, collectionName, itemId: 'native-a' }, 'editor'), /ajeno/);
-  assert.equal((await invoke({ action: 'download', id: recordId, projectId, collectionName, itemId: 'native-b' }, 'editor')).base64, 'JVBERg==');
+  await assert.rejects(invoke({ action: 'download', id: recordId, projectId, collectionName, itemId: 'native-a' }, 'editor'), { code: 'permission-denied' });
+  await assert.rejects(invoke({ action: 'download', id: recordId, projectId, collectionName, itemId: 'native-b' }, 'editor'), { code: 'permission-denied' });
+  assert.equal((await invoke({ action: 'download', id: recordId, projectId, collectionName, itemId: 'native-b' })).base64, 'JVBERg==');
   await assertFails(updateDoc(doc(client, recordRef.path), { detachedExpenseKeys: [] }));
   await assertFails(setDoc(doc(client, `projects/${projectId}/areaExpenses/native-a`), { ...before, sharedInvoices: [{ id: recordId }] }));
   // Later organization of the remaining row must not reintroduce the deleted area.

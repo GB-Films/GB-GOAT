@@ -1,11 +1,18 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { createRequire } from 'node:module';
 import { initializeTestEnvironment, assertFails } from '@firebase/rules-unit-testing';
 import { collection, doc, getDoc, getDocs, setDoc, updateDoc } from 'firebase/firestore';
 import { saveCategoryBudget } from '../src/lib/categoryBudgetStore.ts';
 
 if (!/^127\.0\.0\.1:\d+$/.test(process.env.FIRESTORE_EMULATOR_HOST || '')) throw Error('Local Firestore emulator required; never production.');
 const projectId = 'demo-goat-category-budgets';
+const require = createRequire(new URL('../functions/package.json', import.meta.url));
+const firebase = require('firebase-admin');
+const app = firebase.initializeApp({ projectId });
+const { createProviderFinanceHandler } = require('../functions/providerFinance');
+const finance = createProviderFinanceHandler({ db: app.firestore(), timestamp: firebase.firestore.FieldValue.serverTimestamp });
 const env = await initializeTestEnvironment({ projectId, firestore: { rules: readFileSync('firestore.rules', 'utf8') } });
 const ownerEmail = 'owner@example.test', producerEmail = 'producer@example.test', managerEmail = 'manager@example.test';
 const owner = env.authenticatedContext('owner', { email: ownerEmail, email_verified: true }).firestore();
@@ -44,7 +51,11 @@ try {
   assert.ok(state.categories.includes('Sonido'));
   console.log('PASS owner: active empty category and new category accept budgets without expenses or payments');
 
-  await updateDoc(ref(producer), { areaExpenseSubcategoryBudgets: { 'Arte||Utilería': { area: 'Arte', budget: 200, budgetAssigned: true } } });
+  await assertFails(updateDoc(ref(producer), { areaExpenseSubcategoryBudgets: { 'Arte||Utilería': { area: 'Arte', budget: 200, budgetAssigned: true } } }));
+  await finance({ auth: { uid: 'producer', token: { email: producerEmail, email_verified: true } },
+    data: { action: 'reclassifyAreaExpenses', projectId: 'synthetic', operationId: randomUUID(), kind: 'subcategoryBudget',
+      fromArea: 'Arte', targetArea: 'Arte', fromSubcategory: 'Utilería', targetSubcategory: 'Utilería', expectedRevision: state.budgetRevision,
+      budget: { assigned: true, amount: 200, notes: '', expected: 'null' } } });
   await assertFails(updateDoc(ref(producer), { categoryBudgets: { Arte: 9000 } }));
   await assertFails(saveCategoryBudget(producer, 'synthetic', { area: 'Arte', create: false, amount: 9000, expectedAmount: 500 }, producerEmail));
   await assertFails(saveCategoryBudget(env.unauthenticatedContext().firestore(), 'synthetic', { area: 'Arte', create: false, amount: 9000, expectedAmount: 500 }, ''));
@@ -72,4 +83,4 @@ try {
   assert.equal((await getDoc(ref(owner))).data().categoryBudgetUpdatedByEmail, managerEmail);
   assert.deepEqual((await getDoc(doc(owner, 'projects/synthetic/areaExpenses/paid'))).data(), paidExpense);
   console.log('PASS project administrator, legacy and zero: delegated admin can assign; removing allocation retains item amounts; explicit zero remains an assignment');
-} finally { await env.cleanup(); }
+} finally { await env.cleanup(); await app.delete(); }

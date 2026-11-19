@@ -8,6 +8,7 @@ export async function testProjectContracts({ db, admin, manage, request, sign, s
   const pdf = await PDFDocument.create(); pdf.addPage().drawText('TEST CONTRACT ONLY - NO REAL AGREEMENT'); pdf.addPage().drawText('SIGNATURES - TEST DATA');
   const bytes = Buffer.from(await pdf.save());
   const filePath = 'projects/contracts/documents/uploaded-contract/contract.pdf';
+  await db.doc('users/contract-owner').set({ email: 'owner@example.test', role: 'colaborador' });
   await db.doc('projects/contracts').set({ name: 'Contracts emulator', createdBy: 'contract-owner' });
   await db.doc('projects/contracts/collaborators/producer@example.test').set({ role: 'jefe_produccion', allowedTabs: ['documentos'] });
   await db.doc('providers/contract-person').set({ type: 'persona', name: 'Persona contrato', email: 'unused@example.test', portalAccessEmail: 'own@example.test' });
@@ -18,8 +19,8 @@ export async function testProjectContracts({ db, admin, manage, request, sign, s
   await db.doc('projects/contracts/projectDocuments/uploaded-contract').set({ family: 'contratos', contentType: 'application/pdf', path: filePath, title: 'Contrato de prueba del proyecto', originalFileName: 'test-contract.pdf', providerId: 'contract-person' });
   const call = data => manage(request('admin', 'admin@example.test', { projectId: 'contracts', ...data }));
   const read = { action: 'projectContractSource', documentId: 'uploaded-contract' };
-  await assert.rejects(manage(request('other', 'other@example.test', { projectId: 'contracts', ...read })), /No administrás/);
-  await assert.rejects(manage(request('producer', 'producer@example.test', { projectId: 'contracts', ...read })), /Sólo administración/);
+  await assert.rejects(manage(request('other', 'other@example.test', { projectId: 'contracts', ...read })), { code: 'permission-denied' });
+  await assert.rejects(manage(request('producer', 'producer@example.test', { projectId: 'contracts', ...read })), { code: 'permission-denied' });
   const original = await manage(request('contract-owner', 'owner@example.test', { projectId: 'contracts', ...read }));
   assert.equal(original.pages, 2); assert.equal(original.providerId, 'contract-person');
   assert.equal(Buffer.from(original.base64, 'base64').subarray(0, 5).toString(), '%PDF-');

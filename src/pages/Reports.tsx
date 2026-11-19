@@ -6,6 +6,7 @@ import { deleteObject, ref } from 'firebase/storage';
 import { db, storage } from '../lib/firebase';
 import { readProjectCommercial } from '../lib/projectCommercial';
 import { useAuth } from '../context/AuthContext';
+import { handlePortalInvoiceLink, projectAttachmentHref } from '../lib/portalInvoiceLink';
 import { canChangePaymentCash, assertCanChangePaymentCash } from '../lib/paymentCashAccess';
 import { cn } from '../lib/utils';
 import { buildPaymentCalendarDays, formatDateKey, formatPeriodLabel, formatScheduleDate, getOverdueLines, getTodayLines, getUnscheduledLines, sumDebt, type PaymentScheduleLine } from '../lib/paymentSchedule';
@@ -957,10 +958,10 @@ export default function Reports() {
                           <div className="flex flex-wrap gap-2 pt-1">
                             {reportLine.invoice?.url && (
                               <a
-                                href={reportLine.invoice.url}
+                                href={projectAttachmentHref(reportLine.invoice.url)}
                                 target="_blank"
                                 rel="noreferrer"
-                                onClick={(event) => event.stopPropagation()}
+                                onClick={event => { event.stopPropagation(); handlePortalInvoiceLink(event, reportLine.invoice); }}
                                 className="inline-flex items-center gap-1 rounded border border-emerald-100 bg-emerald-50 px-2 py-1.5 text-[9px] font-black uppercase tracking-widest text-emerald-700 hover:bg-emerald-600 hover:text-white"
                                 title={reportLine.invoice.fileName || 'Ver factura'}
                               >

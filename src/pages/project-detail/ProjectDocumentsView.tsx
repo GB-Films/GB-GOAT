@@ -1,3 +1,4 @@
+import { handleProjectAttachmentLink, projectAttachmentHref } from '../../lib/portalInvoiceLink';
 import type { ReactNode } from 'react';
 import { FileSignature, ShieldCheck, Receipt, Users, Search, Upload, ExternalLink, X } from 'lucide-react';
 import { DOCUMENT_CATEGORIES, filterProjectDocuments, type CatalogDocument, type DocumentCategory } from '../../lib/projectDocumentCatalog';
@@ -54,7 +55,7 @@ export function ProjectDocumentsView({ documents, category, onCategoryChange, se
           </td>
           <td className="px-4 py-2.5 font-medium text-slate-700">{document.providerName}</td>
           <td className="whitespace-nowrap px-4 py-2.5 text-xs text-slate-500">{(cashMovementDate(document.paymentDate) || cashMovementDate(document.uploadedAt))?.toLocaleDateString('es-AR') || '—'}</td>
-          <td className="px-4 py-2.5 text-right">{document.url ? <a href={document.url} target="_blank" rel="noreferrer"
+          <td className="px-4 py-2.5 text-right">{document.url ? <a href={projectAttachmentHref(document.url)} onClick={event => handleProjectAttachmentLink(event, document.url)} target="_blank" rel="noreferrer"
             className="inline-flex items-center gap-2 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-100">Abrir<ExternalLink className="h-3.5 w-3.5" /></a>
             : <span className="text-xs text-slate-400">Sin archivo</span>}</td>
         </tr>)}</tbody>

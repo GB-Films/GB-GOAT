@@ -9,7 +9,8 @@ import {
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
-import { collection, getDocs, or, query, where } from 'firebase/firestore';
+import { collection, getDocs } from 'firebase/firestore';
+import { readProjectSummaries } from '../lib/projectScopedData';
 import { cn } from '../lib/utils';
 import { auth, db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
@@ -59,18 +60,10 @@ export default function Sidebar() {
       }
 
       try {
-        const projectsRef = collection(db, 'projects');
-        const projectsQuery = profile.role === 'admin'
-          ? query(projectsRef)
-          : query(
-              projectsRef,
-              or(
-                where('createdBy', '==', profile.uid),
-                where('collaboratorEmails', 'array-contains', normalizeEmail(profile.email))
-              )
-            );
-        const snapshot = await getDocs(projectsQuery);
-        const projectById = new Map(snapshot.docs.map((item) => [item.id, { id: item.id, ...item.data() }]));
+        const rows = profile.role === 'admin'
+          ? (await getDocs(collection(db, 'projects'))).docs.map(item => ({ id: item.id, ...item.data() }))
+          : await readProjectSummaries();
+        const projectById = new Map(rows.map(item => [item.id, item]));
         if (active) setPinnedProjects(
           pinnedProjectIds
             .map((projectId) => projectById.get(projectId))

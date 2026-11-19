@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { arrayUnion, doc, getDoc, serverTimestamp, Timestamp, writeBatch } from 'firebase/firestore';
-import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
+import { ref, uploadBytes } from 'firebase/storage';
+import { projectAttachmentLink } from '../lib/projectScopedData';
 import { useParams } from 'react-router-dom';
 import { AlertTriangle, CheckCircle2, FileText, Loader2, Upload } from 'lucide-react';
 import { db, storage } from '../lib/firebase';
@@ -116,7 +117,7 @@ export default function InvoiceUploadInvite() {
         },
       });
 
-      const url = await getDownloadURL(storageRef);
+      const url = projectAttachmentLink(invite.projectId, collectionName, invite.expenseId, 'invoices', token);
       const invoice = {
         id: token,
         fileName,

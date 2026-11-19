@@ -26,7 +26,7 @@ try {
     await assertFails(setDoc(doc(db, path), valid()));
     await assertFails(deleteDoc(doc(db, path)));
   }
-  assert.equal((await assertSucceeds(getDoc(doc(lead, 'projects/private-project')))).data().budgetTotal, undefined);
+  await assertFails(getDoc(doc(lead, 'projects/private-project')));
   await assertSucceeds(getDocs(collection(admin, 'projectCommercial')));
   for (const db of [owner, manager, lead, outsider, anonymous]) await assertFails(getDocs(collection(db, 'projectCommercial')));
   for (const extra of [{ budgetTotal: -1 }, { budgetTotal: NaN }, { budgetTotal: Infinity }, { budgetTotal: 1e16 }, { budgetTotal: '100' }, { role: 'admin' }, { clientName: 'x'.repeat(501) }, { controlTotalUrl: 'javascript:alert(1)' }, { controlTotalContractCurrency: 'EUR' }, { controlTotalSourceRowAtImport: 1.5 }, { controlTotalImportedAt: 'now' }, { updatedAt: null }, { schemaVersion: 2 }]) await assertFails(setDoc(doc(admin, path), valid(extra)));

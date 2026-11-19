@@ -4,6 +4,7 @@ import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 export async function testTeamProviderAssignment({ db, admin, env, assertFails, assertSucceeds, createRequire }) {
   const { createProviderPortalAdminHandler } = createRequire('../functions/providerPortalAdmin');
   const { createTeamOnboarding } = createRequire('../functions/teamOnboarding');
+  const { createProviderFinanceHandler } = createRequire('../functions/providerFinance');
   const accounts = new Map(), timestamp = () => admin.firestore.FieldValue.serverTimestamp();
   const findAccount = async email => {
     if (!accounts.has(email)) throw Object.assign(Error('not-found'), { code: 'auth/user-not-found' });
@@ -87,7 +88,10 @@ export async function testTeamProviderAssignment({ db, admin, env, assertFails, 
   assert.deepEqual((await db.doc('projects/direct_project').get()).data().teamOnboardingBlockedEmails, ['keep-blocked@example.test']);
   assert.deepEqual((await db.doc(`users/${pending.a.uid}`).get()).data().pinnedProjectIds, ['direct_project']);
   assert.equal((await db.doc(`userInvites/${invite}`).get()).data().used, true);
-  await assertSucceeds(getDoc(doc(sdk(pending.a), 'projects/direct_project')));
+  await assertFails(getDoc(doc(sdk(pending.a), 'projects/direct_project')));
+  const finance = createProviderFinanceHandler({ db, timestamp });
+  const { projects } = await finance({ auth: { uid: pending.a.uid, token: { email: pending.a.email, email_verified: true } }, data: { action: 'projectSummaries' } });
+  assert.deepEqual(projects.map(project => project.id), ['direct_project']);
 
   const stale = await seed('direct-stale'); const sv = await preview(stale);
   await db.doc('projects/direct_new_acl').set({ createdBy: 'other', collaboratorEmails: [stale.a.email] });

@@ -86,12 +86,10 @@ test('una subcategoría delegada no concede acceso al resto del área', () => {
   assert.equal(canEditProjectSubcategory(false, access, 'Producción', 'Transporte'), false);
 });
 
-test('los permisos legacy se normalizan sin reabrir Presu Ppal', () => {
-  const tabs = normalizeAllowedTabs(['resumen', 'presupuesto', 'areas'], 'jefe_area');
-  assert.equal(tabs.includes('presupuesto'), false);
-  assert.equal(tabs.includes('saldos'), true);
-  assert.equal(tabs.includes('documentos'), true);
-  assert.equal(tabs.includes('proveedores'), true);
+test('las pestañas explícitas prevalecen sobre los valores predeterminados del rol', () => {
+  assert.deepEqual(normalizeAllowedTabs(['resumen', 'presupuesto', 'areas'], 'jefe_area'), ['resumen', 'presupuesto', 'areas']);
+  assert.deepEqual(normalizeAllowedTabs([], 'jefe_produccion'), []);
+  assert(normalizeAllowedTabs(undefined, 'jefe_produccion').includes('permisos'));
 });
 
 test('sólo administradores corrigen o eliminan pagos existentes', () => {

@@ -9,7 +9,6 @@ import {
   PRODUCTION_AREA_CATEGORIES,
   normalizeDigits,
 } from '../lib/providerConstants';
-import { getProviderInviteTargetIssue } from '../lib/providerInvites';
 import { emptyThirdParty, providerFiscalErrors } from '../lib/providerThirdParty';
 import { portalRequest } from '../lib/providerPortal';
 import { providerRegistrationFailure, registrationFieldErrors, registrationProblem, verifyRegistrationSession, type RegistrationFailure } from '../lib/providerRegistrationFlow';
@@ -111,25 +110,12 @@ const PROVIDER_INVITE_MESSAGES: Record<string, string> = {
   CUIT_EXISTS: 'Ya existe un proveedor registrado con este CUIT/CUIL.',
 };
 
-const getInviteTargetRef = (inviteData: any) => {
-  const projectId = typeof inviteData?.projectId === 'string' ? inviteData.projectId : '';
-  const expenseId = typeof inviteData?.expenseId === 'string' ? inviteData.expenseId : '';
-  if (!projectId || !expenseId) return null;
-  const collectionName = inviteData.collectionName === 'budgetItems' ? 'budgetItems' : 'areaExpenses';
-  return doc(db, 'projects', projectId, collectionName, expenseId);
-};
-
-const getInviteTargetIssueFromSnapshot = (snapshot: { exists: () => boolean; data: () => any }) => (
-  getProviderInviteTargetIssue(snapshot.exists() ? { ...snapshot.data(), exists: true } : { exists: false })
-);
-
 // Antes de mostrar el formulario, revisa el gasto del link para poder decir
 // exactamente por qué el alta ya no puede completarse.
-const readInviteTargetIssue = async (inviteData: any) => {
-  const targetRef = getInviteTargetRef(inviteData);
-  if (!targetRef || inviteData.provisionalProviderId) return '';
+const readInviteTargetIssue = async (inviteData: any, inviteToken: string) => {
+  if (!inviteData.projectId || !inviteData.expenseId || inviteData.provisionalProviderId) return '';
   try {
-    const targetIssue = getInviteTargetIssueFromSnapshot(await getDoc(targetRef));
+    const { issue: targetIssue } = await portalRequest({ action: 'linkedInviteTargetStatus', inviteToken });
     return targetIssue ? PROVIDER_INVITE_MESSAGES[targetIssue] || '' : '';
   } catch (err: any) {
     console.error('Error reading provider invite target:', err);
@@ -445,7 +431,7 @@ export default function ProviderInvite({teamOnboarding}: {teamOnboarding?: {init
           setError(PROVIDER_INVITE_MESSAGES.INVITE_EXPIRED);
           return;
         }
-        const targetIssue = await readInviteTargetIssue(data);
+        const targetIssue = await readInviteTargetIssue(data, token);
         if (!active) return;
         if (targetIssue) {
           setError(targetIssue);

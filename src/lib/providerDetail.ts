@@ -1,37 +1,27 @@
-import { collection, query, getDocs, or, where } from 'firebase/firestore';
+import { collection, query, getDocs, where } from 'firebase/firestore';
 import { db } from './firebase';
 import { getPaymentTotal } from './projectFinance';
 import { getProviderExpenseDocuments, uniqueProviderDocuments } from './providerDocuments';
 import { financialDocumentsForExpense } from './providerFinancialRecords';
 import { isInternalBudgetEstimate } from './internalBudgetEstimate';
 import { providerFinanceRequest } from './providerFinance';
+import { readProjectSummaries, readScopedProject } from './projectScopedData';
 export async function loadProviderDetail(provider: any, profile: any) {
 
-  const projectsRef = collection(db, 'projects');
-  const projectsQuery = profile.role === 'admin'
-    ? query(projectsRef)
-    : query(
-        projectsRef,
-        or(
-          where('createdBy', '==', profile.uid),
-          where('collaboratorEmails', 'array-contains', String(profile.email || '').trim().toLowerCase())
-        )
-      );
-  const [projectSnapshot, sharedRecordsSnapshot] = await Promise.all([
-    getDocs(projectsQuery),
+  const admin = profile.role === 'admin';
+  const [projects, sharedRecordsSnapshot] = await Promise.all([
+    admin ? getDocs(collection(db, 'projects')).then(snapshot => snapshot.docs.map(item => ({ id: item.id, ...item.data() as any }))) : readProjectSummaries(),
     profile.role === 'admin' ? getDocs(query(collection(db, 'providerFinancialRecords'), where('providerId', '==', provider.id))) : Promise.resolve(null),
   ]);
   const sharedRecords = sharedRecordsSnapshot?.docs.map(row => ({ ...row.data(), id: row.id })) || [];
-  const projects = projectSnapshot.docs.map((item) => ({ id: item.id, ...item.data() as any }));
   const lines: any[] = [];
 
   await Promise.all(projects.map(async (project) => {
-    const [budgetSnap, areaSnap] = await Promise.all([
-      getDocs(collection(db, 'projects', project.id, 'budgetItems')),
-      getDocs(collection(db, 'projects', project.id, 'areaExpenses')),
-    ]);
-
-    const activeAreas = Array.isArray(project.activeAreas) ? project.activeAreas : [];
+    const scoped = admin ? null : await readScopedProject(project.id, 'proveedores');
+    const [budget, areas] = scoped ? [scoped.budgetItems, scoped.areaExpenses] : await Promise.all(
+      ['budgetItems', 'areaExpenses'].map(name => getDocs(collection(db, 'projects', project.id, name)).then(snap => snap.docs.map(item => ({ id: item.id, ...item.data() })))));
+    const sourceProject = scoped?.project || project;
+    const activeAreas = Array.isArray(sourceProject.activeAreas) ? sourceProject.activeAreas : [];
 
     const pushLine = (item: any, source: 'Presupuesto Principal' | 'Gestion por Areas') => {
       if (isInternalBudgetEstimate(item)) return;
@@ -83,8 +73,8 @@ export async function loadProviderDetail(provider: any, profile: any) {
       });
     };
 
-    budgetSnap.docs.forEach((item) => pushLine({ id: item.id, ...item.data() }, 'Presupuesto Principal'));
-    areaSnap.docs.forEach((item) => pushLine({ id: item.id, ...item.data() }, 'Gestion por Areas'));
+    budget.forEach(item => pushLine(item, 'Presupuesto Principal'));
+    areas.forEach(item => pushLine(item, 'Gestion por Areas'));
   }));
 
   if (profile.role !== 'admin') await Promise.all(projects.map(async project => {

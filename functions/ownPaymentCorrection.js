@@ -7,16 +7,19 @@ const { isInternalBudgetEstimate } = require('./internalBudgetEstimate');
 const fail = message => { throw new HttpsError('failed-precondition', message); };
 const cents = value => Math.round(Number(value) * 100);
 const { paymentCorrectionSnapshot } = require('./paymentCorrectionSnapshot');
+const { scopedFiles } = require('./projectScopedReads');
 const clientValue = value => value?.toDate ? value.toDate().toISOString() : value instanceof Date ? value.toISOString()
   : Array.isArray(value) ? value.map(clientValue) : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, clientValue(entry)])) : value;
 function createOwnPaymentCorrection({ db, timestamp, verifyPaymentReceipt }) {
   return async (actor, input) => {
     const projectId = id(input.projectId), itemId = id(input.itemId), paymentId = id(input.paymentId), attemptId = id(input.attemptId);
     if (input.collectionName !== 'areaExpenses') fail('La corrección requiere permisos sobre el área del gasto.');
-    if (!input.expected || typeof input.expected !== 'object' || Array.isArray(input.expected)) fail('Falta la versión del pago que abriste.');
+    const expectedVersion = typeof input.expectedVersion === 'string' ? input.expectedVersion : '';
+    if (expectedVersion && !/^[a-f0-9]{64}$/.test(expectedVersion)) fail('Versión de pago inválida.');
+    if (!expectedVersion && (!input.expected || typeof input.expected !== 'object' || Array.isArray(input.expected))) fail('Falta la versión del pago que abriste.');
     const expectedKeys = ['id', 'createdBy', 'createdByEmail', 'amount', 'detail', 'date', 'receiptPath', 'cashMovementId', 'cashAccount', 'paidByEmail', 'method'];
-    if (Object.keys(input.expected).length !== expectedKeys.length || Object.entries(input.expected).some(([key, value]) => !expectedKeys.includes(key)
-      || (key === 'amount' || key === 'date' ? value !== null && (typeof value !== 'number' || !Number.isFinite(value)) : typeof value !== 'string' || value.length > 2000))) fail('Versión de pago inválida.');
+    if (!expectedVersion && (Object.keys(input.expected).length !== expectedKeys.length || Object.entries(input.expected).some(([key, value]) => !expectedKeys.includes(key)
+      || (key === 'amount' || key === 'date' ? value !== null && (typeof value !== 'number' || !Number.isFinite(value)) : typeof value !== 'string' || value.length > 2000)))) fail('Versión de pago inválida.');
     if (typeof input.amount !== 'number' || !Number.isFinite(input.amount) || input.amount <= 0 || input.amount > 1e10
       || Math.abs(input.amount * 100 - cents(input.amount)) > 0.0001) fail('Importe inválido.');
     const date = new Date(`${input.date}T12:00:00Z`);
@@ -25,7 +28,7 @@ function createOwnPaymentCorrection({ db, timestamp, verifyPaymentReceipt }) {
     if (typeof input.detail !== 'string' || input.detail.length > 2000) fail('Detalle inválido.');
     const root = db.doc(`projects/${projectId}`), expenseRef = root.collection('areaExpenses').doc(itemId);
     const auditRef = root.collection('activityLog').doc(`own-payment-${attemptId}`);
-    const fingerprint = hash({ actor, projectId, itemId, paymentId, expected: input.expected, amount: input.amount, date: input.date, detail: input.detail,
+    const fingerprint = hash({ actor, projectId, itemId, paymentId, expected: expectedVersion || input.expected, amount: input.amount, date: input.date, detail: input.detail,
       receipt: input.receipt ? { path: input.receipt.path, url: input.receipt.url } : null });
     return db.runTransaction(async tx => {
       const access = await projectFinanceAccess({ db, transaction: tx, actor, projectId });
@@ -40,11 +43,12 @@ function createOwnPaymentCorrection({ db, timestamp, verifyPaymentReceipt }) {
       if (!payment || payment.sharedRecordId || payment.createdBy !== actor.uid || payment.createdByEmail !== actor.email)
         throw new HttpsError('permission-denied', 'Sólo podés corregir pagos que cargaste vos.');
       if (payment.cashAccount === 'general' && !canAccessGeneralCash(actor.email)) throw new HttpsError('permission-denied', 'Caja General sólo está habilitada para sus responsables.');
+      const clientHistory = payments => clientValue(access.admin ? payments : scopedFiles(projectId, 'areaExpenses', { id: itemId, paymentHistory: payments }).paymentHistory);
       if (priorAudit.exists) {
         if (priorAudit.data().fingerprint !== fingerprint) fail('El intento ya corresponde a otra corrección.');
-        return { paymentHistory: clientValue(history), paid: expense.paid, repeated: true };
+        return { paymentHistory: clientHistory(history), paid: expense.paid, repeated: true };
       }
-      if (hash(paymentCorrectionSnapshot(payment)) !== hash(input.expected)) fail('El pago cambió. Volvé a abrirlo antes de corregirlo.');
+      if (hash(paymentCorrectionSnapshot(payment)) !== (expectedVersion || hash(input.expected))) fail('El pago cambió. Volvé a abrirlo antes de corregirlo.');
       if (history.some(row => typeof row.amount !== 'number' || !Number.isFinite(row.amount) || row.amount <= 0)) fail('Revisá el historial antes de corregirlo.');
       const totalPaid = history.reduce((sum, row, position) => sum + (position === index ? cents(input.amount) : cents(row.amount)), 0);
       if (!Number.isFinite(Number(expense.total)) || totalPaid > cents(expense.total)) fail('El pago supera el saldo disponible del gasto.');
@@ -80,7 +84,7 @@ function createOwnPaymentCorrection({ db, timestamp, verifyPaymentReceipt }) {
       tx.create(auditRef, { action: 'payment_corrected', collectionName: 'areaExpenses', itemId, paymentId, paymentIndex: index,
         cashMovementId: payment.cashMovementId || '', oldAmount: payment.amount, amount: nextPayment.amount, before: payment, after: nextPayment,
         fingerprint, deletedBy: actor.uid, deletedByEmail: actor.email, deletedByName: String(access.user?.displayName || actor.email), deletedByRole: collaborator?.role || access.user.role, createdAt: timestamp() });
-      return { paymentHistory: clientValue(nextHistory), paid: totalPaid >= cents(expense.total), repeated: false };
+      return { paymentHistory: clientHistory(nextHistory), paid: totalPaid >= cents(expense.total), repeated: false };
     });
   };
 }

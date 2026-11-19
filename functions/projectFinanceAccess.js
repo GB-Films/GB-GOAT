@@ -16,7 +16,7 @@ async function projectFinanceAccess({ db, transaction, actor, projectId }) {
     || list(project.teamOnboardingBlockedEmails).includes(actor.email)
     || collaborator?.teamOnboardingBlockedEmail === actor.email
     || !(globalAdmin || project.createdBy === actor.uid || collaboratorSnap.exists || list(project.collaboratorEmails).includes(actor.email))) deny();
-  return { project, user, collaborator, admin: globalAdmin || project.createdBy === actor.uid || collaborator?.role === 'admin' };
+  return { project, user, collaborator, globalAdmin, admin: globalAdmin || project.createdBy === actor.uid || collaborator?.role === 'admin' };
 }
 
 function linkedAllocation(record, projectId, itemId, collectionName, expense) {
