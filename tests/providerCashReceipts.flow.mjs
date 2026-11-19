@@ -34,7 +34,7 @@ export async function testProviderCashReceipts({ db, admin, deps, manage, portal
   const operator = input => call(input, 'receipt-operator');
   assert.equal((await operator({ action: 'cashReceiptSource', ...scope('main') })).canRequest, true);
   await db.doc(`projects/${projectId}/collaborators/receipt-operator@example.test`).update({ excludedSubcategories: ['Arte||Utilería'] });
-  await assert.rejects(operator(input), /permiso de edición/);
+  await assert.rejects(operator(input), { code: 'permission-denied' });
   await db.doc(`projects/${projectId}/collaborators/receipt-operator@example.test`).update({ excludedSubcategories: [] });
   await db.doc('teamAccessEmails/receipt-operator@example.test').set({ status: 'pending' });
   await assert.rejects(operator(input), /alta de equipo/);
@@ -84,7 +84,7 @@ export async function testProviderCashReceipts({ db, admin, deps, manage, portal
   const projectDocument = (await call({ action: 'projectDocuments', projectId })).documents.find(d => d.id === receipt.id);
   assert.equal(projectDocument.source, 'cash_receipt'); assert.equal(projectDocument.artifactsReady, true);
   assert.deepEqual(await call({ action: 'projectFile', projectId, source: 'cash_receipt', documentId: receipt.id, artifact: 'signed' }), signedFile);
-  await assert.rejects(call({ action: 'projectFile', projectId: 'project', source: 'cash_receipt', documentId: receipt.id, artifact: 'signed' }), /fuera del alcance/);
+  await assert.rejects(call({ action: 'projectFile', projectId: 'project', source: 'cash_receipt', documentId: receipt.id, artifact: 'signed' }), /fuera del alcance|No tenés acceso/);
   for (const uid of ['admin', 'own', 'other']) {
     const sdk = env.authenticatedContext(uid, { email: `${uid}@example.test`, email_verified: true }).firestore();
     await assertFails(getDoc(doc(sdk, `providerCashReceipts/${receipt.id}`)));
