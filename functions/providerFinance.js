@@ -10,6 +10,8 @@ const { distinctInvoiceExpenseCount } = require('./providerInvoiceMetadata');
 const { createRemoveExpenseInvoiceFile } = require('./removeExpenseInvoiceFile');
 const { activeRecordAllocations } = require('./providerFinanceAllocations');
 const { createDeleteUnpaidAreaExpense } = require('./deleteUnpaidAreaExpense');
+const { createProjectScopedReads, scopedCashMovement, canReadRecordOriginal } = require('./projectScopedReads');
+const { canReadTab, canReadExpense, deny } = require('./projectReadScope');
 
 const fail = message => { throw new HttpsError('failed-precondition', message); };
 const text = (value, max = 500) => String(value || '').trim().slice(0, max);
@@ -92,12 +94,17 @@ function normalizeRecord(input) {
   return result;
 }
 
-function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, verifyPaymentReceipt, clock=()=>new Date() }) {
+function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, bucketName, readMetadata, verifyPaymentReceipt, clock=()=>new Date() }) {
+  const readProject = createProjectScopedReads({ db, readFile, bucketName, readMetadata });
   return async request => {
     if (!request.auth?.uid || !request.auth.token?.email) throw new HttpsError('unauthenticated', 'Iniciá sesión.');
     const user = await db.doc(`users/${request.auth.uid}`).get();
     const input = request.data || {};
     const actor = { uid: request.auth.uid, email: String(request.auth.token.email).trim().toLowerCase() };
+    if (['projectSummaries', 'projectScopedSnapshot', 'projectScopedAttachment', 'scopedProviderCatalog'].includes(input.action)) {
+      if (request.auth.token.email_verified !== true) deny();
+      return readProject(actor, input);
+    }
     if (['previewDeleteUnpaidAreaExpense', 'deleteUnpaidAreaExpense'].includes(input.action)) {
       if (request.auth.token.email_verified !== true) throw new HttpsError('permission-denied', 'Verificá tu correo.');
       return createDeleteUnpaidAreaExpense({ db, timestamp })(actor, input);
@@ -118,14 +125,21 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, ver
     if (input.action === 'personalCashMovements') {
       if (request.auth.token.email_verified !== true) throw new HttpsError('permission-denied', 'Verificá tu correo.');
       const projectId = id(input.projectId);
-      await projectFinanceAccess({ db, actor, projectId });
+      const access = await projectFinanceAccess({ db, actor, projectId });
+      if (!canReadTab(access, 'cajas', 'areas', 'saldos')) return { movements: [] };
       const ledger = db.collection(`projects/${projectId}/cashMovements`);
       const parts = await Promise.all(['fromUserEmail', 'toUserEmail'].map(field => ledger.where(field, '==', actor.email).limit(2001).get()));
       const rows = [...new Map(parts.flatMap(part => part.docs).map(row => [row.id, row])).values()];
       if (rows.length > 2000) fail('La caja requiere revisión por su volumen de movimientos.');
       const clientValue = value => value?.toDate ? value.toDate().toISOString() : value instanceof Date ? value.toISOString()
         : Array.isArray(value) ? value.map(clientValue) : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, clientValue(entry)])) : value;
-      return { movements: rows.filter(row => canReadPersonalCashMovement(actor.email, row.data())).map(row => ({ ...clientValue(row.data()), id: row.id })) };
+      const movements = await Promise.all(rows.filter(row => canReadPersonalCashMovement(actor.email, row.data())).map(async row => {
+        const movement = { ...row.data(), id: row.id };
+        const item = ['budgetItems', 'areaExpenses'].includes(movement.collectionName) && movement.itemId
+          ? (await db.doc(`projects/${projectId}/${movement.collectionName}/${id(movement.itemId)}`).get()).data() : null;
+        return scopedCashMovement(access, actor, movement, item);
+      }));
+      return { movements: movements.filter(Boolean).map(clientValue) };
     }
     if (input.action === 'checkCashLinks') {
       if (request.auth.token.email_verified !== true) throw new HttpsError('permission-denied', 'Verificá tu correo.');
@@ -145,17 +159,20 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, ver
     if (input.action === 'projectDocuments') {
       if (request.auth.token.email_verified !== true) throw new HttpsError('permission-denied', 'Verificá tu correo.');
       const projectId = id(input.projectId);
-      await projectFinanceAccess({ db, actor, projectId });
+      const access = await projectFinanceAccess({ db, actor, projectId });
       if (!Array.isArray(input.recordIds) || input.recordIds.length > 100) fail('Consultá hasta 100 comprobantes por vez.');
       const ids = [...new Set(input.recordIds.map(id))];
       const records = await Promise.all(ids.map(async recordId => {
         const record = { ...(await db.doc(`providerFinancialRecords/${recordId}`).get()).data(), id: recordId };
         if (record.status !== 'active' || !record.file) return null;
         const allocations = activeRecordAllocations(record).filter(row => row.projectId === projectId);
-        const linked = await Promise.all(allocations.map(async row => ['areaExpenses', 'budgetItems'].includes(row.collectionName)
-          && linkedAllocation(record, projectId, row.itemId, row.collectionName,
-            (await db.doc(`projects/${projectId}/${row.collectionName}/${id(row.itemId)}`).get()).data())));
-        if (!linked.some(Boolean)) throw new HttpsError('permission-denied', 'Comprobante ajeno al proyecto.');
+        const linked = await Promise.all(allocations.map(async row => {
+          if (!['areaExpenses', 'budgetItems'].includes(row.collectionName)) return false;
+          const expense = (await db.doc(`projects/${projectId}/${row.collectionName}/${id(row.itemId)}`).get()).data();
+          return canReadExpense(access, row.collectionName, expense) && linkedAllocation(record, projectId, row.itemId, row.collectionName, expense);
+        }));
+        if (!linked.some(Boolean)) return null;
+        if (!access.globalAdmin && !await canReadRecordOriginal({ db, actor, access, projectId, record })) return null;
         return { id: recordId, kind: record.kind, status: record.status, number: record.number || '',
           distinctExpenseCount: distinctInvoiceExpenseCount(activeRecordAllocations(record)),
           ...(record.kind === 'invoice' ? { issuerName: text(record.issuerName), issuerCuit: text(record.issuerCuit).replace(/\D/g, '') } : {}),
@@ -174,10 +191,11 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, ver
         if (request.auth.token.email_verified !== true) throw new HttpsError('permission-denied', 'Verificá tu correo.');
         const projectId = id(input.projectId), itemId = id(input.itemId), collectionName = input.collectionName;
         if (!['areaExpenses', 'budgetItems'].includes(collectionName)) fail('Gasto inválido.');
-        await projectFinanceAccess({ db, actor, projectId });
+        const access = await projectFinanceAccess({ db, actor, projectId });
         const expense = (await db.doc(`projects/${projectId}/${collectionName}/${itemId}`).get()).data();
-        if (record.status !== 'active' || !linkedAllocation(record, projectId, itemId, collectionName, expense))
-          throw new HttpsError('permission-denied', 'Comprobante ajeno o retirado del proyecto.');
+        if (record.status !== 'active' || !canReadExpense(access, collectionName, expense)
+          || !linkedAllocation(record, projectId, itemId, collectionName, expense)) deny();
+        if (!await canReadRecordOriginal({ db, actor, access, projectId, record })) deny();
       }
       const file = record.file;
       if (!file || !readFile) fail('El registro no tiene un archivo descargable.');
