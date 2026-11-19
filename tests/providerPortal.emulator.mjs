@@ -528,6 +528,19 @@ try {
     expiresOn: "2026-12-31",
     responsibilityConfirmed: true,
   });
+  // The browser opens this session before sending the signature to GB Sign.
+  const previousKey = process.env.GB_SIGN_WEB_API_KEY;
+  const fakeKey = 'emulator-only-signing-key';
+  try {
+    delete process.env.GB_SIGN_WEB_API_KEY;
+    await assert.rejects(own({ action: 'signingSession' }), /Falta configurar la integración con GB Sign/);
+    process.env.GB_SIGN_WEB_API_KEY = fakeKey;
+    const session = await own({ action: 'signingSession' });
+    assert.deepEqual(session.config, { projectId: 'gb-sign-e1776', authDomain: 'gb-sign-e1776.firebaseapp.com', apiKey: fakeKey });
+  } finally {
+    if (previousKey === undefined) delete process.env.GB_SIGN_WEB_API_KEY;
+    else process.env.GB_SIGN_WEB_API_KEY = previousKey;
+  }
   await signActual(third);
   assert.equal(third.content.expiresOn, undefined);
   assert.equal(third.content.validity, 'until_revoked');

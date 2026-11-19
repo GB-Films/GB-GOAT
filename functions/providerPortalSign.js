@@ -1,4 +1,5 @@
 const admin = require("firebase-admin");
+const { defineString } = require("firebase-functions/params");
 const { invoiceFile } = require("./providerPortalInvoice");
 const { declarationPdf } = require("./providerDeclarationPdf");
 const { createHash } = require("node:crypto");
@@ -17,6 +18,7 @@ const {
   signingPath,
 } = require("./providerPortalModel");
 const projectId = "gb-sign-e1776";
+const webApiKey = defineString("GB_SIGN_WEB_API_KEY");
 function createSignBridge(db) {
   let remote;
   const app = () =>
@@ -29,7 +31,7 @@ function createSignBridge(db) {
   const bucket = () => app().storage().bucket();
   const config = () => ({
     projectId,
-    apiKey: process.env.GB_SIGN_WEB_API_KEY || "",
+    apiKey: (webApiKey.value() || "").trim(),
     authDomain: `${projectId}.firebaseapp.com`,
   });
   async function assigned(actor, documentId, scope) {
@@ -177,9 +179,10 @@ function createSignBridge(db) {
     ...createProjectContractBridge({ db, store, bucket, readLocalFile: file => fileBytes(file, admin.storage().bucket()), timestamp: () => admin.firestore.FieldValue.serverTimestamp() }),
     list: listDocuments,
     session: async (actor) => {
-      if (!config().apiKey)
+      const signingConfig = config();
+      if (!signingConfig.apiKey)
         fail("Falta configurar la integración con GB Sign.");
-      return { config: config(), actor };
+      return { config: signingConfig, actor };
     },
     async file(actor, documentId, artifact, scope) {
       const r = await assigned(actor, documentId, scope);
