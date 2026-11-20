@@ -5,6 +5,8 @@ import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { execFileSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import { PDFDocument } from "pdf-lib";
 import {
   initializeTestEnvironment,
   assertFails,
@@ -238,10 +240,17 @@ try {
   assert.equal((await own({ action: 'bootstrap' })).memberships.find(m => m.providerId === 'company-representation').status, 'needs_confirmation');
   await assert.rejects(own({ action: 'overview', providerId: 'company-representation' }), /No representás/);
   const evidencePdf = await sign.file({ email: 'own@example.test' }, legacyPersonal.id, 'original');
+  const largeDni = await PDFDocument.create();
+  largeDni.addPage().drawText('DNI ficticio para validar la carga');
+  await largeDni.attach(randomBytes(3 * 1024 * 1024), 'datos-ficticios.bin');
+  const largeDniBytes = Buffer.from(await largeDni.save());
+  assert(largeDniBytes.length > 2 * 1024 * 1024);
   const evidence = await Promise.all(['representation_support', 'identity_document'].map(kind => own({
     action: 'uploadEvidence', providerId: 'company-representation', kind, attemptId: `company-${kind}`,
-    file: { base64: evidencePdf.base64, contentType: 'application/pdf', fileName: `${kind}-test.pdf` },
+    file: { base64: kind === 'identity_document' ? largeDniBytes.toString('base64') : evidencePdf.base64, contentType: 'application/pdf', fileName: `${kind}-test.pdf` },
   })));
+  const savedDni = await own({ action: 'evidenceFile', providerId: 'company-representation', evidenceId: evidence[1].id });
+  assert.deepEqual(Buffer.from(savedDni.base64, 'base64'), largeDniBytes);
   const companyInput = { representative: { name: 'Persona prueba', dni: '12345678', role: 'Representante con poder' },
     accountConfirmed: true, identityConfirmed: true, authorityConfirmed: true, responsibilityConfirmed: true, evidenceIds: evidence.filter(file => file.kind === 'identity_document').map(file => file.id) };
   assert.equal((await own({ action: 'companyState', providerId: 'company-representation' })).evidence.length, 2);

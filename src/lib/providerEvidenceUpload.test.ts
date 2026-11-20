@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { evidenceFileType, evidenceUploadFailure, uploadEvidenceBatch, verifyAndUploadEvidence, type PendingEvidence } from './providerEvidenceUpload';
+import { EVIDENCE_MAX_MB, evidenceFileType, evidenceUploadFailure, prepareEvidenceFile, uploadEvidenceBatch, verifyAndUploadEvidence, type PendingEvidence } from './providerEvidenceUpload';
 import { verifyRegistrationSession } from './providerRegistrationFlow';
 const file = (name = 'dni.pdf', type = 'application/pdf') => new File(['%PDF-fictitious'], name, { type });
 const pending = (name = 'dni.pdf', attemptId = 'same-attempt') => ({ file: file(name), attemptId });
@@ -69,7 +69,12 @@ test('missing browser MIME types are inferred, invalid files fail locally, and u
   assert.equal(evidenceFileType(file('dni.PDF', '')), 'application/pdf');
   assert.equal(evidenceFileType(file('dni.JPG', '')), 'image/jpeg');
   assert.equal(evidenceFileType(file('dni.png', '')), 'image/png');
-  for (const invalid of [file('dni.exe', ''), new File([], 'dni.pdf'), new File([new Uint8Array(2 * 1024 * 1024 + 1)], 'dni.pdf')]) assert.throws(() => evidenceFileType(invalid));
+  assert.throws(() => evidenceFileType(file('dni.exe', '')), /formato/);
+  assert.throws(() => evidenceFileType(new File([], 'dni.pdf')), /vacío/);
+  assert.throws(
+    () => evidenceFileType({ name: 'dos-caras.pdf', type: 'application/pdf', size: 7 * 1024 * 1024 }),
+    /dos-caras\.pdf.*7,0 MB.*límite es 6 MB.*menor tamaño/,
+  );
   let confirmations = 0;
   await assert.rejects(uploadEvidenceBatch('company', 'identity_document', [pending()], {
     verifySession: async () => {}, read: async () => 'bytes', request: async () => null,
@@ -78,4 +83,53 @@ test('missing browser MIME types are inferred, invalid files fail locally, and u
   assert.equal(confirmations, 0);
   assert.equal(evidenceUploadFailure(problem('evidence/invalid-response')).retry, true);
   assert.doesNotMatch(evidenceUploadFailure({ code: 'functions/internal', message: 'PRIVATE_STACK' }).message, /PRIVATE_STACK/);
+});
+
+test('a PDF above the old limit goes through intact; large photos and HEIC are converted locally', async () => {
+  const pdf = new File([new Uint8Array(EVIDENCE_MAX_MB * 1024 * 1024)], 'dos-caras.pdf', { type: 'application/pdf' });
+  const photo = new File([new Uint8Array(8 * 1024 * 1024)], 'frente.png', { type: 'image/png' });
+  const heic = file('dorso.HEIC', 'application/octet-stream');
+  const resized: string[] = [];
+  const jpeg = new Blob([new Uint8Array([255, 216, 255, 217])], { type: 'image/jpeg' });
+  const resize = async (original: File) => { resized.push(original.name); return jpeg; };
+  assert.equal((await prepareEvidenceFile(pdf, resize)).file, pdf);
+  assert.deepEqual(resized, []);
+  assert.equal((await prepareEvidenceFile(photo, resize)).file.name, 'frente.jpg');
+  assert.equal((await prepareEvidenceFile(heic, resize)).file.name, 'dorso.jpg');
+  assert.deepEqual(resized, ['frente.png', 'dorso.HEIC']);
+  await assert.rejects(prepareEvidenceFile(heic, async () => null), /no pudo convertir.*dorso\.HEIC.*Guardala como JPG/);
+});
+
+test('retrying a converted photo reuses the exact bytes and attempt', async () => {
+  const item: PendingEvidence = { file: file('dorso.heic', 'image/heic'), attemptId: 'dorso' };
+  const uploads: Array<Record<string, unknown>> = [];
+  let conversions = 0;
+  const deps = {
+    verifySession: async () => {},
+    prepare: (original: File) => prepareEvidenceFile(original, async () => {
+      conversions++;
+      return new Blob([String(conversions)], { type: 'image/jpeg' });
+    }),
+    read: (prepared: File) => prepared.text(),
+    request: async (input: Record<string, unknown>) => {
+      uploads.push(input);
+      if (uploads.length === 1) throw problem('functions/deadline-exceeded');
+      return result;
+    },
+    onUploaded: () => {},
+  };
+  await assert.rejects(uploadEvidenceBatch('company', 'identity_document', [item], deps));
+  await uploadEvidenceBatch('company', 'identity_document', [item], deps);
+  assert.equal(conversions, 1);
+  assert.deepEqual(uploads[0], uploads[1]);
+});
+
+test('upload errors distinguish storage, access and failed attachment confirmation', () => {
+  const reference = 'ebf9de2b-e984-4d14-83cd-dac9b484c183';
+  const from = (reason: string) => evidenceUploadFailure({ code: 'functions/unavailable', details: { reason, reference } });
+  assert.match(from('evidence_lookup_unavailable').message, /consultar/);
+  assert.match(from('evidence_storage_unavailable').message, /servicio de adjuntos/);
+  assert.match(from('evidence_confirmation_unavailable').message, /faltó confirmar/);
+  assert.equal(from('evidence_confirmation_unavailable').reference, reference);
+  assert.match(evidenceUploadFailure(problem('functions/permission-denied')).message, /no tiene permiso/);
 });
