@@ -134,20 +134,17 @@ export function BudgetRowCell({ item, collectionName, providers, onUpdate, type,
     window.setTimeout(() => setCopiedProviderField(''), 1800);
   };
 
-  const handleValueUpdate = (field: string, value: any) => {
+  const handleAmountUpdate = (field: 'quantity' | 'unitPrice', input: HTMLInputElement) => {
     if (disabled) return;
-    const isNumericField = field === 'quantity' || field === 'unitPrice';
-    const valueDidNotChange = isNumericField
-      ? Number(item[field]) === Number(value)
-      : String(item[field] ?? '') === String(value ?? '');
-    if (valueDidNotChange) return;
-    const updates: any = { [field]: value };
-    if (isNumericField) {
-       const qty = field === 'quantity' ? Number(value) : item.quantity;
-       const price = field === 'unitPrice' ? Number(value) : item.unitPrice;
-       updates.total = qty * price;
+    const value = input.valueAsNumber;
+    if (!Number.isFinite(value) || value < 0) {
+      input.value = input.defaultValue;
+      return;
     }
-    onUpdate(item.id, updates);
+    if (Number(item[field]) === value) return;
+    const otherField = field === 'quantity' ? 'unitPrice' : 'quantity';
+    const total = value * Number(item[otherField]);
+    onUpdate(item.id, { [field]: value, total });
   };
 
   if (type === 'provider') {
@@ -353,7 +350,12 @@ export function BudgetRowCell({ item, collectionName, providers, onUpdate, type,
       <input 
         defaultValue={item.description}
         disabled={disabled}
-        onBlur={(e) => handleValueUpdate('description', e.target.value)}
+        onBlur={(e) => {
+          const description = e.currentTarget.value;
+          if (!disabled && description !== String(item.description ?? '')) {
+            onUpdate(item.id, { description });
+          }
+        }}
         placeholder="Ej: Alquiler de lentes, jornada de 12hs..."
         className={cn(
           "w-full bg-transparent border-b border-transparent outline-none transition-all py-1 text-slate-600 text-[11px]",
@@ -371,7 +373,7 @@ export function BudgetRowCell({ item, collectionName, providers, onUpdate, type,
           type="number"
           defaultValue={item.unitPrice}
           disabled={disabled}
-          onBlur={(e) => handleValueUpdate('unitPrice', e.target.value)}
+          onBlur={(e) => handleAmountUpdate('unitPrice', e.currentTarget)}
           className={cn(
             "w-full bg-transparent border-b border-transparent outline-none transition-all py-1 font-bold text-slate-800",
             disabled ? "cursor-default text-slate-500" : "hover:border-slate-100 focus:border-black"
@@ -387,7 +389,7 @@ export function BudgetRowCell({ item, collectionName, providers, onUpdate, type,
         type="number"
         defaultValue={item.quantity}
         disabled={disabled}
-        onBlur={(e) => handleValueUpdate('quantity', e.target.value)}
+        onBlur={(e) => handleAmountUpdate('quantity', e.currentTarget)}
         className={cn(
           "w-full min-w-0 bg-transparent border-b border-transparent outline-none transition-all py-1 text-center font-bold text-slate-800",
           disabled ? "cursor-default text-slate-500" : "hover:border-slate-100 focus:border-black"
