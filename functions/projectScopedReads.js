@@ -5,7 +5,8 @@ const { projectFinanceAccess, linkedAllocation } = require('./projectFinanceAcce
 const { activeRecordAllocations } = require('./providerFinanceAllocations');
 const { canAccessGeneralCash, canReadPersonalCashMovement } = require('./generalCashAccess');
 const { hasTeamWorkAccess } = require('./teamWorkAccess');
-const { deny, projectTabs, canReadTab, fullArea, canReadArea, canReadExpenseArea, canReadExpense, canReadDocumentArea, canReadDocument } = require('./projectReadScope');
+const { deny, projectTabs, canReadTab, fullArea, canReadArea, canReadExpenseArea, canReadExpense, canReadDocumentArea, canReadDocument,
+  assignedAreaNames, hasAreaEditGrant } = require('./projectReadScope');
 
 const fields = (row, keys) => Object.fromEntries(keys.filter(key => row?.[key] !== undefined).map(key => [key, row[key]]));
 const header = row => fields(row, ['name', 'projectCode', 'status', 'location', 'shootingDate', 'shootingStartDate', 'shootingEndDate', 'createdAt', 'updatedAt', 'archived', 'archivedAt', 'budgetRevision']);
@@ -18,6 +19,28 @@ async function rows(query, max = 1500) {
   const snap = await query.limit(max + 1).get();
   if (snap.size > max) throw new HttpsError('resource-exhausted', 'La consulta supera el límite de esta vista. Contactá a administración.');
   return snap.docs.map(doc => ({ ...doc.data(), id: doc.id }));
+}
+
+async function scopedRows(collection, access, include) {
+  if (access.admin) return rows(collection);
+  const areas = assignedAreaNames(access);
+  const result = [];
+  // Firestore allows 30 values per "in" query. Page only within the assigned
+  // areas and cap visible results, so other areas never exhaust this view.
+  for (let start = 0; start < areas.length; start += 30) {
+    const query = collection.where('area', 'in', areas.slice(start, start + 30)).orderBy('__name__').limit(300);
+    let last;
+    do {
+      const page = await (last ? query.startAfter(last) : query).get();
+      for (const doc of page.docs) {
+        const row = { ...doc.data(), id: doc.id };
+        if (include(row)) result.push(row);
+        if (result.length > 1500) throw new HttpsError('resource-exhausted', 'La vista supera el límite de filas visibles.');
+      }
+      last = page.size === 300 ? page.docs.at(-1) : undefined;
+    } while (last);
+  }
+  return result;
 }
 
 function projectProjection(access) {
@@ -250,14 +273,15 @@ function createProjectScopedReads({ db, readFile, bucketName, readMetadata, time
     if (purpose && !canReadTab(access, purpose)) return { project: { ...header(access.project), id: projectId }, budgetItems: [], areaExpenses: [], providers: [], documents: [], collaborators: [] };
     const auxiliary = !purpose;
     const collection = name => db.collection(`projects/${projectId}/${name}`);
-    const [budget, areas, docs, peers] = await Promise.all([
-      canReadTab(access, 'resumen', 'presupuesto', 'areas', 'saldos', 'proveedores') ? rows(collection('budgetItems')) : [],
-      canReadTab(access, 'resumen', 'areas', 'saldos', 'proveedores') ? rows(collection('areaExpenses')) : [],
-      auxiliary && canReadTab(access, 'documentos') ? rows(collection('projectDocuments')) : [],
+    const [budgetItems, areaExpenses, docs, peers] = await Promise.all([
+      canReadTab(access, 'resumen', 'presupuesto', 'areas', 'saldos', 'proveedores')
+        ? scopedRows(collection('budgetItems'), access, row => canReadExpense(access, 'budgetItems', row)) : [],
+      canReadTab(access, 'resumen', 'areas', 'saldos', 'proveedores')
+        ? scopedRows(collection('areaExpenses'), access, row => canReadExpense(access, 'areaExpenses', row)) : [],
+      auxiliary && canReadTab(access, 'documentos')
+        ? scopedRows(collection('projectDocuments'), access, row => canReadDocument(access, row)) : [],
       auxiliary && canReadTab(access, 'permisos') ? rows(collection('collaborators'), 300) : [],
     ]);
-    const budgetItems = budget.filter(row => canReadExpense(access, 'budgetItems', row));
-    const areaExpenses = areas.filter(row => canReadExpense(access, 'areaExpenses', row));
     const providerIds = [...new Set([...budgetItems, ...areaExpenses].flatMap(row => [row.providerId, ...list(row.paymentHistory).map(p => p.thirdPartyPayerId)])
       .filter(value => typeof value === 'string' && /^[\w-]{1,160}$/.test(value)))];
     const providers = (providerIds.length ? await db.getAll(...providerIds.map(pid => db.doc(`providers/${pid}`))) : [])
@@ -266,9 +290,10 @@ function createProjectScopedReads({ db, readFile, bucketName, readMetadata, time
     const projectedRows = (items, name) => access.admin ? items : items.map(row => scopedFiles(projectId, name, row));
     return {
       project: { ...projectProjection(access), id: projectId }, admin: access.admin,
-      permissions: access.collaborator ? { ...access.collaborator, allowedTabs: projectTabs(access) } : null,
+      permissions: access.collaborator ? { ...access.collaborator, allowedTabs: projectTabs(access),
+        canEditBudgetAreas: hasAreaEditGrant(access) } : null,
       budgetItems: projectedRows(budgetItems, 'budgetItems'), areaExpenses: projectedRows(areaExpenses, 'areaExpenses'), providers,
-      documents: docs.filter(row => canReadDocument(access, row)).map(row => access.admin ? row : ({
+      documents: docs.map(row => access.admin ? row : ({
         ...fields(row, ['id', 'family', 'type', 'subtype', 'area', 'subcategory', 'providerName', 'providerId', 'title', 'notes', 'originalFileName', 'fileName',
           'contentType', 'expirationDate', 'createdAt']),
         url: token({ projectId, collectionName: 'projectDocuments', itemId: row.id, kind: 'document' }),

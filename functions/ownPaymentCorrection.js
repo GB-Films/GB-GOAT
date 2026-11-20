@@ -1,7 +1,8 @@
 const { canAccessGeneralCash } = require('./generalCashAccess');
 const { HttpsError } = require('firebase-functions/v2/https');
-const { hash, id, list } = require('./providerPortalModel');
+const { email, hash, id, list } = require('./providerPortalModel');
 const { projectFinanceAccess } = require('./projectFinanceAccess');
+const { canEditAreaExpense } = require('./projectReadScope');
 const { availablePersonalCents } = require('./cashSubdelivery');
 const { isInternalBudgetEstimate } = require('./internalBudgetEstimate');
 const fail = message => { throw new HttpsError('failed-precondition', message); };
@@ -34,13 +35,11 @@ function createOwnPaymentCorrection({ db, timestamp, verifyPaymentReceipt }) {
       const access = await projectFinanceAccess({ db, transaction: tx, actor, projectId });
       const [expenseSnap, priorAudit] = await Promise.all([tx.get(expenseRef), tx.get(auditRef)]);
       const expense = expenseSnap.data(), collaborator = access.collaborator;
-      if (!expense || isInternalBudgetEstimate(expense) || (!access.admin && !(collaborator?.canEditBudgetAreas === true
-        && list(collaborator.allowedTabs).includes('areas')
-        && !list(collaborator.excludedSubcategories).includes(`${expense.area}||${expense.subcategory || ''}`) && (list(collaborator.allowedCategories).includes(expense.area)
-          || !!expense.subcategory && list(collaborator.allowedSubcategories).includes(`${expense.area}||${expense.subcategory}`)))))
+      if (!canEditAreaExpense(access, expense) || isInternalBudgetEstimate(expense))
         throw new HttpsError('permission-denied', 'No podés corregir pagos de esta área.');
       const history = list(expense.paymentHistory), index = history.findIndex(payment => payment.id === paymentId), payment = history[index];
-      if (!payment || payment.sharedRecordId || payment.createdBy !== actor.uid || payment.createdByEmail !== actor.email)
+      if (!payment || payment.sharedRecordId || payment.createdBy !== actor.uid
+        || payment.createdByEmail && email(payment.createdByEmail) !== actor.email)
         throw new HttpsError('permission-denied', 'Sólo podés corregir pagos que cargaste vos.');
       if (payment.cashAccount === 'general' && !canAccessGeneralCash(actor.email)) throw new HttpsError('permission-denied', 'Caja General sólo está habilitada para sus responsables.');
       const clientHistory = payments => clientValue(access.admin ? payments : scopedFiles(projectId, 'areaExpenses', { id: itemId, paymentHistory: payments }).paymentHistory);

@@ -140,6 +140,7 @@ export function PaymentModal({
   const [selectedReceipt, setSelectedReceipt] = useState<File | null>(null);
   const [receiptPreviewUrl, setReceiptPreviewUrl] = useState('');
   const ownCorrectionAttempt = useRef<{ key: string; id: string } | null>(null);
+  const openedPayment = useRef<Payment | null>(null);
   const ownCorrectionUpload = useRef<{ file: File; paymentId: string; receipt: Payment['receipt'] } | null>(null);
   const scopedRegistration = useRef<{ key: string; id: string; date: Date; file: File | null; uploaded: boolean } | null>(null);
   const [isReceiptDragOver, setIsReceiptDragOver] = useState(false);
@@ -161,6 +162,7 @@ export function PaymentModal({
     setIsReceiptDragOver(false);
     setPaymentDateInput(toDateInputValue());
     setEditingPaymentIndex(null);
+    openedPayment.current = null;
     setEditPaymentDateInput(toDateInputValue());
     setEditReceipt(null);
     setAmountInput('');
@@ -229,9 +231,17 @@ export function PaymentModal({
     event.preventDefault();
     const currentPayment = paymentHistory[paymentIndex] as Payment | undefined;
     if (!projectId || !currentPayment || !(canEditExistingPayments || canCorrectOwnPayments) || !canEditPaymentRecord?.(currentPayment, paymentIndex)) return;
+    const originalPayment = openedPayment.current;
+    if (!originalPayment || originalPayment.id !== currentPayment.id
+      || originalPayment.correctionVersion !== currentPayment.correctionVersion
+      || JSON.stringify(paymentCorrectionSnapshot(originalPayment)) !== JSON.stringify(paymentCorrectionSnapshot(currentPayment))) {
+      alert('El pago cambió mientras lo editabas. Volvé a abrirlo para revisar los datos actuales.');
+      setEditingPaymentIndex(null);
+      return;
+    }
 
     const formData = new FormData(event.currentTarget);
-    const nextAmount = Number(formData.get('editAmount'));
+    const nextAmount = parsePaymentAmount(formData.get('editAmount'));
     const nextDate = formData.get('editPaymentDate') as string;
     const nextDetail = String(formData.get('editDetail') || '');
     const cashChoice = String(formData.get('editCashBoxId') || 'keep');
@@ -299,8 +309,8 @@ export function PaymentModal({
       };
       if (!canEditExistingPayments && canCorrectOwnPayments) {
         const input = { action: 'correctOwnPayment', projectId, collectionName, itemId: item.id,
-          paymentId: currentPayment.id, ...(currentPayment.correctionVersion ? { expectedVersion: currentPayment.correctionVersion }
-            : { expected: paymentCorrectionSnapshot(currentPayment) }),
+          paymentId: originalPayment.id, ...(originalPayment.correctionVersion ? { expectedVersion: originalPayment.correctionVersion }
+            : { expected: paymentCorrectionSnapshot(originalPayment) }),
           amount: nextAmount, date: nextDate, detail: nextDetail, ...(editReceipt && nextReceipt ? { receipt: nextReceipt } : {}) };
         const key = JSON.stringify(input);
         if (ownCorrectionAttempt.current?.key !== key) ownCorrectionAttempt.current = { key, id: crypto.randomUUID() };
@@ -1178,6 +1188,7 @@ export function PaymentModal({
                             <button
                               type="button"
                               onClick={() => {
+                                openedPayment.current = payment;
                                 setEditingPaymentIndex(idx);
                                 setEditPaymentDateInput(toDateInputValue(payment.date));
                                 setEditReceipt(null);

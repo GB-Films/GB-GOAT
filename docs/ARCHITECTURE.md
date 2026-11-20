@@ -26,7 +26,7 @@ Cuando un área está activa, los reportes financieros toman sus gastos desde `a
 - `src/lib/projectAccess.ts` define pestañas, defaults y permisos de área/subcategoría para la UI.
 - `src/lib/identity.ts` normaliza emails y búsquedas.
 - `src/lib/files.ts` normaliza nombres de archivos.
-- Las reglas de Firestore y Storage son la autoridad final de permisos.
+- Firestore y Storage autorizan el acceso directo. Las funciones que usan credenciales de servidor comprueban el acceso antes de leer o escribir. `projectFinanceAccess.js` resuelve la cuenta y su relación con el proyecto, y `projectReadScope.js` decide el alcance de cada operación.
 
 ## Alcance por área y subcategoría
 
@@ -34,7 +34,7 @@ Seleccionar un área en Permisos incluye todas sus subcategorías actuales y fut
 
 Las exclusiones aparecen en amarillo y el área padre se marca «Parcial». Áreas, sus resúmenes, saldos, reintegros, exportación y herramientas del asistente filtran sus gastos según ese alcance. Firestore y Storage rechazan la edición/carga de gastos y adjuntos excluidos; el backend de corrección de pagos propios vuelve a comprobarlo. Las operaciones de estructura trasladan o limpian las exclusiones junto con las delegaciones individuales. Un jefe de producción debe conservar sus propias exclusiones al delegar acceso y no puede ampliar su alcance.
 
-Este alcance por subcategoría organiza las vistas y autoriza escrituras de `areaExpenses`. No modifica el modelo de lectura existente: las consultas y archivos de un proyecto siguen autorizándose por pertenencia al proyecto. Las pestañas y documentos generales, el presupuesto principal sin subcategoría y el historial de caja propio conservan sus permisos independientes. No debe interpretarse la exclusión como una política de confidencialidad por documento frente al acceso directo al SDK.
+Este alcance organiza las vistas y autoriza la lectura de filas y adjuntos, además de la edición de `areaExpenses`. Un colaborador consulta una vista acotada desde el servidor. Los documentos generales, el presupuesto principal sin subcategoría y el historial de caja propio conservan sus permisos independientes.
 
 Publicar este cambio requiere las nuevas reglas de Firestore/Storage, la función `manageProviderFinance` (correcciones de pagos) y el frontend, en ese orden. No necesita cambios de IAM, Auth ni migración de registros existentes.
 
@@ -54,11 +54,11 @@ Publicar este cambio requiere las nuevas reglas de Firestore/Storage, la funció
 
 - Un colaborador autorizado puede crear gastos en su alcance y anexar pagos o comprobantes.
 - El SDK de un colaborador no puede reescribir el historial. Puede corregir un pago propio desde la callable, con autor original, alcance vigente, versión abierta, saldo y auditoría comprobados en una transacción. Los pagos ajenos y las aplicaciones compartidas permanecen protegidos.
-- Corregir o eliminar pagos requiere administración del proyecto y auditoría en la misma operación. Sólo se puede afectar Caja General o la caja asignada a quien opera; la caja ajena permanece protegida. La identidad de una fila con historial financiero conserva su bloqueo. Si todos sus pagos fueron eliminados y no quedan movimientos de caja, un administrador puede borrar individualmente la fila guardando el documento anterior completo en la auditoría; los archivos originales se conservan.
+- Corregir un pago ajeno o eliminar un pago requiere administración del proyecto. Toda corrección queda auditada. La Caja General y la caja personal conservan sus comprobaciones de acceso. Si todos los pagos de una fila se eliminaron y no quedan movimientos de caja, un administrador puede borrar la fila individualmente y guardar el documento anterior en la auditoría. Se conservan los archivos originales.
 - Las devoluciones de caja nacen pendientes: sólo el administrador destinatario puede confirmar la recepción y entonces se reduce el saldo de la persona. El emisor puede cancelar una devolución pendiente, conservando el registro. Caja General muestra salidas netas, sin saldo inicial.
 - Los archivos financieros se crean dentro del alcance de la fila y no pueden reemplazarse o borrarse por un colaborador.
 
 ## Límites conocidos
 
-- Los miembros de un proyecto pueden leer su contexto operativo, con la excepción del libro completo de Caja General reservado a sus tres responsables. Las áreas y subcategorías limitan escritura, no confidencialidad de campos. Si se necesita ocultar importes o proveedores por área, habrá que separar documentos/colecciones para que las reglas puedan autorizar lecturas parciales.
+- Las vistas de colaboradores omiten filas y datos de otras áreas. El servicio entrega un comprobante compartido cuando el usuario puede consultar todas las filas que abarca. El libro completo de Caja General conserva su permiso independiente.
 - El borrado de un proyecto elimina documentos conocidos desde el cliente, pero no garantiza el borrado recursivo de todos los archivos de Storage. Un borrado total y auditable requiere una función backend privilegiada.

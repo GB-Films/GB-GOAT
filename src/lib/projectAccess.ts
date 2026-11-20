@@ -75,7 +75,10 @@ export const getDefaultCollaboratorPermissions = (
   };
 };
 
-export const cleanAreaExpenseSubcategory = (value: unknown) => String(value || '').trim();
+export const cleanAreaExpenseSubcategory = (value: unknown) => {
+  const label = String(value || '').trim();
+  return label === 'Sin subcategoria' ? '' : label;
+};
 
 export const areaSubcategoryKey = (area: unknown, subcategory: unknown) => (
   `${String(area || '').trim()}||${cleanAreaExpenseSubcategory(subcategory)}`
@@ -167,5 +170,6 @@ export const canOrganizeProjectSubcategory = (isProjectAdmin: boolean, access: P
 );
 
 export const canEditExistingPayment = (isProjectAdmin: boolean, payment?: { id?: string; sharedRecordId?: string; createdBy?: string; createdByEmail?: string }, uid = '', email = '') =>
-  isProjectAdmin || Boolean(payment?.id && !payment.sharedRecordId && uid && email && payment.createdBy === uid && payment.createdByEmail === email);
+  isProjectAdmin || Boolean(payment?.id && !payment.sharedRecordId && uid && email && payment.createdBy === uid
+    && (!payment.createdByEmail || payment.createdByEmail.trim().toLowerCase() === email.trim().toLowerCase()));
 

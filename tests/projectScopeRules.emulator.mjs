@@ -80,6 +80,13 @@ try {
   ]);
   await env.withSecurityRulesDisabled(ctx => uploadBytes(ref(ctx.storage(bucket), filePath), new Uint8Array([37, 80, 68, 70]), { contentType: 'application/pdf' }));
   const dbProducer = producer.firestore();
+  // The collaborator's small view must remain usable when another area has
+  // more rows than the snapshot limit.
+  const bulk = Array.from({ length: 4 }, () => db.batch());
+  for (let index = 0; index < 1501; index++) {
+    bulk[Math.floor(index / 400)].set(projectRef.collection('areaExpenses').doc(`unassigned-${index}`), row('Post', 'Render', 'elsewhere'));
+  }
+  await Promise.all(bulk.map(batch => batch.commit()));
   for (const location of ['projects/p', 'projects/p/areaExpenses/visible', 'projects/p/areaExpenses/hidden', 'projects/p/areaExpenses/bare', 'projects/p/projectDocuments/doc-visible', 'providers/elsewhere']) {
     await assertFails(getDoc(doc(dbProducer, location)));
   }
@@ -141,6 +148,17 @@ try {
   assert.equal(overview.project.budgetTotal, undefined);
   assert.deepEqual(overview.providers.map(provider => provider.id), ['supplier']);
   assert.deepEqual((await call('scopedProviderCatalog')).providers.map(provider => provider.id), ['supplier']);
+  const currentHistory = (await writableRef.get()).data().paymentHistory;
+  const { createdByEmail: ignoredLegacyEmail, ...legacyOwnPayment } = currentHistory[1];
+  assert.equal(ignoredLegacyEmail, producerEmail);
+  await writableRef.update({ paymentHistory: [currentHistory[0], legacyOwnPayment] });
+  const [editable] = (await call('projectScopedSnapshot')).areaExpenses;
+  const ownPayment = editable.paymentHistory[1];
+  const correction = await call('correctOwnPayment', { itemId: 'visible', collectionName: 'areaExpenses',
+    paymentId: ownPayment.id, expectedVersion: ownPayment.correctionVersion, attemptId: 'own-existing-payment',
+    amount: 21, date: '2026-10-25', detail: 'Pago propio corregido' });
+  assert.equal(correction.paymentHistory[1].amount, 21);
+  assert.deepEqual((await writableRef.get()).data().paymentHistory[0], legacyShared);
   const { movements } = await call('personalCashMovements');
   assert.equal(movements.length, 2);
   const ownHidden = movements.find(movement => movement.id === 'owned-hidden');
@@ -195,6 +213,10 @@ try {
   await acl.update({ allowedTabs: [] });
   assert.deepEqual((await call('projectScopedSnapshot')).documents, []);
   await assert.rejects(callSign('projectDocuments'), { code: 'permission-denied' });
+  await acl.update({ allowedTabs: admin.firestore.FieldValue.delete() });
+  const legacyScope = await call('projectScopedSnapshot');
+  assert.ok(legacyScope.permissions.allowedTabs.includes('areas'));
+  assert.equal(legacyScope.permissions.canEditBudgetAreas, false);
   console.log('PASS project scope: rules, tabs, inherited and excluded categories, projected totals and files, personal cash, supplier intake and live revocation.');
 } finally {
   await env.cleanup();
