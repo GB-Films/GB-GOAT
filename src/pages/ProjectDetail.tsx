@@ -997,10 +997,13 @@ export default function ProjectDetail() {
       } finally { refreshing = false; }
     };
     void refresh();
-    const timer = window.setInterval(refresh, 12_000);
+    const refreshVisible = () => { if (!document.hidden) void refresh(); };
+    const timer = window.setInterval(refreshVisible, 12_000);
     window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refreshVisible);
     const own = onSnapshot(doc(db, 'projects', id, 'collaborators', normalizeEmail(user.email)), refresh, () => {});
-    return () => { stopped = true; window.clearInterval(timer); window.removeEventListener('focus', refresh); own(); };
+    return () => { stopped = true; window.clearInterval(timer); window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', refreshVisible); own(); };
   }, [loadScope, loadedProjectScope, loading, isProjectAdmin, projectLoadError]);
 
   // Start auxiliary catalogs alongside the core request, never as a prerequisite

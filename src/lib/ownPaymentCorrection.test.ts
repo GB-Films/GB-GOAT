@@ -8,7 +8,8 @@ const server = require('../../functions/paymentCorrectionSnapshot');
 test('only the original author can correct a normal payment; missing and shared authorship does not confer access', () => {
   const payment = { id: 'p', createdBy: 'own', createdByEmail: 'own@example.test' };
   assert.equal(canEditExistingPayment(false, payment, 'own', 'own@example.test'), true);
-  for (const value of [{ ...payment, createdBy: 'other' }, { ...payment, createdByEmail: 'other@example.test' }, { ...payment, id: '' }, { ...payment, sharedRecordId: 's' }])
+  assert.equal(canEditExistingPayment(false, { ...payment, createdByEmail: undefined }, 'own', 'own@example.test'), true);
+  for (const value of [{ ...payment, createdBy: 'other' }, { ...payment, createdBy: undefined }, { ...payment, createdByEmail: 'other@example.test' }, { ...payment, id: '' }, { ...payment, sharedRecordId: 's' }])
     assert.equal(canEditExistingPayment(false, value, 'own', 'own@example.test'), false);
   assert.equal(canEditExistingPayment(false), false);
   assert.equal(canEditExistingPayment(true), true);
