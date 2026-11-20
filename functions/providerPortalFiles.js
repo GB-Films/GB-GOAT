@@ -1,4 +1,25 @@
 const { fail, hash } = require("./providerPortalModel");
+
+function portalFileGrantRef(db, providerId, file) {
+  return db.doc(`providerPortalFileGrants/${hash({ providerId, fingerprint: hash(file) })}`);
+}
+
+const approved = (grant, sha256) => grant?.safeForProvider === true && grant.sha256 === sha256;
+
+async function requestFileDownload(db, ref, file, original, { providerId, downloadRequest }) {
+  const { actor, source, timestamp } = downloadRequest;
+  return db.runTransaction(async tx => {
+    const grant = (await tx.get(ref)).data();
+    if (approved(grant, original.sha256)) return 'available';
+    if (grant?.downloadRequest?.sha256 === original.sha256)
+      return grant.downloadRequest.active ? 'pending_review' : 'closed';
+    tx.set(ref, { providerId, fingerprint: hash(file), downloadRequest: {
+      sha256: original.sha256, actor, source, fileName: original.fileName, requestedAt: timestamp(), active: true,
+    } }, { merge: true });
+    return 'pending_review';
+  });
+}
+
 function createPortalFileReader({ db, readLocalFile }) {
   return async (file, context) => {
     if (!context?.providerId) fail("Falta el alcance del archivo.");
@@ -33,20 +54,17 @@ function createPortalFileReader({ db, readLocalFile }) {
       && metadata.paymentId === context.paymentId
       && (context.kind === 'advance' || context.reimbursementId && metadata.reimbursementId === context.reimbursementId);
     if (!trustedUpload && !ownedInvoice && !ownedAdvance) {
-      const grant = (
-        await db
-          .doc(
-            `providerPortalFileGrants/${hash({ providerId: context.providerId, fingerprint: hash(file) })}`,
-          )
-          .get()
-      ).data();
-      if (!grant?.safeForProvider || grant.sha256 !== original.sha256)
-        fail(
-          "Administración debe revisar el original y publicar una copia sin datos de terceros.",
-        );
+      const ref = portalFileGrantRef(db, context.providerId, file);
+      const grant = (await ref.get()).data();
+      if (!approved(grant, original.sha256)) {
+        if (!context.downloadRequest)
+          fail('Administración debe habilitar la descarga de este archivo.');
+        const status = await requestFileDownload(db, ref, file, original, context);
+        if (status !== 'available') return { status };
+      }
     }
     const { metadata: _metadata, path: _path, ...result } = original;
     return result;
   };
 }
-module.exports = { createPortalFileReader };
+module.exports = { createPortalFileReader, portalFileGrantRef };
