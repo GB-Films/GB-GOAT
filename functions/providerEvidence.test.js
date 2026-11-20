@@ -45,7 +45,55 @@ test('el manifiesto admite un respaldo de representación y uno o dos DNI de est
   await assert.rejects(f.service.manifest('company', actor, [...ids, second, third], COMPANY_EVIDENCE));
 });
 test('rechaza archivos demasiado grandes o cuyo contenido no coincide con el formato', () => {
-  assert.throws(() => evidenceBytes({ ...file, base64: Buffer.from('<html>documento falso</html>').toString('base64') }));
-  assert.throws(() => evidenceBytes({ ...file, base64: Buffer.alloc(2 * 1024 * 1024 + 1).toString('base64') }));
-  assert.throws(() => evidenceBytes({ ...file, contentType: 'text/html' }));
+  assert.throws(() => evidenceBytes({ ...file, base64: Buffer.from('<html>documento falso</html>').toString('base64') }), /contenido no coincide/);
+  assert.throws(() => evidenceBytes({ ...file, base64: Buffer.alloc(6 * 1024 * 1024 + 1).toString('base64') }), /supera 6 MB/);
+  assert.throws(() => evidenceBytes({ ...file, base64: 'abc' }), /archivo incompleto/);
+  assert.throws(() => evidenceBytes({ ...file, base64: '' }), /llegó vacío/);
+  assert.throws(() => evidenceBytes({ ...file, contentType: 'text/html' }), /no admite ese formato/);
+  const allowed = Buffer.alloc(6 * 1024 * 1024);
+  allowed.write('%PDF-');
+  assert.deepEqual(evidenceBytes({ ...file, base64: allowed.toString('base64') }), allowed);
+});
+
+test('distingue si la carga falló al guardar o al confirmar y conserva el mismo intento', async () => {
+  const f = fixture();
+  let stage = 'storage';
+  const service = createEvidenceStore({
+    db: {
+      doc: path => ({ path, get: async () => ({ data: () => f.records.get(path) }) }),
+      runTransaction: callback => {
+        if (stage === 'confirmation') throw Object.assign(Error('private details'), { code: 14 });
+        return callback({ get: async ref => ({ data: () => f.records.get(ref.path) }), create: (ref, value) => f.records.set(ref.path, value) });
+      },
+    },
+    bucket: () => ({
+      file: path => ({
+        save: async bytes => {
+          if (stage === 'storage') throw Object.assign(Error('private details'), { code: 503 });
+          if (f.files.has(path)) throw Object.assign(Error('exists'), { code: 412 });
+          f.files.set(path, bytes);
+        },
+        download: async () => [f.files.get(path)],
+      }),
+    }),
+    timestamp: () => 'now',
+  });
+  const input = { kind: 'identity_document', attemptId: 'dni-test', file };
+  const upload = () => service.upload('company', actor, input, 'empresa');
+  for (const failingStage of ['storage', 'confirmation']) {
+    stage = failingStage;
+    await assert.rejects(upload, error => {
+      assert.equal(error.code, 'unavailable');
+      assert.equal(error.details.reason, 'evidence_' + failingStage + '_unavailable');
+      assert.match(error.details.reference, /^[\da-f-]{36}$/);
+      assert.doesNotMatch(error.message, /private details/);
+      return true;
+    });
+    assert.equal(f.records.size, 0);
+  }
+  stage = '';
+  const saved = await upload();
+  assert.equal((await service.read('company', saved.id, actor)).base64, file.base64);
+  assert.equal(f.files.size, 1);
+  assert.equal(f.records.size, 1);
 });
