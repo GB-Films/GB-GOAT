@@ -243,6 +243,22 @@ service cloud.firestore {
       return isAppAdmin() || isAppAdminAssistant();
     }
 
+    // An expense association alone cannot grant access to a provider's private ficha.
+    function validProviderBindingOnCreate() {
+      return request.resource.data.get('providerId', '') == ''
+        || request.resource.data.get('providerIdentityOnly', false) == true
+        || canEditGlobalProvider();
+    }
+
+    function validProviderBindingOnUpdate() {
+      let nextId = request.resource.data.get('providerId', '');
+      let changed = nextId != resource.data.get('providerId', '');
+      let restricted = request.resource.data.get('providerIdentityOnly', false);
+      return (!changed && restricted == resource.data.get('providerIdentityOnly', false))
+        || (changed && (nextId == '' || restricted == true))
+        || canEditGlobalProvider();
+    }
+
     function storedPaymentCount() {
       return resource.data.keys().hasAny(['paymentHistory'])
         && resource.data.paymentHistory is list
@@ -395,6 +411,7 @@ service cloud.firestore {
       // Resolve the same role once to keep valid payment appends below the rule expression limit.
       let admin = isProjectAdmin(projectId);
       return preservesSharedSupplierRecords() && ((admin
+          && validProviderBindingOnUpdate()
           && (preservesPaidExpenseIdentity()
             || validUnpaidAmountCorrection(projectId, 'areaExpenses', expenseId)
             || validPaidProviderCorrection(projectId, expenseId))
@@ -405,7 +422,9 @@ service cloud.firestore {
             && ((resource.data.area == request.resource.data.area
                 && resource.data.subcategory == request.resource.data.subcategory)
               || canWriteAreaExpense(projectId, request.resource.data.area, request.resource.data.subcategory))
-          ) && preservesExpensePaymentAudit() && preservesPaidExpenseIdentity()
+          ) && request.resource.data.get('providerId', '') == resource.data.get('providerId', '')
+            && request.resource.data.get('providerIdentityOnly', false) == resource.data.get('providerIdentityOnly', false)
+            && preservesExpensePaymentAudit() && preservesPaidExpenseIdentity()
             && preservesExpenseReceipts() && preservesExistingExpenseInvoice()))
           || (request.auth == null && canPublicUploadInvoice(projectId, 'areaExpenses', expenseId)));
     }
@@ -691,7 +710,7 @@ service cloud.firestore {
       let audit = getAfter(auditPath).data;
       return hasReceivedPayment()
         && changed.hasAll(['providerId', 'providerName', 'lastProviderCorrectionAuditId'])
-        && changed.hasOnly(['providerId', 'providerName', 'lastProviderCorrectionAuditId', 'updatedAt'])
+        && changed.hasOnly(['providerId', 'providerName', 'providerIdentityOnly', 'lastProviderCorrectionAuditId', 'updatedAt'])
         && newProviderId is string && newProviderId.size() > 0 && newProviderId.size() <= 128
         && newProviderId != resource.data.get('providerId', '')
         && newProviderName is string && newProviderName.size() > 0 && newProviderName.size() <= 200
@@ -1646,6 +1665,7 @@ service cloud.firestore {
         allow list: if isProjectAdmin(projectId);
         allow get: if isProjectAdmin(projectId);
         allow create: if !request.resource.data.keys().hasAny(['sharedInvoices', 'sharedReceipts', 'sharedPaymentIds', 'sharedPaymentRecords', 'thirdPartyPayoutRequired']) && isProjectAdmin(projectId)
+          && validProviderBindingOnCreate()
           && !(request.resource.data.area in getAfter(/databases/$(database)/documents/projects/$(projectId)).data.get('activeAreas', []))
           && budgetMembershipAdvancesRevision(projectId)
           && request.resource.data.get('paymentHistory', []) == []
@@ -1654,6 +1674,7 @@ service cloud.firestore {
         allow delete: if hasNoSharedSupplierRecords() && (isProjectAdmin(projectId) && (!hasReceivedPayment() || canDeleteClearedExpense(projectId, 'budgetItems', itemId))
           && budgetMembershipAdvancesRevision(projectId));
         allow update: if preservesSharedSupplierRecords() && ((isProjectAdmin(projectId)
+          && validProviderBindingOnUpdate()
           && (preservesPaidExpenseIdentity() || validUnpaidAmountCorrection(projectId, 'budgetItems', itemId))
           && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['area'])
             || (!(request.resource.data.area in getAfter(/databases/$(database)/documents/projects/$(projectId)).data.get('activeAreas', []))
@@ -1670,6 +1691,7 @@ service cloud.firestore {
         allow get: if isProjectAdmin(projectId);
         allow create: if !request.resource.data.keys().hasAny(['sharedInvoices', 'sharedReceipts', 'sharedPaymentIds', 'sharedPaymentRecords', 'thirdPartyPayoutRequired']) && (isProjectAdmin(projectId)
           || canWriteAreaExpense(projectId, request.resource.data.area, request.resource.data.subcategory))
+            && validProviderBindingOnCreate()
             && request.resource.data.createdBy == request.auth.uid
             && request.resource.data.createdByEmail is string
             && request.resource.data.paymentHistory == []

@@ -20,7 +20,7 @@ import { hasRecordedPayment, sameExpenseVersion, samePaymentTarget } from './exp
 import { buildLinkedProviderInviteExpiration } from './providerInvites';
 import { Timestamp, updateDoc, writeBatch } from 'firebase/firestore';
 import { ref, uploadBytes } from 'firebase/storage';
-import { editScopedAreaExpense, projectAttachmentLink } from './projectScopedData';
+import { editScopedAreaExpense, projectAttachmentLink, restrictedProviderBinding } from './projectScopedData';
 import { providerFinanceRequest } from './providerFinance';
 import { deleteUnpaidExpenseWithConfirmation } from './expenseDeletion';
 import { areaGroupBudgetVersion } from './areaStructureChanges';
@@ -168,6 +168,7 @@ export type AssistantToolsOptions = {
   loadUsers?: () => Promise<Array<{ id: string; email?: string; displayName?: string; role?: string }>>;
   getPendingFile?: () => File | null;
   canAccessProviders?: boolean;
+  canGrantProviderDetails?: boolean;
   isAppAdmin?: boolean;
   currentProjectId?: string | null;
   userId?: string;
@@ -252,6 +253,7 @@ export const buildAssistantTools = ({
   loadUsers,
   getPendingFile,
   canAccessProviders = false,
+  canGrantProviderDetails = false,
   isAppAdmin = false,
   currentProjectId = null,
   userId = '',
@@ -876,6 +878,7 @@ export const buildAssistantTools = ({
             projectId: context.projectId,
             area,
             providerId: provider?.id || '',
+            ...restrictedProviderBinding(provider?.id, canGrantProviderDetails),
             providerName: provider ? providerLabel(provider) : String(args?.proveedor || '').trim(),
             description,
             unit: 'Unidad',
@@ -960,6 +963,7 @@ export const buildAssistantTools = ({
             area,
             subcategory,
             providerId: provider?.id || '',
+            ...restrictedProviderBinding(provider?.id, canGrantProviderDetails),
             providerName: provider ? providerLabel(provider) : String(args?.proveedor || '').trim(),
             description,
             unit: 'Unidad',
@@ -1121,6 +1125,7 @@ export const buildAssistantTools = ({
               area: row.area,
               subcategory: row.subcategory,
               providerId: row.providerId,
+              ...restrictedProviderBinding(row.providerId, canGrantProviderDetails),
               providerName: row.providerName,
               description: row.description,
               unit: 'Unidad',
@@ -1274,7 +1279,7 @@ export const buildAssistantTools = ({
               throw new Error('El total de subcategorías asignadas superaría el presupuesto de la categoría.');
             }
           }
-          transaction.update(rowRef, { ...updates, updatedAt: serverTimestamp() });
+          transaction.update(rowRef, { ...updates, ...restrictedProviderBinding(updates.providerId, canGrantProviderDetails, latest), updatedAt: serverTimestamp() });
           if (projectSnapshot) transaction.update(projectRef, {
             budgetRevision: (Number(projectSnapshot.data().budgetRevision) || 0) + 1,
             updatedAt: serverTimestamp(),
@@ -1507,6 +1512,7 @@ export const buildAssistantTools = ({
           }
           transaction.update(rowRef, {
             ...updates,
+            ...restrictedProviderBinding(updates.providerId, canGrantProviderDetails, latest),
             ...(inviteRef ? { providerInviteLink: null } : {}),
             updatedAt: serverTimestamp(),
           });
@@ -2067,6 +2073,7 @@ export const buildAssistantTools = ({
               area,
               subcategory: '',
               providerId: item.providerId || '',
+              ...restrictedProviderBinding(item.providerId, canGrantProviderDetails && !(item as any).providerIdentityOnly),
               providerName: item.providerName || '',
               description: item.description || '',
               unit: (item as any).unit || 'Unidad',

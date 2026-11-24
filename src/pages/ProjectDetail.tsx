@@ -86,7 +86,7 @@ import { PaymentModal } from './project-detail/PaymentModal';
 import { ExpenseInvoiceCell, ExpenseReceiptsCell, InvoiceDropOverlay } from './project-detail/ExpenseFileCells';
 import { SharedInvoiceRecordsProvider } from '../components/SharedExpenseInvoices';
 import { providerFinanceRequest } from '../lib/providerFinance';
-import { editScopedAreaExpense, projectAttachmentLink, readProjectAccess, readScopedCash, readScopedProject, readScopedProviders } from '../lib/projectScopedData';
+import { assignScopedExpenseProvider, editScopedAreaExpense, projectAttachmentLink, readProjectAccess, readScopedCash, readScopedProject, readScopedProviders, restrictedProviderBinding } from '../lib/projectScopedData';
 import type { AreaExpense, BudgetItem, CashMovement, Collaborator, Payment, PaymentCollection } from './project-detail/types';
 import { formatIdentifier, inferLegacyIdentifiers, normalizeDigits, providerDisplayName } from '../lib/providerConstants';
 import { normalizeEmail, normalizeSearchText } from '../lib/identity';
@@ -826,6 +826,7 @@ export default function ProjectDetail() {
   const expenseConfirmationTimeoutRef = useRef<number | null>(null);
   const areaSelectorRef = useRef<HTMLDivElement>(null);
   const isGlobalAdmin = profile?.role === 'admin';
+  const canReadFullProviderCatalog = isGlobalAdmin || profile?.role === 'ayudante_admin';
   const [isCreatingCashSubdelivery, setIsCreatingCashSubdelivery] = useState(false);
   const cashSubdeliveryRequestId = useRef<string | null>(null);
   const canViewGeneralCash = canAccessGeneralCash(user?.email);
@@ -1293,6 +1294,7 @@ export default function ProjectDetail() {
           isProjectAdmin: true, expectedUpdatedAt: currentItem?.updatedAt,
         });
         const assignedUpdates = await cancelPendingProviderInviteIfAssigning(transaction, latestSnap.data(), nextUpdates);
+        Object.assign(assignedUpdates, restrictedProviderBinding(assignedUpdates.providerId, canReadFullProviderCatalog, latestSnap.data()));
         if (!projectSnapshot.exists()) throw new Error('PROJECT_MISSING');
         const originalArea = String(latestSnap.data().area || '');
         const nextArea = String(assignedUpdates.area ?? originalArea);
@@ -1395,7 +1397,7 @@ export default function ProjectDetail() {
         throw new Error('AREA_CHANGED');
       }
       const revision = (Number(projectSnapshot.data().budgetRevision) || 0) + 1;
-      transaction.set(budgetRef, newItem);
+      transaction.set(budgetRef, { ...newItem, ...restrictedProviderBinding(newItem.providerId, canReadFullProviderCatalog) });
       transaction.update(projectRef, { budgetRevision: revision, updatedAt: serverTimestamp() });
       return revision;
     });
@@ -1618,6 +1620,7 @@ export default function ProjectDetail() {
           area: areaName,
           subcategory: '',
           providerId: item.providerId || '',
+          ...restrictedProviderBinding(item.providerId, canReadFullProviderCatalog && !item.providerIdentityOnly),
           providerName: item.providerName || '',
           description: item.description || '',
           unit: item.unit || 'Unidad',
@@ -1894,6 +1897,12 @@ export default function ProjectDetail() {
       setAreaExpenses(expenses => [...expenses, { id: docRef.id, ...newItem }]);
       setAreaExpenseSort('manual');
       showExpenseConfirmation('Nuevo gasto agregado en Gestión por Áreas');
+      if (!isProjectAdmin && isProductionLead) {
+        void readScopedProject(id).then(({ areaExpenses }) => {
+          const saved = areaExpenses.find(expense => expense.id === docRef.id);
+          if (saved) setAreaExpenses(current => current.map(expense => expense.id === saved.id && !expense.updatedAt?.seconds ? saved : expense));
+        }).catch(() => {}); // The regular scoped refresh also picks up the server revision.
+      }
     } catch (e) {
       console.error("Error adding area expense:", e);
     }
@@ -1954,6 +1963,7 @@ export default function ProjectDetail() {
         const assignedUpdates = paidProviderCorrection
           ? nextUpdates
           : await cancelPendingProviderInviteIfAssigning(transaction, latest, nextUpdates);
+        Object.assign(assignedUpdates, restrictedProviderBinding(assignedUpdates.providerId, canReadFullProviderCatalog, latest));
         if (isUnpaidAmountCorrection(latest, submittedUpdates, isProjectAdmin)) {
           transaction.set(amountAuditRef, {
             ...buildUnpaidAmountCorrectionAudit(latest, nextUpdates),
@@ -2002,6 +2012,13 @@ export default function ProjectDetail() {
           ? 'Sólo un administrador puede corregir el importe después de eliminar todos los pagos de la fila. Los demás datos del gasto conservan su bloqueo histórico.'
           : 'No se pudo guardar la corrección: el gasto cambió o no se pudo validar el importe o el proveedor. Actualizá y revisá la fila antes de intentarlo otra vez.');
     }
+  };
+
+  const selectScopedExpenseProvider = async (expense: AreaExpense, providerId: string) => {
+    if (!id) throw new Error('No se encontró el proyecto.');
+    const { expense: saved, provider } = await assignScopedExpenseProvider(id, expense.id, expense.updatedAt, providerId);
+    setAreaExpenses(current => reconcileAreaExpenseSnapshot(current, current.map(row => row.id === saved.id ? saved : row)));
+    showExpenseConfirmation(`Proveedor asignado: ${provider.name}`);
   };
 
   const getStoredAreaSubcategories = (area: string) => {
@@ -3390,6 +3407,7 @@ export default function ProjectDetail() {
           ...(isInternalBudgetEstimate(item) ? { economicNature: 'internal_estimate' } : {}),
           area: item.area || 'Producción',
           providerId: item.providerId || '',
+          ...restrictedProviderBinding(item.providerId, canReadFullProviderCatalog && !item.providerIdentityOnly),
           providerName: item.providerName || '',
           description: item.description || '',
           unit: item.unit || 'Unidad',
@@ -6700,6 +6718,7 @@ export default function ProjectDetail() {
                                         onDelete={deleteAreaExpense}
                                         type="provider" collectionName="areaExpenses"
                                         canCopyProviderInfo
+                                        onSelectScopedProvider={!isProjectAdmin && isProductionLead ? selectScopedExpenseProvider : undefined}
                                         onCreateProviderInvite={(row) => createProviderInviteForItem(row, 'areaExpenses')}
                                         onDetachProviderInvite={isProjectAdmin ? row => detachProviderInviteForItem(row, 'areaExpenses') : undefined}
                                         creatingProviderInvite={!!generatingProviderInviteLinks[`areaExpenses-${item.id}`]}
@@ -6993,6 +7012,7 @@ export default function ProjectDetail() {
                                   onDelete={deleteAreaExpense}
                                   type="provider" collectionName="areaExpenses"
                                   canCopyProviderInfo
+                                  onSelectScopedProvider={!isProjectAdmin && isProductionLead ? selectScopedExpenseProvider : undefined}
                                   onCreateProviderInvite={(row) => createProviderInviteForItem(row, 'areaExpenses')}
                                   onDetachProviderInvite={isProjectAdmin ? row => detachProviderInviteForItem(row, 'areaExpenses') : undefined}
                                   creatingProviderInvite={!!generatingProviderInviteLinks[`areaExpenses-${item.id}`]}

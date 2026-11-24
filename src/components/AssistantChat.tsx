@@ -95,6 +95,7 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
     isAppAdmin: globalRole === 'admin',
     loadProviders: loadAssistantProviders,
     canAccessProviders: hasGlobalRole(globalRole, PROVIDER_ACCESS_ROLES),
+    canGrantProviderDetails: globalRole === 'admin' || globalRole === 'ayudante_admin',
     currentProjectId: currentProjectId || null,
     userId: uid,
     userEmail: email,

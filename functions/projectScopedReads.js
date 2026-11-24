@@ -14,6 +14,7 @@ const wire = value => value?.toDate ? { seconds: value.seconds, nanoseconds: val
   : Array.isArray(value) ? value.map(wire) : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([k, v]) => [k, wire(v)])) : value;
 const providerFields = ['id', 'type', 'name', 'lastName', 'businessName', 'alias', 'fullName', 'email', 'phone', 'dni', 'cuit', 'cuitNormalized',
   'bankAccount_cbu', 'bankAccount_alias', 'bankAccount_holder', 'source', 'provisional', 'administrativeRegistrationExempt', 'createdAt', 'updatedAt', 'category'];
+const providerIdentityFields = ['type', 'name', 'lastName', 'businessName', 'fullName', 'source', 'provisional', 'administrativeRegistrationExempt'];
 
 async function rows(query, max = 1500) {
   const snap = await query.limit(max + 1).get();
@@ -282,10 +283,14 @@ function createProjectScopedReads({ db, readFile, bucketName, readMetadata, time
         ? scopedRows(collection('projectDocuments'), access, row => canReadDocument(access, row)) : [],
       auxiliary && canReadTab(access, 'permisos') ? rows(collection('collaborators'), 300) : [],
     ]);
-    const providerIds = [...new Set([...budgetItems, ...areaExpenses].flatMap(row => [row.providerId, ...list(row.paymentHistory).map(p => p.thirdPartyPayerId)])
+    const expenseRows = [...budgetItems, ...areaExpenses];
+    const providerIds = [...new Set(expenseRows.flatMap(row => [row.providerId, ...list(row.paymentHistory).map(p => p.thirdPartyPayerId)])
       .filter(value => typeof value === 'string' && /^[\w-]{1,160}$/.test(value)))];
+    const fullCatalogAccess = access.globalAdmin || access.user?.role === 'ayudante_admin';
+    const existingDetails = new Set(expenseRows.filter(row => row.providerIdentityOnly !== true).map(row => row.providerId));
     const providers = (providerIds.length ? await db.getAll(...providerIds.map(pid => db.doc(`providers/${pid}`))) : [])
-      .filter(row => row.exists).map(row => ({ ...fields(row.data(), providerFields),
+      .filter(row => row.exists).map(row => ({
+        ...fields(row.data(), fullCatalogAccess || existingDetails.has(row.id) ? providerFields : providerIdentityFields),
         ...(row.data().registration?.status === 'complete' ? { registration: { status: 'complete' } } : {}), id: row.id }));
     const projectedRows = (items, name) => access.admin ? items : items.map(row => scopedFiles(projectId, name, row));
     return {

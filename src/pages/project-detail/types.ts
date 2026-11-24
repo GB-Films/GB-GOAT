@@ -45,6 +45,7 @@ export interface BudgetItem {
   projectId: string;
   area: string;
   providerId: string;
+  providerIdentityOnly?: boolean;
   providerName: string;
   description: string;
   unit: string;
