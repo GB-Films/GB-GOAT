@@ -250,12 +250,10 @@ service cloud.firestore {
         || canEditGlobalProvider();
     }
 
-    function validProviderBindingOnUpdate() {
-      let nextId = request.resource.data.get('providerId', '');
-      let changed = nextId != resource.data.get('providerId', '');
-      let restricted = request.resource.data.get('providerIdentityOnly', false);
-      return (!changed && restricted == resource.data.get('providerIdentityOnly', false))
-        || (changed && (nextId == '' || restricted == true))
+    function validProviderBindingOnUpdate(changed) {
+      return !changed.hasAny(['providerId', 'providerIdentityOnly'])
+        || (changed.hasAny(['providerId']) && (request.resource.data.get('providerId', '') == ''
+          || request.resource.data.get('providerIdentityOnly', false) == true))
         || canEditGlobalProvider();
     }
 
@@ -410,27 +408,26 @@ service cloud.firestore {
     function canUpdateProjectAreaExpense(projectId, expenseId) {
       // Resolve the same role once to keep valid payment appends below the rule expression limit.
       let admin = isProjectAdmin(projectId);
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
       return preservesSharedSupplierRecords() && ((admin
-          && validProviderBindingOnUpdate()
-          && (preservesPaidExpenseIdentity()
+          && validProviderBindingOnUpdate(changed)
+          && (preservesPaidExpenseIdentity(changed)
             || validUnpaidAmountCorrection(projectId, 'areaExpenses', expenseId)
             || validPaidProviderCorrection(projectId, expenseId))
-          && preservesAdminFinancialHistory(projectId, 'areaExpenses', expenseId))
+          && preservesAdminFinancialHistory(projectId, 'areaExpenses', expenseId, changed))
           || canPublicAssignProviderFromInvite(projectId, 'areaExpenses', expenseId)
           || ((!admin && (
             canWriteAreaExpense(projectId, resource.data.area, resource.data.subcategory)
             && ((resource.data.area == request.resource.data.area
                 && resource.data.subcategory == request.resource.data.subcategory)
               || canWriteAreaExpense(projectId, request.resource.data.area, request.resource.data.subcategory))
-          ) && request.resource.data.get('providerId', '') == resource.data.get('providerId', '')
-            && request.resource.data.get('providerIdentityOnly', false) == resource.data.get('providerIdentityOnly', false)
-            && preservesExpensePaymentAudit() && preservesPaidExpenseIdentity()
+          ) && !changed.hasAny(['providerId', 'providerIdentityOnly'])
+            && preservesExpensePaymentAudit(changed) && preservesPaidExpenseIdentity(changed)
             && preservesExpenseReceipts() && preservesExistingExpenseInvoice()))
           || (request.auth == null && canPublicUploadInvoice(projectId, 'areaExpenses', expenseId)));
     }
 
-    function preservesExpensePaymentAudit() {
-      let changed = request.resource.data.diff(resource.data).affectedKeys();
+    function preservesExpensePaymentAudit(changed) {
       return !changed.hasAny(['createdBy', 'createdByEmail'])
         && (
           !changed.hasAny(['paymentHistory', 'paymentLocked', 'paymentAuthorIds'])
@@ -538,8 +535,7 @@ service cloud.firestore {
         ? getAfter(auditPath).data.get('action', '') : '';
     }
 
-    function preservesAdminFinancialHistory(projectId, collectionName, itemId) {
-      let changed = request.resource.data.diff(resource.data).affectedKeys();
+    function preservesAdminFinancialHistory(projectId, collectionName, itemId, changed) {
       let newHistory = request.resource.data.get('paymentHistory', []);
       let newCount = newHistory is list ? newHistory.size() : 0;
       // Reuse the audit action instead of resolving the same document three
@@ -623,9 +619,9 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    function preservesPaidExpenseIdentity() {
+    function preservesPaidExpenseIdentity(changed) {
       return !hasReceivedPayment()
-        || !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+        || !changed.hasAny([
           'area', 'subcategory', 'providerId', 'providerName', 'description',
           'unit', 'quantity', 'unitPrice', 'total', 'lastProviderCorrectionAuditId',
           'lastAmountCorrectionAuditId'
@@ -1661,6 +1657,19 @@ service cloud.firestore {
         allow delete: if isProjectAdmin(projectId) && teamTargetReady(email);
       }
 
+      function canUpdateBudgetItem(itemId) {
+        let changed = request.resource.data.diff(resource.data).affectedKeys();
+        return preservesSharedSupplierRecords() && ((isProjectAdmin(projectId)
+          && validProviderBindingOnUpdate(changed)
+          && (preservesPaidExpenseIdentity(changed) || validUnpaidAmountCorrection(projectId, 'budgetItems', itemId))
+          && (!changed.hasAny(['area'])
+            || (!(request.resource.data.area in getAfter(/databases/$(database)/documents/projects/$(projectId)).data.get('activeAreas', []))
+              && budgetMembershipAdvancesRevision(projectId)))
+          && preservesAdminFinancialHistory(projectId, 'budgetItems', itemId, changed))
+          || canPublicAssignProviderFromInvite(projectId, 'budgetItems', itemId)
+          || (request.auth == null && canPublicUploadInvoice(projectId, 'budgetItems', itemId)));
+      }
+
       match /budgetItems/{itemId} {
         allow list: if isProjectAdmin(projectId);
         allow get: if isProjectAdmin(projectId);
@@ -1673,15 +1682,7 @@ service cloud.firestore {
           && request.resource.data.get('paid', false) == false;
         allow delete: if hasNoSharedSupplierRecords() && (isProjectAdmin(projectId) && (!hasReceivedPayment() || canDeleteClearedExpense(projectId, 'budgetItems', itemId))
           && budgetMembershipAdvancesRevision(projectId));
-        allow update: if preservesSharedSupplierRecords() && ((isProjectAdmin(projectId)
-          && validProviderBindingOnUpdate()
-          && (preservesPaidExpenseIdentity() || validUnpaidAmountCorrection(projectId, 'budgetItems', itemId))
-          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['area'])
-            || (!(request.resource.data.area in getAfter(/databases/$(database)/documents/projects/$(projectId)).data.get('activeAreas', []))
-              && budgetMembershipAdvancesRevision(projectId)))
-          && preservesAdminFinancialHistory(projectId, 'budgetItems', itemId))
-          || canPublicAssignProviderFromInvite(projectId, 'budgetItems', itemId)
-          || (request.auth == null && canPublicUploadInvoice(projectId, 'budgetItems', itemId)));
+        allow update: if canUpdateBudgetItem(itemId);
       }
 
       match /areaExpenses/{expenseId} {
