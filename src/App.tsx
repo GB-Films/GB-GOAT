@@ -2,7 +2,7 @@ import { lazy, Suspense, type ReactNode } from 'react';
 import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Layout from './components/Layout';
-import { hasGlobalRole, PROVIDER_ACCESS_ROLES } from './lib/roles';
+import { providerDirectoryAccess } from './lib/roles';
 
 const ProviderPortal = lazy(() => import('./pages/ProviderPortal'));
 const ProviderPortalAdmin = lazy(() => import('./pages/ProviderPortalAdmin'));
@@ -40,7 +40,7 @@ function ProvidersRoute({ children }: { children: ReactNode }) {
   const { profile, loading } = useAuth();
 
   if (loading) return null;
-  if (!hasGlobalRole(profile?.role, PROVIDER_ACCESS_ROLES)) return <Navigate to="/proyectos" replace />;
+  if (!providerDirectoryAccess(profile?.role)) return <Navigate to="/proyectos" replace />;
 
   return <>{children}</>;
 }

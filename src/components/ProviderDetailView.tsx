@@ -40,6 +40,7 @@ export function ProviderDetailView({ detail, loading, onClose, financePanel, com
     { label: 'CUIT / CUIL', value: cuit, copyValue: cuitRaw || cuit },
     { label: 'CBU', value: cbu },
     { label: 'Alias', value: alias },
+    ...(provider.bankAccount_holder ? [{ label: 'Titular de la cuenta', value: provider.bankAccount_holder }] : []),
     { label: administrative ? 'Contacto interno' : 'Email', value: administrative ? administrativeContact || '-' : provider.email || provider.adminEmail || '-' },
     { label: 'Telefono', value: provider.phone || '-' },
     { label: 'Domicilio', value: provider.address || '-' },
@@ -59,7 +60,7 @@ export function ProviderDetailView({ detail, loading, onClose, financePanel, com
           className="inline-flex items-center gap-1.5 rounded border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] text-slate-600">
           <span className="text-slate-400">{item.label}</span><span className="font-mono">{item.value}</span><Copy className="h-3 w-3" />{copiedProviderField === item.label && <span>Copiado</span>}
         </button>)}</div>
-        {!loading && <dl className="flex items-center gap-5 text-xs"><div><dt className="inline text-slate-500">Trabajado </dt><dd className="inline font-bold">${totals.total.toLocaleString('es-AR')}</dd></div>
+        {!loading && !detail.projectReadError && <dl className="flex items-center gap-5 text-xs"><div><dt className="inline text-slate-500">Trabajado </dt><dd className="inline font-bold">${totals.total.toLocaleString('es-AR')}</dd></div>
           <div><dt className="inline text-slate-500">Saldo </dt><dd className={`inline font-bold ${totals.debt > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>${totals.debt.toLocaleString('es-AR')}</dd></div></dl>}
       </div>
       {loading ? <p role="status" className="py-8 text-center text-sm text-slate-500">Cargando comprobantes…</p> : <>
@@ -74,7 +75,7 @@ export function ProviderDetailView({ detail, loading, onClose, financePanel, com
                 </button>
                 {showFullData && (
                   <div className="grid grid-cols-1 gap-0 divide-y divide-slate-100 md:grid-cols-2 md:divide-x md:divide-y-0">
-                    {fullDataItems.filter(item => canSeeBankDetails || !['CBU', 'Alias'].includes(item.label)).map((item) => (
+                    {fullDataItems.filter(item => canSeeBankDetails || !['CBU', 'Alias', 'Titular de la cuenta'].includes(item.label)).map((item) => (
                       <div key={item.label} className="flex min-w-0 items-start justify-between gap-3 border-b border-slate-100 px-3 py-2 md:[&:nth-last-child(-n+2)]:border-b-0">
                         <div className="min-w-0">
                           <div className="text-[9px] font-black uppercase tracking-widest text-slate-300">{item.label}</div>
@@ -101,7 +102,8 @@ export function ProviderDetailView({ detail, loading, onClose, financePanel, com
         {administrationPanel}
         {authorizationPanel}
         {companyPanel && <details className="rounded-xl border border-slate-200 p-3"><summary className="cursor-pointer text-xs font-semibold text-slate-600">Representación y respaldos de la empresa · acceso restringido</summary><div className="mt-3">{companyPanel}</div></details>}
-        <div key={`projects:${provider.id}`}><ProviderProjectList projects={detail.projects || []} lines={detail.lines || []} initialProjectId={initialProjectId} onOpenSharedDocument={onOpenSharedDocument} /></div>
+        {detail.projectReadError ? <p role="status" className="text-sm text-slate-600">{detail.projectReadError}</p>
+          : <div key={`projects:${provider.id}`}><ProviderProjectList projects={detail.projects || []} lines={detail.lines || []} initialProjectId={initialProjectId} onOpenSharedDocument={onOpenSharedDocument} /></div>}
       </>}
     </div>
     {financePanel && <ProviderFinanceWindow open={showFinance} onClose={() => setShowFinance(false)}>{financePanel}</ProviderFinanceWindow>}

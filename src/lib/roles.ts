@@ -9,12 +9,17 @@ export const ROLE_LABELS: Record<GlobalRole, string> = {
 };
 
 export const PROVIDER_ACCESS_ROLES: readonly GlobalRole[] = ['admin', 'jefe_produccion', 'ayudante_admin'];
-export const PROVIDER_CREATE_ROLES: readonly GlobalRole[] = ['admin', 'jefe_produccion', 'ayudante_admin'];
+export const PROVIDER_CREATE_ROLES: readonly GlobalRole[] = ['admin', 'ayudante_admin'];
 export const PROVIDER_UPDATE_ROLES: readonly GlobalRole[] = ['admin', 'ayudante_admin'];
 
 export const hasGlobalRole = (role: unknown, allowedRoles: readonly GlobalRole[]) => (
   typeof role === 'string' && allowedRoles.includes(role as GlobalRole)
 );
+
+export function providerDirectoryAccess(role: unknown) {
+  if (role === 'jefe_produccion') return 'view';
+  return hasGlobalRole(role, PROVIDER_UPDATE_ROLES) ? 'manage' : null;
+}
 
 export const roleLabel = (role?: string | null) => (
   typeof role === 'string' && GLOBAL_ROLES.includes(role as GlobalRole)

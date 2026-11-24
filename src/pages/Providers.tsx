@@ -1,6 +1,6 @@
 import { ProviderDetailModal } from '../components/ProviderDetailModal';
 import { loadProviderDetail } from '../lib/providerDetail';
-import { readScopedProviders } from '../lib/projectScopedData';
+import { readProductionProviderDetail, readProductionProviderDirectory } from '../lib/projectScopedData';
 import { ProviderDataExportDialog } from '../components/ProviderDataExportDialog';
 import { ProviderSortSelect } from '../components/ProviderSortSelect';
 import { providerRegistrationLabel, sortProviders, type ProviderSortOrder } from '../lib/providerOrdering';
@@ -38,7 +38,7 @@ import {
   providerSearchText,
   inferLegacyIdentifiers,
 } from '../lib/providerConstants';
-import { hasGlobalRole, PROVIDER_ACCESS_ROLES, PROVIDER_CREATE_ROLES, PROVIDER_UPDATE_ROLES } from '../lib/roles';
+import { hasGlobalRole, providerDirectoryAccess, PROVIDER_CREATE_ROLES } from '../lib/roles';
 import { normalizeSearchText } from '../lib/identity';
 
 const inputClass = 'w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded text-sm focus:outline-none focus:border-black transition-all';
@@ -112,11 +112,13 @@ const buildProviderIdentifiers = (provider: any) => {
 export default function Providers() {
   const [providers, setProviders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [directoryError, setDirectoryError] = useState('');
   const [showDataExport, setShowDataExport] = useState(false);
   const [showNewModal, setShowNewModal] = useState(false);
   const [editingProvider, setEditingProvider] = useState<any | null>(null);
   const [providerDetail, setProviderDetail] = useState<any | null>(null);
   const [loadingProviderDetail, setLoadingProviderDetail] = useState(false);
+  const detailRequest = useRef(0);
   const [showProviderInviteModal, setShowProviderInviteModal] = useState(false);
   const [providerInviteModalView, setProviderInviteModalView] = useState<'generate' | 'manage'>('generate');
   const [generatedInviteLink, setGeneratedInviteLink] = useState('');
@@ -134,8 +136,10 @@ export default function Providers() {
   const [searchTerm, setSearchTerm] = useState('');
   const [providerOrder, setProviderOrder] = useState<ProviderSortOrder>('updated-desc');
   const canDeleteProviders = profile?.role === 'admin';
-  const canEditProviders = hasGlobalRole(profile?.role, PROVIDER_UPDATE_ROLES);
+  const directoryAccess = providerDirectoryAccess(profile?.role);
+  const canEditProviders = directoryAccess === 'manage';
   const canCreateProviders = hasGlobalRole(profile?.role, PROVIDER_CREATE_ROLES);
+  const isProductionDirectory = directoryAccess === 'view';
 
   const filteredProviders = useMemo(() => {
     const term = normalizeSearchText(searchTerm);
@@ -192,24 +196,31 @@ export default function Providers() {
 
   useEffect(() => {
     if (!profile) return;
+    let active = true;
+    setProviders([]);
+    setLoading(true);
+    setDirectoryError('');
     const fetchProviders = async () => {
       try {
-        const items = profile.role === 'admin' || profile.role === 'ayudante_admin'
-          ? (await getDocs(query(collection(db, 'providers'), orderBy('updatedAt', 'desc')))).docs.map(item => ({ id: item.id, ...item.data() }))
-          : await readScopedProviders();
+        const items = isProductionDirectory ? await readProductionProviderDirectory()
+          : (await getDocs(query(collection(db, 'providers'), orderBy('updatedAt', 'desc')))).docs.map(item => ({ id: item.id, ...item.data() }));
+        if (!active) return;
         setProviders(items);
         if (canEditProviders) void syncProviderIdentifiers(items);
       } catch (error: any) {
+        if (!active) return;
+        setDirectoryError(error instanceof Error ? error.message : 'No se pudo cargar el padrón de proveedores.');
         console.error('Error fetching providers:', error);
         if (error.message?.includes('insufficient permissions')) {
           handleFirestoreError(error, 'list', 'providers');
         }
       } finally {
-        setLoading(false);
+        if (active) setLoading(false);
       }
     };
-    fetchProviders();
-  }, [profile, canEditProviders]);
+    void fetchProviders();
+    return () => { active = false; detailRequest.current++; };
+  }, [profile, canEditProviders, isProductionDirectory]);
 
   useEffect(() => {
     if (!profile || !canCreateProviders) return;
@@ -607,17 +618,27 @@ export default function Providers() {
 
   const openProviderDetail = async (provider: any) => {
     if (!profile?.uid || !profile?.email) return;
+    const request = ++detailRequest.current;
     setLoadingProviderDetail(true);
     setProviderDetail({ provider, loading: true, projects: [], totals: null, lines: [] });
 
+    let completeProvider: any;
     try {
-      setProviderDetail(await loadProviderDetail(provider, profile));
+      completeProvider = isProductionDirectory ? await readProductionProviderDetail(provider.id) : provider;
+      if (request !== detailRequest.current) return;
+      const detail = await loadProviderDetail(completeProvider, profile);
+      if (request === detailRequest.current) setProviderDetail(detail);
     } catch (error) {
+      if (request !== detailRequest.current) return;
       console.error('Error loading provider detail:', error);
+      if (isProductionDirectory && completeProvider) {
+        setProviderDetail({ provider: completeProvider, projects: [], lines: [], projectReadError: 'No pudimos cargar los comprobantes de tus proyectos.' });
+        return;
+      }
       alert('No se pudo cargar el detalle del proveedor.');
       setProviderDetail(null);
     } finally {
-      setLoadingProviderDetail(false);
+      if (request === detailRequest.current) setLoadingProviderDetail(false);
     }
   };
 
@@ -627,7 +648,7 @@ export default function Providers() {
         eyebrow="GB GOAT / Recursos"
         title="Base de contactos"
         actions={<>
-          {hasGlobalRole(profile?.role, PROVIDER_ACCESS_ROLES) && <button type="button" disabled={loading} onClick={() => setShowDataExport(true)} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-40"><Download className="h-4 w-4"/>Exportar datos</button>}
+          {canEditProviders && <button type="button" disabled={loading} onClick={() => setShowDataExport(true)} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-40"><Download className="h-4 w-4"/>Exportar datos</button>}
           {canCreateProviders && (
             <>
               <button
@@ -648,7 +669,7 @@ export default function Providers() {
         </>}
       />
 
-      {showDataExport && hasGlobalRole(profile?.role, PROVIDER_ACCESS_ROLES) && <ProviderDataExportDialog providers={providers} initialOrder={providerOrder === 'updated-desc' ? 'name' : providerOrder} onClose={() => setShowDataExport(false)} onExport={async (selected, format, order) => { const { downloadProviderData } = await import('../lib/providerDataWorkbook'); await downloadProviderData(selected, format, order); }} />}
+      {showDataExport && canEditProviders && <ProviderDataExportDialog providers={providers} initialOrder={providerOrder === 'updated-desc' ? 'name' : providerOrder} onClose={() => setShowDataExport(false)} onExport={async (selected, format, order) => { const { downloadProviderData } = await import('../lib/providerDataWorkbook'); await downloadProviderData(selected, format, order); }} />}
 
       {false && generatedInviteLink && (
         <div className="bg-white rounded-xl border border-emerald-200 p-5 shadow-sm flex flex-col lg:flex-row gap-4 lg:items-center justify-between">
@@ -720,6 +741,8 @@ export default function Providers() {
         <div className="space-y-3">
           {[1, 2, 3].map((i) => <div key={i} className="h-16 bg-white border border-slate-200 rounded-lg animate-pulse" />)}
         </div>
+      ) : directoryError ? (
+        <p role="alert" className="rounded-lg bg-rose-50 p-4 text-sm text-rose-800">{directoryError}</p>
       ) : filteredProviders.length === 0 ? (
         <div className="text-center py-20 bg-white rounded-xl border border-dashed border-slate-200">
           <Truck className="w-12 h-12 text-slate-100 mx-auto mb-4" />
@@ -997,7 +1020,7 @@ export default function Providers() {
             detail={providerDetail}
             loading={loadingProviderDetail}
             onChanged={() => void openProviderDetail(providerDetail.provider)}
-            onClose={() => setProviderDetail(null)}
+            onClose={() => { detailRequest.current++; setProviderDetail(null); }}
           />
         )}
       </AnimatePresence>
