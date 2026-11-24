@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { collection, getDocs } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { downloadPortalFile, portalAdminRequest } from "../lib/providerPortal";
+import { ProviderDownloadRequests } from '../components/ProviderDownloadRequests';
 export default function ProviderPortalAdmin() {
   const [checks, setChecks] = useState<Record<string, Record<string, boolean>>>({});
   const [approvedScope, setApprovedScope] = useState<Record<string, string>>({});
@@ -59,6 +60,10 @@ export default function ProviderPortalAdmin() {
           {error}
         </p>
       )}
+      <ProviderDownloadRequests busy={busy} run={run} providerName={id => {
+        const provider = providers.find(row => row.id === id);
+        return provider?.businessName || [provider?.name, provider?.lastName].filter(Boolean).join(' ');
+      }} />
       <section className="rounded-2xl border bg-white p-4 space-y-3">
         <h2 className="font-semibold">
           Preparar acceso de proveedores existentes

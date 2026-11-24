@@ -658,10 +658,11 @@ function createProviderPortalHandler({
       return { status: "revoked" };
     }
     if (input.action === "download") {
-      let file, advanceContext = {};
+      let file, source, advanceContext = {};
       if (input.recordId) {
+        const recordId = id(input.recordId);
         const r = (
-          await db.doc(`providerFinancialRecords/${id(input.recordId)}`).get()
+          await db.doc(`providerFinancialRecords/${recordId}`).get()
         ).data();
         if (!r || r.providerId !== providerId)
           throw new HttpsError("permission-denied", "Comprobante ajeno.");
@@ -680,6 +681,7 @@ function createProviderPortalHandler({
             );
         }
         file = r.file;
+        source = { recordId, kind: r.kind };
       } else {
         const parts = text(input.workKey, 500).split("/");
         if (
@@ -707,6 +709,7 @@ function createProviderPortalHandler({
         if (input.kind === "other") file = list(e.otherReceipts)[index];
         if (input.kind === "payment")
           file = list(e.paymentHistory)[index]?.receipt;
+        if (!advance) source = { workKey: parts.join('/'), kind: input.kind, index };
       }
       if (!file) fail("No hay original disponible.");
       return readFile(file, {
@@ -714,6 +717,7 @@ function createProviderPortalHandler({
         workKey: input.workKey || "",
         kind: input.kind || "shared",
         ...advanceContext,
+        ...(source && input.requestIfPending === true ? { downloadRequest: { actor, source, timestamp } } : {}),
       });
     }
     if (input.action === "removeInvoice") {

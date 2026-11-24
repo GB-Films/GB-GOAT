@@ -13,6 +13,7 @@ const { COMPANY_EVIDENCE, LEGACY_COMPANY_EVIDENCE } = require('./providerEvidenc
 const { thirdPartyIsCurrent } = require('./providerThirdPartyDeclaration');
 const { createSignedThirdPartyService } = require('./signedThirdPartyDeclaration');
 const { createProviderAdministrativeRecords, assertProviderPortalAllowed, isAdministrativeRecord } = require('./providerAdministrativeRecords');
+const { portalFileGrantRef } = require('./providerPortalFiles');
 const {
   expenseInvoices,
   dateKey,
@@ -446,35 +447,56 @@ function createProviderPortalAdminHandler({
       }
       return { files };
     }
-    if (input.action === "approveFile" || input.action === "reviewFile") {
+    if (input.action === 'pendingFileDownloads') {
+      const pending = await db.collection('providerPortalFileGrants').where('downloadRequest.active', '==', true).limit(100).get();
+      return { files: pending.docs.map(row => ({
+        requestId: row.id, providerId: row.data().providerId, fileName: row.data().downloadRequest.fileName,
+        kind: row.data().downloadRequest.source.kind,
+      })) };
+    }
+    if (input.action === 'closeFileDownload' || input.action === 'approveFile' || input.action === 'reviewFile') {
       // A human confirms this original contains only information publishable to this provider.
-      const providerId = id(input.providerId);
+      const requestRef = input.requestId && db.doc(`providerPortalFileGrants/${id(input.requestId)}`);
+      const pending = requestRef && (await requestRef.get()).data();
+      if (requestRef && (!pending?.downloadRequest?.active || !pending.downloadRequest.source)) fail('Esta solicitud ya se cerró.');
+      if (input.action === 'closeFileDownload') {
+        if (!requestRef) fail('Elegí una solicitud.');
+        await db.runTransaction(async tx => {
+          const current = (await tx.get(requestRef)).data();
+          if (current?.downloadRequest?.sha256 !== pending.downloadRequest.sha256) fail('El archivo cambió. Actualizá las solicitudes.');
+          if (current.downloadRequest.active !== true) return;
+          tx.update(requestRef, { 'downloadRequest.active': false, 'downloadRequest.closedBy': actor, 'downloadRequest.closedAt': timestamp() });
+        });
+        return { closed: true };
+      }
+      const source = pending ? pending.downloadRequest.source : input;
+      const providerId = id(pending ? pending.providerId : input.providerId);
       let file;
-      if (input.recordId) {
+      if (source.recordId) {
         const r = (
-          await db.doc(`providerFinancialRecords/${id(input.recordId)}`).get()
+          await db.doc(`providerFinancialRecords/${id(source.recordId)}`).get()
         ).data();
         if (r?.providerId !== providerId) fail("Comprobante ajeno.");
         file = r.file;
       } else {
-        const [projectId, c, itemId] = text(input.workKey, 500).split("/");
+        const [projectId, c, itemId] = text(source.workKey, 500).split("/");
         if (!["areaExpenses", "budgetItems"].includes(c))
           fail("Trabajo inválido.");
         const e = (
           await db.doc(`projects/${id(projectId)}/${c}/${id(itemId)}`).get()
         ).data();
         if (e?.providerId !== providerId) fail("Trabajo ajeno.");
-        const index = Number(input.index);
+        const index = Number(source.index);
         if (!Number.isInteger(index) || index < 0) fail("Documento inválido.");
-        file =
-          input.kind === "payment"
-            ? list(e.paymentHistory)[index]?.receipt
-            : input.kind === "other"
-              ? list(e.otherReceipts)[index]
-              : expenseInvoices(e)[index];
+        const files = source.kind === 'payment' ? list(e.paymentHistory).map(payment => payment.receipt)
+          : source.kind === 'other' ? list(e.otherReceipts) : expenseInvoices(e);
+        file = pending ? files.find(candidate => candidate && hash(candidate) === pending.fingerprint) : files[index];
       }
       if (!file) fail("Sin original.");
+      const grantRef = portalFileGrantRef(db, providerId, file);
+      if (requestRef && requestRef.id !== grantRef.id) fail('Este archivo ya cambió.');
       const original = await sign.readLocalFile(file);
+      if (pending && pending.downloadRequest.sha256 !== original.sha256) fail('El archivo cambió desde la solicitud.');
       if (input.action === "reviewFile") {
         const { metadata: _metadata, path: _path, ...safe } = original;
         return safe;
@@ -482,9 +504,12 @@ function createProviderPortalAdminHandler({
       if (input.sha256 !== original.sha256)
         fail("Primero descargá y revisá esta versión del original.");
       const fingerprint = hash(file);
-      await db
-        .doc(`providerPortalFileGrants/${hash({ providerId, fingerprint })}`)
-        .set({
+      await db.runTransaction(async tx => {
+        const current = (await tx.get(grantRef)).data();
+        if (requestRef && current?.downloadRequest?.active !== true) fail('Esta solicitud ya se cerró.');
+        if (current?.downloadRequest?.active && current.downloadRequest.sha256 !== original.sha256)
+          fail('Hay una solicitud para una versión más reciente. Volvé a revisar el archivo.');
+        tx.set(grantRef, {
           providerId,
           fingerprint,
           sha256: original.sha256,
@@ -492,6 +517,7 @@ function createProviderPortalAdminHandler({
           approvedAt: timestamp(),
           safeForProvider: true,
         });
+      });
       return { approved: true };
     }
     fail("Acción administrativa desconocida.");
