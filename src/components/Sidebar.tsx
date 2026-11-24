@@ -14,7 +14,7 @@ import { readProjectSummaries } from '../lib/projectScopedData';
 import { cn } from '../lib/utils';
 import { auth, db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
-import { hasGlobalRole, PROVIDER_ACCESS_ROLES } from '../lib/roles';
+import { providerDirectoryAccess } from '../lib/roles';
 import { normalizeEmail } from '../lib/identity';
 import { AccountMenu } from './AccountMenu';
 
@@ -48,7 +48,7 @@ export default function Sidebar() {
   const filteredMenuItems = menuItems.filter(item => (profile?.role !== 'portal' || item.path === '/mi-proveedor') && (
     profile?.role === 'admin'
     || !item.adminOnly
-    || (item.productionLead && hasGlobalRole(profile?.role, PROVIDER_ACCESS_ROLES))
+    || (item.productionLead && providerDirectoryAccess(profile?.role))
   ));
 
   useEffect(() => {

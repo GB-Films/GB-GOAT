@@ -65,6 +65,22 @@ export async function readScopedProviders() {
   return result.providers;
 }
 
+export async function readProductionProviderDirectory() {
+  const providers: any[] = [];
+  let cursor = '';
+  do {
+    const page = await providerFinanceRequest({ action: 'productionProviderDirectory', cursor }) as { providers: any[]; nextCursor: string };
+    providers.push(...page.providers);
+    cursor = page.nextCursor;
+  } while (cursor);
+  return providers;
+}
+
+export async function readProductionProviderDetail(providerId: string) {
+  const response = await providerFinanceRequest({ action: 'productionProviderDetail', providerId }) as { provider: any };
+  return response.provider;
+}
+
 export async function readScopedCash(projectId: string) {
   const result = await providerFinanceRequest({ action: 'personalCashMovements', projectId }) as { movements: CashMovement[] };
   return result.movements;

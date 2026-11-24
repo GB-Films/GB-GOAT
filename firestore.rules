@@ -223,20 +223,10 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/users/$(request.resource.data.uid)).data.email == email;
     }
 
-    function isAppProductionLead() {
-      return isSignedIn()
-        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
-        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'jefe_produccion';
-    }
-
     function isAppAdminAssistant() {
       return isSignedIn()
         && exists(/databases/$(database)/documents/users/$(request.auth.uid))
         && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'ayudante_admin';
-    }
-
-    function canCreateGlobalProvider() {
-      return isAppAdmin() || isAppProductionLead() || isAppAdminAssistant();
     }
 
     function canEditGlobalProvider() {
@@ -1795,7 +1785,7 @@ service cloud.firestore {
       // Public intake now runs in providerPortal.registerProvider. The server
       // resolves legacy/provisional identities before committing atomically.
       // Old clients must not bypass that resolution by creating a second ficha.
-      allow create: if canCreateGlobalProvider() && !request.resource.data.keys().hasAny(['personalGoogleAccount']);
+      allow create: if canEditGlobalProvider() && !request.resource.data.keys().hasAny(['personalGoogleAccount']);
       allow update: if canEditGlobalProvider()
         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['personalGoogleAccount'])
         && (!resource.data.keys().hasAny(['personalGoogleAccount']) || request.resource.data.email == resource.data.email);
@@ -1805,8 +1795,8 @@ service cloud.firestore {
 
     match /providerInvites/{token} {
       allow get: if true;
-      allow list: if canCreateGlobalProvider();
-      allow create: if (canCreateGlobalProvider() || canCreateLinkedProviderInvite())
+      allow list: if canEditGlobalProvider();
+      allow create: if (canEditGlobalProvider() || canCreateLinkedProviderInvite())
         && request.resource.data.status == 'pending'
         && request.resource.data.used == false
         && validProviderInviteExpiration();
@@ -1814,7 +1804,7 @@ service cloud.firestore {
         || (
           request.resource.data.status == 'cancelled'
           &&
-          (canCreateGlobalProvider() || canCancelLinkedProviderInvite())
+          (canEditGlobalProvider() || canCancelLinkedProviderInvite())
           && resource.data.used == false
           && resource.data.status == 'pending'
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'cancelledAt', 'cancelledBy', 'cancelledByEmail', 'updatedAt'])
@@ -1850,7 +1840,7 @@ service cloud.firestore {
     match /providerIdentifiers/{identifierId} {
       allow get: if true;
       allow list: if isAppAdmin();
-      allow create: if canCreateGlobalProvider()
+      allow create: if canEditGlobalProvider()
         || (
           request.resource.data.inviteToken is string
           && inviteIsPending(request.resource.data.inviteToken)
@@ -1866,7 +1856,7 @@ service cloud.firestore {
 
     match /invoiceUploadInvites/{token} {
       allow get: if true;
-      allow list: if canCreateGlobalProvider();
+      allow list: if canEditGlobalProvider();
       allow create: if isSignedIn()
         && request.resource.data.status == 'pending'
         && request.resource.data.used == false

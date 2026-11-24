@@ -29,6 +29,7 @@ const cases = [
   ["areaExpenseAccessRules", "demo-goat-area-access", "firestore"],
   ["projectScopeRules", "demo-goat-scope-rules", "firestore,storage"],
   ["scopedProviderPicker", "demo-goat-scoped-provider-picker", "firestore"],
+  ["productionProviderDirectory", "demo-goat-production-directory", "firestore"],
   ["projectScopedFiles", "demo-goat-scoped-files", "firestore"],
   ["financialRules", "demo-gb-goat-financial-rules", "firestore"],
   ["assistantPaymentDates", "demo-goat-assistant-dates", "firestore"],
