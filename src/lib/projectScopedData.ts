@@ -5,10 +5,35 @@ export function projectAttachmentLink(projectId: string, collectionName: string,
   return 'goat-file:' + encodeURIComponent(JSON.stringify({ projectId, collectionName, itemId, kind, fileId }));
 }
 
-export async function editScopedAreaExpense(projectId: string, itemId: string, updatedAt: unknown, updates: Record<string, unknown>) {
+function expenseRevision(updatedAt: unknown) {
   const version = updatedAt as { seconds?: number; nanoseconds?: number } | null | undefined;
-  const expectedUpdatedAt = Number.isInteger(version?.seconds) ? [version?.seconds, version?.nanoseconds || 0] : null;
-  return (await providerFinanceRequest({ action: 'editScopedAreaExpense', projectId, itemId, expectedUpdatedAt, updates }) as { expense: AreaExpense }).expense;
+  return Number.isInteger(version?.seconds) ? [version?.seconds, version?.nanoseconds || 0] : null;
+}
+
+export async function editScopedAreaExpense(projectId: string, itemId: string, updatedAt: unknown, updates: Record<string, unknown>) {
+  return (await providerFinanceRequest({
+    action: 'editScopedAreaExpense', projectId, itemId, expectedUpdatedAt: expenseRevision(updatedAt), updates,
+  }) as { expense: AreaExpense }).expense;
+}
+
+export type ScopedProviderOption = { id: string; name: string };
+
+export async function searchScopedExpenseProviders(projectId: string, itemId: string, updatedAt: unknown, query: string) {
+  const response = await providerFinanceRequest({
+    action: 'searchScopedExpenseProviders', projectId, itemId, expectedUpdatedAt: expenseRevision(updatedAt), query,
+  }) as { providers: ScopedProviderOption[] };
+  return response.providers;
+}
+
+export function assignScopedExpenseProvider(projectId: string, itemId: string, updatedAt: unknown, providerId: string) {
+  return providerFinanceRequest({
+    action: 'assignScopedExpenseProvider', projectId, itemId, expectedUpdatedAt: expenseRevision(updatedAt), providerId,
+  }) as Promise<{ expense: AreaExpense; provider: ScopedProviderOption }>;
+}
+
+export function restrictedProviderBinding(providerId: unknown, fullCatalogAccess: boolean, original?: { providerId?: unknown; providerIdentityOnly?: boolean }) {
+  return providerId && providerId !== original?.providerId && (!fullCatalogAccess || original?.providerIdentityOnly)
+    ? { providerIdentityOnly: true } : {};
 }
 
 export type ScopedProjectSnapshot = {

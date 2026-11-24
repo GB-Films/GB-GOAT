@@ -6,6 +6,7 @@ import { expenseRegistrationState, type RegistrationEvidence } from '../../lib/p
 import { ProviderWorkAuthorization } from '../../components/ProviderWorkAuthorization';
 import { InvoiceContext } from '../../components/SharedExpenseInvoices';
 import { hasMultiRowLinkedExpenseFile } from '../../lib/sharedExpenseInvoices';
+import { searchScopedExpenseProviders, type ScopedProviderOption } from '../../lib/projectScopedData';
 import { useParams } from 'react-router-dom';
 import {
   formatIdentifier,
@@ -31,22 +32,64 @@ interface BudgetRowCellProps {
   canCopyProviderInfo?: boolean;
   onCreateProviderInvite?: (item: any) => Promise<boolean | void> | boolean | void;
   onDetachProviderInvite?: (item: any) => Promise<boolean>;
+  onSelectScopedProvider?: (item: any, providerId: string) => Promise<void>;
   creatingProviderInvite?: boolean;
   registrationEvidence?: RegistrationEvidence;
 }
 
-export function BudgetRowCell({ item, collectionName, providers, onUpdate, type, onManagePayment, disabledPayment, disabled, canCopyProviderInfo, onCreateProviderInvite, onDetachProviderInvite, creatingProviderInvite, registrationEvidence }: BudgetRowCellProps) {
+export function BudgetRowCell({ item, collectionName, providers, onUpdate, type, onManagePayment, disabledPayment, disabled, canCopyProviderInfo, onCreateProviderInvite, onDetachProviderInvite, onSelectScopedProvider, creatingProviderInvite, registrationEvidence }: BudgetRowCellProps) {
   const { id: projectId } = useParams();
   const { records: linkedRecords } = useContext(InvoiceContext);
   const [isEditingProvider, setIsEditingProvider] = useState(false);
   const [showProviderInfo, setShowProviderInfo] = useState(false);
   const [showProviderDetail, setShowProviderDetail] = useState(false);
   const [providerSearch, setProviderSearch] = useState('');
+  const scopedPicker = Boolean(onSelectScopedProvider);
+  const [searchResult, setSearchResult] = useState<{ key: string; options?: ScopedProviderOption[]; error?: string }>();
+  const [savingProvider, setSavingProvider] = useState(false);
+  const [providerSaveError, setProviderSaveError] = useState('');
+  const query = providerSearch.trim();
+  const canRunSearch = query.replace(/[^\p{L}\p{N}]/gu, '').length >= 3;
+  const seconds = item.updatedAt?.seconds;
+  const nanoseconds = item.updatedAt?.nanoseconds;
+  const searchKey = JSON.stringify([projectId, item.id, seconds, nanoseconds, query]);
+  const currentResult = searchResult?.key === searchKey ? searchResult : undefined;
   const [detachingProviderInvite, setDetachingProviderInvite] = useState(false);
   const [copiedProviderField, setCopiedProviderField] = useState('');
   const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0, width: 256 });
   const providerCellRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!scopedPicker || !isEditingProvider || disabled || !projectId || !canRunSearch) return;
+    let current = true;
+    const timer = window.setTimeout(() => {
+      searchScopedExpenseProviders(projectId, item.id, { seconds, nanoseconds }, query).then(
+        options => { if (current) setSearchResult({ key: searchKey, options }); },
+        error => { if (current) setSearchResult({ key: searchKey, error: error instanceof Error ? error.message : 'No pudimos buscar. Volvé a intentar.' }); },
+      );
+    }, 250);
+    return () => { current = false; window.clearTimeout(timer); };
+  }, [scopedPicker, isEditingProvider, disabled, projectId, item.id, seconds, nanoseconds, canRunSearch, query, searchKey]);
+
+  const selectProvider = async (option: ScopedProviderOption) => {
+    if (onSelectScopedProvider) {
+      setSavingProvider(true);
+      setProviderSaveError('');
+      try {
+        await onSelectScopedProvider(item, option.id);
+      } catch (error) {
+        setProviderSaveError(error instanceof Error ? error.message : 'No pudimos asignar el proveedor. Volvé a intentar.');
+        return;
+      } finally {
+        setSavingProvider(false);
+      }
+    } else {
+      onUpdate(item.id, { providerId: option.id, providerName: option.name, providerInviteLink: null });
+    }
+    setIsEditingProvider(false);
+    setProviderSearch('');
+  };
   
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -284,14 +327,17 @@ export function BudgetRowCell({ item, collectionName, providers, onUpdate, type,
               <div className="relative mb-3">
                 <input 
                   autoFocus
-                  placeholder="Buscar profesional..."
+                  aria-label="Buscar proveedor"
+                  placeholder={scopedPicker ? 'Buscar por nombre o razón social' : 'Buscar profesional...'}
+                  maxLength={scopedPicker ? 100 : undefined}
+                  disabled={savingProvider}
                   value={providerSearch}
-                  onChange={(e) => setProviderSearch(e.target.value)}
+                  onChange={(e) => { setProviderSearch(e.target.value); setProviderSaveError(''); setSearchResult(undefined); }}
                   className="w-full px-3 py-2 bg-slate-50 rounded border border-slate-100 outline-none focus:border-black text-[10px] font-medium"
                 />
               </div>
               <div className="max-h-52 overflow-y-auto custom-scrollbar">
-                {(item.providerId || item.providerName) && <button
+                {(item.providerId || item.providerName) && <button disabled={savingProvider}
                   onClick={() => {
                     onUpdate(item.id, { providerId: '', providerName: '' });
                     setIsEditingProvider(false);
@@ -316,7 +362,7 @@ export function BudgetRowCell({ item, collectionName, providers, onUpdate, type,
                 {onCreateProviderInvite && (
                   <button
                     type="button"
-                    disabled={creatingProviderInvite}
+                    disabled={creatingProviderInvite || savingProvider}
                     onClick={async () => {
                       const inviteCreated = await onCreateProviderInvite(item);
                       if (inviteCreated !== false) {
@@ -333,17 +379,22 @@ export function BudgetRowCell({ item, collectionName, providers, onUpdate, type,
                     {creatingProviderInvite ? 'Generando link...' : pendingProviderInvite ? 'Copiar link pendiente' : 'Generar link alta proveedor'}
                   </button>
                 )}
-                {providers?.filter(p => providerMatchesSearch(p, providerSearch)).slice(0, 40).map(p => (
+                {scopedPicker && <p role="status" className="px-3 py-1 text-[10px] text-slate-600">
+                  {!canRunSearch ? 'Escribí al menos 3 letras del nombre.'
+                    : !currentResult ? 'Buscando proveedores…' : currentResult.error
+                      || (currentResult.options?.length === 0 ? 'No encontramos proveedores con ese nombre.' : '')}
+                </p>}
+                {providerSaveError && <p role="alert" className="px-3 py-1 text-[10px] text-rose-700">{providerSaveError}</p>}
+                {(scopedPicker ? currentResult?.options
+                  : providers?.filter(p => providerMatchesSearch(p, providerSearch)).slice(0, 40).map(p => ({ id: p.id, name: providerDisplayName(p) })))?.map(p => (
                   <button
+                    type="button"
                     key={p.id}
-                    onClick={() => {
-                      onUpdate(item.id, { providerId: p.id, providerName: providerDisplayName(p), providerInviteLink: null });
-                      setIsEditingProvider(false);
-                      setProviderSearch('');
-                    }}
-                    className="w-full text-left px-3 py-2 hover:bg-slate-50 text-[10px] border-t border-slate-50 first:border-0 transition-colors font-medium"
+                    disabled={savingProvider}
+                    onClick={() => void selectProvider(p)}
+                    className="w-full text-left px-3 py-2 hover:bg-slate-50 text-[10px] border-t border-slate-50 first:border-0 transition-colors font-medium disabled:opacity-60"
                   >
-                    {providerDisplayName(p)}
+                    {p.name}
                   </button>
                 ))}
               </div>

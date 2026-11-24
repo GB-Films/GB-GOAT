@@ -120,7 +120,8 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, buc
       if (request.auth.token.email_verified !== true) throw new HttpsError('permission-denied', 'Verificá tu correo.');
       return require('./areaStructureChange').createAreaStructureChange({ db, timestamp })(actor, input);
     }
-    if (['editScopedAreaExpense', 'attachScopedAreaExpenseFile', 'registerScopedAreaExpensePayment', 'scheduleScopedAreaExpenseDates'].includes(input.action)) {
+    if (['editScopedAreaExpense', 'attachScopedAreaExpenseFile', 'registerScopedAreaExpensePayment', 'scheduleScopedAreaExpenseDates',
+      'searchScopedExpenseProviders', 'assignScopedExpenseProvider'].includes(input.action)) {
       if (request.auth.token.email_verified !== true) deny();
       return editAreaExpense(actor, input);
     }

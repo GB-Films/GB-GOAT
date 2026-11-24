@@ -6,6 +6,7 @@ const { projectFinanceAccess } = require('./projectFinanceAccess');
 const { canEditAreaExpense, deny } = require('./projectReadScope');
 const { paymentDatesVersion, scopedFiles, wire } = require('./projectScopedReads');
 const { fail, hash, id, list } = require('./providerPortalModel');
+const { checkPickerExpense, checkUnlinkedExpense, createScopedProviderPicker, providerName } = require('./scopedProviderPicker');
 
 const amountFields = ['unitPrice', 'quantity', 'total'];
 const editableFields = ['description', 'unit', 'providerName', 'providerId', ...amountFields];
@@ -66,10 +67,11 @@ async function uploadedAttachment(inspectUpload, scope, expense, actor, input, k
 }
 
 function createScopedAreaExpenseEdits({ db, inspectUpload }) {
+  const searchProviders = createScopedProviderPicker(db);
   return async (actor, input) => {
     const projectId = id(input.projectId), collectionName = 'areaExpenses';
     const root = db.doc(`projects/${projectId}`);
-    return db.runTransaction(async tx => {
+    const result = await db.runTransaction(async tx => {
       const access = await projectFinanceAccess({ db, transaction: tx, actor, projectId });
       if (input.action === 'scheduleScopedAreaExpenseDates') {
         const targets = input.targets;
@@ -97,9 +99,28 @@ function createScopedAreaExpenseEdits({ db, inspectUpload }) {
       if (!canEditAreaExpense(access, expense)) deny();
       const view = row => wire(scopedFiles(projectId, collectionName, { ...row, id: itemId }));
       const updatedAt = Timestamp.fromMillis(Math.max(Date.now(), (expense.updatedAt?.toMillis?.() ?? 0) + 1));
+      if (input.action === 'searchScopedExpenseProviders' || input.action === 'assignScopedExpenseProvider') {
+        await checkPickerExpense({ tx, db, access, expense, scope, expectedUpdatedAt: input.expectedUpdatedAt });
+        if (input.action === 'searchScopedExpenseProviders') return;
+
+        const providerId = id(input.providerId);
+        const provider = (await tx.get(db.doc(`providers/${providerId}`))).data();
+        const name = provider && providerName(provider);
+        if (!name) fail('El proveedor ya no está disponible. Volvé a buscarlo.');
+        if (providerId === expense.providerId && name === expense.providerName) return { expense: view(expense), provider: { id: providerId, name } };
+        const updates = { providerId, providerName: name, updatedAt };
+        if (providerId !== expense.providerId) updates.providerIdentityOnly = true;
+        tx.update(ref, updates);
+        return { expense: view({ ...expense, ...updates }), provider: { id: providerId, name } };
+      }
       if (input.action === 'editScopedAreaExpense') {
         const updates = prepareChanges(expense, input);
+        if (!access.admin && access.collaborator?.role === 'jefe_produccion' && Object.hasOwn(updates, 'providerId')
+          && (updates.providerId !== (expense.providerId || '') || expense.providerInviteLink && input.updates.providerInviteLink === null))
+          await checkUnlinkedExpense({ tx, db, expense, scope });
         if (updates.providerId && !(await tx.get(db.doc(`providers/${updates.providerId}`))).exists) fail('El proveedor ya no está disponible.');
+        if (updates.providerId && updates.providerId !== expense.providerId && !access.globalAdmin && access.user?.role !== 'ayudante_admin')
+          updates.providerIdentityOnly = true;
         if (updates.providerId && expense.providerInviteLink?.status === 'pending' && validId(expense.providerInviteLink.token)) {
           const inviteRef = db.doc(`providerInvites/${expense.providerInviteLink.token}`);
           const invite = (await tx.get(inviteRef)).data();
@@ -182,6 +203,7 @@ function createScopedAreaExpenseEdits({ db, inspectUpload }) {
       tx.update(ref, updates);
       return { expense: view({ ...expense, ...updates }) };
     });
+    return input.action === 'searchScopedExpenseProviders' ? { providers: await searchProviders(input.query) } : result;
   };
 }
 
