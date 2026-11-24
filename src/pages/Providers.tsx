@@ -9,6 +9,7 @@ import {
   collection,
   query,
   getDoc,
+  getDocFromServer,
   getDocs,
   runTransaction,
   serverTimestamp,
@@ -20,6 +21,8 @@ import {
   Timestamp,
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
+import { providerFinanceRequest } from '../lib/providerFinance';
+import { DETACH_PROVIDER_INVITE_CONFIRMATION } from '../lib/providerInvites';
 import { handleFirestoreError } from '../lib/firestoreUtils';
 import { useAuth } from '../context/AuthContext';
 import { PageHeader } from '../components/PageHeader';
@@ -123,7 +126,9 @@ export default function Providers() {
   const [generatingInvite, setGeneratingInvite] = useState(false);
   const [providerInviteDays, setProviderInviteDays] = useState(4);
   const [providerInvites, setProviderInvites] = useState<any[]>([]);
+  const [providerInviteLimit, setProviderInviteLimit] = useState(20);
   const [cancellingInviteToken, setCancellingInviteToken] = useState('');
+  const [detachingInviteToken, setDetachingInviteToken] = useState('');
   const [savingProvider, setSavingProvider] = useState(false);
   const { profile } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
@@ -347,6 +352,24 @@ export default function Providers() {
       alert('No se pudo dar de baja el link.');
     } finally {
       setCancellingInviteToken('');
+    }
+  };
+
+  const handleDetachProviderInvite = async (invite: any) => {
+    if (profile?.role !== 'admin' || detachingInviteToken || !window.confirm(DETACH_PROVIDER_INVITE_CONFIRMATION)) return;
+    setDetachingInviteToken(invite.id);
+    try {
+      await providerFinanceRequest({ action: 'detachProviderInvite', projectId: invite.projectId,
+        collectionName: invite.collectionName || 'areaExpenses', itemId: invite.expenseId, inviteToken: invite.id });
+      const refreshed = await getDocFromServer(doc(db, 'providerInvites', invite.id)).catch(() => null);
+      setProviderInvites(current => current.map(item => {
+        if (item.id !== invite.id) return item;
+        return refreshed?.exists() ? { id: refreshed.id, ...refreshed.data() } : { ...item, projectId: '', expenseId: '' };
+      }));
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'No se pudo desvincular el enlace. Actualizá y reintentá.');
+    } finally {
+      setDetachingInviteToken('');
     }
   };
 
@@ -880,11 +903,12 @@ export default function Providers() {
                         No hay links generados
                       </div>
                     ) : (
-                      providerInvites.slice(0, 20).map((invite) => {
+                      providerInvites.slice(0, providerInviteLimit).map((invite) => {
                         const expiresAt = getInviteDate(invite.expiresAt);
                         const expired = isProviderInviteExpired(invite);
                         const isPending = !invite.used && invite.status === 'pending';
                         const canCancelInvite = isPending && !expired;
+                        const canDetachInvite = profile?.role === 'admin' && invite.projectId && invite.expenseId;
                         const inviteLink = getPublicInviteLink(invite.id);
                         return (
                           <div key={invite.id} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
@@ -912,7 +936,7 @@ export default function Providers() {
                                   {invite.projectName ? ` - ${invite.projectName}` : ''}
                                 </div>
                               </div>
-                              <div className="flex shrink-0 gap-2">
+                              <div className="flex shrink-0 flex-wrap gap-2">
                                 <button
                                   type="button"
                                   onClick={() => navigator.clipboard?.writeText(inviteLink)}
@@ -920,10 +944,17 @@ export default function Providers() {
                                 >
                                   Copiar
                                 </button>
+                                {canDetachInvite && (
+                                  <button type="button" disabled={Boolean(detachingInviteToken) || cancellingInviteToken === invite.id}
+                                    onClick={() => void handleDetachProviderInvite(invite)}
+                                    className="rounded border border-slate-200 bg-white px-3 py-2 text-[9px] font-bold text-slate-700 hover:bg-slate-100 disabled:opacity-50">
+                                    {detachingInviteToken === invite.id ? 'Desvinculando…' : 'Desvincular enlace del gasto'}
+                                  </button>
+                                )}
                                 {canCancelInvite && (
                                   <button
                                     type="button"
-                                    disabled={cancellingInviteToken === invite.id}
+                                    disabled={cancellingInviteToken === invite.id || detachingInviteToken === invite.id}
                                     onClick={() => handleCancelProviderInvite(invite)}
                                     className="rounded border border-red-100 bg-white px-3 py-2 text-[9px] font-black uppercase tracking-widest text-red-500 hover:border-red-200 hover:bg-red-50 disabled:text-slate-300"
                                   >
@@ -935,6 +966,10 @@ export default function Providers() {
                           </div>
                         );
                       })
+                    )}
+                    {providerInvites.length > providerInviteLimit && (
+                      <button type="button" className="text-xs font-medium text-blue-700 hover:underline"
+                        onClick={() => setProviderInviteLimit(value => value + 20)}>Ver más enlaces</button>
                     )}
                   </div>
                 )}

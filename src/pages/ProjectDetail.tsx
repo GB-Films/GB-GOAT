@@ -120,7 +120,7 @@ import { buildPaymentCashBoxOptions, calculateCashBalances, calculateCashBoxSumm
 import { cashMovementOptions } from '../lib/cashBoxDefaults';
 import { expenseNeedsProviderRegistration } from '../lib/providerRegistration';
 import { useProviderRegistrationEvidence } from '../hooks/useProviderRegistrationEvidence';
-import { buildLinkedProviderInviteExpiration } from '../lib/providerInvites';
+import { buildLinkedProviderInviteExpiration, DETACH_PROVIDER_INVITE_CONFIRMATION } from '../lib/providerInvites';
 import { resolveCashMovementTarget } from '../lib/cashMovementTargets';
 import { resolveCashReturnRecipientEmail } from '../lib/cashReturnRecipient';
 import { canChangePaymentCash, assertCanChangePaymentCash } from '../lib/paymentCashAccess';
@@ -1997,7 +1997,7 @@ export default function ProjectDetail() {
       console.error("Error updating area expense:", e);
       if (propagateFailure) throw new Error('No se pudo guardar el importe. El gasto cambió o tiene pagos asociados; revisá la fila.');
       alert(e instanceof Error && e.message === 'PENDING_PROVIDER_INVITE'
-        ? 'Este gasto tiene una invitación de alta pendiente. Cancelala antes de corregir el proveedor.'
+        ? 'Esta fila tiene un enlace de alta asociado. Elegí «Desvincular enlace de alta» antes de corregir el proveedor.'
         : e instanceof Error && e.message === 'PAID_EXPENSE_LOCKED'
           ? 'Sólo un administrador puede corregir el importe después de eliminar todos los pagos de la fila. Los demás datos del gasto conservan su bloqueo histórico.'
           : 'No se pudo guardar la corrección: el gasto cambió o no se pudo validar el importe o el proveedor. Actualizá y revisá la fila antes de intentarlo otra vez.');
@@ -2651,6 +2651,20 @@ export default function ProjectDetail() {
     } finally {
       setGeneratingInvoiceLinks(prev => ({ ...prev, [loadingKey]: false }));
     }
+  };
+
+  const detachProviderInviteForItem = async (item: any, collectionName: PaymentCollection) => {
+    if (!id || !isProjectAdmin || !item?.providerInviteLink?.token || !window.confirm(DETACH_PROVIDER_INVITE_CONFIRMATION)) return false;
+    try {
+      await providerFinanceRequest({
+        action: 'detachProviderInvite', projectId: id, collectionName, itemId: item.id, inviteToken: item.providerInviteLink.token,
+      });
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'No se pudo desvincular el enlace. Actualizá la fila y reintentá.');
+      return false;
+    }
+    showExpenseConfirmation('Enlace desvinculado del gasto.');
+    return true;
   };
 
   const createProviderInviteForItem = async (item: any, collectionName: PaymentCollection) => {
@@ -3951,6 +3965,7 @@ export default function ProjectDetail() {
             type="provider" collectionName={collectionName}
             canCopyProviderInfo={canCopyProviderInfo}
             onCreateProviderInvite={(row) => createProviderInviteForItem(row, collectionName)}
+            onDetachProviderInvite={isProjectAdmin ? row => detachProviderInviteForItem(row, collectionName) : undefined}
             creatingProviderInvite={!!generatingProviderInviteLinks[`${collectionName}-${item.id}`]}
             disabled={!canEdit}
           />
@@ -6170,6 +6185,7 @@ export default function ProjectDetail() {
                                                             type="provider" collectionName="budgetItems"
                                                             canCopyProviderInfo={isProjectAdmin || isProductionLead}
                                                             onCreateProviderInvite={(row) => createProviderInviteForItem(row, 'budgetItems')}
+                                                            onDetachProviderInvite={isProjectAdmin ? row => detachProviderInviteForItem(row, 'budgetItems') : undefined}
                                                             creatingProviderInvite={!!generatingProviderInviteLinks[`budgetItems-${item.id}`]}
                                                             disabled={!canEditMainBudget}
                                                           />
@@ -6685,6 +6701,7 @@ export default function ProjectDetail() {
                                         type="provider" collectionName="areaExpenses"
                                         canCopyProviderInfo
                                         onCreateProviderInvite={(row) => createProviderInviteForItem(row, 'areaExpenses')}
+                                        onDetachProviderInvite={isProjectAdmin ? row => detachProviderInviteForItem(row, 'areaExpenses') : undefined}
                                         creatingProviderInvite={!!generatingProviderInviteLinks[`areaExpenses-${item.id}`]}
                                         disabled={!canEditAreaExpense(item)}
                                       />
@@ -6977,6 +6994,7 @@ export default function ProjectDetail() {
                                   type="provider" collectionName="areaExpenses"
                                   canCopyProviderInfo
                                   onCreateProviderInvite={(row) => createProviderInviteForItem(row, 'areaExpenses')}
+                                  onDetachProviderInvite={isProjectAdmin ? row => detachProviderInviteForItem(row, 'areaExpenses') : undefined}
                                   creatingProviderInvite={!!generatingProviderInviteLinks[`areaExpenses-${item.id}`]}
                                   disabled={!canEditAreaExpense(item)}
                                 />

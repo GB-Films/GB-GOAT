@@ -30,17 +30,19 @@ interface BudgetRowCellProps {
   disabled?: boolean;
   canCopyProviderInfo?: boolean;
   onCreateProviderInvite?: (item: any) => Promise<boolean | void> | boolean | void;
+  onDetachProviderInvite?: (item: any) => Promise<boolean>;
   creatingProviderInvite?: boolean;
   registrationEvidence?: RegistrationEvidence;
 }
 
-export function BudgetRowCell({ item, collectionName, providers, onUpdate, type, onManagePayment, disabledPayment, disabled, canCopyProviderInfo, onCreateProviderInvite, creatingProviderInvite, registrationEvidence }: BudgetRowCellProps) {
+export function BudgetRowCell({ item, collectionName, providers, onUpdate, type, onManagePayment, disabledPayment, disabled, canCopyProviderInfo, onCreateProviderInvite, onDetachProviderInvite, creatingProviderInvite, registrationEvidence }: BudgetRowCellProps) {
   const { id: projectId } = useParams();
   const { records: linkedRecords } = useContext(InvoiceContext);
   const [isEditingProvider, setIsEditingProvider] = useState(false);
   const [showProviderInfo, setShowProviderInfo] = useState(false);
   const [showProviderDetail, setShowProviderDetail] = useState(false);
   const [providerSearch, setProviderSearch] = useState('');
+  const [detachingProviderInvite, setDetachingProviderInvite] = useState(false);
   const [copiedProviderField, setCopiedProviderField] = useState('');
   const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0, width: 256 });
   const providerCellRef = useRef<HTMLDivElement>(null);
@@ -289,7 +291,7 @@ export function BudgetRowCell({ item, collectionName, providers, onUpdate, type,
                 />
               </div>
               <div className="max-h-52 overflow-y-auto custom-scrollbar">
-                <button 
+                {(item.providerId || item.providerName) && <button
                   onClick={() => {
                     onUpdate(item.id, { providerId: '', providerName: '' });
                     setIsEditingProvider(false);
@@ -297,8 +299,20 @@ export function BudgetRowCell({ item, collectionName, providers, onUpdate, type,
                   }}
                   className="w-full text-left px-3 py-2 hover:bg-red-50 text-[10px] text-red-500 font-bold uppercase transition-colors rounded mb-1"
                 >
-                  X Desvincular actual
-                </button>
+                  Quitar proveedor actual
+                </button>}
+                {onDetachProviderInvite && item.providerInviteLink?.token && (
+                  <button type="button" disabled={detachingProviderInvite}
+                    onClick={async () => {
+                      setDetachingProviderInvite(true);
+                      try {
+                        if (await onDetachProviderInvite(item)) setIsEditingProvider(false);
+                      } finally { setDetachingProviderInvite(false); }
+                    }}
+                    className="mb-1 flex w-full items-center gap-2 rounded px-3 py-2 text-left text-[10px] font-bold text-slate-700 hover:bg-slate-100 disabled:opacity-50">
+                    {detachingProviderInvite ? 'Desvinculando…' : 'Desvincular enlace de alta'}
+                  </button>
+                )}
                 {onCreateProviderInvite && (
                   <button
                     type="button"

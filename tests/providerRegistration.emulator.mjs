@@ -3,9 +3,11 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { initializeTestEnvironment, assertFails } from '@firebase/rules-unit-testing';
 import { doc, setDoc, updateDoc, getDoc, getDocs, collection, serverTimestamp } from 'firebase/firestore';
+import { testDetachProviderInvite } from './providerInviteDetach.flow.mjs';
 const require=createRequire(new URL('../functions/package.json',import.meta.url));
 const admin=require('firebase-admin');
 const {createProviderPortalHandler}=require('../functions/providerPortal');
+const {createProviderFinanceHandler}=require('../functions/providerFinance');
 if(!/^127\.0\.0\.1:\d+$/.test(process.env.FIRESTORE_EMULATOR_HOST || '')) throw Error('Local emulator required. Production forbidden.');
 const projectId='demo-goat-provider-intake';
 const env=await initializeTestEnvironment({projectId,firestore:{rules:readFileSync('firestore.rules','utf8')}});
@@ -28,6 +30,8 @@ async function denied(data,pattern){
 }
 try {
   await db.doc('providerPortalConfig/current').set({enabled:true});
+  await testDetachProviderInvite({ db, finance: createProviderFinanceHandler({ db, timestamp: () => admin.firestore.FieldValue.serverTimestamp() }),
+    portal, seed, input, submit });
   await seed('new');const first=input('new'),out=await submit(first);
   const saved=(await db.doc(`providers/${out.providerId}`).get()).data();
   assert.equal(out.reused,false);assert.equal(saved.personalGoogleAccount.uid,'person');assert.equal(saved.registration.status,'complete');

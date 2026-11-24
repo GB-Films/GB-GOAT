@@ -2,6 +2,7 @@ import { hasRecordedPayment } from './expenseEdits';
 
 export const MAX_LINKED_PROVIDER_INVITE_DAYS = 7;
 export const PROVIDER_INVITE_CLOCK_SKEW_MARGIN_MS = 5 * 60 * 1000;
+export const DETACH_PROVIDER_INVITE_CONFIRMATION = '¿Desvincular este enlace del gasto? Si el enlace sigue vigente, permitirá completar el alta sin asignarla a esta fila.';
 
 export const clampLinkedProviderInviteDays = (value: number) => (
   Math.max(1, Math.min(MAX_LINKED_PROVIDER_INVITE_DAYS, Math.floor(value) || MAX_LINKED_PROVIDER_INVITE_DAYS))
