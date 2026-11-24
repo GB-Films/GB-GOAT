@@ -18,6 +18,7 @@ const cases = [
   ["crmProjectImport", "demo-goat-crm-import", "firestore"],
   ["projectPins", "demo-goat-project-pins", "firestore"],
   ["providerIntake", "demo-goat-provider-intake", "firestore"],
+  ["providerRegistration", "demo-goat-provider-intake", "firestore"],
   ["projectCommercialRules", "demo-gb-goat-commercial", "firestore"],
   ["projectAdministrationRules", "demo-gb-goat-administration", "firestore"],
   [

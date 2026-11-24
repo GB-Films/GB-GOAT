@@ -10,6 +10,7 @@ const { distinctInvoiceExpenseCount } = require('./providerInvoiceMetadata');
 const { createRemoveExpenseInvoiceFile } = require('./removeExpenseInvoiceFile');
 const { activeRecordAllocations } = require('./providerFinanceAllocations');
 const { createDeleteUnpaidAreaExpense } = require('./deleteUnpaidAreaExpense');
+const { createDetachProviderInvite } = require('./detachProviderInvite');
 const { createProjectScopedReads, scopedCashMovement, canReadRecordOriginal } = require('./projectScopedReads');
 const { canReadTab, canReadExpense, deny } = require('./projectReadScope');
 
@@ -97,6 +98,7 @@ function normalizeRecord(input) {
 function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, bucketName, readMetadata, inspectUpload, verifyPaymentReceipt, clock=()=>new Date() }) {
   const readProject = createProjectScopedReads({ db, readFile, bucketName, readMetadata, timestamp });
   const editAreaExpense = require('./scopedAreaExpenseEdits').createScopedAreaExpenseEdits({ db, inspectUpload });
+  const detachProviderInvite = createDetachProviderInvite({ db, timestamp });
   return async request => {
     if (!request.auth?.uid || !request.auth.token?.email) throw new HttpsError('unauthenticated', 'Iniciá sesión.');
     const user = await db.doc(`users/${request.auth.uid}`).get();
@@ -109,6 +111,10 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, buc
     if (['previewDeleteUnpaidAreaExpense', 'deleteUnpaidAreaExpense'].includes(input.action)) {
       if (request.auth.token.email_verified !== true) throw new HttpsError('permission-denied', 'Verificá tu correo.');
       return createDeleteUnpaidAreaExpense({ db, timestamp })(actor, input);
+    }
+    if (input.action === 'detachProviderInvite') {
+      if (request.auth.token.email_verified !== true) deny();
+      return detachProviderInvite(actor, input);
     }
     if (input.action === 'reclassifyAreaExpenses') {
       if (request.auth.token.email_verified !== true) throw new HttpsError('permission-denied', 'Verificá tu correo.');
