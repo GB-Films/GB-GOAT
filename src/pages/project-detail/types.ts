@@ -71,6 +71,7 @@ export interface BudgetItem {
 }
 
 export interface AreaExpense extends Omit<BudgetItem, 'order'> {
+  hasSharedExpensePayments?: boolean;
   subcategory?: string;
   order?: number;
   invoice?: any;

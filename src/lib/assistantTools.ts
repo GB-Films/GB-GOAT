@@ -1208,7 +1208,7 @@ export const buildAssistantTools = ({
         const changesProvider = args?.proveedor !== undefined;
         const changesIdentity = ['descripcion', 'cantidad', 'precioUnitario', 'unidad']
           .some((field) => args?.[field] !== undefined);
-        if (paid && changesIdentity) {
+        if (paid && changesIdentity && (collectionName !== 'areaExpenses' || context.capabilities.isProjectAdmin)) {
           return { error: 'Esa fila tiene pagos registrados: sólo un administrador puede corregir el proveedor, y no se pueden cambiar importes ni descripción.' };
         }
         if (paid && changesProvider && !context.capabilities.isProjectAdmin) {

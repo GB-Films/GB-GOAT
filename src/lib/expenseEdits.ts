@@ -26,6 +26,20 @@ export const hasRecordedPayment = (expense: Pick<ExpenseRecord, 'paymentLocked' 
     || (Array.isArray(expense.paymentHistory) && expense.paymentHistory.length > 0)
 );
 
+export function canEditScopedExpenseDetails(expense: {
+  paymentLocked?: boolean;
+  paid?: boolean;
+  paymentHistory?: Array<{ createdBy?: string; createdByEmail?: string; sharedRecordId?: string }>;
+  sharedPaymentIds?: string[];
+  hasSharedExpensePayments?: boolean;
+}, uid: string, email: string) {
+  if (expense.hasSharedExpensePayments || expense.sharedPaymentIds?.length) return false;
+  const history = expense.paymentHistory;
+  if (!history?.length) return expense.paid !== true && (expense.paymentLocked !== true || Array.isArray(history));
+  return Boolean(uid) && history.every(payment => payment?.createdBy === uid && !payment.sharedRecordId
+    && (!payment.createdByEmail || payment.createdByEmail.trim().toLowerCase() === email.trim().toLowerCase()));
+}
+
 export const hasActiveExpensePayments = (expense: Pick<ExpenseRecord, 'paymentHistory' | 'paid'>) => (
   expense.paid === true || !Array.isArray(expense.paymentHistory) || expense.paymentHistory.length > 0
 );

@@ -1,12 +1,27 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { assertCashPaymentLink, buildUnpaidAmountCorrectionAudit, findCurrentPayment, hasRecordedPayment, isUnpaidAmountCorrection, prepareExpenseEdit, samePaymentTarget } from './expenseEdits';
+import { assertCashPaymentLink, buildUnpaidAmountCorrectionAudit, canEditScopedExpenseDetails, findCurrentPayment, hasRecordedPayment, isUnpaidAmountCorrection, prepareExpenseEdit, samePaymentTarget } from './expenseEdits';
 
 const paidGimbal = {
   description: 'Alquiler de Gimbal', quantity: 1, unitPrice: 87000, total: 87000,
   paymentLocked: true, paymentHistory: [{ amount: 87000 }],
   updatedAt: { seconds: 10, nanoseconds: 1 },
 };
+
+test('scoped row inputs open for unpaid expenses and for identifiable own payments only', () => {
+  const own = { createdBy: 'editor', createdByEmail: 'editor@example.test' };
+  const canEdit = (expense: Parameters<typeof canEditScopedExpenseDetails>[0]) => canEditScopedExpenseDetails(expense, 'editor', 'Editor@example.test');
+  assert.equal(canEdit({}), true);
+  assert.equal(canEdit({ paymentLocked: true, paid: false, paymentHistory: [] }), true);
+  assert.equal(canEdit({ paymentLocked: true, paid: true, paymentHistory: [own] }), true);
+  assert.equal(canEdit({ paymentLocked: true }), false);
+  assert.equal(canEdit({ paid: true, paymentHistory: [] }), false);
+  assert.equal(canEdit({ paymentHistory: [own, { createdBy: 'admin' }] }), false);
+  assert.equal(canEdit({ paymentHistory: [{ ...own, createdByEmail: 'otro@example.test' }] }), false);
+  assert.equal(canEdit({ paymentHistory: [{}] }), false);
+  assert.equal(canEdit({ paymentHistory: [{ ...own, sharedRecordId: 'record' }] }), false);
+  assert.equal(canEdit({ paymentHistory: [own], hasSharedExpensePayments: true }), false);
+});
 
 test('a collaborator cannot turn a paid expense into a different row', () => {
   assert.throws(() => prepareExpenseEdit(paidGimbal, {

@@ -29,6 +29,7 @@ interface BudgetRowCellProps {
   onManagePayment?: (item: any) => void;
   disabledPayment?: boolean;
   disabled?: boolean;
+  readOnlyReason?: string;
   canCopyProviderInfo?: boolean;
   onCreateProviderInvite?: (item: any) => Promise<boolean | void> | boolean | void;
   onDetachProviderInvite?: (item: any) => Promise<boolean>;
@@ -37,7 +38,7 @@ interface BudgetRowCellProps {
   registrationEvidence?: RegistrationEvidence;
 }
 
-export function BudgetRowCell({ item, collectionName, providers, onUpdate, type, onManagePayment, disabledPayment, disabled, canCopyProviderInfo, onCreateProviderInvite, onDetachProviderInvite, onSelectScopedProvider, creatingProviderInvite, registrationEvidence }: BudgetRowCellProps) {
+export function BudgetRowCell({ item, collectionName, providers, onUpdate, type, onManagePayment, disabledPayment, disabled, readOnlyReason, canCopyProviderInfo, onCreateProviderInvite, onDetachProviderInvite, onSelectScopedProvider, creatingProviderInvite, registrationEvidence }: BudgetRowCellProps) {
   const { id: projectId } = useParams();
   const { records: linkedRecords } = useContext(InvoiceContext);
   const [isEditingProvider, setIsEditingProvider] = useState(false);
@@ -48,6 +49,9 @@ export function BudgetRowCell({ item, collectionName, providers, onUpdate, type,
   const [searchResult, setSearchResult] = useState<{ key: string; options?: ScopedProviderOption[]; error?: string }>();
   const [savingProvider, setSavingProvider] = useState(false);
   const [providerSaveError, setProviderSaveError] = useState('');
+  const [fieldDraft, setFieldDraft] = useState<string>();
+  const [savingField, setSavingField] = useState(false);
+  const [fieldError, setFieldError] = useState('');
   const query = providerSearch.trim();
   const canRunSearch = query.replace(/[^\p{L}\p{N}]/gu, '').length >= 3;
   const seconds = item.updatedAt?.seconds;
@@ -177,19 +181,6 @@ export function BudgetRowCell({ item, collectionName, providers, onUpdate, type,
     await navigator.clipboard?.writeText(value);
     setCopiedProviderField(label);
     window.setTimeout(() => setCopiedProviderField(''), 1800);
-  };
-
-  const handleAmountUpdate = (field: 'quantity' | 'unitPrice', input: HTMLInputElement) => {
-    if (disabled) return;
-    const value = input.valueAsNumber;
-    if (!Number.isFinite(value) || value < 0) {
-      input.value = input.defaultValue;
-      return;
-    }
-    if (Number(item[field]) === value) return;
-    const otherField = field === 'quantity' ? 'unitPrice' : 'quantity';
-    const total = value * Number(item[otherField]);
-    onUpdate(item.id, { [field]: value, total });
   };
 
   if (type === 'provider') {
@@ -410,57 +401,50 @@ export function BudgetRowCell({ item, collectionName, providers, onUpdate, type,
     );
   }
 
-  if (type === 'description') {
-    return (
-      <input 
-        defaultValue={item.description}
-        disabled={disabled}
-        onBlur={(e) => {
-          const description = e.currentTarget.value;
-          if (!disabled && description !== String(item.description ?? '')) {
-            onUpdate(item.id, { description });
-          }
-        }}
-        placeholder="Ej: Alquiler de lentes, jornada de 12hs..."
-        className={cn(
-          "w-full bg-transparent border-b border-transparent outline-none transition-all py-1 text-slate-600 text-[11px]",
-          disabled ? "cursor-default text-slate-500" : "hover:border-slate-100 focus:border-black"
-        )}
-      />
-    );
-  }
-
-  if (type === 'price') {
-    return (
-      <div className="flex items-center gap-1 font-mono text-[11px]">
-        <span className="text-slate-300 font-bold">$</span>
-        <input 
-          type="number"
-          defaultValue={item.unitPrice}
-          disabled={disabled}
-          onBlur={(e) => handleAmountUpdate('unitPrice', e.currentTarget)}
-          className={cn(
-            "w-full bg-transparent border-b border-transparent outline-none transition-all py-1 font-bold text-slate-800",
-            disabled ? "cursor-default text-slate-500" : "hover:border-slate-100 focus:border-black"
-          )}
+  if (type === 'description' || type === 'price' || type === 'quantity') {
+    const isDescription = type === 'description';
+    const field = type === 'price' ? 'unitPrice' : type;
+    const value = String(item[field] ?? '');
+    const readOnly = Boolean(disabled || readOnlyReason);
+    const save = async (input: HTMLInputElement) => {
+      if (readOnly || savingField) return;
+      const next = isDescription ? input.value : input.valueAsNumber;
+      if (input.value === value || String(next) === value) { setFieldDraft(undefined); return; }
+      if (typeof next === 'number' && (!Number.isFinite(next) || next < 0)) {
+        setFieldDraft(undefined);
+        setFieldError('Ingresá un número mayor o igual a cero.');
+        return;
+      }
+      const updates = isDescription ? { description: next }
+        : { [field]: next, total: Number(next) * Number(item[type === 'price' ? 'quantity' : 'unitPrice']) };
+      setSavingField(true);
+      try {
+        await onUpdate(item.id, updates);
+        setFieldError('');
+      } catch (error) {
+        setFieldError(error instanceof Error ? error.message : 'No se pudo guardar el cambio.');
+      } finally {
+        setFieldDraft(undefined);
+        setSavingField(false);
+      }
+    };
+    return <div title={readOnlyReason}>
+      <div className={cn(type === 'price' && 'flex items-center gap-1 font-mono')}>
+        {type === 'price' && <span className="text-[11px] font-bold text-slate-300">$</span>}
+        <input type={isDescription ? 'text' : 'number'} value={readOnly ? value : fieldDraft ?? value}
+          aria-label={isDescription ? 'Descripción del gasto' : type === 'price' ? 'Precio unitario' : 'Cantidad'}
+          aria-invalid={Boolean(fieldError)} aria-busy={savingField} readOnly={readOnly || savingField}
+          placeholder={isDescription ? 'Ej.: Alquiler de lentes, jornada de 12 hs' : undefined}
+          onChange={event => { setFieldDraft(event.currentTarget.value); setFieldError(''); }}
+          onBlur={event => void save(event.currentTarget)}
+          onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); } }}
+          className={cn('w-full min-w-0 border-b border-transparent bg-transparent py-1 text-[11px] outline-none transition-all',
+            isDescription ? 'text-slate-600' : 'font-bold text-slate-800', type === 'quantity' && 'text-center',
+            readOnly ? 'cursor-default text-slate-500' : 'hover:border-slate-100 focus:border-black')}
         />
       </div>
-    );
-  }
-
-  if (type === 'quantity') {
-    return (
-      <input 
-        type="number"
-        defaultValue={item.quantity}
-        disabled={disabled}
-        onBlur={(e) => handleAmountUpdate('quantity', e.currentTarget)}
-        className={cn(
-          "w-full min-w-0 bg-transparent border-b border-transparent outline-none transition-all py-1 text-center font-bold text-slate-800",
-          disabled ? "cursor-default text-slate-500" : "hover:border-slate-100 focus:border-black"
-        )}
-      />
-    );
+      {fieldError && <p role="alert" className="mt-0.5 text-[10px] text-red-700">{fieldError}</p>}
+    </div>;
   }
 
   if (type === 'paid') {

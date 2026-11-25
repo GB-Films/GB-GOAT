@@ -124,7 +124,7 @@ import { buildLinkedProviderInviteExpiration, DETACH_PROVIDER_INVITE_CONFIRMATIO
 import { resolveCashMovementTarget } from '../lib/cashMovementTargets';
 import { resolveCashReturnRecipientEmail } from '../lib/cashReturnRecipient';
 import { canChangePaymentCash, assertCanChangePaymentCash } from '../lib/paymentCashAccess';
-import { assertCashPaymentLink, buildUnpaidAmountCorrectionAudit, findCurrentPayment, hasRecordedPayment, hasActiveExpensePayments, isUnpaidAmountCorrection, prepareExpenseEdit, sameExpenseVersion, samePaymentTarget } from '../lib/expenseEdits';
+import { assertCashPaymentLink, buildUnpaidAmountCorrectionAudit, canEditScopedExpenseDetails, findCurrentPayment, hasRecordedPayment, hasActiveExpensePayments, isUnpaidAmountCorrection, prepareExpenseEdit, sameExpenseVersion, samePaymentTarget } from '../lib/expenseEdits';
 import { canDeleteUnpaidAreaExpense, deleteUnpaidExpenseWithConfirmation, unpaidExpenseDeletionErrorMessage } from '../lib/expenseDeletion';
 import { collapseAroundDraggedRow, type StructureDragLayout } from '../lib/dragPointerAnchor';
 import { runAreaStructureChange, areaStructureErrorMessage, areaGroupBudgetVersion, type AreaStructureChange, type AreaStructureAttempt } from '../lib/areaStructureChanges';
@@ -1899,7 +1899,7 @@ export default function ProjectDetail() {
       setAreaExpenses(expenses => [...expenses, { id: docRef.id, ...newItem }]);
       setAreaExpenseSort('manual');
       showExpenseConfirmation('Nuevo gasto agregado en Gestión por Áreas');
-      if (!isProjectAdmin && isProductionLead) {
+      if (!isProjectAdmin) {
         void readScopedProject(id).then(({ areaExpenses }) => {
           const saved = areaExpenses.find(expense => expense.id === docRef.id);
           if (saved) setAreaExpenses(current => current.map(expense => expense.id === saved.id && !expense.updatedAt?.seconds ? saved : expense));
@@ -1913,8 +1913,13 @@ export default function ProjectDetail() {
   const updateAreaExpense = async (expenseId: string, updates: any, propagateFailure = false) => {
     if (!id) { if (propagateFailure) throw new Error('No se encontró el proyecto.'); return; }
     try {
-      const currentExpense = areaExpenses.find(e => e.id === expenseId);
+      let currentExpense = areaExpenses.find(e => e.id === expenseId);
       if (!currentExpense) { if (propagateFailure) throw new Error('No se encontró el gasto.'); return; }
+      if (!isProjectAdmin && typeof currentExpense.updatedAt?.isEqual === 'function' && !Number.isInteger(currentExpense.updatedAt.seconds)) {
+        const { areaExpenses: fresh } = await readScopedProject(id);
+        currentExpense = fresh.find(row => row.id === expenseId);
+        if (!currentExpense) throw new Error('El gasto todavía no está disponible. Volvé a intentarlo.');
+      }
 
       const paidProviderCorrection = hasRecordedPayment(currentExpense)
         && 'providerId' in updates && 'providerName' in updates;
@@ -1947,7 +1952,8 @@ export default function ProjectDetail() {
       const budgetWarning = getAreaExpenseBudgetWarning(nextArea, nextTotal, expenseId);
       if (!isProjectAdmin) {
         const saved = await editScopedAreaExpense(id, expenseId, currentExpense.updatedAt, submittedUpdates);
-        setAreaExpenses(expenses => expenses.map(e => e.id === expenseId ? saved : e));
+        if (structureScope.current !== loadScope) return;
+        setAreaExpenses(expenses => reconcileAreaExpenseSnapshot(expenses, expenses.map(e => e.id === expenseId ? saved : e)));
         if (budgetWarning) showExpenseConfirmation(budgetWarning, 'warning');
         return;
       }
@@ -2007,14 +2013,22 @@ export default function ProjectDetail() {
       if (budgetWarning) showExpenseConfirmation(budgetWarning, 'warning');
     } catch (e) {
       console.error("Error updating area expense:", e);
-      if (propagateFailure) throw new Error('No se pudo guardar el importe. El gasto cambió o tiene pagos asociados; revisá la fila.');
-      alert(e instanceof Error && e.message === 'PENDING_PROVIDER_INVITE'
+      const detail = e instanceof Error ? e.message : '';
+      const code = (e as { code?: string })?.code;
+      const message = detail === 'PENDING_PROVIDER_INVITE'
         ? 'Esta fila tiene un enlace de alta asociado. Elegí «Desvincular enlace de alta» antes de corregir el proveedor.'
-        : e instanceof Error && e.message === 'PAID_EXPENSE_LOCKED'
-          ? 'Sólo un administrador puede corregir el importe después de eliminar todos los pagos de la fila. Los demás datos del gasto conservan su bloqueo histórico.'
-          : 'No se pudo guardar la corrección: el gasto cambió o no se pudo validar el importe o el proveedor. Actualizá y revisá la fila antes de intentarlo otra vez.');
+        : detail === 'PAID_EXPENSE_LOCKED' ? 'El gasto tiene un historial de pagos que bloquea esta edición.'
+        : detail === 'EXPENSE_CHANGED' ? 'El gasto cambió. Revisá la versión actual de la fila y volvé a editarla.'
+        : detail === 'EXPENSE_BELOW_PAYMENTS' ? 'El importe del gasto no puede quedar por debajo de lo ya pagado.'
+        : code === 'functions/permission-denied' ? 'Tu cuenta no tiene permiso para editar esta fila.'
+        : code === 'functions/failed-precondition' && detail ? detail
+        : 'No se pudo guardar el cambio. Actualizá la fila y volvé a intentar.';
+      if (propagateFailure) throw new Error(message);
+      alert(message);
     }
   };
+
+  const saveAreaExpenseDetails = (expenseId: string, updates: Record<string, unknown>) => updateAreaExpense(expenseId, updates, true);
 
   const selectScopedExpenseProvider = async (expense: AreaExpense, providerId: string) => {
     if (!id) throw new Error('No se encontró el proyecto.');
@@ -3852,6 +3866,13 @@ export default function ProjectDetail() {
     && canEditArea(area)
   );
   const canEditAreaExpense = (expense?: any | null) => canEditAreaSubcategory(expense?.area, expense?.subcategory);
+  const areaExpenseDetailsBlock = (expense: AreaExpense, amount = false) => {
+    if (!canEditAreaExpense(expense)) return 'Tu cuenta tiene acceso de sólo lectura para esta fila.';
+    if (!isProjectAdmin) return canEditScopedExpenseDetails(expense, user?.uid || '', currentUserEmail)
+      ? undefined : 'La fila tiene pagos de otra persona o sin autoría verificable.';
+    if (!hasRecordedPayment(expense) || amount && isUnpaidAmountCorrection(expense, { total: expense.total }, true)) return undefined;
+    return 'El historial de pagos bloquea este campo.';
+  };
   const canOrganizeArea = (area: string) => canOrganizeProjectArea(isProjectAdmin, userPermissions, area);
   const canOrganizeSubcategory = (area: string, subcategory: string) => canOrganizeProjectSubcategory(isProjectAdmin, userPermissions, area, subcategory);
   const canDeleteAreaExpense = (expense?: any | null) => {
@@ -6705,15 +6726,15 @@ export default function ProjectDetail() {
                                       <div className="mt-0.5">
                                         <BudgetRowCell
                                           item={item}
-                                          onUpdate={updateAreaExpense}
+                                          onUpdate={saveAreaExpenseDetails}
                                           type="description"
-                                          disabled={!canEditAreaExpense(item)}
+                                          readOnlyReason={areaExpenseDetailsBlock(item)}
                                         />
                                       </div>
                                     </div>
                                     <MobileExpenseAmount item={item} paidAmount={getPaymentTotal(item)}
-                                      canEdit={canEditAreaExpense(item) && (!hasRecordedPayment(item) || isUnpaidAmountCorrection(item, { total: item.total }, isProjectAdmin))}
-                                      onUpdate={(rowId, updates) => updateAreaExpense(rowId, updates, true)} />
+                                      canEdit={!areaExpenseDetailsBlock(item, true)}
+                                      readOnlyReason={areaExpenseDetailsBlock(item, true)} onUpdate={saveAreaExpenseDetails} />
                                   </div>
 
                                   <div className="mt-1.5 flex flex-wrap items-center gap-1">
@@ -7001,26 +7022,26 @@ export default function ProjectDetail() {
                             <div>
                               <BudgetRowCell 
                                 item={item} 
-                                onUpdate={updateAreaExpense} 
+                                onUpdate={saveAreaExpenseDetails}
                                 type="description"
-                                disabled={!canEditAreaExpense(item)}
+                                readOnlyReason={areaExpenseDetailsBlock(item)}
                               />
                             </div>
                             <div>{renderExpenseInvoiceCell(item, 'areaExpenses')}</div>
                             <div>
                               <BudgetRowCell 
                                 item={item} 
-                                onUpdate={updateAreaExpense} 
+                                onUpdate={saveAreaExpenseDetails}
                                 type="price"
-                                disabled={!canEditAreaExpense(item)}
+                                readOnlyReason={areaExpenseDetailsBlock(item, true)}
                               />
                             </div>
                             <div>
                               <BudgetRowCell 
                                 item={item} 
-                                onUpdate={updateAreaExpense} 
+                                onUpdate={saveAreaExpenseDetails}
                                 type="quantity"
-                                disabled={!canEditAreaExpense(item)}
+                                readOnlyReason={areaExpenseDetailsBlock(item, true)}
                               />
                             </div>
                             <div className="text-right font-bold text-slate-900 text-xs">
