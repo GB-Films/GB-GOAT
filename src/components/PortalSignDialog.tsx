@@ -3,6 +3,7 @@ import { useAuth } from "../context/AuthContext";
 import { downloadPortalFile, portalRequest, signPortalDocument } from "../lib/providerPortal";
 import { PortalSigningRoom } from "./PortalSigningRoom";
 import { portalErrorMessage } from '../lib/providerPortalUi';
+import './portalSigning.css';
 
 export default function PortalSignDialog({ document: doc, onClose, onSigned }: {
   document: any;

@@ -1,14 +1,14 @@
 export function ProviderSigningGuide({ email, needsRepresentation, pendingCount, onDocuments }: {
   email: string; needsRepresentation: boolean; pendingCount: number; onDocuments: () => void;
 }) {
-  return <details className="portal-details mt-4 border-t border-slate-100 pt-4">
+  return <details className="portal-details mt-2 border-t border-slate-100 pt-2 sm:mt-4 sm:pt-4">
     <summary className="w-fit select-none rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">Cómo firmar tus documentos</summary>
-    <div className="mt-4 space-y-3 rounded-xl bg-blue-50 p-4 text-slate-700">
+    <div className="mt-2 space-y-2 rounded-xl bg-blue-50 p-3 text-slate-700 sm:mt-4 sm:space-y-3 sm:p-4">
     <p className="break-words text-sm">Usá tu cuenta Google registrada: <strong>{email}</strong>.</p>
     <ol className="list-decimal space-y-2 pl-5 text-sm">
       {needsRepresentation && <li>Completá la declaración de representación que aparece debajo: tus datos, DNI y responsabilidad por tus facultades. El poder es opcional. Revisá el PDF y firmá para habilitarte.</li>}
       <li>Entrá a <strong>Mi proveedor → Documentos</strong> y buscá el estado <strong>Pendiente de tu firma</strong>.</li>
-      <li>Elegí <strong>Revisar y firmar</strong>. Leé el PDF, tocá tu recuadro de firma, confirmá tu DNI y dibujá tu firma o usá tu nombre.</li>
+      <li>Elegí <strong>Revisar y firmar</strong>. Leé el PDF y seguí los pasos <strong>Documento</strong>, <strong>Tus datos</strong> y <strong>Firma</strong>.</li>
       <li>Aceptá la firma electrónica y pulsá <strong>Firmar y confirmar</strong>. Esperá la confirmación antes de cerrar.</li>
       <li>Cuando termine, podés descargar el <strong>PDF firmado</strong> y el <strong>Certificado de evidencia</strong>. Si faltan otras firmas, verás el estado en el documento.</li>
     </ol>

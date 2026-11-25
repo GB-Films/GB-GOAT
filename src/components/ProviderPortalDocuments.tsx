@@ -17,20 +17,19 @@ export function ProviderPortalDocuments({ documents, declarations, providerId, p
   const history = declarationCards.filter(item => !activeDeclarations.includes(item));
   const card = (doc: any) => {
     const pending = needsPortalSignature(doc);
-    return <article key={doc.id} className={`portal-panel space-y-4 ${pending ? 'border-amber-200' : ''}`}>
-      <div className="flex flex-wrap items-start gap-3">
-        <div className={`rounded-xl p-2.5 ${pending ? 'bg-amber-50 text-amber-700' : 'bg-slate-50 text-slate-500'}`}><FileText className="h-5 w-5" aria-hidden="true" /></div>
-        <div className="min-w-[10rem] flex-1"><h3 className="break-words font-semibold text-slate-900">{doc.title}</h3>
-          <p className="mt-1 text-xs text-slate-500">{doc.declarationKind === 'cash_receipt' ? 'Recibo de efectivo' : doc.declarationKind ? 'Declaración' : 'Contrato'}</p></div>
+    return <article key={doc.id} className={`portal-panel space-y-2 sm:space-y-3 ${pending ? 'border-amber-200' : ''}`}>
+      <div className="flex items-start gap-2 sm:gap-3">
+        <div className={`shrink-0 rounded-lg p-1.5 sm:p-2.5 ${pending ? 'bg-amber-50 text-amber-700' : 'bg-slate-50 text-slate-500'}`}><FileText className="h-4 w-4 sm:h-5 sm:w-5" aria-hidden="true" /></div>
+        <div className="flex min-w-0 flex-1 flex-col items-start gap-1 sm:flex-row sm:justify-between sm:gap-3"><h3 className="break-words font-semibold text-slate-900">{doc.title}</h3>
         <span className={`portal-status ${pending ? 'portal-status-pending' : doc.signed ? 'portal-status-signed' : ''}`}>
           {pending ? <Clock3 className="h-3.5 w-3.5" aria-hidden="true" /> : doc.signed ? <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" /> : null}
           {pending ? 'Pendiente de tu firma' : ({ cancelled: 'Anulado', revoked: 'Revocado', rejected: 'Rechazado', replaced: 'Pago modificado · antecedente' } as Record<string, string>)[doc.status] || (doc.signed ? 'Firmado por vos' : 'Sin firma pendiente')}
-        </span>
+        </span></div>
       </div>
       {doc.signed && (doc.status === 'partially_signed' || !doc.artifactsReady) && <p className="text-sm text-slate-500">{doc.status === 'partially_signed' ? 'Esperando las otras firmas.' : 'El PDF firmado se está preparando.'}</p>}
-      <div className="flex flex-wrap gap-2 border-t border-slate-100 pt-4">
-        {pending && <button disabled={busy} className="portal-button portal-button-primary" onClick={() => onSign(doc)}><PenLine className="h-4 w-4" aria-hidden="true" />Revisar y firmar</button>}
-        <button disabled={busy} className="portal-button" onClick={() => void onDownload(doc, 'original')}><FileText className="h-4 w-4" aria-hidden="true" />Original</button>
+      <div className="flex flex-wrap gap-1.5 border-t border-slate-100 pt-2 sm:gap-2 sm:pt-3">
+        {pending && <button disabled={busy} className="portal-button portal-button-primary max-sm:w-full" onClick={() => onSign(doc)}><PenLine className="h-4 w-4" aria-hidden="true" />Revisar y firmar</button>}
+        <button disabled={busy} className="portal-button" onClick={() => void onDownload(doc, 'original')}><FileText className="h-4 w-4" aria-hidden="true" />Descargar original</button>
         {doc.signed && !doc.artifactsReady && <button disabled={busy} className="portal-button" onClick={() => void onRecover(doc)}>Completar PDF firmado</button>}
         {doc.signed && portalDeclarationCompletionInput(doc) && !['applied', 'active', 'signed', 'rejected', 'revoked', 'cancelled', 'replaced'].includes(doc.declarationStatus) && !['cancelled', 'replaced'].includes(doc.status) && !(doc.declarationKind === 'representation' && doc.declarationVersion !== 'company-representation-v4') && <button disabled={busy} className="portal-button" onClick={() => void onApplyDocument(doc)}>{doc.declarationKind === 'cash_receipt' ? 'Confirmar recibo firmado' : 'Aplicar declaración firmada'}</button>}
         {doc.artifactsReady && ['signed', 'certificate'].map(artifact => <button disabled={busy} key={artifact} className="portal-button" onClick={() => void onDownload(doc, artifact)}><Download className="h-4 w-4" aria-hidden="true" />{artifact === 'signed' ? 'PDF firmado' : 'Certificado de evidencia'}</button>)}
@@ -55,7 +54,7 @@ export function ProviderPortalDocuments({ documents, declarations, providerId, p
       {['active', 'pending_review'].includes(d.status) && <button disabled={busy} className="portal-button" onClick={() => onRevoke(d.id)}>Revocar autorización</button>}
     </div>}
   </ProviderDeclarationCard>;
-  const projects = (items: any[]) => groupPortalDocumentsByProject(items).map(group => <details key={group.key} aria-label={group.name} open={group.documents.some(needsPortalSignature) || undefined} className="group rounded-2xl border border-slate-200 bg-slate-50/70 p-3 sm:p-4">
+  const projects = (items: any[]) => groupPortalDocumentsByProject(items).map(group => <details key={group.key} aria-label={group.name} open={group.documents.some(needsPortalSignature) || undefined} className="group rounded-xl border border-slate-200 bg-slate-50/70 p-2 sm:rounded-2xl sm:p-4">
     <summary className="flex min-h-11 list-none items-center gap-2 rounded-xl px-1 py-1 transition-colors hover:bg-slate-100 [&::-webkit-details-marker]:hidden"><ChevronRight className="h-4 w-4 shrink-0 text-slate-500 transition-transform group-open:rotate-90" aria-hidden="true" /><FolderOpen className="h-4 w-4 shrink-0 text-slate-500" aria-hidden="true" /><span className="min-w-0 flex-1 break-words font-semibold text-slate-800">{group.name}</span><span className="portal-status">{group.documents.length} {group.documents.length === 1 ? 'documento' : 'documentos'}</span></summary>
     <div className="mt-3 space-y-3">{group.documents.map(card)}</div>
   </details>);
@@ -74,7 +73,7 @@ export function ProviderPortalDocuments({ documents, declarations, providerId, p
       const active = category.statements.filter(item => activeDeclarations.includes(item)), old = category.statements.filter(item => history.includes(item));
       const total = category.docs.length + category.statements.length, attention = needs.length + active.length;
       if (!total && category.key === 'profile') return null;
-      return <details key={category.key} id={`provider-documents-${category.key}`} aria-label={category.title} open={attention > 0 || undefined} className="portal-details portal-panel">
+      return <details key={category.key} id={`provider-documents-${category.key}`} aria-label={category.title} open={attention > 0 || undefined} className="portal-details portal-panel scroll-mt-3">
         <summary className="flex flex-wrap items-center gap-2"><span className="flex-1 font-semibold">{category.title}</span><span className="portal-status">{total}</span>{attention > 0 && <span className="portal-status portal-status-pending">{attention} pendientes</span>}</summary>
         <div className="mt-4 space-y-4">
           {!!attention && <section className="space-y-3" aria-label="Documentos pendientes"><h3 className="text-sm font-semibold text-amber-900">Necesitan tu atención</h3>{projects(needs)}{active.map(declarationCard)}</section>}

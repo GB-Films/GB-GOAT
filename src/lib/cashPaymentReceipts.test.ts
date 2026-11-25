@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { registerHooks } from 'node:module';
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { JSDOM } from 'jsdom';
@@ -48,4 +49,67 @@ test('pending receipts show one clear entry point and use their real project gro
   const html = renderToStaticMarkup(createElement(ProviderPendingSignatures, { documents, onOpen() {} }));
   assert.match(html, /Tenés 1 documento para firmar/); assert.match(html, /Firmar recibo \(1\)/);
   assert.equal(renderToStaticMarkup(createElement(ProviderPendingSignatures, { documents: [{ ...receipt, signed: true }], onOpen() {} })), '');
+});
+
+test('payment receipt actions download the selected file and ask for a reason before cancellation', async () => {
+  const calls: Record<string, unknown>[] = [];
+  const downloads: string[] = [];
+  const source = { fingerprint: 'fixture', amountCents: 10000, date: '2026-11-25', concept: 'Servicio ficticio', projectName: 'Proyecto ficticio', providerName: 'Persona de prueba', signerEmail: 'persona@example.test', cashBoxLabel: 'Caja personal' };
+  const receipt = { id: 'receipt', status: 'signed', signed: true, title: 'Recibo de prueba', signing: {}, content: { preparedAt: '2026-11-25T15:00:00Z', parts: { arsCents: 10000, usdCents: 0 } } };
+  const adminRequest = async (input: Record<string, unknown>) => {
+    calls.push(input);
+    if (input.action === 'cashReceiptSource') return { source, receipts: [receipt], canRequest: true };
+    if (input.action === 'cashReceiptFile') return { fileName: `${input.artifact}.pdf` };
+    if (input.action === 'cancelCashReceipt') { receipt.status = 'cancelled'; return { status: 'cancelled' }; }
+    throw new Error('Unexpected action');
+  };
+  const mock = `export const portalAdminRequest = input => globalThis.goatTestReceipt.adminRequest(input);
+    export const downloadPortalFile = file => globalThis.goatTestReceipt.downloads.push(file.fileName);`;
+  const hook = registerHooks({ resolve: (name, context, next) => name === '../lib/providerPortal' && context.parentURL?.includes('CashPaymentReceiptButton.tsx')
+    ? { url: `data:text/javascript,${encodeURIComponent(mock)}`, format: 'module', shortCircuit: true }
+    : next(name, context) });
+  const dom = new JSDOM('<div id="app"></div>');
+  dom.window.HTMLDialogElement.prototype.showModal ||= function () { this.open = true; };
+  dom.window.HTMLDialogElement.prototype.close ||= function () { this.open = false; };
+  // React may have selected its legacy input handler before JSDOM was installed.
+  Object.defineProperties(dom.window.HTMLElement.prototype, { attachEvent: { value() {} }, detachEvent: { value() {} } });
+  const globals = { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true, goatTestReceipt: { adminRequest, downloads } };
+  const previous = Object.entries(globals).map(([key, value]) => {
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, key);
+    Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+    return [key, descriptor] as const;
+  });
+  const container = dom.window.document.getElementById('app')!;
+  const root = createRoot(container);
+  const button = (label: string) => [...container.querySelectorAll<HTMLButtonElement>('button')].find(item => item.textContent?.trim() === label)!;
+  const click = async (label: string) => act(async () => button(label).click());
+  try {
+    const { CashPaymentReceiptButton } = await import('../components/CashPaymentReceiptButton');
+    await act(async () => root.render(createElement(CashPaymentReceiptButton, { projectId: 'project', itemId: 'expense', collectionName: 'areaExpenses',
+      payment: { id: 'payment', amount: 100, method: 'caja_efectivo', cashAccount: 'personal', cashMovementId: 'movement' }, canRequest: true })));
+    await click('Gestionar recibo');
+    assert(button('Descargar original'));
+    assert(button('Descargar certificado'));
+    await click('Descargar PDF firmado');
+    assert.deepEqual(downloads, ['signed.pdf']);
+    await click('Anular recibo');
+    assert.equal(button('Confirmar anulación').disabled, true);
+    assert(!calls.some(input => input.action === 'cancelCashReceipt'));
+    const textarea = container.querySelector('textarea')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(dom.window.HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, 'Duplicado ficticio');
+      textarea.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+      textarea.dispatchEvent(new dom.window.KeyboardEvent('keyup', { bubbles: true }));
+    });
+    await click('Confirmar anulación');
+    assert.deepEqual(calls.find(input => input.action === 'cancelCashReceipt'), { action: 'cancelCashReceipt', receiptId: 'receipt', reason: 'Duplicado ficticio' });
+    assert.match(container.textContent || '', /Recibo anulado/);
+  } finally {
+    await act(async () => root.unmount());
+    for (const [key, descriptor] of previous) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key);
+    }
+    hook.deregister();
+    dom.window.close();
+  }
 });

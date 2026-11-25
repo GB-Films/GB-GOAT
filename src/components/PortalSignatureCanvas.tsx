@@ -13,18 +13,19 @@ export function PortalSignatureCanvas({
     if (ink.current && canvas.current) onChange(canvas.current.toDataURL("image/png"));
   };
   return (
-    <div>
+    <div className="portal-sign-canvas">
       <canvas
         ref={canvas}
         width={600}
-        height={300}
+        height={240}
         aria-label="Dibujá tu firma"
         className="h-auto w-full touch-none rounded-lg border bg-white"
         onPointerDown={(e) => {
           const c = canvas.current;
           if (!c) return;
-          const ctx = c.getContext("2d")!;
+          const ctx = c.getContext("2d");
           const r = c.getBoundingClientRect();
+          if (!ctx || !r.width || !r.height) return;
           drawing.current = true;
           ink.current = false;
           c.setPointerCapture(e.pointerId);
@@ -38,7 +39,8 @@ export function PortalSignatureCanvas({
           const c = canvas.current;
           if (!c || !drawing.current) return;
           const r = c.getBoundingClientRect(),
-            ctx = c.getContext("2d")!;
+            ctx = c.getContext("2d");
+          if (!ctx || !r.width || !r.height) return;
           ctx.lineWidth = 2.5;
           ctx.lineCap = "round";
           ctx.strokeStyle = "#0f172a";

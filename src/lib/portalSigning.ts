@@ -34,6 +34,10 @@ export function normalizeSigningDni(value: string): string {
   return value.replace(/[.\s-]/g, "");
 }
 
+export function signingFieldChoice(fields: PortalSignatureField[], selectedId: string) {
+  return fields.find(field => field.id === selectedId) ?? (fields.length === 1 ? fields[0] : undefined);
+}
+
 export type SigningStep = 'preparing' | 'loading' | 'load_error' | 'unassigned' | 'field' | 'dni' | 'dni_confirmation' | 'signature' | 'consent' | 'ready';
 export function signingNextStep(input: {
   preparing: boolean; hasUrl: boolean; loadError: string; ready: boolean;
