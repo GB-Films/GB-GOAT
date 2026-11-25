@@ -108,6 +108,7 @@ function scopedFiles(projectId, collectionName, item) {
     ? { ...fields(file, attachmentFields), fileName: ['invoice', 'invoices'].includes(kind) ? 'Factura' : 'Comprobante',
       url: token({ projectId, collectionName, itemId: item.id, kind, index, nestedIndex }) } : null;
   const next = fields(item, expenseFields);
+  if (list(item.sharedPaymentRecords).length) next.hasSharedExpensePayments = true;
   next.paymentDatesVersion = paymentDatesVersion(item);
   for (const field of ['sharedInvoices', 'sharedReceipts']) {
     if (Array.isArray(item[field])) next[field] = item[field].map(reference => fields(reference, ['id', 'amountCents', 'fileHidden']));

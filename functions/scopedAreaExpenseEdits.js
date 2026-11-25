@@ -5,7 +5,7 @@ const { isInternalBudgetEstimate } = require('./internalBudgetEstimate');
 const { projectFinanceAccess } = require('./projectFinanceAccess');
 const { canEditAreaExpense, deny } = require('./projectReadScope');
 const { paymentDatesVersion, scopedFiles, wire } = require('./projectScopedReads');
-const { fail, hash, id, list } = require('./providerPortalModel');
+const { email, fail, hash, id, list } = require('./providerPortalModel');
 const { checkPickerExpense, checkUnlinkedExpense, createScopedProviderPicker, providerName } = require('./scopedProviderPicker');
 
 const amountFields = ['unitPrice', 'quantity', 'total'];
@@ -20,7 +20,7 @@ const revision = value => value?.seconds == null ? null : [value.seconds, value.
 const fileMarker = (scope, kind, fileId) => 'goat-file:' + encodeURIComponent(JSON.stringify({ ...scope, kind, fileId }));
 const documents = ['invoice', 'other'];
 
-function prepareChanges(expense, input) {
+function prepareChanges(expense, input, access, actor) {
   const submitted = input.updates;
   if (!isMap(submitted) || !Object.keys(submitted).length || Object.keys(submitted).some(key => ![...editableFields, 'providerInviteLink'].includes(key))) fail('Dato de gasto no editable.');
   if (JSON.stringify(input.expectedUpdatedAt) !== JSON.stringify(revision(expense.updatedAt))) fail('El gasto cambió. Actualizá la fila antes de editarla.');
@@ -35,7 +35,18 @@ function prepareChanges(expense, input) {
   if (assignsProvider !== Object.hasOwn(updates, 'providerName') || assignsProvider && (Boolean(updates.providerId) !== Boolean(updates.providerName)
     || Boolean(updates.providerId) && !validId(updates.providerId))) fail('Proveedor inválido.');
   if (Object.hasOwn(submitted, 'providerInviteLink') && (!updates.providerId || submitted.providerInviteLink !== null)) fail('Invitación inválida.');
-  if (expense.paymentLocked === true || expense.paid === true || list(expense.paymentHistory).length) fail('PAID_EXPENSE_LOCKED');
+  const history = list(expense.paymentHistory);
+  const hasSharedPayment = list(expense.sharedPaymentIds).length || list(expense.sharedPaymentRecords).length;
+  const hasPaymentLock = expense.paymentLocked === true || expense.paid === true || history.length || hasSharedPayment;
+  // A missing history on a legacy paid row is not proof that the payments are gone.
+  const canEditOwnPaidDetails = !access.admin && !hasSharedPayment && Array.isArray(expense.paymentHistory)
+    && (history.length > 0 || expense.paid !== true)
+    && history.every(payment => payment?.createdBy === actor.uid && !payment.sharedRecordId
+      && (!payment.createdByEmail || email(payment.createdByEmail) === actor.email));
+  if (hasPaymentLock && (!canEditOwnPaidDetails || assignsProvider)) {
+    fail(assignsProvider ? 'El gasto tiene historial de pagos. Revisá la corrección del proveedor con administración.'
+      : 'Este gasto tiene pagos que no podés modificar. Sólo podés editar filas cuyos pagos estén todos registrados por vos.');
+  }
   if ((expense.thirdPartyPayoutRequired || list(expense.sharedInvoices).length || list(expense.sharedReceipts).length || list(expense.sharedPaymentIds).length)
     && ['providerId', 'providerName', ...amountFields].some(key => key in updates && updates[key] !== expense[key])) fail('El gasto tiene comprobantes compartidos. Revisá sus importes o proveedor con administración.');
   if ('quantity' in updates || 'unitPrice' in updates) {
@@ -43,6 +54,13 @@ function prepareChanges(expense, input) {
     updates.unitPrice = updates.unitPrice ?? Number(expense.unitPrice);
     updates.total = updates.quantity * updates.unitPrice;
     if (![updates.quantity, updates.unitPrice, updates.total].every(isNumber)) fail('Importe de gasto inválido.');
+  }
+  if ('total' in updates && history.length) {
+    if (!('quantity' in updates)) fail('Para cambiar el importe, indicá el precio unitario o la cantidad.');
+    if (history.some(payment => !isNumber(payment.amount) || cents(payment.amount) <= 0)) fail('Revisá el historial de pagos antes de cambiar el importe.');
+    const paidCents = history.reduce((sum, payment) => sum + cents(payment.amount), 0);
+    if (cents(updates.total) < paidCents) fail('El importe del gasto no puede quedar por debajo de lo ya pagado.');
+    updates.paid = cents(updates.total) === paidCents;
   }
   return updates;
 }
@@ -114,7 +132,7 @@ function createScopedAreaExpenseEdits({ db, inspectUpload }) {
         return { expense: view({ ...expense, ...updates }), provider: { id: providerId, name } };
       }
       if (input.action === 'editScopedAreaExpense') {
-        const updates = prepareChanges(expense, input);
+        const updates = prepareChanges(expense, input, access, actor);
         if (!access.admin && access.collaborator?.role === 'jefe_produccion' && Object.hasOwn(updates, 'providerId')
           && (updates.providerId !== (expense.providerId || '') || expense.providerInviteLink && input.updates.providerInviteLink === null))
           await checkUnlinkedExpense({ tx, db, expense, scope });
@@ -129,7 +147,16 @@ function createScopedAreaExpenseEdits({ db, inspectUpload }) {
           }
           updates.providerInviteLink = null;
         } else if (input.updates.providerInviteLink === null) updates.providerInviteLink = null;
-        tx.update(ref, { ...updates, updatedAt });
+        const changed = Object.fromEntries(Object.entries(updates).filter(([key, value]) => expense[key] !== value));
+        if (!Object.keys(changed).length) return { expense: view(expense) };
+        if (list(expense.paymentHistory).length) {
+          tx.create(root.collection('activityLog').doc(), {
+            action: 'paid_area_expense_details_corrected', collectionName, itemId,
+            before: Object.fromEntries(Object.keys(changed).map(key => [key, expense[key] ?? null])), after: changed,
+            editedBy: actor.uid, editedByEmail: actor.email, createdAt: updatedAt,
+          });
+        }
+        tx.update(ref, { ...changed, updatedAt });
         return { expense: view({ ...expense, ...updates, updatedAt }) };
       }
 

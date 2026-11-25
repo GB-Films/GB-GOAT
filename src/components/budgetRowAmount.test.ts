@@ -4,7 +4,7 @@ import { act, createElement } from 'react';
 import { JSDOM } from 'jsdom';
 import { MemoryRouter } from 'react-router-dom';
 
-test('desktop area edits send numeric prices and quantities to the save handler', async () => {
+test('desktop area edits save numeric values and show description failures against the saved value', async () => {
   const dom = new JSDOM('<div id="app"></div>');
   const globals = { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true };
   const previous = new Map(Object.keys(globals).map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
@@ -12,14 +12,18 @@ test('desktop area edits send numeric prices and quantities to the save handler'
   const { createRoot } = await import('react-dom/client');
   const { BudgetRowCell } = await import('../pages/project-detail/BudgetRowCell');
   const root = createRoot(dom.window.document.getElementById('app')!);
-  const item = { id: 'gasto-ficticio', unitPrice: 80, quantity: 2, total: 160 };
+  const item = { id: 'gasto-ficticio', description: 'Detalle guardado', unitPrice: 80, quantity: 2, total: 160 };
   const writes: Array<{ id: string; updates: Record<string, unknown> }> = [];
-  const onUpdate = async (id: string, updates: Record<string, unknown>) => { writes.push({ id, updates }); };
+  const onUpdate = async (id: string, updates: Record<string, unknown>) => {
+    if (updates.description === 'Intento sin guardar') throw new Error('El gasto cambió. Volvé a editar la fila.');
+    writes.push({ id, updates });
+  };
 
   try {
     await act(async () => root.render(createElement(MemoryRouter, null,
       createElement(BudgetRowCell, { item, collectionName: 'areaExpenses', type: 'price', onUpdate }),
       createElement(BudgetRowCell, { item, collectionName: 'areaExpenses', type: 'quantity', onUpdate }),
+      createElement(BudgetRowCell, { item, collectionName: 'areaExpenses', type: 'description', onUpdate }),
     )));
     const [price, quantity] = [...dom.window.document.querySelectorAll<HTMLInputElement>('input[type=number]')];
     assert.ok(price && quantity);
@@ -40,6 +44,12 @@ test('desktop area edits send numeric prices and quantities to the save handler'
     assert.equal(writes.length, 2, 'clearing an input does not save a zero amount');
     await finish(price, '0');
     assert.deepEqual(writes.at(-1), { id: item.id, updates: { unitPrice: 0, total: 0 } });
+    const description = dom.window.document.querySelector<HTMLInputElement>('input[aria-label="Descripción del gasto"]')!;
+    await finish(description, 'Detalle nuevo');
+    assert.deepEqual(writes.at(-1), { id: item.id, updates: { description: 'Detalle nuevo' } });
+    await finish(description, 'Intento sin guardar');
+    assert.equal(description.value, item.description);
+    assert([...dom.window.document.querySelectorAll('[role="alert"]')].some(alert => alert.textContent?.includes('El gasto cambió')));
   } finally {
     await act(async () => root.unmount());
     dom.window.close();

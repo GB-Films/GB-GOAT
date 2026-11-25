@@ -4,8 +4,9 @@ import { cn } from '../../lib/utils';
 import { ProjectDialog } from './ProjectDialog';
 import { sameExpenseVersion, samePaymentTarget } from '../../lib/expenseEdits';
 
-export function MobileExpenseAmount({ item, canEdit, paidAmount, onUpdate }: {
+export function MobileExpenseAmount({ item, canEdit, paidAmount, onUpdate, readOnlyReason }: {
   item: any; canEdit: boolean; paidAmount: number; onUpdate: (id: string, updates: any) => Promise<void>;
+  readOnlyReason?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [total, setTotal] = useState('');
@@ -43,7 +44,8 @@ export function MobileExpenseAmount({ item, canEdit, paidAmount, onUpdate }: {
         <label className="block text-xs font-bold">Cantidad
           <input aria-label="Cantidad" value={quantity} onChange={e => setQuantity(e.target.value)} disabled={!canEdit || saving}
             inputMode="decimal" required className="mt-1 w-full rounded-lg border border-slate-200 p-3 text-base" /></label>
-        <p className="text-xs text-slate-500">El precio unitario se calcula como total dividido por cantidad. No registra un pago ni mueve la caja.</p>
+        {readOnlyReason && <p className="text-xs text-slate-500">{readOnlyReason}</p>}
+        {canEdit && <p className="text-xs text-slate-500">El precio unitario se calcula como total dividido por cantidad.</p>}
         {error && <p role="alert" className="text-xs text-red-600">{error}</p>}
         {canEdit && <button disabled={saving} type="submit" className="w-full rounded-lg bg-slate-900 px-4 py-3 text-sm font-bold text-white disabled:opacity-50">{saving ? 'Guardando...' : 'Guardar importe'}</button>}
       </form>
