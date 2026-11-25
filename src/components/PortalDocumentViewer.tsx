@@ -62,8 +62,9 @@ function DocumentPage({ pdf, pageNumber, root, size, fit, zoom, fields, selected
   const drag = useRef<{ field: PortalSignatureField; x: number; y: number } | null>(null);
   const original = page?.getViewport({ scale: 1 });
   const pageWidth = original?.width || 595, pageHeight = original?.height || 842;
-  const scale = Math.max(.1, Math.min(Math.max(1, size.width - 32) / pageWidth,
-    fit === "page" ? Math.max(1, size.height - 32) / pageHeight : Infinity) * zoom);
+  const padding = editor ? 32 : 16;
+  const scale = Math.max(.1, Math.min(Math.max(1, size.width - padding) / pageWidth,
+    fit === "page" ? Math.max(1, size.height - padding) / pageHeight : Infinity) * zoom);
   const width = pageWidth * scale, height = pageHeight * scale;
 
   useEffect(() => {
@@ -209,7 +210,7 @@ export function PortalDocumentViewer({ url, fields, selectedFieldId, signatureIm
     if (!element || !sheet) return;
     const field = fieldId ? Array.from(sheet.querySelectorAll<HTMLElement>("[data-signature-field-id]")).find((f: HTMLElement) => f.dataset.signatureFieldId === fieldId) as HTMLElement | undefined : undefined;
     const rect = (field || sheet).getBoundingClientRect(), root = element.getBoundingClientRect();
-    const top = element.scrollTop + rect.top - root.top - (field ? (element.clientHeight - rect.height) / 2 : 16);
+    const top = element.scrollTop + rect.top - root.top - (field ? (element.clientHeight - rect.height) / 2 : editor ? 16 : 8);
     const left = field ? element.scrollLeft + rect.left - root.left - (element.clientWidth - rect.width) / 2 : 0;
     if (fieldId) scrollToField(element, top, left); else { scrollAnimations.get(element)?.(); element.scrollTo({ top, left }); }
     setPageNumber(page);
@@ -248,15 +249,15 @@ export function PortalDocumentViewer({ url, fields, selectedFieldId, signatureIm
       <div className="portal-pdf-control-group">
         <button type="button" aria-label="Alejar documento" disabled={!pdf || zoom <= .5} onClick={() => setZoom(z => Math.max(.5, z - .25))}>−</button>
         <button type="button" aria-label="Acercar documento" disabled={!pdf || zoom >= 3} onClick={() => setZoom(z => Math.min(3, z + .25))}>+</button>
-        <select aria-label="Ajuste del documento" value={fit} onChange={e => { setFit(e.target.value as "page" | "width"); setZoom(1); }}>
+        <select className="portal-pdf-fit" aria-label="Ajuste del documento" value={fit} onChange={e => { setFit(e.target.value as "page" | "width"); setZoom(1); }}>
           <option value="page">Hoja completa</option><option value="width">Ajustar al ancho</option>
         </select>
       </div>
       <div className="portal-pdf-control-group">
-        <select aria-label={editor ? 'Ir a un recuadro de firma' : 'Ir a mi recuadro de firma'} value="" disabled={!pdf || !fields.length} onChange={e => { const field = fields.find(f => f.id === e.target.value); if (field) goToPage(field.page, field.id); }}>
-          <option value="" disabled>{editor ? 'Ir a un recuadro' : 'Ir a mi recuadro'}</option>
+        {editor && <select aria-label="Ir a un recuadro de firma" value="" disabled={!pdf || !fields.length} onChange={e => { const field = fields.find(f => f.id === e.target.value); if (field) goToPage(field.page, field.id); }}>
+          <option value="" disabled>Ir a un recuadro</option>
           {fields.map((field, index) => <option key={field.id} value={field.id}>Recuadro {index + 1} · página {field.page}</option>)}
-        </select>
+        </select>}
         {url && <a href={url} target="_blank" rel="noreferrer">Abrir PDF</a>}
       </div>
     </div>
@@ -265,6 +266,6 @@ export function PortalDocumentViewer({ url, fields, selectedFieldId, signatureIm
         <div className="portal-pdf-pages">{Array.from({ length: pdf.numPages }, (_, index) => <DocumentPage key={index + 1} pdf={pdf} pageNumber={index + 1} root={viewport.current!} size={size} fit={fit} zoom={zoom} fields={fields} selectedFieldId={selectedFieldId} signatureImage={signatureImage} signatureName={signatureName} onSelectField={onSelectField} onRendered={onRendered} onError={setError} editor={editor} />)}</div> :
         <p role="status" className="portal-pdf-loading">Cargando documento…</p>}
     </div>
-    <p className="portal-pdf-hint">{editor ? 'Elegí un firmante y tocá el PDF para ubicar su firma. Podés arrastrar el recuadro y desplazarte por todas las hojas.' : 'Desplazate por las hojas y seleccioná tu recuadro de firma. Usá + para ampliar el texto.'}</p>
+    {editor && <p className="portal-pdf-hint">Elegí un firmante y tocá el PDF para ubicar su firma. Podés arrastrar el recuadro y desplazarte por todas las hojas.</p>}
   </section>;
 }

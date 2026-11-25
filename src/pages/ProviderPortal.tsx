@@ -203,7 +203,7 @@ export default function ProviderPortal() {
     <div className="provider-portal mx-auto min-w-0 max-w-6xl space-y-3 p-1 sm:space-y-5 sm:p-5">
       <header className={box}>
         <h1 className="text-2xl font-bold tracking-tight">Mi proveedor</h1>
-        <p className="mt-2 text-sm text-slate-600">
+        <p className="mt-1 text-sm text-slate-600 sm:mt-2">
           {user?.displayName && <span className="mr-2 font-medium text-slate-800">{user.displayName}</span>}<span className="break-all">{user?.email}</span>
         </p>
         {members.length > 1 ? (
@@ -248,7 +248,13 @@ export default function ProviderPortal() {
       </header>
       <ProviderPendingSignatures documents={docs} onOpen={category => {
         setTab('Documentos');
-        window.requestAnimationFrame(() => { const section = document.getElementById(`provider-documents-${category}`) as HTMLDetailsElement | null; if (section) { section.open = true; section.scrollIntoView({ behavior: 'smooth', block: 'start' }); } });
+        window.requestAnimationFrame(() => {
+          const section = document.getElementById(`provider-documents-${category}`) as HTMLDetailsElement | null;
+          if (!section) return;
+          section.open = true;
+          section.scrollIntoView({ behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'start' });
+          section.querySelector('summary')?.focus({ preventScroll: true });
+        });
       }} />
       {hasLoaded && !members.length && !error && <section className={box + ' space-y-3'}>
         <h2 className="font-semibold">¿Te registraste con otro correo?</h2>
@@ -289,7 +295,7 @@ export default function ProviderPortal() {
             onClick={() => { setError(''); setTab(t); }}
             className={`flex min-h-10 min-w-0 items-center justify-center gap-1 whitespace-nowrap rounded-lg px-2 py-1.5 text-xs sm:min-h-11 sm:gap-2 sm:rounded-xl sm:py-2 sm:text-sm font-medium transition-colors sm:px-4 ${pending ? `bg-amber-100 text-amber-950 hover:bg-amber-200 ${tab === t ? 'ring-2 ring-inset ring-amber-400' : ''}` : tab === t ? 'bg-slate-900 text-white hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'}`}
           >
-            <Icon className="h-4 w-4 shrink-0" aria-hidden="true" /><span className="sm:hidden">{t === "Pagos y retenciones" ? "Pagos" : t}</span><span className="hidden sm:inline">{t}</span>{pending && <span className="flex min-w-5 items-center justify-center rounded-full bg-amber-400 px-1.5 text-xs font-bold leading-5 text-amber-950" aria-hidden="true">{pendingCount}</span>}
+            <Icon className={`h-4 w-4 shrink-0 ${pending ? 'max-[380px]:hidden' : ''}`} aria-hidden="true" /><span className="sm:hidden">{t === "Pagos y retenciones" ? "Pagos" : t}</span><span className="hidden sm:inline">{t}</span>{pending && <span className="flex min-w-5 items-center justify-center rounded-full bg-amber-400 px-1 text-xs font-bold leading-5 text-amber-950" aria-hidden="true">{pendingCount}</span>}
           </button>
         ); })}
       </nav>
