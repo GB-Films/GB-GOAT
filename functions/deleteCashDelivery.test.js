@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { createCashSubdeliveryHandler, availablePersonalCents } = require('./cashSubdelivery');
 const actorEmail = 'tomas@granberta.com', recipient = 'delete-recipient@example.test';
-const request = (data = {}, auth = { uid: 'custodian', token: { email: actorEmail } }) => ({ auth, data: { action: 'deleteDelivery', projectId: 'cash-delete', movementId: 'funds', ...data } });
+const request = (data = {}, auth = { uid: 'custodian', token: { email: actorEmail, email_verified: true } }) => ({ auth, data: { action: 'deleteDelivery', projectId: 'cash-delete', movementId: 'funds', ...data } });
 
 test('deletion rejects missing identity, forged money/actor fields and malformed paths before reading', async () => {
   const handler = createCashSubdeliveryHandler({ db: null });
