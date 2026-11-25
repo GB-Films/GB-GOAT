@@ -143,19 +143,28 @@ function createProviderFinanceHandler({ db, timestamp, verifyFile, readFile, buc
       if (request.auth.token.email_verified !== true) throw new HttpsError('permission-denied', 'Verificá tu correo.');
       const projectId = id(input.projectId);
       const access = await projectFinanceAccess({ db, actor, projectId });
-      if (!canReadTab(access, 'cajas', 'areas', 'saldos')) return { movements: [] };
+      const canReadOwnCash = canReadTab(access, 'cajas', 'areas', 'saldos');
       if (access.admin && canAccessGeneralCash(actor.email) && input.includeGeneral === true) {
         const snap = await db.collection(`projects/${projectId}/cashMovements`).limit(2001).get();
         if (snap.size > 2000) fail('La caja requiere revisión por su volumen de movimientos.');
         return { movements: snap.docs.map(row => ({ ...row.data(), id: row.id })) };
       }
       const ledger = db.collection(`projects/${projectId}/cashMovements`);
-      const parts = await Promise.all(['fromUserEmail', 'toUserEmail'].map(field => ledger.where(field, '==', actor.email).limit(2001).get()));
+      // A named recipient must be able to see and acknowledge a pending handover
+      // even if their project access doesn't include a financial tab.
+      const parts = canReadOwnCash
+        ? await Promise.all(['fromUserEmail', 'toUserEmail'].map(field => ledger.where(field, '==', actor.email).limit(2001).get()))
+        : [await ledger.where('toUserEmail', '==', actor.email).where('type', '==', 'transferencia').where('status', '==', 'pending').limit(2001).get()];
       const rows = [...new Map(parts.flatMap(part => part.docs).map(row => [row.id, row])).values()];
       if (rows.length > 2000) fail('La caja requiere revisión por su volumen de movimientos.');
       const clientValue = value => value?.toDate ? value.toDate().toISOString() : value instanceof Date ? value.toISOString()
         : Array.isArray(value) ? value.map(clientValue) : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, clientValue(entry)])) : value;
-      const movements = await Promise.all(rows.filter(row => canReadPersonalCashMovement(actor.email, row.data())).map(async row => {
+      const movements = await Promise.all(rows.filter(row => {
+        const value = row.data();
+        return canReadPersonalCashMovement(actor.email, value)
+          && (canReadOwnCash || value.cashAccount === 'personal' && value.subdelivery === true && value.receiptVersion === 1
+            && (!value.toUserId || value.toUserId === actor.uid));
+      }).map(async row => {
         const movement = { ...row.data(), id: row.id };
         const item = ['budgetItems', 'areaExpenses'].includes(movement.collectionName) && movement.itemId
           ? (await db.doc(`projects/${projectId}/${movement.collectionName}/${id(movement.itemId)}`).get()).data() : null;

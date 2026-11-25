@@ -1,6 +1,6 @@
 import { handleProjectAttachmentLink, projectAttachmentHref } from '../lib/portalInvoiceLink';
 import { canAccessGeneralCash } from '../lib/generalCashAccess';
-import { readProjectCashMovements, watchProjectCashMovements } from '../lib/projectCashQueries';
+import { readProjectCashMovements, readProjectCashRecipients, watchProjectCashMovements, type ProjectCashRecipients } from '../lib/projectCashQueries';
 import { ProjectScopePermissions } from '../components/ProjectScopePermissions';
 import React, { useState, useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
@@ -773,8 +773,8 @@ export default function ProjectDetail() {
   const [cashTransferTargetEmail, setCashTransferTargetEmail] = useState('');
   const [cashReturnRecipientChoice, setCashReturnRecipientChoice] = useState('');
   const [isCreatingCashDelivery, setIsCreatingCashDelivery] = useState(false);
-  const [isCreatingCashReturn, setIsCreatingCashReturn] = useState(false);
   const [cashMovementDialog, setCashMovementDialog] = useState<'entrega' | 'transferencia' | 'devolucion' | null>(null);
+  const [cashRecipients, setCashRecipients] = useState<{ scope: string; entries?: ProjectCashRecipients; error?: string }>();
   const [confirmingCashDeliveryId, setConfirmingCashDeliveryId] = useState('');
   const [confirmingCashReturnId, setConfirmingCashReturnId] = useState('');
   const [cancellingCashReturnId, setCancellingCashReturnId] = useState('');
@@ -827,8 +827,10 @@ export default function ProjectDetail() {
   const areaSelectorRef = useRef<HTMLDivElement>(null);
   const isGlobalAdmin = profile?.role === 'admin';
   const canReadFullProviderCatalog = isGlobalAdmin || profile?.role === 'ayudante_admin';
-  const [isCreatingCashSubdelivery, setIsCreatingCashSubdelivery] = useState(false);
-  const cashSubdeliveryRequestId = useRef<string | null>(null);
+  const [isCreatingOwnCashMovement, setIsCreatingOwnCashMovement] = useState(false);
+  const cashMovementAttempt = useRef<{ key: string; requestId: string } | null>(null);
+  const cashUiScope = useRef(loadScope);
+  cashUiScope.current = loadScope;
   const canViewGeneralCash = canAccessGeneralCash(user?.email);
   const canDeliverGeneralCash = canViewGeneralCash && isProjectAdmin && !safeArray(project?.generalCashDeliveryBlockedEmails).includes(normalizeEmail(user?.email));
 
@@ -4170,19 +4172,24 @@ export default function ProjectDetail() {
       && movement.status === 'pending'
       && normalizeEmail(movement.toUserEmail) === currentUserEmail)
   ), [cashMovements, currentUserEmail, canViewGeneralCash]);
-  const cashReturnRecipients = React.useMemo(() => cashResponsibles.filter((responsible) =>
-    responsible.role === 'admin' && canAccessGeneralCash(responsible.email) && normalizeEmail(responsible.email) !== currentUserEmail
-  ), [cashResponsibles, currentUserEmail]);
+  const cashRecipientsOpen = cashMovementDialog !== null;
+  const cashRecipientState = cashRecipients?.scope === loadScope ? cashRecipients : undefined;
+  const cashReturnRecipients = cashRecipientState?.entries?.returns || [];
   const cashReturnRecipientEmail = resolveCashReturnRecipientEmail(cashReturnRecipients, cashReturnRecipientChoice);
-  const productionTransferTargets = React.useMemo(() => (
-    cashResponsibles.filter((responsible) => {
-      if (normalizeEmail(responsible.email) === currentUserEmail) return false;
-      if (isProjectAdmin) return true;
-      if (responsible.role !== 'jefe_area') return false;
-      const ownAreas = safeArray(userPermissions?.allowedCategories);
-      return safeArray(responsible.allowedCategories).some((area) => ownAreas.includes(area));
-    })
-  ), [cashResponsibles, currentUserEmail, isProjectAdmin, userPermissions]);
+  const transferRecipients = cashRecipientState?.entries?.transfers || [];
+  const selectedTransferRecipient = transferRecipients.find(person => person.email === cashTransferTargetEmail)?.email || '';
+
+  useEffect(() => {
+    if (!id || !cashRecipientsOpen) return;
+    let active = true;
+    setCashRecipients({ scope: loadScope });
+    void readProjectCashRecipients(db, id).then(entries => {
+      if (active) setCashRecipients({ scope: loadScope, entries });
+    }).catch(() => {
+      if (active) setCashRecipients({ scope: loadScope, error: 'No pudimos cargar los destinatarios. Cerrá y volvé a abrir el formulario.' });
+    });
+    return () => { active = false; };
+  }, [id, cashRecipientsOpen, loadScope]);
 
   const visibleCashRows = React.useMemo(() => (
     cashLedgerPeople(cashResponsibles, cashMovements)
@@ -4224,13 +4231,10 @@ export default function ProjectDetail() {
   }, [cashRecipientEmail, cashResponsibles]);
 
   useEffect(() => {
-    if (!cashTransferTargetEmail && productionTransferTargets.length > 0) {
-      setCashTransferTargetEmail(productionTransferTargets[0].email);
-    }
-  }, [cashTransferTargetEmail, productionTransferTargets]);
-
-  useEffect(() => {
     setCashReturnRecipientChoice('');
+    setCashTransferTargetEmail('');
+    setCashMovementDialog(null);
+    setIsCreatingOwnCashMovement(false);
   }, [loadScope]);
 
   const providerSaldosByArea = React.useMemo(() => {
@@ -4913,51 +4917,53 @@ export default function ProjectDetail() {
     }
   };
 
-  const createCashReturn = async (event: React.FormEvent<HTMLFormElement>) => {
+  const createOwnCashMovement = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!id || !user?.uid || isCreatingCashReturn) return;
+    if (!id || !user?.uid || !hasAssignedCashBox || isCreatingOwnCashMovement || !cashRecipientState?.entries) return;
+    const returning = cashMovementDialog === 'devolucion';
     const form = event.currentTarget;
     const formData = new FormData(form);
     const toEmail = normalizeEmail(formData.get('toUserEmail') as string);
-    const recipient = cashReturnRecipients.find((item) => item.email === toEmail);
+    const recipient = (returning ? cashReturnRecipients : transferRecipients).find(item => item.email === toEmail);
     const amount = Number(formData.get('amount'));
-    const date = parseProjectDate(String(formData.get('date') || ''));
     const notes = String(formData.get('notes') || '').trim();
+    const date = returning ? parseProjectDate(String(formData.get('date') || '')) : new Date();
     if (!recipient || !Number.isFinite(amount) || amount <= 0 || !date) {
-      alert('Elegí un administrador e ingresá una fecha y un monto válidos.');
+      alert(returning ? 'Elegí un responsable de Caja General e ingresá una fecha y un monto válidos.' : 'Elegí una persona e ingresá un monto válido.');
       return;
     }
-    setIsCreatingCashReturn(true);
+    const key = JSON.stringify([loadScope, returning, toEmail, amount, notes, returning ? date.toISOString() : null]);
+    if (cashMovementAttempt.current?.key !== key) cashMovementAttempt.current = { key, requestId: crypto.randomUUID() };
+    const { requestId } = cashMovementAttempt.current;
+    setIsCreatingOwnCashMovement(true);
     try {
-      const movements = isProjectAdmin ? await readProjectCashMovements(db, id, currentUserEmail) as CashMovement[] : await readScopedCash(id);
-      const balance = calculateCashBalances(movements).get(currentUserEmail) || 0;
-      const reserved = movements.filter((movement) => movement.type === 'devolucion'
-        && movement.status === 'pending' && normalizeEmail(movement.fromUserEmail) === currentUserEmail)
-        .reduce((total, movement) => total + (Number(movement.amount) || 0), 0);
-      if (amount > balance - reserved + 0.01) {
-        alert('La devolución supera tu saldo disponible, descontando otras devoluciones pendientes.');
-        return;
-      }
-      const payload = {
-        type: 'devolucion', cashAccount: GENERAL_CASH_ACCOUNT, status: 'pending',
-        amount, date, fromUserEmail: currentUserEmail, fromUserName: currentUserName,
-        ...(recipient.uid ? { toUserId: recipient.uid } : {}),
-        toUserEmail: recipient.email, toUserName: recipient.displayName || recipient.email,
-        notes, createdBy: user.uid, createdByEmail: currentUserEmail,
-        createdByName: currentUserName, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+      const call = httpsCallable<unknown, { id: string; repeated: boolean }>(getFunctions(auth.app, 'us-central1'), 'createCashSubdelivery');
+      const { data: result } = await call({
+        projectId: id, requestId, toUserEmail: toEmail, amount, notes, receiptVersion: 1,
+        ...(returning ? { action: 'createReturn', date: date.toISOString() } : {}),
+      });
+      if (cashMovementAttempt.current?.requestId === requestId) cashMovementAttempt.current = null;
+      if (cashUiScope.current !== loadScope) return;
+      const movement: CashMovement = {
+        id: result.id, type: returning ? 'devolucion' : 'transferencia',
+        ...(returning ? { cashAccount: GENERAL_CASH_ACCOUNT } : { cashAccount: 'personal', subdelivery: true, receiptVersion: 1 }),
+        status: 'pending', amount, date, fromUserEmail: currentUserEmail, fromUserName: currentUserName,
+        toUserEmail: toEmail, toUserName: recipient.displayName, notes,
+        createdBy: user.uid, createdByEmail: currentUserEmail, createdByName: currentUserName, createdAt: new Date(),
       };
-      const ref = await addDoc(collection(db, 'projects', id, 'cashMovements'), payload);
-      setCashMovements((current) => [{ id: ref.id, ...payload, createdAt: new Date(), updatedAt: new Date() } as CashMovement, ...current]);
+      if (!result.repeated) setCashMovements(current => current.some(row => row.id === result.id) ? current : [movement, ...current]);
       form.reset();
-      showExpenseConfirmation(`Devolución de $${amount.toLocaleString()} pendiente de confirmación por ${recipient.displayName || recipient.email}.`, 'warning');
-      setCashReturnRecipientChoice('');
+      showExpenseConfirmation(result.repeated
+        ? 'El movimiento ya estaba registrado. Podés consultar su estado en Cajas.'
+        : `${returning ? 'Devolución' : 'Entrega'} pendiente de confirmación por ${recipient.displayName}.`, 'warning');
       setSelectedCashBox(currentUserEmail);
       setCashMovementDialog(null);
-    } catch (error) {
-      console.error('Error creating cash return:', error);
-      alert('No se pudo registrar la devolución. Intentá nuevamente.');
+      setCashReturnRecipientChoice('');
+      setCashTransferTargetEmail('');
+    } catch (error: any) {
+      if (cashUiScope.current === loadScope) alert(error.message || 'No pudimos verificar el registro. Reintentá con los mismos datos para evitar duplicados.');
     } finally {
-      setIsCreatingCashReturn(false);
+      if (cashUiScope.current === loadScope) setIsCreatingOwnCashMovement(false);
     }
   };
 
@@ -5072,34 +5078,6 @@ export default function ProjectDetail() {
     } finally {
       setDeletingCashDeliveryId('');
     }
-  };
-
-  const createCashTransfer = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!id || !isProjectAdmin || isCreatingCashSubdelivery) return;
-
-    const form = event.currentTarget;
-    const formData = new FormData(form);
-    const toEmail = normalizeEmail(formData.get('toUserEmail') as string);
-    const amount = Number(formData.get('amount'));
-    const notes = String(formData.get('notes') || '').trim();
-    const recipient = productionTransferTargets.find((item) => normalizeEmail(item.email) === toEmail);
-
-    if (!recipient || !amount || amount <= 0) return;
-    setIsCreatingCashSubdelivery(true);
-    cashSubdeliveryRequestId.current ||= crypto.randomUUID();
-    try {
-      await httpsCallable(getFunctions(auth.app, 'us-central1'), 'createCashSubdelivery')({
-        projectId: id, requestId: cashSubdeliveryRequestId.current, toUserEmail: toEmail, amount, notes, receiptVersion: 1,
-      });
-      cashSubdeliveryRequestId.current = null;
-      form.reset();
-      setSelectedCashBox(currentUserEmail);
-      setCashMovementDialog(null);
-      showExpenseConfirmation('Entrega registrada. Queda pendiente de que la persona confirme la recepción.', 'warning');
-    } catch (error: any) {
-      alert(error.message || 'No se pudo confirmar la subentrega. Reintentá sin cambiar los datos para evitar duplicados.');
-    } finally { setIsCreatingCashSubdelivery(false); }
   };
 
   const addCollaborator = async (selectedUser: any) => {
@@ -7140,7 +7118,10 @@ export default function ProjectDetail() {
             <header className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
               <h2 className="text-base font-bold text-slate-900">Cajas</h2>
               {(canDeliverGeneralCash || hasAssignedCashBox) && <button type="button"
-                onClick={() => setCashMovementDialog(cashMovementOptions({ hasAssignedCashBox, canDeliver: canDeliverGeneralCash, canTransfer: isProjectAdmin, canReturn: hasAssignedCashBox })[0]?.kind || null)}
+                onClick={() => {
+                  setCashRecipients(undefined);
+                  setCashMovementDialog(cashMovementOptions({ hasAssignedCashBox, canDeliver: canDeliverGeneralCash, canTransfer: hasAssignedCashBox, canReturn: hasAssignedCashBox })[0]?.kind || null);
+                }}
                 className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700">
                 <Plus className="h-4 w-4" />Registrar movimiento
               </button>}
@@ -7183,15 +7164,17 @@ export default function ProjectDetail() {
             </section>
 
             {cashMovementDialog && <CashMovementDialog kind={cashMovementDialog} onKindChange={setCashMovementDialog}
-              onClose={() => setCashMovementDialog(null)} canDeliver={canDeliverGeneralCash} canTransfer={isProjectAdmin}
+              onClose={() => setCashMovementDialog(null)} canDeliver={canDeliverGeneralCash} canTransfer={hasAssignedCashBox}
               canReturn={hasAssignedCashBox} hasAssignedCashBox={hasAssignedCashBox}
-              recipients={cashMovementDialog === 'entrega' ? cashResponsibles : cashMovementDialog === 'transferencia' ? productionTransferTargets : cashReturnRecipients}
-              recipientEmail={cashMovementDialog === 'entrega' ? cashRecipientEmail : cashMovementDialog === 'transferencia' ? cashTransferTargetEmail : cashReturnRecipientEmail}
+              recipients={cashMovementDialog === 'entrega' ? cashResponsibles : cashMovementDialog === 'transferencia' ? transferRecipients : cashReturnRecipients}
+              recipientEmail={cashMovementDialog === 'entrega' ? cashRecipientEmail : cashMovementDialog === 'transferencia' ? selectedTransferRecipient : cashReturnRecipientEmail}
+              recipientsLoading={cashMovementDialog !== 'entrega' && !cashRecipientState?.entries && !cashRecipientState?.error}
+              recipientsError={cashMovementDialog !== 'entrega' ? cashRecipientState?.error : undefined}
               onRecipientChange={cashMovementDialog === 'entrega' ? setCashRecipientEmail : cashMovementDialog === 'transferencia' ? setCashTransferTargetEmail : setCashReturnRecipientChoice}
               availableBalance={availableReturnBalance} currentBalance={currentCashBalance} ownName={currentUserName || currentUserEmail}
               defaultDate={toProjectDateInputValue(new Date())}
-              busy={isCreatingCashDelivery || isCreatingCashSubdelivery || isCreatingCashReturn}
-              onSubmit={cashMovementDialog === 'entrega' ? createCashDelivery : cashMovementDialog === 'transferencia' ? createCashTransfer : createCashReturn} />}
+              busy={isCreatingCashDelivery || isCreatingOwnCashMovement}
+              onSubmit={cashMovementDialog === 'entrega' ? createCashDelivery : createOwnCashMovement} />}
 
           </div>
         )}

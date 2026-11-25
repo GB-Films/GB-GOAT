@@ -69,7 +69,8 @@ try {
   await assertFails(updateDoc(doc(db('admin'), root, 'cashMovements', 'private-general'), { amount: 1 }));
   await assertFails(deleteDoc(doc(db('admin'), root, 'cashMovements', 'private-general')));
   const returnFields = { type: 'devolucion', amount: 20, fromUserEmail: people.admin, fromUserName: 'Admin', toUserEmail: people.tomas, toUserId: 'tomas', toUserName: 'Tomas', notes: '', createdByName: 'Admin' };
-  await assertSucceeds(setDoc(doc(db('admin'), root, 'cashMovements', 'own-return'), movement('admin', returnFields)));
+  await assertFails(setDoc(doc(db('admin'), root, 'cashMovements', 'own-return'), movement('admin', returnFields)));
+  await store.doc(`${root}/cashMovements/own-return`).set({ ...movement('admin', returnFields), createdAt: new Date(), updatedAt: new Date() });
   await assertSucceeds(updateDoc(doc(db('tomas'), root, 'cashMovements', 'own-return'), { status: 'confirmed', confirmedBy: 'tomas', confirmedByEmail: people.tomas, confirmedByName: 'Tomas', confirmedAt: serverTimestamp(), updatedAt: serverTimestamp() }));
   await assertFails(setDoc(doc(db('admin'), root, 'cashMovements', 'wrong-return'), movement('admin', { ...returnFields, toUserEmail: people.owner, toUserId: 'owner' })));
   const unverified = env.authenticatedContext('tomas', { email: people.tomas, email_verified: false }).firestore();

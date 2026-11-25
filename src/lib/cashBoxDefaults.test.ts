@@ -25,11 +25,26 @@ test('an automatic General default gives way to assigned cash when it loads; an 
   assert.equal(resolvePaymentCashBoxChoice([], email), '');
   assert.equal(resolvePaymentCashBoxChoice(initial, email, 'personal'), 'general', 'removed/unavailable options cannot remain selected');
 });
-test('General remains limited to authorized users; owning cash does not grant General or subdelivery privileges', () => {
+test('a collaborator with assigned cash can make personal handovers and returns without access to General', () => {
   const ownOnly = buildPaymentCashBoxOptions({ isProjectAdmin: true, hasPersonalCashBox: true, personalBalance: 20, currentUserEmail: 'other@example.test', currentUserName: 'Otra persona' });
   assert.equal(resolvePaymentCashBoxChoice(ownOnly, 'other@example.test', 'general'), 'personal');
-  assert.deepEqual(cashMovementOptions({ hasAssignedCashBox: true, canDeliver: false, canTransfer: false, canReturn: true }).map(row => row.kind), ['devolucion']);
+  assert.deepEqual(cashMovementOptions({ hasAssignedCashBox: true, canDeliver: false, canTransfer: true, canReturn: true }).map(row => row.kind), ['transferencia', 'devolucion']);
   assert.deepEqual(cashMovementOptions({ hasAssignedCashBox: false, canDeliver: false, canTransfer: false, canReturn: false }), []);
+});
+test('return shows the three General recipients, and distinguishes a loading list from an unavailable one', () => {
+  const options = ['Tomás', 'Agustín', 'Guido'].map((displayName, index) => ({ displayName, email: `recipient-${index}@example.test` }));
+  const props = { kind: 'devolucion' as const, onKindChange() {}, onClose() {}, canDeliver: false, canTransfer: true, canReturn: true,
+    recipients: options, recipientEmail: options[0].email, onRecipientChange() {}, availableBalance: 64100,
+    ownName: 'Productor ficticio', defaultDate: '2026-11-25', busy: false, onSubmit() {} };
+  const populated = renderToStaticMarkup(createElement(CashMovementDialog, props));
+  assert.match(populated, /Responsable de Caja General/);
+  for (const person of options) assert.match(populated, new RegExp(person.displayName));
+  assert.match(populated, /El importe queda reservado/);
+  const loading = renderToStaticMarkup(createElement(CashMovementDialog, { ...props, recipients: [], recipientEmail: '', recipientsLoading: true }));
+  assert.match(loading, /Buscando destinatarios/);
+  assert.match(loading, /type="submit" disabled/);
+  const failed = renderToStaticMarkup(createElement(CashMovementDialog, { ...props, recipients: [], recipientEmail: '', recipientsError: 'Probá de nuevo.' }));
+  assert.match(failed, /role="alert"[^>]*>Probá de nuevo/);
 });
 test('movement creation and its selector share the assigned-cash-first order, with General still selectable', () => {
   const access = { hasAssignedCashBox: true, canDeliver: true, canTransfer: true, canReturn: true };

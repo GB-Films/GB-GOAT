@@ -147,7 +147,9 @@ try {
   await assertFails(setDoc(doc(collaboratorDb, movementPath('return-to-self')), {
     ...cashReturn, toUserId: collaboratorId, toUserEmail: collaboratorEmail,
   }));
-  await assertSucceeds(setDoc(doc(collaboratorDb, movementPath('return-confirmed')), cashReturn));
+  await assertFails(setDoc(doc(collaboratorDb, movementPath('return-confirmed')), cashReturn));
+  await testEnv.withSecurityRulesDisabled(ctx => Promise.all(['return-confirmed', 'return-cancelled'].map(id =>
+    setDoc(doc(ctx.firestore(), movementPath(id)), cashReturn))));
   await assertFails(updateDoc(doc(collaboratorDb, movementPath('return-confirmed')), {
     status: 'confirmed', confirmedBy: collaboratorId, confirmedByEmail: collaboratorEmail,
     confirmedByName: 'Colaborador', confirmedAt: serverTimestamp(), updatedAt: serverTimestamp(),
@@ -159,7 +161,6 @@ try {
   }));
   await assertFails(deleteDoc(doc(adminDb, movementPath('return-confirmed'))));
   await assertFails(updateDoc(doc(adminDb, movementPath('return-confirmed')), { status: 'pending' }));
-  await assertSucceeds(setDoc(doc(collaboratorDb, movementPath('return-cancelled')), cashReturn));
   await assertFails(updateDoc(doc(adminDb, movementPath('return-cancelled')), {
     status: 'cancelled', cancelledBy: adminId, cancelledByEmail: adminEmail,
     cancelledAt: serverTimestamp(), updatedAt: serverTimestamp(),

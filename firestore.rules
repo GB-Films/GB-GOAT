@@ -999,32 +999,8 @@ service cloud.firestore {
               || isAppAdminRecipient('', request.resource.data.toUserEmail)
             )
           )
-          || (
-            hasProjectAccess(projectId)
-            && request.resource.data.type == 'devolucion'
-            && request.resource.data.status == 'pending'
-            && request.resource.data.cashAccount == 'general'
-            && request.resource.data.createdBy == request.auth.uid
-            && request.resource.data.createdByEmail == userEmail()
-            && request.resource.data.fromUserEmail == userEmail()
-            && request.resource.data.toUserEmail != userEmail()
-            && request.resource.data.toUserEmail in ['tomas@granberta.com', 'agustin@granberta.com', 'guido@bani-vfx.com']
-            && request.resource.data.createdAt == request.time
-            && request.resource.data.updatedAt == request.time
-            && request.resource.data.keys().hasOnly([
-              'type', 'cashAccount', 'status', 'amount', 'date', 'fromUserEmail',
-              'fromUserName', 'toUserId', 'toUserEmail', 'toUserName', 'notes',
-              'createdBy', 'createdByEmail', 'createdByName', 'createdAt', 'updatedAt'
-            ])
-            && (
-              projectDoc(projectId).get('createdByEmail', '') == request.resource.data.toUserEmail
-              || (
-                hasCollaboratorDocByEmail(projectId, request.resource.data.toUserEmail)
-                && collaboratorDocByEmail(projectId, request.resource.data.toUserEmail).role == 'admin'
-              )
-              || isAppAdminRecipient(request.resource.data.get('toUserId', ''), request.resource.data.toUserEmail)
-            )
-          )
+          // Personal handovers and returns are created in the server transaction
+          // so they reserve funds against the same live balance.
           || (
             request.resource.data.type == 'pago'
             && request.resource.data.fromUserEmail == userEmail()
