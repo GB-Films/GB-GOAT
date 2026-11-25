@@ -6,13 +6,14 @@ export type { CashMovementKind } from '../../lib/cashBoxDefaults';
 type Person = { email: string; displayName?: string };
 
 export function CashMovementDialog({ kind, onKindChange, onClose, canDeliver, canTransfer, canReturn, hasAssignedCashBox = canReturn,
-  recipients, recipientEmail, onRecipientChange, availableBalance, currentBalance = availableBalance, ownName, defaultDate, busy, onSubmit }: {
+  recipients, recipientEmail, onRecipientChange, recipientsLoading, recipientsError, availableBalance, currentBalance = availableBalance, ownName, defaultDate, busy, onSubmit }: {
   kind: CashMovementKind;
   onKindChange: (kind: CashMovementKind) => void;
   onClose: () => void;
   canDeliver: boolean; canTransfer: boolean; canReturn: boolean;
   hasAssignedCashBox?: boolean;
   recipients: Person[]; recipientEmail: string; onRecipientChange: (email: string) => void;
+  recipientsLoading?: boolean; recipientsError?: string;
   availableBalance: number; currentBalance?: number; ownName: string; defaultDate: string; busy: boolean;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
@@ -30,10 +31,10 @@ export function CashMovementDialog({ kind, onKindChange, onClose, canDeliver, ca
     <form key={kind} onSubmit={onSubmit}>
       <fieldset disabled={busy} className="grid gap-4 sm:grid-cols-2">
         <div>
-          <label htmlFor="cash-movement-recipient" className={labelClass}>{kind === 'devolucion' ? 'Administrador que recibe' : 'Persona que recibe'}</label>
-          <select id="cash-movement-recipient" name="toUserEmail" value={recipientEmail} required
+          <label htmlFor="cash-movement-recipient" className={labelClass}>{kind === 'devolucion' ? 'Responsable de Caja General' : 'Persona que recibe'}</label>
+          <select id="cash-movement-recipient" name="toUserEmail" value={recipientEmail} required disabled={recipients.length === 0}
             onChange={event => onRecipientChange(event.target.value)} className={inputClass}>
-            <option value="" disabled>{recipients.length ? 'Seleccioná una persona' : 'No hay destinatarios disponibles'}</option>
+            <option value="" disabled>{recipientsLoading ? 'Buscando destinatarios…' : recipientsError ? 'No pudimos cargar la lista' : recipients.length ? 'Seleccioná una persona' : 'No hay destinatarios disponibles'}</option>
             {recipients.map(person => <option key={person.email} value={person.email}>{person.displayName || person.email}{person.displayName ? ` · ${person.email}` : ''}</option>)}
           </select>
         </div>
@@ -50,10 +51,11 @@ export function CashMovementDialog({ kind, onKindChange, onClose, canDeliver, ca
           <label htmlFor="cash-movement-notes" className={labelClass}>Descripción (opcional)</label>
           <input id="cash-movement-notes" name="notes" className={inputClass} placeholder={delivery ? 'Ej.: efectivo para rodaje' : transfer ? 'Ej.: fondos para Arte' : 'Ej.: saldo no utilizado'} />
         </div>
-        <p className="text-xs text-slate-500 sm:col-span-2">{transfer ? 'El saldo se descuenta cuando la persona confirma la recepción. Mientras tanto, el importe queda reservado.' : delivery ? 'Se suma al saldo cuando la persona confirma la recepción.' : 'Se descuenta de tu saldo cuando el administrador confirma la recepción.'}</p>
+        {recipientsError && <p role="alert" className="text-xs text-rose-700 sm:col-span-2">{recipientsError}</p>}
+        <p className="text-xs text-slate-500 sm:col-span-2">{delivery ? 'Se suma al saldo cuando la persona confirma la recepción.' : 'El importe queda reservado. Se descuenta de tu saldo cuando la persona confirma la recepción.'}</p>
         <div className="mt-1 flex justify-end gap-2 sm:col-span-2">
           <button type="button" onClick={onClose} className="rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-600">Cancelar</button>
-          <button type="submit" disabled={busy || recipients.length === 0 || (!delivery && availableBalance <= 0)}
+          <button type="submit" disabled={busy || !recipientEmail || (!delivery && availableBalance <= 0)}
             className="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300">
             {busy ? 'Registrando…' : delivery ? 'Registrar entrega' : transfer ? 'Registrar transferencia' : 'Registrar devolución'}
           </button>

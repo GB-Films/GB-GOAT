@@ -48,4 +48,6 @@ try {
   });
   await assertFails(deleteDoc(doc(other, `${base}/cashMovements/legacy-delivery`)));
   console.log('Rules: scoped General delivery restriction, policy/counter lockdown, forged-source denial, immutable subdelivery and recipient confirmation passed.');
+  await env.clearFirestore();
 } finally { await env.cleanup(); }
+await import('../functions/cashSubdelivery.test.js');

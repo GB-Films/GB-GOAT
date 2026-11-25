@@ -3,6 +3,13 @@ import { getFunctions, httpsCallable } from 'firebase/functions';
 import { canAccessGeneralCash } from './generalCashAccess';
 
 type PersonalReader = (projectId: string) => Promise<any[]>;
+type CashRecipient = { email: string; displayName: string };
+export type ProjectCashRecipients = { returns: CashRecipient[]; transfers: CashRecipient[] };
+
+export async function readProjectCashRecipients(db: Firestore, projectId: string): Promise<ProjectCashRecipients> {
+  const call = httpsCallable<{ action: 'recipients'; projectId: string }, ProjectCashRecipients>(getFunctions(db.app, 'us-central1'), 'createCashSubdelivery');
+  return (await call({ action: 'recipients', projectId })).data;
+}
 
 export function personalCashRefreshQueries(db: Firestore, projectId: string, email: string) {
   const ledger = collection(db, 'projects', projectId, 'cashMovements');

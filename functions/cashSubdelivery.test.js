@@ -1,8 +1,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { availablePersonalCents, createCashSubdeliveryHandler } = require('./cashSubdelivery');
-const request = (data = {}, uid = 'admin') => ({ auth: { uid, token: { email: `${uid}@example.test` } }, data: { projectId: 'p', requestId: '12345678-1234-1234-1234-123456789012', toUserEmail: 'recipient@example.test', amount: 50, notes: '', receiptVersion: 1, ...data } });
-const confirmation = (movementId, uid = 'recipient', data = {}) => ({ auth: { uid, token: { email: `${uid}@example.test` } }, data: { action: 'confirm', projectId: 'p', movementId, ...data } });
+const auth = uid => ({ uid, token: { email: `${uid}@example.test`, email_verified: true } });
+const request = (data = {}, uid = 'admin') => ({ auth: auth(uid), data: { projectId: 'p', requestId: '12345678-1234-1234-1234-123456789012', toUserEmail: 'recipient@example.test', amount: 50, notes: '', receiptVersion: 1, ...data } });
+const confirmation = (movementId, uid = 'recipient', data = {}) => ({ auth: auth(uid), data: { action: 'confirm', projectId: 'p', movementId, ...data } });
 
 test('personal balance excludes General payments/pending deliveries, reserves returns and handles transfers once', () => {
   const rows = [
@@ -45,7 +46,8 @@ test('real transactions enforce roles, live balance, immutable identity, retry a
     for (const uid of ['admin', 'manager', 'lead', 'recipient', 'owner']) await db.collection('users').doc(uid).set({ email: `${uid}@example.test`, role: uid === 'admin' ? 'admin' : 'colaborador' });
     for (const [uid, role] of [['manager', 'admin'], ['lead', 'jefe_produccion'], ['recipient', 'jefe_area']]) await root.collection('collaborators').doc(`${uid}@example.test`).set({ email: `${uid}@example.test`, role });
     const handler = createCashSubdeliveryHandler({ db, timestamp: () => FieldValue.serverTimestamp() });
-    for (const uid of ['lead', 'recipient', 'outsider']) await assert.rejects(handler(request({ toUserEmail: 'admin@example.test' }, uid)), { code: 'permission-denied' });
+    await assert.rejects(handler(request({ toUserEmail: 'admin@example.test' }, 'outsider')), { code: 'permission-denied' });
+    await assert.rejects(handler(request({ toUserEmail: 'recipient@example.test' }, 'lead')), { code: 'failed-precondition' });
     await assert.rejects(handler(request()), { code: 'failed-precondition' });
     await root.collection('cashMovements').doc('funds').set({ type: 'entrega', status: 'confirmed', amount: 100, toUserEmail: 'admin@example.test' });
     const first = await handler(request());
@@ -89,5 +91,84 @@ test('real transactions enforce roles, live balance, immutable identity, retry a
     const legacyId = 'subdelivery-a2345678-1234-1234-1234-123456789012';
     await root.collection('cashMovements').doc(legacyId).set({ type: 'transferencia', subdelivery: true, cashAccount: 'personal', amount: 1, fromUserEmail: 'admin@example.test', toUserEmail: 'recipient@example.test' });
     await assert.rejects(handler(confirmation(legacyId)), { code: 'permission-denied' });
+  } finally { await deleteApp(app); }
+});
+
+test('project cash recipients and collaborator handovers respect current access and reserve one balance', { skip: !process.env.FIRESTORE_EMULATOR_HOST }, async () => {
+  assert.ok(process.env.GCLOUD_PROJECT?.startsWith('demo-'));
+  const { initializeApp, deleteApp } = require('firebase-admin/app');
+  const { getFirestore, FieldValue } = require('firebase-admin/firestore');
+  const { createProviderFinanceHandler } = require('./providerFinance');
+  const app = initializeApp({ projectId: process.env.GCLOUD_PROJECT }, 'cash-participants-tests');
+  const db = getFirestore(app);
+  const timestamp = FieldValue.serverTimestamp;
+  const handler = createCashSubdeliveryHandler({ db, timestamp });
+  const finance = createProviderFinanceHandler({ db, timestamp });
+  const projectId = 'bancor-demo';
+  const project = db.doc(`projects/${projectId}`);
+  const people = {
+    producer: 'producer@example.test', area: 'area@example.test', summary: 'summary@example.test',
+    blocked: 'blocked@example.test', outsider: 'outsider@example.test', extraAdmin: 'extra-admin@example.test',
+    tomas: 'tomas@granberta.com', agustin: 'agustin@granberta.com', guido: 'guido@bani-vfx.com',
+  };
+  const call = (uid, data, verified = true) => handler({ auth: { uid, token: { email: people[uid], email_verified: verified } }, data: { projectId, ...data } });
+  const intent = (number, to, amount, extra) => ({
+    requestId: `${number}2345678-1234-1234-1234-123456789012`, toUserEmail: people[to], amount, receiptVersion: 1, ...extra,
+  });
+  const returnData = { action: 'createReturn', date: '2026-11-25T15:00:00.000Z' };
+  const movement = id => project.collection('cashMovements').doc(id);
+  try {
+    const seed = db.batch();
+    seed.set(project, { createdBy: 'tomas', collaboratorEmails: [people.producer, people.area, people.summary, people.blocked] });
+    for (const [uid, email] of Object.entries(people)) {
+      seed.set(db.doc(`users/${uid}`), { email, role: ['extraAdmin', 'tomas', 'agustin', 'guido'].includes(uid) ? 'admin' : 'colaborador',
+        displayName: uid, bankAccount_cbu: 'dato que no debe aparecer' });
+    }
+    for (const [uid, role, areas, tabs] of [
+      ['producer', 'jefe_produccion', ['Campo'], ['cajas']], ['area', 'jefe_area', ['Arte'], ['cajas']],
+      ['summary', 'jefe_area', [], ['resumen']], ['blocked', 'jefe_area', [], ['cajas']],
+    ]) seed.set(project.collection('collaborators').doc(people[uid]), { uid, email: people[uid], role, allowedCategories: areas, allowedTabs: tabs });
+    seed.set(db.doc(`teamAccessEmails/${people.blocked}`), { status: 'pending' });
+    seed.set(movement('funds'), { type: 'entrega', cashAccount: 'general', status: 'confirmed', amount: 100, toUserEmail: people.producer });
+    await seed.commit();
+
+    const options = await call('producer', { action: 'recipients' });
+    assert.deepEqual(options.returns.map(row => row.email).sort(), [people.tomas, people.agustin, people.guido].sort());
+    assert.ok(options.transfers.some(row => row.email === people.area), 'people in a different area remain eligible');
+    assert.ok(options.transfers.some(row => row.email === people.summary), 'a person can acknowledge a handover without a financial tab');
+    assert.ok(!options.transfers.some(row => [people.producer, people.blocked, people.outsider, people.extraAdmin].includes(row.email)));
+    assert.ok([...options.returns, ...options.transfers].every(row => Object.keys(row).sort().join(',') === 'displayName,email'));
+    await assert.rejects(call('outsider', { action: 'recipients' }), { code: 'permission-denied' });
+    await assert.rejects(call('producer', { action: 'recipients' }, false), { code: 'permission-denied' });
+    await assert.rejects(call('summary', intent(2, 'area', 1)), { code: 'permission-denied' });
+    await assert.rejects(call('producer', intent(2, 'blocked', 1)), { code: 'permission-denied' });
+    await assert.rejects(call('producer', intent(2, 'outsider', 1)), { code: 'permission-denied' });
+    await assert.rejects(call('producer', intent(2, 'extraAdmin', 1, returnData)), { code: 'permission-denied' });
+    await assert.rejects(call('producer', intent(2, 'producer', 1)), { code: 'invalid-argument' });
+
+    const saved = await call('producer', intent(3, 'guido', 15, returnData));
+    const returned = (await movement(saved.id).get()).data();
+    assert.equal(returned.status, 'pending');
+    assert.equal(returned.type, 'devolucion');
+    assert.equal(returned.cashAccount, 'general');
+    assert.equal(returned.toUserId, 'guido');
+    assert.equal((await call('producer', intent(3, 'guido', 15, returnData))).repeated, true);
+    const transfer = await call('producer', intent(4, 'summary', 25));
+    const rows = () => project.collection('cashMovements').get().then(result => result.docs.map(doc => doc.data()));
+    assert.equal(availablePersonalCents(await rows(), people.producer), 6000);
+    assert.equal(availablePersonalCents(await rows(), people.summary), 0);
+    const ownNotice = () => finance({ auth: { uid: 'summary', token: { email: people.summary, email_verified: true } },
+      data: { action: 'personalCashMovements', projectId } });
+    assert.deepEqual((await ownNotice()).movements.map(row => row.id), [transfer.id]);
+    await assert.rejects(call('producer', { action: 'confirm', movementId: transfer.id }), { code: 'permission-denied' });
+    await assert.rejects(call('area', { action: 'confirm', movementId: transfer.id }), { code: 'permission-denied' });
+    await call('summary', { action: 'confirm', movementId: transfer.id });
+    assert.equal(availablePersonalCents(await rows(), people.summary), 2500);
+    assert.equal(availablePersonalCents(await rows(), people.producer), 6000);
+    assert.deepEqual((await ownNotice()).movements, []);
+    const contested = await Promise.allSettled([call('producer', intent(5, 'area', 40)), call('producer', intent(6, 'agustin', 40, returnData))]);
+    assert.equal(contested.filter(result => result.status === 'fulfilled').length, 1);
+    assert.equal(contested.find(result => result.status === 'rejected').reason.code, 'failed-precondition');
+    assert.equal(availablePersonalCents(await rows(), people.producer), 2000);
   } finally { await deleteApp(app); }
 });
