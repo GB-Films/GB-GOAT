@@ -22,7 +22,7 @@ import { ProviderSigningGuide } from '../components/ProviderSigningGuide';
 import { ProviderPortalDocuments } from '../components/ProviderPortalDocuments';
 import { ProviderPendingSignatures } from '../components/ProviderPendingSignatures';
 import { pendingPortalSignatureCount, portalErrorMessage, representsAnotherProvider, providerWorkEmptyMessage } from '../lib/providerPortalUi';
-import { BriefcaseBusiness, FileText, Wallet, FolderPen, UserRound } from 'lucide-react';
+import { BriefcaseBusiness, FileText, Wallet, FolderPen, UserRound, ArrowRight } from 'lucide-react';
 
 const tabs = [
   "Trabajos",
@@ -51,6 +51,15 @@ const money = (value: number, currency = "ARS") =>
   );
 const box = 'portal-panel';
 const tabIcons = [BriefcaseBusiness, FileText, Wallet, FolderPen, UserRound];
+function openPortalSection(id: string) {
+  window.requestAnimationFrame(() => {
+    const section = document.getElementById(id) as HTMLDetailsElement | null;
+    if (!section) return;
+    section.open = true;
+    section.scrollIntoView({ behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'start' });
+    section.querySelector('summary')?.focus({ preventScroll: true });
+  });
+}
 export default function ProviderPortal() {
   const { user } = useAuth();
   const [searchParams] = useSearchParams();
@@ -61,6 +70,7 @@ export default function ProviderPortal() {
   const preparationRevision = useRef(0), documentRevision = useRef(0);
   const [documentsLoading, setDocumentsLoading] = useState(false), [documentsLoaded, setDocumentsLoaded] = useState(false);
   const [profileNotice, setProfileNotice] = useState('');
+  const [documentNotice, setDocumentNotice] = useState('');
   const [invoiceNotice, setInvoiceNotice] = useState('');
   const [thirdPartyNotice, setThirdPartyNotice] = useState('');
   const [members, setMembers] = useState<any[]>([]),
@@ -77,7 +87,7 @@ export default function ProviderPortal() {
   const selected = members.find((m) => m.providerId === providerId);
   const pendingCount = pendingPortalSignatureCount(docs);
   const revocableAuthorizations = (view?.declarations || []).filter((d: any) => d.kind === 'third_party'
-    && d.signedAt && ['active', 'pending_review'].includes(d.status)).map((d: any) => {
+    && d.signedAt && d.thirdPartyCurrent !== false && ['active', 'pending_review'].includes(d.status)).map((d: any) => {
     const works: { projectName?: string; description?: string }[] = Array.isArray(d.content?.workDetails) ? d.content.workDetails : [];
     const scope = works.length === 1 ? [works[0]?.projectName, works[0]?.description].filter(Boolean).join(' · ')
       : [...new Set(works.map(w => w?.projectName).filter(Boolean))].slice(0, 3).join(', ');
@@ -89,7 +99,10 @@ export default function ProviderPortal() {
     if (!view || view.providerId !== providerId || intakePrefilled.current === key) return;
     intakePrefilled.current = key;
     setParty(thirdPartyFormDefaults(view));
-    if (view.thirdPartyIntake && !view.declarations.some((d: any) => d.kind === 'third_party')) setTab('Mis datos');
+    if (view.thirdPartyIntake && !view.declarations.some((d: any) => d.kind === 'third_party')) {
+      setTab('Mis datos');
+      openPortalSection('provider-third-party');
+    }
   }, [view, providerId, user?.uid]);
   const load = useCallback(async () => {
     const revision = ++loadRevision.current;
@@ -127,7 +140,7 @@ export default function ProviderPortal() {
   }, []);
   useEffect(() => {
     loadRevision.current++; documentRevision.current++; preparationRevision.current++;
-    setInvoiceNotice(''); setThirdPartyNotice(''); setHasLoaded(false); setMembers([]); setView(null); setDocs([]); setDocumentsLoaded(false); setDraft({}); setSigning(null); intakePrefilled.current = '';
+    setInvoiceNotice(''); setThirdPartyNotice(''); setProfileNotice(''); setDocumentNotice(''); setHasLoaded(false); setMembers([]); setView(null); setDocs([]); setDocumentsLoaded(false); setDraft({}); setSigning(null); intakePrefilled.current = '';
     attempts.current.clear(); thirdPartyAttempts.current.clear();
     if (!user?.uid) return;
     void load(); void loadDocuments();
@@ -135,13 +148,13 @@ export default function ProviderPortal() {
     return () => { window.clearInterval(timer); loadRevision.current++; };
   }, [load, loadDocuments, user?.uid, user?.email]);
   useEffect(() => { if (tab === 'Documentos' && user?.uid) void loadDocuments(); }, [tab, loadDocuments, user?.uid]);
-  async function run(action: () => Promise<void>) {
+  async function run(action: () => Promise<void>, reportError = (error: Error) => setError(portalErrorMessage(error))) {
     setBusy(true);
     setError("");
     try {
       await action();
     } catch (e: any) {
-      setError(portalErrorMessage(e));
+      reportError(e);
     } finally {
       setBusy(false);
     }
@@ -152,15 +165,16 @@ export default function ProviderPortal() {
       { const result = await portalRequest(completion);
       if (signing.declarationKind === 'profile') { reviewProfileData(); setProfileNotice(result.confirmation
         ? 'Datos confirmados, firma guardada y cambios aplicados.' : 'Cambios firmados y aplicados.'); }
-      if (signing.declarationKind === 'representation') { setTab('Documentos'); setProfileNotice(result.status === 'applied'
+      if (signing.declarationKind === 'representation') { setTab('Documentos'); setDocumentNotice(result.status === 'applied'
         ? 'Declaración firmada. Tu representación quedó habilitada; los contratos asignados aparecen en Documentos.'
         : 'La firma de esta presentación anterior quedó guardada. Completá la nueva declaración de representación para habilitarte sin esperar una revisión.'); }
       if (signing.declarationKind === 'third_party') {
         if (result.status === 'active') { intakePrefilled.current = ''; setParty((current: any) => ({ ...current, workKeys: [], responsibilityConfirmed: false })); }
-        setTab('Documentos'); setProfileNotice(declarationCompletionMessage('third_party', result.status));
+        setTab('Documentos'); setDocumentNotice(declarationCompletionMessage('third_party', result.status));
+        openPortalSection('provider-documents-third-party');
       }
-      if (signing.declarationKind === 'cash_receipt') { setTab('Documentos'); setProfileNotice(result.status === 'signed' ? 'Recibo firmado. Podés descargarlo desde Documentos → Recibos.' : 'Todavía falta completar la firma del recibo.'); } }
-    else { setTab('Documentos'); setProfileNotice('Tu firma quedó guardada. Consultá el estado del contrato y sus constancias aquí. Si faltan otras firmas, se indicará en el documento.'); }
+      if (signing.declarationKind === 'cash_receipt') { setTab('Documentos'); setDocumentNotice(result.status === 'signed' ? 'Recibo firmado. Podés descargarlo desde Documentos → Recibos.' : 'Todavía falta completar la firma del recibo.'); } }
+    else { setTab('Documentos'); setDocumentNotice('Tu firma quedó guardada. Consultá el estado del contrato y sus constancias aquí. Si faltan otras firmas, se indicará en el documento.'); }
     if (await load()) setDraft({});
     await loadDocuments();
   }
@@ -189,7 +203,7 @@ export default function ProviderPortal() {
       setSigning({ ...d, originalFile: result.originalFile });
       setTab("Documentos");
       } catch (error) { if (revision === preparationRevision.current) setSigning(null); throw error; }
-    });
+    }, action === 'prepareThirdParty' ? error => { throw error; } : undefined);
   }
   async function download(input: any) {
     await run(async () => {
@@ -204,7 +218,12 @@ export default function ProviderPortal() {
   }
   function reviewProfileData() {
     setTab('Mis datos');
-    window.requestAnimationFrame(() => { const section = document.getElementById('provider-profile-details'); section?.setAttribute('open', ''); section?.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
+    openPortalSection('provider-profile-details');
+  }
+  function reviewThirdParty() {
+    setError('');
+    setTab('Mis datos');
+    openPortalSection('provider-third-party');
   }
   async function applyDeclaration(id: string, kind: string, doc?: DeclarationDocument, recover = false) {
     setBusy(true);
@@ -227,7 +246,7 @@ export default function ProviderPortal() {
       const key = thirdPartyAttempts.current.get(id);
       if (key) { attempts.current.delete(key); thirdPartyAttempts.current.delete(id); }
       setThirdPartyNotice('Autorización revocada. Podés reutilizar los datos si más adelante decidís firmar otro permiso.');
-      if (tab === 'Documentos') setProfileNotice('Autorización revocada.');
+      if (tab === 'Documentos') setDocumentNotice('Autorización revocada.');
       await load();
     });
   }
@@ -251,7 +270,7 @@ export default function ProviderPortal() {
                 setView(null);
                 setSigning(null);
                 preparationRevision.current++;
-                setProfileNotice(''); setInvoiceNotice(''); setThirdPartyNotice('');
+                setProfileNotice(''); setDocumentNotice(''); setInvoiceNotice(''); setThirdPartyNotice('');
                 setError('');
                 setProviderId(e.target.value);
                 selectedProviderRef.current = e.target.value;
@@ -280,13 +299,7 @@ export default function ProviderPortal() {
       </header>
       <ProviderPendingSignatures documents={docs} onOpen={category => {
         setTab('Documentos');
-        window.requestAnimationFrame(() => {
-          const section = document.getElementById(`provider-documents-${category}`) as HTMLDetailsElement | null;
-          if (!section) return;
-          section.open = true;
-          section.scrollIntoView({ behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'start' });
-          section.querySelector('summary')?.focus({ preventScroll: true });
-        });
+        openPortalSection(`provider-documents-${category}`);
       }} />
       {hasLoaded && !members.length && !error && <section className={box + ' space-y-3'}>
         <h2 className="font-semibold">¿Te registraste con otro correo?</h2>
@@ -333,13 +346,16 @@ export default function ProviderPortal() {
       </nav>
       {tab === "Trabajos" && (
         <section className="space-y-3">
-          <div><h2 className="text-lg font-semibold">Tus trabajos</h2><p className="mt-1 text-xs text-slate-500">Desplegá un proyecto para ver sus trabajos y pagos.</p></div>
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div><h2 className="text-lg font-semibold">Tus trabajos</h2><p className="mt-1 text-sm text-slate-600">Cuando producción carga un trabajo a tu nombre, aparece en su proyecto. Abrilo para ver los importes y pagos.</p></div>
+            {view?.provider.type === 'persona' && <button type="button" className="portal-button" onClick={reviewThirdParty}>Autorizar a un tercero <ArrowRight className="size-4" aria-hidden="true" /></button>}
+          </div>
           <ProviderWorkList key={providerId} works={view?.works || []} emptyMessage={providerWorkEmptyMessage(hasLoaded, selected, !!view)} />
         </section>
       )}
       {tab === "Facturas" && (
         <section className="space-y-3">
-          <div><h2 className="text-lg font-semibold">Tus facturas</h2><p className="mt-1 text-sm text-slate-500">Adjuntá tu factura al trabajo correspondiente.</p></div>
+          <div><h2 className="text-lg font-semibold">Tus facturas</h2><p className="mt-1 text-sm text-slate-600">Elegí un trabajo para adjuntar su factura. Las facturas ya cargadas se pueden descargar desde acá.</p></div>
           {invoiceNotice && <p role="status" className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-900">{invoiceNotice}</p>}
           {!view && <p className={box + ' text-sm text-slate-500'}>{!hasLoaded ? 'Cargando tus facturas…' : 'Tus facturas aparecerán al habilitar la ficha de proveedor.'}</p>}
           {view && <div key={`${user?.uid}/${providerId}`}><ProviderInvoiceUpload providerId={providerId} works={view.works} onUploaded={async () => { setInvoiceNotice(''); return load(); }} /></div>}
@@ -371,7 +387,7 @@ export default function ProviderPortal() {
       )}
       {tab === "Pagos y retenciones" && (
         <section className="space-y-3">
-          <div><h2 className="text-lg font-semibold">Pagos y retenciones</h2><p className="mt-1 text-sm text-slate-500">Consultá los movimientos y descargá sus comprobantes.</p></div>
+          <div><h2 className="text-lg font-semibold">Pagos y retenciones</h2><p className="mt-1 text-sm text-slate-600">Consultá los pagos, retenciones y reintegros registrados. Si tienen comprobante, podés descargarlo acá.</p></div>
           {!view && <p className={box + ' text-sm text-slate-500'}>{!hasLoaded ? 'Cargando tus pagos…' : 'Tus pagos aparecerán al habilitar la ficha de proveedor.'}</p>}
           {view?.works.filter((w: any) => w.payments.length || w.otherCount || w.markedPaidWithoutDetails).map((w: any) => (
             <div className={box} key={w.key}>
@@ -441,21 +457,22 @@ export default function ProviderPortal() {
         </section>
       )}
       {tab === "Documentos" && <ProviderPortalDocuments documents={docs} declarations={view?.declarations || []} providerId={providerId} providerType={selected?.type || ''} provider={view?.provider}
-        busy={busy} loading={documentsLoading} loaded={documentsLoaded} notice={profileNotice} labels={labels}
+        busy={busy} loading={documentsLoading} loaded={documentsLoaded} notice={documentNotice} labels={labels}
         onRefresh={() => { void load(); void loadDocuments(); }} onSign={setSigning} onReviewData={reviewProfileData} onReviewCompany={reviewCompanyRepresentation}
         onDownload={(doc, artifact) => run(async () => { downloadPortalFile(await portalRequest({ action: 'signingFile', requestId: doc.id, projectId: doc.projectId, documentId: doc.documentId, artifact })); })}
         onRecover={doc => run(async () => { await signPortalDocument(doc, { dni: '', typedName: '' }); const completion = portalDeclarationCompletionInput(doc); if (completion) await portalRequest(completion); await load(); await loadDocuments(); })}
         onApply={applyDeclaration}
-        onApplyDocument={doc => run(async () => { if (doc.declarationKind === 'cash_receipt') { const result = await portalRequest(portalDeclarationCompletionInput(doc)!); setProfileNotice(result.status === 'signed' ? 'Recibo firmado y guardado.' : 'Todavía falta completar la firma.'); await loadDocuments(); } else setProfileNotice(await applyDeclaration(doc.documentId, doc.declarationKind, doc)); })}
+        onApplyDocument={doc => run(async () => { if (doc.declarationKind === 'cash_receipt') { const result = await portalRequest(portalDeclarationCompletionInput(doc)!); setDocumentNotice(result.status === 'signed' ? 'Recibo firmado y guardado.' : 'Todavía falta completar la firma.'); await loadDocuments(); } else setDocumentNotice(await applyDeclaration(doc.documentId, doc.declarationKind, doc)); })}
         onRevoke={revokeThirdParty}
+        onEditThirdParties={view?.provider.type === 'persona' ? reviewThirdParty : undefined}
       />}
       {tab === "Mis datos" && view && (
         <>
+          <div><h2 className="text-lg font-semibold">Tu ficha de proveedor</h2><p className="mt-1 text-sm text-slate-600">Revisá tu información de contacto, tu cuenta de acceso y tus datos de cobro.</p></div>
           <div key={providerId}><ProviderProfileForm provider={view.provider} declarations={view.declarations} labels={labels} draft={draft} onChange={setDraft} busy={busy} notice={profileNotice} confirmationRequired={view.profileConfirmation?.status === 'required'} accessEmail={user?.email || ''} onVerifyAccount={email => verifyProviderGoogleAccount(providerId, email)} onPrepare={input => prepare('prepareProfile', input)} onApplySigned={async id => { await applyDeclaration(id, 'profile'); }} /></div>
           {view.provider.type === 'empresa' && <details className="portal-details portal-panel" key={`company/${providerId}`}><summary>Tu representación de la empresa</summary><div className="mt-4"><CompanyRepresentationForm providerId={providerId} email={user?.email || ''} busy={busy} onPrepare={input => prepare('prepareRepresentation', input)} /></div></details>}
-          {view.provider.type === 'persona' && <details className="portal-details portal-panel"><summary>Quién factura y cobra por mí</summary><div className="mt-4"><ThirdPartyAuthorizationForm embedded provider={view.provider} works={view.works} party={party} onChange={setParty} busy={busy}
-            recovered={!!view.thirdPartyDefaults || !!view.thirdPartyIntake}
-            signedDetails={view.thirdPartyLastSigned?.party} savedDetails={view.thirdPartyDefaults} authorizations={revocableAuthorizations}
+          {view.provider.type === 'persona' && <details key={`third-party/${providerId}`} id="provider-third-party" className="portal-details portal-panel scroll-mt-3"><summary className="font-bold">Quién factura y cobra por mí</summary><div className="mt-4"><ThirdPartyAuthorizationForm embedded works={view.works} party={party} onChange={setParty} busy={busy}
+            choices={view.thirdPartyChoices} authorizations={revocableAuthorizations}
             onRevoke={revokeThirdParty} revocationNotice={thirdPartyNotice}
             onSave={async input => { await portalRequest({ action: 'saveThirdPartyDetails', providerId, ...input }); await load(); }}
             onPrepare={input => prepare('prepareThirdParty', input)} /></div></details>}

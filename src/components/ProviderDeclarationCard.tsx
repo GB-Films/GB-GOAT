@@ -23,9 +23,9 @@ export function ProviderDeclarationCard({ declaration: d, document: doc, provide
   const disabled = busy || working;
   const button = 'portal-button';
   return <article className="portal-panel space-y-3">
-    <div className="flex flex-wrap justify-between gap-2"><h3 className="font-semibold">{ui.title}</h3><span className={`portal-status ${ui.action === 'sign' ? 'portal-status-pending' : ['applied', 'active'].includes(d.status) ? 'portal-status-signed' : ''}`}>{ui.status}</span></div>
+    <div className="flex flex-wrap justify-between gap-2"><h3 className="font-semibold">{ui.title}</h3><span className={`portal-status ${ui.action === 'sign' ? 'portal-status-pending' : d.thirdPartyCurrent !== false && ['applied', 'active'].includes(d.status) ? 'portal-status-signed' : ''}`}>{ui.status}</span></div>
     <p className="text-sm text-slate-600">{ui.explanation}</p>
-    {children && <details className="portal-details rounded-xl border border-slate-100 p-3"><summary>Ver detalle de la declaración</summary><div className="mt-3">{children}</div></details>}
+    {children && (d.kind === 'third_party' ? children : <details className="portal-details rounded-xl border border-slate-100 p-3"><summary>Ver detalle de la declaración</summary><div className="mt-3">{children}</div></details>)}
     {Number.isFinite(signedAt) && <p className="text-xs text-slate-500">Firmada el {new Intl.DateTimeFormat('es-AR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Argentina/Buenos_Aires' }).format(signedAt)}</p>}
     {ui.missingDocument && <p className="text-sm text-amber-800">No encontramos un documento de firma disponible para esta solicitud. Volvé a consultar Documentos; si sigue sin aparecer, pedí que revisen esta constancia.</p>}
     <div className="flex flex-wrap gap-3">

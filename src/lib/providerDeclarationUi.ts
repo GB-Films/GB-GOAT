@@ -1,6 +1,6 @@
 export type PortalDeclaration = {
   id: string; kind: string; status: string; owned: boolean; signedAt?: string;
-  content: any; applicationIssue?: string;
+  content: any; applicationIssue?: string; thirdPartyCurrent?: boolean;
 };
 export type DeclarationDocument = {
   id: string; documentId: string; projectId?: string; providerId?: string; portalManaged?: boolean;
@@ -21,9 +21,10 @@ export function declarationPresentation(d: PortalDeclaration, providerType: stri
   const legacy = d.kind === 'representation' && providerType === 'persona';
   const profile = d.kind === 'profile';
   const thirdParty = d.kind === 'third_party';
+  const expiredPermission = thirdParty && d.status === 'active' && d.thirdPartyCurrent === false;
   const declaredCompany = d.kind === 'representation' && d.content.version === 'company-representation-v4';
   const title = profile ? d.content.confirmation ? 'Confirmación de tus datos' : 'Actualización de tus datos'
-    : d.kind === 'representation' ? 'Representación de empresa' : 'Autorización para que un tercero facture o cobre';
+    : d.kind === 'representation' ? 'Representación de empresa' : 'Permiso para facturar y cobrar por vos';
   const statuses: Record<string, string> = {
     pending_signature: 'Falta tu firma', preparing: 'Documento en preparación', pending_review: profile || thirdParty ? 'Firma guardada · falta aplicar' : 'Firmada · pendiente de revisión',
     applied: 'Aplicada', active: 'Vigente', revoked: 'Revocada', rejected: 'Rechazada',
@@ -32,14 +33,14 @@ export function declarationPresentation(d: PortalDeclaration, providerType: stri
   const action = !actionable ? null : doc && !doc.signed ? 'sign' : doc?.signed && !doc.artifactsReady ? 'recover' : d.status === 'preparing' ? 'prepare' : d.status === 'pending_review' || doc?.signed ? 'apply' : null;
   return {
     title: legacy ? 'Antecedente del alta anterior' : title,
-    status: legacy ? 'Sin acción pendiente' : d.applicationIssue ? 'Falta actualizar la declaración' : declaredCompany && d.status === 'applied' ? 'Representación declarada · habilitada' : statuses[d.status] || d.status,
+    status: legacy ? 'Sin acción pendiente' : d.applicationIssue ? 'Falta actualizar la declaración' : expiredPermission ? 'Sin vigencia' : declaredCompany && d.status === 'applied' ? 'Representación declarada · habilitada' : statuses[d.status] || d.status,
     explanation: legacy ? 'Esta solicitud de representación pertenece al circuito anterior. No necesitás firmarla para actualizar tus datos personales; hacelo desde Mis datos.'
       : profile && d.status === 'applied' ? 'Estos cambios ya se aplicaron con tu firma. Se conserva el documento como constancia.'
       : profile && d.status === 'pending_review' ? 'Tu firma está guardada. Falta aplicar los datos.'
       : profile ? 'Al firmar declarás que los datos son verídicos y autorizás su aplicación automática, sin revisión administrativa posterior.'
       : declaredCompany ? 'Declarás bajo tu responsabilidad que tenés facultades para representar a la empresa y firmar en su nombre. Al completar tu firma se habilita la representación; adjuntar el poder es opcional.'
       : d.kind === 'representation' ? 'Presentación del circuito anterior de representación empresarial. Podés completar la nueva declaración desde Mis datos; el poder es opcional y no requiere esperar una revisión.'
-      : d.applicationIssue || 'Al completar tu firma, se habilitan automáticamente la facturación y el cobro declarados para los trabajos seleccionados, bajo tu responsabilidad. No requieren aprobación administrativa.',
+      : d.applicationIssue || (d.status === 'revoked' ? 'Este permiso fue revocado. Se conserva como constancia.' : expiredPermission ? 'Podés reutilizar estos datos para firmar un permiso nuevo.' : d.status === 'active' ? 'El tercero puede facturar y cobrar los trabajos incluidos.' : 'Al firmar, autorizás al tercero a facturar y cobrar los trabajos incluidos. El permiso se aplica automáticamente.'),
     action: d.applicationIssue ? null : action,
     missingDocument: actionable && !d.applicationIssue && !action && !doc,
   };
@@ -52,6 +53,6 @@ export function declarationCompletionMessage(kind: string, status: string) {
     : kind === 'third_party' ? 'Tu firma está guardada. Revisá tus datos para completar la aplicación.'
     : 'Firma comprobada. Esta autorización quedó pendiente de revisión.';
   if (status === 'pending_signature') return 'Todavía falta completar la firma. Abrí el documento para revisar y firmar.';
-  if (status === 'active') return 'Declaración aplicada. La facturación y el cobro quedaron habilitados para los trabajos seleccionados.';
+  if (status === 'active') return 'Permiso firmado y aplicado a los trabajos seleccionados. La constancia está en Permisos a terceros.';
   return 'Consulta completada. Revisá el estado actualizado de la declaración.';
 }

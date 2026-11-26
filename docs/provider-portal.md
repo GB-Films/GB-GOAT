@@ -180,11 +180,16 @@ Documentos reúne cada declaración de la ficha con su original, PDF firmado y c
 
 La declaración `third-party-v5` identifica al prestador, el emisor de la factura y su cuenta; habilita **facturación y cobro juntos** para los trabajos seleccionados, hasta revocación. La persona firma desde su cuenta Google registrada y asume la responsabilidad por los datos y los acuerdos con el tercero. Al completar la firma y sus artefactos, GOAT la aplica automáticamente en una transacción. No requiere casillas, motivo, aprobación fiscal o bancaria de administración. Guardar el borrador no habilita operaciones. La firma no crea pagos ni certifica por sí sola titularidad bancaria o encuadre fiscal.
 
-En **Mis datos → Quién factura y cobra por mí**, GOAT precarga el nombre, CUIT y
-cuenta de la última autorización firmada por esa cuenta. Los borradores guardados
-se pueden recuperar por separado. El nuevo permiso requiere seleccionar trabajos y
-confirmar nuevamente la autorización. Los permisos firmados se pueden revocar
-desde la misma sección y sus antecedentes quedan en Documentos.
+**Trabajos** muestra por proyecto los gastos vinculados a la ficha del proveedor.
+Desde **Autorizar a un tercero** se abre **Mis datos → Quién factura y cobra por mí**,
+donde se puede cargar un tercero nuevo o elegir entre los datos guardados y los usados
+en permisos firmados. GOAT recupera nombre, CUIT y cuenta. La persona debe marcar
+los trabajos que quiere incluir, uno a uno o todos los que ya aparecen en un proyecto,
+y confirmar nuevamente antes de revisar y firmar el documento.
+
+El permiso se aplica sólo a los trabajos marcados al firmar. En **Documentos → Permisos a terceros**
+se puede consultar su alcance, descargar la constancia o revocarlo. La revocación conserva los
+documentos y el historial del permiso. Los datos del tercero quedan disponibles para una nueva firma.
 
 La aplicación verifica firma íntegra, hash del contenido original, DNI declarado, membresía activa de la misma cuenta, persona física, vigencia, CUIT/titular coincidentes y pertenencia y gestión efectiva de los trabajos. Activa ambos roles, guarda `activation.method: signed_declaration` y una auditoría; marca únicamente `thirdPartyPayoutRequired` en esas filas. No cambia importes, pagos, facturas, originales ni datos propios del prestador. Reintentos y llamadas concurrentes producen una sola aplicación/auditoría.
 
