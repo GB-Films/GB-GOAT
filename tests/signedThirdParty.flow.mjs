@@ -25,6 +25,7 @@ export async function testSignedThirdParty({ db, deps, own, adminCall, signActua
 
   const overview = await own({ action: 'overview', providerId: legacy.providerId });
   assert.equal(overview.declarations.find(d => d.id === legacy.id).status, 'active', 'a historical signed declaration applies on return without admin approval');
+  assert.equal(overview.thirdPartyLastSigned.party.alias, legacy.content.party.alias);
   assert.deepEqual((await ref.get()).data().effectiveRoles, ['invoice', 'payment']);
   assert.equal((await ref.get()).data().decisions, undefined);
   assert.equal(await auditCount(), 1);
@@ -83,5 +84,28 @@ export async function testSignedThirdParty({ db, deps, own, adminCall, signActua
   await service.apply(ref);
   assert.deepEqual((await workRef.get()).data(), workBefore, 'only the third-party flag is written; money and history stay intact');
   assert.deepEqual((await db.collection('providerFinancialRecords').get()).docs.map(row => ({ id: row.id, ...row.data() })), financialBefore, 'signatures never create or modify financial records');
+  const preferencesRef = db.doc(`providerPortalPreferences/${hash({ providerId: original.providerId, uid: original.actor.uid })}`);
+  const beforePreferences = await preferencesRef.get(), beforeRevocation = (await ref.get()).data();
+  let pending;
+  try {
+    await own({ action: 'saveThirdPartyDetails', providerId: original.providerId, ...original.content.party, cbu: '', alias: 'cuenta.guardada' });
+    pending = await own({ action: 'prepareThirdParty', providerId: original.providerId, attemptId: 'new-unfinished-third-party-draft',
+      ...original.content.party, cbu: '', alias: 'cuenta.sin.firma', roles: ['invoice', 'payment'], workKeys: original.content.workKeys, responsibilityConfirmed: true });
+    assert.equal(pending.status, 'pending_signature');
+    const withDraft = await own({ action: 'overview', providerId: original.providerId });
+    assert.equal(withDraft.thirdPartyDefaults.alias, 'cuenta.guardada');
+    assert.equal(withDraft.thirdPartyLastSigned.party.alias, content.party.alias);
+    const revoke = { action: 'revokeThirdParty', providerId: original.providerId, declarationId: legacy.id };
+    assert.deepEqual(await own(revoke), { status: 'revoked' });
+    const revoked = (await ref.get()).data();
+    assert.deepEqual(await own(revoke), { status: 'revoked' });
+    assert.deepEqual((await ref.get()).data(), revoked, 'retries preserve the same revocation');
+    assert.equal((await own({ action: 'overview', providerId: original.providerId })).thirdPartyLastSigned.party.alias, content.party.alias);
+    assert.deepEqual((await workRef.get()).data(), workBefore, 'revocation and reuse preserve existing project records');
+  } finally {
+    await ref.set(beforeRevocation);
+    if (pending?.id) await db.doc(`providerPortalDeclarations/${pending.id}`).delete();
+    if (beforePreferences.exists) await preferencesRef.set(beforePreferences.data()); else await preferencesRef.delete();
+  }
   console.log('PASS third-party signed activation, real legacy recovery, concurrency, revocation and immutable finances');
 }

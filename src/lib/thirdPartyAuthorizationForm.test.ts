@@ -17,3 +17,19 @@ test('la solicitud del tercero muestra emisor, CUIT y cuenta, sin requerir docum
   assert(html.includes('se aplica automáticamente'));
   assert(html.includes('No necesita aprobación administrativa'));
 });
+
+test('ofrece recuperar el tercero firmado y revocar el permiso desde la ficha', () => {
+  const html = renderToStaticMarkup(createElement(ThirdPartyAuthorizationForm, {
+    provider: {}, works: [{ key: 'p/areaExpenses/w', projectName: 'Próximo rodaje', description: 'Sonido' }],
+    party: { name: 'Borrador', cuit: '20111111112', account: 'cuenta.borrador', workKeys: [], responsibilityConfirmed: false },
+    signedDetails: { name: 'Persona autorizada', cuit: '20333333334', alias: 'cuenta.firmada' },
+    savedDetails: { name: 'Otro borrador', cuit: '20444444445', alias: 'cuenta.guardada' },
+    authorizations: [{ id: 'signed', name: 'Persona autorizada', workCount: 1, scope: 'Rodaje anterior · Sonido' }],
+    onRevoke: () => {}, onChange: () => {}, onPrepare: async () => {}, busy: false,
+  }));
+  assert.match(html, /Usar datos del último tercero autorizado/);
+  assert.match(html, /Usar datos guardados/);
+  assert.match(html, /Rodaje anterior · Sonido/);
+  assert.match(html, /Revocar permiso/);
+  assert.match(html, /disabled=""[^>]*>Revisar y firmar/);
+});

@@ -57,10 +57,12 @@ export default function ProviderPortal() {
   const [hasLoaded, setHasLoaded] = useState(false);
   const loadRevision = useRef(0),
     attempts = useRef(new Map<string, string>());
+  const thirdPartyAttempts = useRef(new Map<string, string>());
   const preparationRevision = useRef(0), documentRevision = useRef(0);
   const [documentsLoading, setDocumentsLoading] = useState(false), [documentsLoaded, setDocumentsLoaded] = useState(false);
   const [profileNotice, setProfileNotice] = useState('');
   const [invoiceNotice, setInvoiceNotice] = useState('');
+  const [thirdPartyNotice, setThirdPartyNotice] = useState('');
   const [members, setMembers] = useState<any[]>([]),
     [providerId, setProviderId] = useState(() => searchParams.get("provider") || ""),
     [view, setView] = useState<any>(null),
@@ -74,10 +76,17 @@ export default function ProviderPortal() {
   const selectedProviderRef = useRef(providerId);
   const selected = members.find((m) => m.providerId === providerId);
   const pendingCount = pendingPortalSignatureCount(docs);
+  const revocableAuthorizations = (view?.declarations || []).filter((d: any) => d.kind === 'third_party'
+    && d.signedAt && ['active', 'pending_review'].includes(d.status)).map((d: any) => {
+    const works: { projectName?: string; description?: string }[] = Array.isArray(d.content?.workDetails) ? d.content.workDetails : [];
+    const scope = works.length === 1 ? [works[0]?.projectName, works[0]?.description].filter(Boolean).join(' · ')
+      : [...new Set(works.map(w => w?.projectName).filter(Boolean))].slice(0, 3).join(', ');
+    return { id: d.id, name: d.content?.party?.name || 'Tercero autorizado', workCount: Array.isArray(d.content?.workKeys) ? d.content.workKeys.length : 0, scope };
+  });
   const intakePrefilled = useRef("");
   useEffect(() => {
     const key = `${user?.uid}/${providerId}`;
-    if (!view || intakePrefilled.current === key) return;
+    if (!view || view.providerId !== providerId || intakePrefilled.current === key) return;
     intakePrefilled.current = key;
     setParty(thirdPartyFormDefaults(view));
     if (view.thirdPartyIntake && !view.declarations.some((d: any) => d.kind === 'third_party')) setTab('Mis datos');
@@ -92,13 +101,16 @@ export default function ProviderPortal() {
       const chosen =
         b.memberships.find((m: any) => m.providerId === selectedProviderRef.current) ||
         b.memberships[0];
-      if (chosen?.providerId !== selectedProviderRef.current) { selectedProviderRef.current = chosen?.providerId || ''; setProviderId(chosen?.providerId || ''); }
+      if (chosen?.providerId !== selectedProviderRef.current) {
+        selectedProviderRef.current = chosen?.providerId || '';
+        setProviderId(selectedProviderRef.current); setView(null); setThirdPartyNotice('');
+      }
       if (chosen?.status === "active" && !chosen.needsClassification) {
         const result = await portalRequest({
           action: "overview",
           providerId: chosen.providerId,
         });
-        if (revision === loadRevision.current) setView(result); else return false;
+        if (revision === loadRevision.current) setView({ ...result, providerId: chosen.providerId }); else return false;
       } else setView(null);
       return true;
     } catch (e: any) {
@@ -115,7 +127,8 @@ export default function ProviderPortal() {
   }, []);
   useEffect(() => {
     loadRevision.current++; documentRevision.current++; preparationRevision.current++;
-    setInvoiceNotice(''); setHasLoaded(false); setMembers([]); setView(null); setDocs([]); setDocumentsLoaded(false); setDraft({}); setSigning(null); intakePrefilled.current = '';
+    setInvoiceNotice(''); setThirdPartyNotice(''); setHasLoaded(false); setMembers([]); setView(null); setDocs([]); setDocumentsLoaded(false); setDraft({}); setSigning(null); intakePrefilled.current = '';
+    attempts.current.clear(); thirdPartyAttempts.current.clear();
     if (!user?.uid) return;
     void load(); void loadDocuments();
     const timer = window.setInterval(() => { if (!document.hidden) { void load(); void loadDocuments(); } }, 30000);
@@ -142,7 +155,10 @@ export default function ProviderPortal() {
       if (signing.declarationKind === 'representation') { setTab('Documentos'); setProfileNotice(result.status === 'applied'
         ? 'Declaración firmada. Tu representación quedó habilitada; los contratos asignados aparecen en Documentos.'
         : 'La firma de esta presentación anterior quedó guardada. Completá la nueva declaración de representación para habilitarte sin esperar una revisión.'); }
-      if (signing.declarationKind === 'third_party') { setTab('Documentos'); setProfileNotice(declarationCompletionMessage('third_party', result.status)); }
+      if (signing.declarationKind === 'third_party') {
+        if (result.status === 'active') { intakePrefilled.current = ''; setParty((current: any) => ({ ...current, workKeys: [], responsibilityConfirmed: false })); }
+        setTab('Documentos'); setProfileNotice(declarationCompletionMessage('third_party', result.status));
+      }
       if (signing.declarationKind === 'cash_receipt') { setTab('Documentos'); setProfileNotice(result.status === 'signed' ? 'Recibo firmado. Podés descargarlo desde Documentos → Recibos.' : 'Todavía falta completar la firma del recibo.'); } }
     else { setTab('Documentos'); setProfileNotice('Tu firma quedó guardada. Consultá el estado del contrato y sus constancias aquí. Si faltan otras firmas, se indicará en el documento.'); }
     if (await load()) setDraft({});
@@ -162,6 +178,7 @@ export default function ProviderPortal() {
         attemptId: attempts.current.get(key),
         ...input,
       });
+      if (action === 'prepareThirdParty' && result.id) thirdPartyAttempts.current.set(result.id, key);
       let d = result.signingDocument;
       if (!d) { const b = await portalRequest({ action: 'myDocuments' }); setDocs(b.documents); d = b.documents.find((d: any) => d.documentId === result.id); }
       if (!d)
@@ -196,8 +213,23 @@ export default function ProviderPortal() {
       const result = await portalRequest({ action: 'completeDeclaration', providerId: doc?.providerId || providerId, declarationId: id });
       const message = declarationCompletionMessage(kind, result.status);
       if (kind === 'profile') { setProfileNotice(message); if (result.status === 'applied') setDraft({}); }
+      if (kind === 'third_party' && result.status === 'active') intakePrefilled.current = '';
       return message;
     } finally { await Promise.all([load(), loadDocuments()]); setBusy(false); }
+  }
+  function revokeThirdParty(id: string) {
+    const declaration = view?.declarations?.find((entry: any) => entry.id === id);
+    const name = declaration?.content?.party?.name || 'el tercero';
+    const scope = revocableAuthorizations.find((entry: any) => entry.id === id)?.scope;
+    if (!confirm(`¿Revocar la autorización de ${name}?${scope ? `\n${scope}` : ''}\n\nLos pagos y comprobantes ya registrados se conservan.`)) return;
+    void run(async () => {
+      await portalRequest({ action: 'revokeThirdParty', providerId, declarationId: id });
+      const key = thirdPartyAttempts.current.get(id);
+      if (key) { attempts.current.delete(key); thirdPartyAttempts.current.delete(id); }
+      setThirdPartyNotice('Autorización revocada. Podés reutilizar los datos si más adelante decidís firmar otro permiso.');
+      if (tab === 'Documentos') setProfileNotice('Autorización revocada.');
+      await load();
+    });
   }
   return (
     <div className="provider-portal mx-auto min-w-0 max-w-6xl space-y-3 p-1 sm:space-y-5 sm:p-5">
@@ -219,7 +251,7 @@ export default function ProviderPortal() {
                 setView(null);
                 setSigning(null);
                 preparationRevision.current++;
-                setProfileNotice(''); setInvoiceNotice('');
+                setProfileNotice(''); setInvoiceNotice(''); setThirdPartyNotice('');
                 setError('');
                 setProviderId(e.target.value);
                 selectedProviderRef.current = e.target.value;
@@ -415,7 +447,7 @@ export default function ProviderPortal() {
         onRecover={doc => run(async () => { await signPortalDocument(doc, { dni: '', typedName: '' }); const completion = portalDeclarationCompletionInput(doc); if (completion) await portalRequest(completion); await load(); await loadDocuments(); })}
         onApply={applyDeclaration}
         onApplyDocument={doc => run(async () => { if (doc.declarationKind === 'cash_receipt') { const result = await portalRequest(portalDeclarationCompletionInput(doc)!); setProfileNotice(result.status === 'signed' ? 'Recibo firmado y guardado.' : 'Todavía falta completar la firma.'); await loadDocuments(); } else setProfileNotice(await applyDeclaration(doc.documentId, doc.declarationKind, doc)); })}
-        onRevoke={id => { if (confirm('¿Revocar para operaciones futuras? Se conserva la historia.')) void run(async () => { await portalRequest({ action: 'revokeThirdParty', providerId, declarationId: id }); await load(); }); }}
+        onRevoke={revokeThirdParty}
       />}
       {tab === "Mis datos" && view && (
         <>
@@ -423,6 +455,8 @@ export default function ProviderPortal() {
           {view.provider.type === 'empresa' && <details className="portal-details portal-panel" key={`company/${providerId}`}><summary>Tu representación de la empresa</summary><div className="mt-4"><CompanyRepresentationForm providerId={providerId} email={user?.email || ''} busy={busy} onPrepare={input => prepare('prepareRepresentation', input)} /></div></details>}
           {view.provider.type === 'persona' && <details className="portal-details portal-panel"><summary>Quién factura y cobra por mí</summary><div className="mt-4"><ThirdPartyAuthorizationForm embedded provider={view.provider} works={view.works} party={party} onChange={setParty} busy={busy}
             recovered={!!view.thirdPartyDefaults || !!view.thirdPartyIntake}
+            signedDetails={view.thirdPartyLastSigned?.party} savedDetails={view.thirdPartyDefaults} authorizations={revocableAuthorizations}
+            onRevoke={revokeThirdParty} revocationNotice={thirdPartyNotice}
             onSave={async input => { await portalRequest({ action: 'saveThirdPartyDetails', providerId, ...input }); await load(); }}
             onPrepare={input => prepare('prepareThirdParty', input)} /></div></details>}
 

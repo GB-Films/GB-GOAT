@@ -21,7 +21,7 @@ const { profileReview } = require('./providerProfileReview');
 const { DECLARED_COMPANY_EVIDENCE } = require('./providerEvidence');
 const { companyRepresentation, assertCompanyAccount, DECLARED_COMPANY_VERSION } = require('./providerRepresentation');
 const { applySignedCompanyRepresentation } = require('./signedCompanyRepresentation');
-const { thirdPartyDeclaration, thirdPartyDetails } = require('./providerThirdPartyDeclaration');
+const { thirdPartyDeclaration, thirdPartyDetails, lastSignedThirdParty } = require('./providerThirdPartyDeclaration');
 const { applySignedProviderProfile } = require('./signedProviderProfile');
 const { createSignedThirdPartyService, needsThirdPartyApplication } = require('./signedThirdPartyDeclaration');
 const { createCashReceiptService } = require('./providerCashReceipts');
@@ -464,6 +464,7 @@ function createProviderPortalHandler({
         provider: M.publicProfile(provider),
         profileConfirmation,
         profileReview: profileReview(provider, profileConfirmation, declarations.docs.map(row => row.data())),
+        thirdPartyLastSigned: provider.type === 'persona' ? lastSignedThirdParty(declarationRows, actor) : null,
         thirdPartyDefaults: preferences?.data()?.uid === actor.uid && preferences.data().email === actor.email
           ? preferences.data().party
           : declarations.docs.map(doc => doc.data()).filter(d => d.kind === 'third_party' && d.actor.uid === actor.uid && d.actor.email === actor.email)
@@ -634,7 +635,6 @@ function createProviderPortalHandler({
             tx.update(ref, { signing, status: "pending_signature" });
         });
       }
-      if (kind === 'third_party') await saveThirdPartyDetails(providerId, actor, content.party);
       return { id: declarationId, ...(await ref.get()).data(), ...clientPreview };
     }
     if (input.action === "completeDeclaration") {
@@ -656,10 +656,11 @@ function createProviderPortalHandler({
         if (
           !r ||
           r.providerId !== providerId ||
-          r.kind !== "third_party" ||
-          !["active", "pending_review"].includes(r.status)
+          r.kind !== "third_party"
         )
           fail("Autorización no revocable.");
+        if (r.status === 'revoked') return;
+        if (!['active', 'pending_review'].includes(r.status)) fail('Autorización no revocable.');
         tx.update(ref, {
           status: "revoked",
           revocation: { actor, at: timestamp() },

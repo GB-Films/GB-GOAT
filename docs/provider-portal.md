@@ -180,6 +180,12 @@ Documentos reúne cada declaración de la ficha con su original, PDF firmado y c
 
 La declaración `third-party-v5` identifica al prestador, el emisor de la factura y su cuenta; habilita **facturación y cobro juntos** para los trabajos seleccionados, hasta revocación. La persona firma desde su cuenta Google registrada y asume la responsabilidad por los datos y los acuerdos con el tercero. Al completar la firma y sus artefactos, GOAT la aplica automáticamente en una transacción. No requiere casillas, motivo, aprobación fiscal o bancaria de administración. Guardar el borrador no habilita operaciones. La firma no crea pagos ni certifica por sí sola titularidad bancaria o encuadre fiscal.
 
+En **Mis datos → Quién factura y cobra por mí**, GOAT precarga el nombre, CUIT y
+cuenta de la última autorización firmada por esa cuenta. Los borradores guardados
+se pueden recuperar por separado. El nuevo permiso requiere seleccionar trabajos y
+confirmar nuevamente la autorización. Los permisos firmados se pueden revocar
+desde la misma sección y sus antecedentes quedan en Documentos.
+
 La aplicación verifica firma íntegra, hash del contenido original, DNI declarado, membresía activa de la misma cuenta, persona física, vigencia, CUIT/titular coincidentes y pertenencia y gestión efectiva de los trabajos. Activa ambos roles, guarda `activation.method: signed_declaration` y una auditoría; marca únicamente `thirdPartyPayoutRequired` en esas filas. No cambia importes, pagos, facturas, originales ni datos propios del prestador. Reintentos y llamadas concurrentes producen una sola aplicación/auditoría.
 
 Las declaraciones v3/v4 compatibles que quedaron firmadas en `pending_review` se recuperan al abrir Mi proveedor, Accesos de proveedores o las autorizaciones de la ficha. También se recupera una firma completada cuyo navegador no llegó a confirmar la aplicación. Se verifica nuevamente la evidencia real de Sign usando la cuenta del firmante original; no se reescribe su PDF ni se firma en su nombre. Las vigentes completas no se reaplican; las revocadas, rechazadas o con decisiones rechazadas no se reactivan. Las v3 conservan su vencimiento. Si cambiaron DNI, membresía, proveedor o gestión de un trabajo, o la declaración anterior no contiene los datos/roles necesarios, permanece intacta y pide una nueva declaración al proveedor. Una falla temporal permite volver a actualizar la consulta.

@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { hash } = require('./providerPortalModel');
-const { thirdPartyDeclaration } = require('./providerThirdPartyDeclaration');
+const { thirdPartyDeclaration, lastSignedThirdParty } = require('./providerThirdPartyDeclaration');
 const { checkSignedThirdParty, needsThirdPartyApplication } = require('./signedThirdPartyDeclaration');
 const actor = { uid: 'supplier-test', email: 'supplier@example.test' };
 const provider = { type: 'persona', name: 'Persona de prueba', dni: '12345678', bankAccount_alias: 'cuenta.propia' };
@@ -54,4 +54,24 @@ test('no reaplica vigentes completas ni revive revocaciones o decisiones rechaza
     { ...declaration, status: 'active', effectiveRoles: ['invoice', 'payment'] },
     { ...declaration, status: 'pending_review', decisions: { invoice: { decision: 'rejected' } } },
   ]) assert.equal(needsThirdPartyApplication(d), false);
+});
+
+test('recupera datos por fecha de firma comprobada, incluso si el permiso se revocó', () => {
+  const signed = (id, date, alias, overrides = {}) => {
+    const row = { ...declaration, id, status: 'active', content: { ...content, party: { ...content.party, alias } },
+      effectiveRoles: ['invoice', 'payment'], ...overrides };
+    row.contentHash = hash({ kind: row.kind, providerId: row.providerId, actor: row.actor, content: row.content });
+    row.proof = { complete: true, signedPdfSha256: 'a'.repeat(64), contentHash: row.contentHash, signedAt: date };
+    return row;
+  };
+  const earlier = signed('earlier', '2026-11-01T12:00:00Z', 'cuenta.anterior');
+  const latest = signed('latest', '2026-11-04T12:00:00Z', 'cuenta.firmada', { status: 'revoked' });
+  const pending = signed('draft', '2026-11-07T12:00:00Z', 'cuenta.borrador', { status: 'pending_signature' });
+  const foreign = signed('foreign', '2026-11-06T12:00:00Z', 'cuenta.ajena', { actor: { ...actor, email: 'foreign@example.test' } });
+  const changed = signed('changed', '2026-11-08T12:00:00Z', 'cuenta.alterada');
+  changed.content.party.alias = 'otra.cuenta';
+  assert.deepEqual(lastSignedThirdParty([earlier, pending, changed, latest, foreign], actor), {
+    id: 'latest', signedAt: '2026-11-04T12:00:00Z', party: { ...content.party, alias: 'cuenta.firmada' },
+  });
+  assert.equal(lastSignedThirdParty([pending, changed, foreign], actor), null);
 });
