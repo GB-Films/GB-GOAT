@@ -5,8 +5,10 @@ const { isInternalBudgetEstimate } = require('./internalBudgetEstimate');
 const { projectFinanceAccess } = require('./projectFinanceAccess');
 const { canEditAreaExpense, deny } = require('./projectReadScope');
 const { paymentDatesVersion, scopedFiles, wire } = require('./projectScopedReads');
-const { email, fail, hash, id, list } = require('./providerPortalModel');
+const { fail, hash, id, list } = require('./providerPortalModel');
 const { checkPickerExpense, checkUnlinkedExpense, createScopedProviderPicker, providerName } = require('./scopedProviderPicker');
+const { canEditScopedExpensePayments, hasPayments, hasSharedPayments } = require('./scopedExpensePayments');
+const { retainOriginalFileOwners } = require('./providerExpenseFiles');
 
 const amountFields = ['unitPrice', 'quantity', 'total'];
 const editableFields = ['description', 'unit', 'providerName', 'providerId', ...amountFields];
@@ -19,6 +21,20 @@ const ownerName = (access, actor) => String(access.user?.displayName || actor.em
 const revision = value => value?.seconds == null ? null : [value.seconds, value.nanoseconds || 0];
 const fileMarker = (scope, kind, fileId) => 'goat-file:' + encodeURIComponent(JSON.stringify({ ...scope, kind, fileId }));
 const documents = ['invoice', 'other'];
+
+function confirmPaidDetails(expense, updates, input) {
+  if (hasPayments(expense) && ['providerId', 'providerName', 'description'].some(key => key in updates && updates[key] !== expense[key])
+    && input.confirmedPaidEdit !== true) fail('Confirmá el cambio en el gasto con pagos antes de guardarlo.');
+}
+
+function recordPaidDetails(tx, root, scope, expense, updates, actor, updatedAt) {
+  if (!hasPayments(expense)) return;
+  tx.create(root.collection('activityLog').doc(), {
+    action: 'paid_area_expense_details_corrected', collectionName: scope.collectionName, itemId: scope.itemId,
+    before: Object.fromEntries(Object.keys(updates).map(key => [key, expense[key] ?? null])), after: updates,
+    editedBy: actor.uid, editedByEmail: actor.email, createdAt: updatedAt,
+  });
+}
 
 function prepareChanges(expense, input, access, actor) {
   const submitted = input.updates;
@@ -36,17 +52,11 @@ function prepareChanges(expense, input, access, actor) {
     || Boolean(updates.providerId) && !validId(updates.providerId))) fail('Proveedor inválido.');
   if (Object.hasOwn(submitted, 'providerInviteLink') && (!updates.providerId || submitted.providerInviteLink !== null)) fail('Invitación inválida.');
   const history = list(expense.paymentHistory);
-  const hasSharedPayment = list(expense.sharedPaymentIds).length || list(expense.sharedPaymentRecords).length;
-  const hasPaymentLock = expense.paymentLocked === true || expense.paid === true || history.length || hasSharedPayment;
-  // A missing history on a legacy paid row is not proof that the payments are gone.
-  const canEditOwnPaidDetails = !access.admin && !hasSharedPayment && Array.isArray(expense.paymentHistory)
-    && (history.length > 0 || expense.paid !== true)
-    && history.every(payment => payment?.createdBy === actor.uid && !payment.sharedRecordId
-      && (!payment.createdByEmail || email(payment.createdByEmail) === actor.email));
-  if (hasPaymentLock && (!canEditOwnPaidDetails || assignsProvider)) {
-    fail(assignsProvider ? 'El gasto tiene historial de pagos. Revisá la corrección del proveedor con administración.'
-      : 'Este gasto tiene pagos que no podés modificar. Sólo podés editar filas cuyos pagos estén todos registrados por vos.');
+  const hasPaymentLock = expense.paymentLocked === true || hasPayments(expense) || hasSharedPayments(expense);
+  if (access.admin ? hasPaymentLock : !canEditScopedExpensePayments(expense, actor)) {
+    fail('Este gasto tiene pagos que no podés modificar. Sólo podés editar filas cuyos pagos estén todos registrados por vos.');
   }
+  if (hasPayments(expense) && assignsProvider && !updates.providerId) fail('Elegí el proveedor correcto para el gasto con pagos.');
   if ((expense.thirdPartyPayoutRequired || list(expense.sharedInvoices).length || list(expense.sharedReceipts).length || list(expense.sharedPaymentIds).length)
     && ['providerId', 'providerName', ...amountFields].some(key => key in updates && updates[key] !== expense[key])) fail('El gasto tiene comprobantes compartidos. Revisá sus importes o proveedor con administración.');
   if ('quantity' in updates || 'unitPrice' in updates) {
@@ -118,7 +128,7 @@ function createScopedAreaExpenseEdits({ db, inspectUpload }) {
       const view = row => wire(scopedFiles(projectId, collectionName, { ...row, id: itemId }));
       const updatedAt = Timestamp.fromMillis(Math.max(Date.now(), (expense.updatedAt?.toMillis?.() ?? 0) + 1));
       if (input.action === 'searchScopedExpenseProviders' || input.action === 'assignScopedExpenseProvider') {
-        await checkPickerExpense({ tx, db, access, expense, scope, expectedUpdatedAt: input.expectedUpdatedAt });
+        await checkPickerExpense({ tx, db, access, actor, expense, scope, expectedUpdatedAt: input.expectedUpdatedAt });
         if (input.action === 'searchScopedExpenseProviders') return;
 
         const providerId = id(input.providerId);
@@ -126,17 +136,33 @@ function createScopedAreaExpenseEdits({ db, inspectUpload }) {
         const name = provider && providerName(provider);
         if (!name) fail('El proveedor ya no está disponible. Volvé a buscarlo.');
         if (providerId === expense.providerId && name === expense.providerName) return { expense: view(expense), provider: { id: providerId, name } };
-        const updates = { providerId, providerName: name, updatedAt };
+        const updates = { providerId, providerName: name };
         if (providerId !== expense.providerId) updates.providerIdentityOnly = true;
-        tx.update(ref, updates);
-        return { expense: view({ ...expense, ...updates }), provider: { id: providerId, name } };
+        confirmPaidDetails(expense, updates, input);
+        const files = providerId !== expense.providerId && (hasPayments(expense) || expense.paymentLocked === true)
+          ? await retainOriginalFileOwners(db, tx, ref, expense) : null;
+        if (files) tx.set(files.ref, { owners: files.owners });
+        recordPaidDetails(tx, root, scope, expense, updates, actor, updatedAt);
+        tx.update(ref, { ...updates, updatedAt });
+        return { expense: view({ ...expense, ...updates, updatedAt }), provider: { id: providerId, name } };
       }
       if (input.action === 'editScopedAreaExpense') {
+        if (hasPayments(expense) && (isInternalBudgetEstimate(expense) || !list(access.project.activeAreas).includes(expense.area))) deny();
         const updates = prepareChanges(expense, input, access, actor);
-        if (!access.admin && access.collaborator?.role === 'jefe_produccion' && Object.hasOwn(updates, 'providerId')
+        if (!access.admin && (access.collaborator?.role === 'jefe_produccion' || hasPayments(expense)) && Object.hasOwn(updates, 'providerId')
           && (updates.providerId !== (expense.providerId || '') || expense.providerInviteLink && input.updates.providerInviteLink === null))
           await checkUnlinkedExpense({ tx, db, expense, scope });
-        if (updates.providerId && !(await tx.get(db.doc(`providers/${updates.providerId}`))).exists) fail('El proveedor ya no está disponible.');
+        if (updates.providerId) {
+          const provider = (await tx.get(db.doc(`providers/${updates.providerId}`))).data();
+          if (!provider) fail('El proveedor ya no está disponible.');
+          if (hasPayments(expense)) {
+            updates.providerName = providerName(provider);
+            if (!updates.providerName) fail('El proveedor no tiene nombre registrado.');
+          }
+        }
+        confirmPaidDetails(expense, updates, input);
+        const files = updates.providerId && updates.providerId !== expense.providerId && (hasPayments(expense) || expense.paymentLocked === true)
+          ? await retainOriginalFileOwners(db, tx, ref, expense) : null;
         if (updates.providerId && updates.providerId !== expense.providerId && !access.globalAdmin && access.user?.role !== 'ayudante_admin')
           updates.providerIdentityOnly = true;
         if (updates.providerId && expense.providerInviteLink?.status === 'pending' && validId(expense.providerInviteLink.token)) {
@@ -149,13 +175,8 @@ function createScopedAreaExpenseEdits({ db, inspectUpload }) {
         } else if (input.updates.providerInviteLink === null) updates.providerInviteLink = null;
         const changed = Object.fromEntries(Object.entries(updates).filter(([key, value]) => expense[key] !== value));
         if (!Object.keys(changed).length) return { expense: view(expense) };
-        if (list(expense.paymentHistory).length) {
-          tx.create(root.collection('activityLog').doc(), {
-            action: 'paid_area_expense_details_corrected', collectionName, itemId,
-            before: Object.fromEntries(Object.keys(changed).map(key => [key, expense[key] ?? null])), after: changed,
-            editedBy: actor.uid, editedByEmail: actor.email, createdAt: updatedAt,
-          });
-        }
+        if (files) tx.set(files.ref, { owners: files.owners });
+        recordPaidDetails(tx, root, scope, expense, changed, actor, updatedAt);
         tx.update(ref, { ...changed, updatedAt });
         return { expense: view({ ...expense, ...updates, updatedAt }) };
       }

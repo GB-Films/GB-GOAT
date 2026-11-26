@@ -1184,7 +1184,7 @@ export const buildAssistantTools = ({
           args?.precioUnitario !== undefined ? `precio $${Number(args.precioUnitario).toLocaleString('es-AR')}` : '',
           args?.unidad !== undefined ? `unidad "${String(args.unidad)}"` : '',
         ].filter(Boolean).join(', ');
-        return `Editar "${String(args?.fila || '').trim()}": ${changes || 'sin cambios'}`;
+        return `Editar "${String(args?.fila || '').trim()}": ${changes || 'sin cambios'}. Se conservan los pagos registrados.`;
       },
       parameters: projectOptionsSchema({
         fila: { type: 'string', description: 'Id de la fila, proveedor o descripción que la identifique' },
@@ -1205,14 +1205,10 @@ export const buildAssistantTools = ({
           return { error: 'El usuario no tiene permiso para editar esa fila.' };
         }
         const paid = hasRecordedPayment(item);
-        const changesProvider = args?.proveedor !== undefined;
         const changesIdentity = ['descripcion', 'cantidad', 'precioUnitario', 'unidad']
           .some((field) => args?.[field] !== undefined);
         if (paid && changesIdentity && (collectionName !== 'areaExpenses' || context.capabilities.isProjectAdmin)) {
           return { error: 'Esa fila tiene pagos registrados: sólo un administrador puede corregir el proveedor, y no se pueden cambiar importes ni descripción.' };
-        }
-        if (paid && changesProvider && !context.capabilities.isProjectAdmin) {
-          return { error: 'Esa fila tiene pagos registrados: sólo un administrador puede corregir el proveedor.' };
         }
 
         const updates: any = {};
@@ -1247,7 +1243,7 @@ export const buildAssistantTools = ({
         if (Object.keys(updates).length === 0) return { error: 'No hay cambios para aplicar.' };
 
         if (collectionName === 'areaExpenses' && !context.capabilities.isProjectAdmin) {
-          const saved = await editScopedAreaExpense(context.projectId, item.id, item.updatedAt, updates);
+          const saved = await editScopedAreaExpense(context.projectId, item.id, item.updatedAt, updates, paid);
           projectCache.delete(context.projectId);
           return { ok: true, mensaje: `Fila editada: ${rowLabel(saved, saved.subcategory)}.`, cambios: updates };
         }
@@ -1455,7 +1451,7 @@ export const buildAssistantTools = ({
       summarize: (args) => (
         args?.quitar
           ? `Quitar el proveedor de "${String(args?.fila || '').trim()}"`
-          : `Asignar ${String(args?.proveedor || '').trim()} a "${String(args?.fila || '').trim()}"`
+          : `Asignar ${String(args?.proveedor || '').trim()} a "${String(args?.fila || '').trim()}". Se conservan los pagos registrados.`
       ),
       parameters: projectOptionsSchema({
         fila: { type: 'string' },
@@ -1485,15 +1481,12 @@ export const buildAssistantTools = ({
           if (!provider) {
             return { error: `No encontré el proveedor "${providerName}" en la base. Escribí el nombre como figura en Proveedores o creálo desde la app.` };
           }
-          if (paid && !context.capabilities.isProjectAdmin) {
-            return { error: 'Esa fila tiene pagos registrados: sólo un administrador puede corregir el proveedor.' };
-          }
           updates.providerId = provider.id;
           updates.providerName = providerLabel(provider);
         }
 
         if (collectionName === 'areaExpenses' && !context.capabilities.isProjectAdmin) {
-          await editScopedAreaExpense(context.projectId, item.id, item.updatedAt, updates);
+          await editScopedAreaExpense(context.projectId, item.id, item.updatedAt, updates, paid);
           projectCache.delete(context.projectId);
           return { ok: true, mensaje: args?.quitar ? `Se quitó el proveedor de ${rowLabel(item, item.subcategory)}.`
             : `Proveedor ${updates.providerName} asignado a ${rowLabel(item, item.subcategory)}.` };

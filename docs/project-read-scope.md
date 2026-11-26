@@ -12,6 +12,10 @@ Las pestañas habilitadas controlan la navegación. Las categorías y subcategor
 
 Las pruebas `projectScopeRules` y `projectScopedFiles` usan datos ficticios. Cubren lecturas y ediciones autorizadas, exclusiones, cambios de permisos, presupuestos, proveedores, documentos individuales y compartidos, vínculos históricos y saldo personal.
 
+En Áreas, un colaborador con permiso vigente puede corregir el proveedor y la descripción de un gasto cuando todos los pagos son propios y su autoría se puede verificar. La edición requiere confirmación, verifica la versión del gasto y queda auditada. Los documentos compartidos o vinculados por una autorización o un enlace de alta conservan sus restricciones de reasignación. Los comprobantes locales previos permanecen en el gasto y conservan el proveedor al que pueden mostrarse en el portal. La corrección preserva los pagos y movimientos de caja.
+
+Para publicar esta corrección, actualizar primero `providerPortal`, luego `manageProviderFinance` y por último la web. `scopedProviderPicker.emulator.mjs` verifica la búsqueda, los permisos, la confirmación y el acceso a archivos tras cambiar el proveedor.
+
 Las filas completas de Áreas quedan reservadas a administración. El servicio vuelve a comprobar la categoría, subcategoría y permisos vigentes en la transacción de cada edición, adjunto, pago o lote de fechas. Devuelve la misma vista acotada que el listado. Las referencias de comprobantes compartidos conservan el importe aplicado. Las cuentas, los comprobantes de otras aplicaciones y el detalle compartido quedan fuera de esa respuesta.
 
 Las vistas de colaboradores consultan primero las áreas asignadas, por páginas, y aplican después los permisos exactos de subcategoría y las exclusiones. El límite de una vista cuenta sus filas visibles. Las pestañas predeterminadas de fichas antiguas habilitan la lectura. Para editar se requiere el permiso de edición y la asignación explícita de Áreas, como en las reglas de acceso directo.

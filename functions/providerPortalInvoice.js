@@ -23,10 +23,11 @@ function ownedPortalInvoice(file, upload, providerId, workKey, actor) {
     && file.path === upload.path && file.sha256 === upload.sha256
     && (!file.uploadedByUid || file.uploadedByUid === actor.uid));
 }
-async function portalInvoiceRows(db, expense, workKey, providerId, actor) {
+async function portalInvoiceRows(db, expense, workKey, providerId, actor, visible = () => true) {
   const files = M.expenseInvoices(expense);
   if (files.length > 100) M.fail('El historial de facturas requiere revisión administrativa.');
-  return Promise.all(files.map(async (file, index) => {
+  const visibleFiles = files.flatMap((file, index) => visible(file) ? [{ file, index }] : []);
+  return Promise.all(visibleFiles.map(async ({ file, index }) => {
     const upload = /^[\w-]{1,160}$/.test(file.portalUploadId || '')
       ? (await db.doc(`providerPortalInvoiceUploads/${file.portalUploadId}`).get()).data() : null;
     const copies = [expense.invoice, ...M.list(expense.invoices)].filter(f => f && (f.path === file.path || f.portalUploadId === file.portalUploadId && file.portalUploadId));
