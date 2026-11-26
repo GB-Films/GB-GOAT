@@ -33,7 +33,7 @@ interface BudgetRowCellProps {
   canCopyProviderInfo?: boolean;
   onCreateProviderInvite?: (item: any) => Promise<boolean | void> | boolean | void;
   onDetachProviderInvite?: (item: any) => Promise<boolean>;
-  onSelectScopedProvider?: (item: any, providerId: string) => Promise<void>;
+  onSelectScopedProvider?: (item: any, option: ScopedProviderOption) => Promise<void>;
   creatingProviderInvite?: boolean;
   registrationEvidence?: RegistrationEvidence;
 }
@@ -81,7 +81,7 @@ export function BudgetRowCell({ item, collectionName, providers, onUpdate, type,
       setSavingProvider(true);
       setProviderSaveError('');
       try {
-        await onSelectScopedProvider(item, option.id);
+        await onSelectScopedProvider(item, option);
       } catch (error) {
         setProviderSaveError(error instanceof Error ? error.message : 'No pudimos asignar el proveedor. Volvé a intentar.');
         return;
@@ -185,7 +185,7 @@ export function BudgetRowCell({ item, collectionName, providers, onUpdate, type,
 
   if (type === 'provider') {
     return (
-      <div ref={providerCellRef} className={cn('relative group/provider', provisional && 'rounded-lg border border-amber-200 bg-amber-50 p-2')}>
+      <div ref={providerCellRef} title={readOnlyReason} className={cn('relative group/provider', provisional && 'rounded-lg border border-amber-200 bg-amber-50 p-2')}>
         {(registrationState === 'loading' || registrationState === 'error') && <p className="mb-1 text-[10px] text-slate-500">
           {registrationState === 'loading' ? 'Verificando alta…' : 'Alta sin verificar · actualizá la página'}
         </p>}
@@ -225,7 +225,7 @@ export function BudgetRowCell({ item, collectionName, providers, onUpdate, type,
             >
               {item.providerName || 'Sin Nombre'}
             </button>
-            {!disabled && (
+            {!disabled && !readOnlyReason && (
               <button 
                 type="button"
                 onClick={() => {
@@ -240,7 +240,7 @@ export function BudgetRowCell({ item, collectionName, providers, onUpdate, type,
             )}
           </div>
         ) : (
-          disabled ? (
+          disabled || readOnlyReason ? (
             <span className="text-slate-300 font-bold uppercase text-[9px] tracking-widest">Sin proveedor</span>
           ) : (
             <div className="flex flex-col items-start gap-1">
@@ -309,7 +309,7 @@ export function BudgetRowCell({ item, collectionName, providers, onUpdate, type,
           Comprobantes / pago vinculado
         </button>}
         
-        {isEditingProvider && !disabled && (
+        {isEditingProvider && !disabled && !readOnlyReason && (
            <div 
              ref={dropdownRef}
              style={{ top: dropdownPosition.top, left: dropdownPosition.left, width: dropdownPosition.width }}
@@ -328,7 +328,7 @@ export function BudgetRowCell({ item, collectionName, providers, onUpdate, type,
                 />
               </div>
               <div className="max-h-52 overflow-y-auto custom-scrollbar">
-                {(item.providerId || item.providerName) && <button disabled={savingProvider}
+                {(item.providerId || item.providerName) && (collectionName !== 'areaExpenses' || !item.paid && !item.paymentHistory?.length) && <button disabled={savingProvider}
                   onClick={() => {
                     onUpdate(item.id, { providerId: '', providerName: '' });
                     setIsEditingProvider(false);

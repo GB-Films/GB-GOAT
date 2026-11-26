@@ -71,7 +71,8 @@ try {
       createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
     })));
     await assertFails(getDoc(doc(leadDb, expensePath(id, 'new'))));
-    const edit = (itemId, updates, expectedUpdatedAt = versionOf(date)) => callAsLead({ action: 'editScopedAreaExpense', projectId: id, itemId, expectedUpdatedAt, updates });
+    const edit = (itemId, updates, expectedUpdatedAt = versionOf(date), confirmedPaidEdit = false) =>
+      callAsLead({ action: 'editScopedAreaExpense', projectId: id, itemId, expectedUpdatedAt, updates, confirmedPaidEdit });
     const edited = await edit('new', { description: 'Gasto cargado por administración', quantity: 1, unitPrice: 2000 });
     assert.equal(edited.expense.total, 2000);
     assert.equal(edited.expense.description, 'Gasto cargado por administración');
@@ -86,7 +87,8 @@ try {
     await assertFails(updateDoc(doc(leadDb, expensePath(id, 'new')), { createdBy: 'another-user' }));
     await assertFails(updateDoc(doc(leadDb, expensePath(id, 'paid')), { total: 2000, unitPrice: 2000 }));
     await assertFails(updateDoc(doc(leadDb, expensePath(id, 'paid')), { paymentHistory: [] }));
-    const revised = await edit('paid', { description: 'Actualizado con pago propio', unitPrice: 150 });
+    await assert.rejects(edit('paid', { description: 'Sin confirmar' }), /Confirmá el cambio/);
+    const revised = await edit('paid', { description: 'Actualizado con pago propio', unitPrice: 150 }, versionOf(date), true);
     assert.equal(revised.expense.description, 'Actualizado con pago propio');
     assert.equal(revised.expense.total, 150);
     assert.equal(revised.expense.paid, false);

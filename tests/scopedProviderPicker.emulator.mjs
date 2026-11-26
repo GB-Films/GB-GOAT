@@ -7,6 +7,7 @@ import { collection, deleteField, doc, getDoc, getDocs, setDoc, updateDoc } from
 const require = createRequire(new URL('../functions/package.json', import.meta.url));
 const admin = require('firebase-admin');
 const { createProviderFinanceHandler } = require('../functions/providerFinance');
+const { createProviderPortalHandler } = require('../functions/providerPortal');
 const projectId = 'demo-goat-scoped-provider-picker';
 assert.match(process.env.FIRESTORE_EMULATOR_HOST || '', /^(127\.0\.0\.1|localhost):\d+$/);
 const env = await initializeTestEnvironment({ projectId, firestore: { rules: readFileSync('firestore.rules', 'utf8') } });
@@ -67,6 +68,68 @@ try {
   assert.deepEqual((await lookup('editable', 'Al')).providers, []);
   assert.equal((await lookup('editable', 'proveedor comun')).providers.length, 20);
 
+  const ownPayment = { id: 'own-payment', amount: 50, createdBy: 'producer', createdByEmail: claims('producer').email, receipt };
+  const previousInvoice = { ...receipt, id: 'invoice-before', path: 'old-invoice', fileName: 'detalle reservado.pdf' };
+  const currentInvoice = { ...receipt, id: 'invoice-after', path: 'current-invoice', fileName: 'factura nueva.pdf' };
+  const previousOther = { ...receipt, id: 'other-before', path: 'old-other' };
+  const currentOther = { ...receipt, id: 'other-after', path: 'current-other' };
+  const ownPaid = row({ paid: true, paymentLocked: true, providerId: 'established', providerName: 'Alicia Sol',
+    paymentHistory: [ownPayment], invoices: [previousInvoice], otherReceipts: [previousOther] });
+  const cashRef = db.doc('projects/film/cashMovements/own-payment');
+  const cash = { type: 'pago', amount: 50, paymentId: ownPayment.id, itemId: 'own-paid', collectionName: 'areaExpenses' };
+  await Promise.all([
+    source('own-paid').set(ownPaid), cashRef.set(cash),
+    source('admin-paid').set({ ...ownPaid, paymentHistory: [{ ...ownPayment, createdBy: 'owner' }] }),
+    source('mixed-paid').set({ ...ownPaid, paymentHistory: [ownPayment, { ...ownPayment, id: 'admin', createdBy: 'owner' }] }),
+    source('area-lead-paid').set({ ...ownPaid, paymentHistory: [{ ...ownPayment, createdBy: 'area-lead', createdByEmail: claims('area-lead').email }] }),
+    db.doc('providerPortalConfig/current').set({ enabled: true }),
+    db.doc('providerPortalUsers/recipient/memberships/new-supplier').set({ status: 'active', email: claims('recipient').email }),
+  ]);
+  for (const itemId of ['admin-paid', 'mixed-paid']) {
+    await assert.rejects(lookup(itemId), /pagos de otra persona/);
+    await assert.rejects(assign(itemId, { confirmedPaidEdit: true }), /pagos de otra persona/);
+    await assert.rejects(call('editScopedAreaExpense', { itemId, expectedUpdatedAt: null, confirmedPaidEdit: true,
+      updates: { description: 'Descripción bloqueada', providerId: 'new-supplier', providerName: 'Andrea Álvarez' } }), /pagos que no podés modificar/);
+  }
+  assert.deepEqual((await lookup('own-paid')).providers, [{ id: 'new-supplier', name: 'Andrea Álvarez' }]);
+  await assert.rejects(assign('own-paid'), /Confirmá el cambio/);
+  const moved = await assign('own-paid', { confirmedPaidEdit: true });
+  assert.equal(moved.expense.providerId, 'new-supplier');
+  const movedVersion = [moved.expense.updatedAt.seconds, moved.expense.updatedAt.nanoseconds];
+  await assert.rejects(call('editScopedAreaExpense', { itemId: 'own-paid', expectedUpdatedAt: movedVersion,
+    updates: { description: 'No confirmado' } }), /Confirmá el cambio/);
+  const described = await call('editScopedAreaExpense', { itemId: 'own-paid', expectedUpdatedAt: movedVersion, confirmedPaidEdit: true,
+    updates: { description: 'Servicio corregido' } });
+  assert.equal(described.expense.description, 'Servicio corregido');
+  const lead = await call('editScopedAreaExpense', { itemId: 'area-lead-paid', expectedUpdatedAt: null, confirmedPaidEdit: true,
+    updates: { providerId: 'corp', providerName: 'Nombre no verificado', description: 'Edición de área' } }, 'area-lead');
+  assert.equal(lead.expense.providerName, 'Música del Sur');
+  const savedPaid = (await source('own-paid').get()).data();
+  assert.deepEqual(savedPaid.paymentHistory, ownPaid.paymentHistory);
+  assert.deepEqual(savedPaid.invoices, [previousInvoice]);
+  assert.deepEqual(savedPaid.otherReceipts, [previousOther]);
+  assert.deepEqual((await cashRef.get()).data(), cash);
+  const edits = await db.collection('projects/film/activityLog').where('itemId', '==', 'own-paid').get();
+  assert.equal(edits.size, 2);
+  assert(edits.docs.every(entry => entry.data().editedBy === 'producer'));
+
+  const portal = createProviderPortalHandler({ db, sign: {}, timestamp: admin.firestore.FieldValue.serverTimestamp,
+    readFile: async file => ({ fileName: file.fileName }),
+    findAccountByUid: async uid => ({ uid, email: claims(uid).email, emailVerified: true, providerData: [{ providerId: 'google.com' }] }) });
+  const recipient = data => portal({ auth: { uid: 'recipient', token: { ...claims('recipient'), firebase: { sign_in_provider: 'google.com' } } },
+    data: { providerId: 'new-supplier', ...data } });
+  const workKey = 'film/areaExpenses/own-paid';
+  for (const kind of ['invoice', 'payment', 'other']) {
+    await assert.rejects(recipient({ action: 'download', workKey, kind, index: 0 }), { code: 'permission-denied' });
+  }
+  await source('own-paid').update({ invoices: [previousInvoice, currentInvoice], otherReceipts: [previousOther, currentOther] });
+  const portalRow = (await recipient({ action: 'overview' })).works.find(work => work.key === workKey);
+  assert.equal(portalRow.invoiceCount, 1);
+  assert.deepEqual(portalRow.invoices, [{ index: 1, fileName: currentInvoice.fileName, canRemove: false }]);
+  assert.equal(portalRow.payments[0].hasReceipt, false);
+  assert.deepEqual(portalRow.otherIndices, [1]);
+  assert.deepEqual(await recipient({ action: 'download', workKey, kind: 'invoice', index: 1 }), { fileName: currentInvoice.fileName });
+
   for (const itemId of ['excluded', 'inactive', 'no-row', 'budget-only']) {
     await assert.rejects(lookup(itemId), { code: 'permission-denied' });
     await assert.rejects(assign(itemId), { code: 'permission-denied' });
@@ -112,6 +175,9 @@ try {
   const projectAdmin = env.authenticatedContext('project-admin', claims('project-admin')).firestore();
   const owner = env.authenticatedContext('owner', claims('owner')).firestore();
   const rowPath = itemId => `projects/film/areaExpenses/${itemId}`;
+  const ownershipPath = `${rowPath('own-paid')}/providerFileOwnership/originals`;
+  await assertFails(getDoc(doc(producer, ownershipPath)));
+  await assertFails(setDoc(doc(producer, ownershipPath), { owners: {} }));
   await assertFails(getDoc(doc(producer, 'providers/new-supplier')));
   await assertFails(getDocs(collection(producer, 'providers')));
   await assertSucceeds(getDoc(doc(owner, 'providers/new-supplier')));

@@ -369,7 +369,7 @@ export default function ProviderPortal() {
                   )}
                 </div>
               ))}
-              {Array.from({ length: w.otherCount }, (_, index) => (
+              {(w.otherIndices || Array.from({ length: w.otherCount }, (_, index) => index)).map((index: number, position: number) => (
                 <button
                   key={index}
                   disabled={busy}
@@ -378,7 +378,7 @@ export default function ProviderPortal() {
                     download({ workKey: w.key, kind: "other", index })
                   }
                 >
-                  Retención / comprobante {index + 1}
+                  Retención / comprobante {position + 1}
                 </button>
               ))}
             </div>

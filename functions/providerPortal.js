@@ -6,6 +6,7 @@ const { projectFinanceAccess } = require('./projectFinanceAccess');
 const { canReadExpense, deny } = require('./projectReadScope');
 const { createPortalReimbursements, ownAdvanceFile } = require("./providerPortalReimbursements");
 const { createPortalInvoiceUpload, createPortalInvoiceRemoval, portalInvoiceRows } = require("./providerPortalInvoice");
+const { expenseFileVisibility } = require('./providerExpenseFiles');
 const { confirmationContent, confirmationState } = require('./providerProfileConfirmation');
 const { approvedEin } = require('./providerFiscalIdentifierException');
 const { createAccountChoiceService } = require('./providerAccountChoice');
@@ -142,13 +143,22 @@ function createProviderPortalHandler({
             projectId,
             (await db.doc(`projects/${projectId}`).get()).data() || {},
           );
+        const expense = doc.data();
         const row = M.ownExpense(
-          doc.data(),
+          expense,
           projects.get(projectId),
           doc.ref.path,
         );
         if (row) {
-          if (actor) row.invoices = await portalInvoiceRows(db, doc.data(), row.key, providerId, actor);
+          if (actor) {
+            const visible = await expenseFileVisibility(db, doc.ref, expense, providerId);
+            row.invoices = await portalInvoiceRows(db, expense, row.key, providerId, actor, visible);
+            row.invoiceCount = row.invoices.length;
+            row.payments.forEach((payment, index) => { payment.hasReceipt = payment.hasReceipt && visible(expense.paymentHistory[index].receipt); });
+            const otherIndices = list(expense.otherReceipts).flatMap((file, index) => visible(file) ? [index] : []);
+            if (otherIndices.length !== row.otherCount) row.otherIndices = otherIndices;
+            row.otherCount = otherIndices.length;
+          }
           result.push(row);
         }
       }
@@ -687,11 +697,8 @@ function createProviderPortalHandler({
           !["budgetItems", "areaExpenses"].includes(parts[1])
         )
           fail("Trabajo inválido.");
-        const e = (
-          await db
-            .doc(`projects/${id(parts[0])}/${parts[1]}/${id(parts[2])}`)
-            .get()
-        ).data();
+        const expenseRef = db.doc(`projects/${id(parts[0])}/${parts[1]}/${id(parts[2])}`);
+        const e = (await expenseRef.get()).data();
         const advance = ['advance', 'reimbursement'].includes(input.kind);
         if (advance) {
           const project = (await db.doc(`projects/${id(parts[0])}`).get()).data();
@@ -707,6 +714,9 @@ function createProviderPortalHandler({
         if (input.kind === "other") file = list(e.otherReceipts)[index];
         if (input.kind === "payment")
           file = list(e.paymentHistory)[index]?.receipt;
+        if (!advance && file && !(await expenseFileVisibility(db, expenseRef, e, providerId))(file)) {
+          throw new HttpsError('permission-denied', 'Ese comprobante corresponde al proveedor anterior.');
+        }
       }
       if (!file) fail("No hay original disponible.");
       return readFile(file, {

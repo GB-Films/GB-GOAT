@@ -86,7 +86,7 @@ import { PaymentModal } from './project-detail/PaymentModal';
 import { ExpenseInvoiceCell, ExpenseReceiptsCell, InvoiceDropOverlay } from './project-detail/ExpenseFileCells';
 import { SharedInvoiceRecordsProvider } from '../components/SharedExpenseInvoices';
 import { providerFinanceRequest } from '../lib/providerFinance';
-import { assignScopedExpenseProvider, editScopedAreaExpense, projectAttachmentLink, readProjectAccess, readScopedCash, readScopedProject, readScopedProviders, restrictedProviderBinding } from '../lib/projectScopedData';
+import { assignScopedExpenseProvider, editScopedAreaExpense, projectAttachmentLink, readProjectAccess, readScopedCash, readScopedProject, readScopedProviders, restrictedProviderBinding, type ScopedProviderOption } from '../lib/projectScopedData';
 import type { AreaExpense, BudgetItem, CashMovement, Collaborator, Payment, PaymentCollection } from './project-detail/types';
 import { formatIdentifier, inferLegacyIdentifiers, normalizeDigits, providerDisplayName } from '../lib/providerConstants';
 import { normalizeEmail, normalizeSearchText } from '../lib/identity';
@@ -1910,6 +1910,14 @@ export default function ProjectDetail() {
     }
   };
 
+  const confirmPaidExpenseDetails = (expense: AreaExpense, providerName?: string) => {
+    const paidAmount = getPaymentTotal(expense).toLocaleString('es-AR', { style: 'currency', currency: 'ARS' });
+    const warning = `Pagos registrados: ${paidAmount}. El cambio conserva los pagos, la caja y los comprobantes.`;
+    if (providerName === undefined) return confirm(`¿Cambiar la descripción de este gasto con pagos registrados?\n\n${warning}`);
+    return confirm(`¿Cambiar el proveedor de este gasto con pagos registrados?\n\n${expense.providerName || 'Sin proveedor'} → ${providerName}\n\n${warning}`
+      + '\nLos archivos previos quedan en la fila y no se comparten con el nuevo proveedor.');
+  };
+
   const updateAreaExpense = async (expenseId: string, updates: any, propagateFailure = false) => {
     if (!id) { if (propagateFailure) throw new Error('No se encontró el proyecto.'); return; }
     try {
@@ -1921,11 +1929,12 @@ export default function ProjectDetail() {
         if (!currentExpense) throw new Error('El gasto todavía no está disponible. Volvé a intentarlo.');
       }
 
-      const paidProviderCorrection = hasRecordedPayment(currentExpense)
-        && 'providerId' in updates && 'providerName' in updates;
+      const hasPayments = currentExpense.paid === true || Boolean(currentExpense.paymentHistory?.length);
+      const privilegedCorrection = isProjectAdmin && hasRecordedPayment(currentExpense);
+      const paidProviderCorrection = (privilegedCorrection || hasPayments) && 'providerId' in updates && 'providerName' in updates;
+      let confirmedPaidEdit = false;
       let submittedUpdates = updates;
       if (paidProviderCorrection) {
-        if (!isProjectAdmin) throw new Error('PAID_EXPENSE_LOCKED');
         if (getPendingProviderInviteLink(currentExpense)) throw new Error('PENDING_PROVIDER_INVITE');
         const chosenProvider = providers.find((provider) => provider.id === updates.providerId);
         if (!chosenProvider || providerDisplayName(chosenProvider) !== updates.providerName) {
@@ -1933,16 +1942,19 @@ export default function ProjectDetail() {
         }
         if (currentExpense.providerId === updates.providerId && currentExpense.providerName === updates.providerName) return;
         submittedUpdates = { providerId: updates.providerId, providerName: updates.providerName };
-        const paidAmount = getPaymentTotal(currentExpense);
-        if (!confirm(
+        confirmedPaidEdit = isProjectAdmin ? confirm(
           `¿Confirmás cambiar el proveedor de este gasto ya pagado?\n\n`
           + `Gasto: ${currentExpense.description || 'Sin descripción'}\n`
           + `Proveedor anterior: ${currentExpense.providerName || 'Sin proveedor'}\n`
           + `Proveedor nuevo: ${updates.providerName}\n`
           + `Importe del gasto: $${(Number(currentExpense.total) || 0).toLocaleString('es-AR')}\n`
-          + `Pagos registrados: $${paidAmount.toLocaleString('es-AR')}\n\n`
+          + `Pagos registrados: $${getPaymentTotal(currentExpense).toLocaleString('es-AR')}\n\n`
           + 'No se modificarán los pagos ni la caja. La corrección quedará registrada en la actividad del proyecto.'
-        )) return;
+        ) : confirmPaidExpenseDetails(currentExpense, updates.providerName);
+        if (!confirmedPaidEdit) return;
+      } else if (!isProjectAdmin && hasPayments && 'description' in updates && updates.description !== currentExpense.description) {
+        confirmedPaidEdit = confirmPaidExpenseDetails(currentExpense);
+        if (!confirmedPaidEdit) return;
       }
 
       const nextArea = submittedUpdates.area || currentExpense.area;
@@ -1951,7 +1963,7 @@ export default function ProjectDetail() {
       const nextTotal = submittedUpdates.total !== undefined ? Number(submittedUpdates.total) : Number(currentExpense.total) || 0;
       const budgetWarning = getAreaExpenseBudgetWarning(nextArea, nextTotal, expenseId);
       if (!isProjectAdmin) {
-        const saved = await editScopedAreaExpense(id, expenseId, currentExpense.updatedAt, submittedUpdates);
+        const saved = await editScopedAreaExpense(id, expenseId, currentExpense.updatedAt, submittedUpdates, confirmedPaidEdit);
         if (structureScope.current !== loadScope) return;
         setAreaExpenses(expenses => reconcileAreaExpenseSnapshot(expenses, expenses.map(e => e.id === expenseId ? saved : e)));
         if (budgetWarning) showExpenseConfirmation(budgetWarning, 'warning');
@@ -2030,9 +2042,12 @@ export default function ProjectDetail() {
 
   const saveAreaExpenseDetails = (expenseId: string, updates: Record<string, unknown>) => updateAreaExpense(expenseId, updates, true);
 
-  const selectScopedExpenseProvider = async (expense: AreaExpense, providerId: string) => {
+  const selectScopedExpenseProvider = async (expense: AreaExpense, option: ScopedProviderOption) => {
     if (!id) throw new Error('No se encontró el proyecto.');
-    const { expense: saved, provider } = await assignScopedExpenseProvider(id, expense.id, expense.updatedAt, providerId);
+    if (expense.providerId === option.id && expense.providerName === option.name) return;
+    const hasPayments = expense.paid === true || Boolean(expense.paymentHistory?.length);
+    if (hasPayments && !confirmPaidExpenseDetails(expense, option.name)) return;
+    const { expense: saved, provider } = await assignScopedExpenseProvider(id, expense.id, expense.updatedAt, option.id, hasPayments);
     setAreaExpenses(current => reconcileAreaExpenseSnapshot(current, current.map(row => row.id === saved.id ? saved : row)));
     showExpenseConfirmation(`Proveedor asignado: ${provider.name}`);
   };
@@ -6722,6 +6737,7 @@ export default function ProjectDetail() {
                                         onDetachProviderInvite={isProjectAdmin ? row => detachProviderInviteForItem(row, 'areaExpenses') : undefined}
                                         creatingProviderInvite={!!generatingProviderInviteLinks[`areaExpenses-${item.id}`]}
                                         disabled={!canEditAreaExpense(item)}
+                                        readOnlyReason={isProjectAdmin ? undefined : areaExpenseDetailsBlock(item)}
                                       />
                                       <div className="mt-0.5">
                                         <BudgetRowCell
@@ -7016,6 +7032,7 @@ export default function ProjectDetail() {
                                   onDetachProviderInvite={isProjectAdmin ? row => detachProviderInviteForItem(row, 'areaExpenses') : undefined}
                                   creatingProviderInvite={!!generatingProviderInviteLinks[`areaExpenses-${item.id}`]}
                                   disabled={!canEditAreaExpense(item)}
+                                  readOnlyReason={isProjectAdmin ? undefined : areaExpenseDetailsBlock(item)}
                                 />
                               </div>
                             </div>

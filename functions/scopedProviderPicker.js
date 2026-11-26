@@ -2,6 +2,7 @@ const { HttpsError } = require('firebase-functions/v2/https');
 const { isInternalBudgetEstimate } = require('./internalBudgetEstimate');
 const { canEditAreaExpense, deny } = require('./projectReadScope');
 const { list } = require('./providerPortalModel');
+const { canEditScopedExpensePayments } = require('./scopedExpensePayments');
 
 const nameFields = ['type', 'name', 'lastName', 'fullName', 'businessName'];
 const providerIdPattern = /^[\w-]{1,160}$/;
@@ -17,15 +18,15 @@ function providerName(data) {
     : names || text(data.fullName)).slice(0, 300);
 }
 
-async function checkPickerExpense({ tx, db, access, expense, scope, expectedUpdatedAt }) {
+async function checkPickerExpense({ tx, db, access, actor, expense, scope, expectedUpdatedAt }) {
   if (access.admin || access.collaborator?.role !== 'jefe_produccion' || !canEditAreaExpense(access, expense)
     || isInternalBudgetEstimate(expense) || !list(access.project.activeAreas).includes(expense.area)) deny();
 
   const revision = expense.updatedAt?.seconds == null ? null : [expense.updatedAt.seconds, expense.updatedAt.nanoseconds || 0];
   if (JSON.stringify(expectedUpdatedAt) !== JSON.stringify(revision))
     throw new HttpsError('failed-precondition', 'El gasto cambió. Actualizá la fila y volvé a intentar.');
-  if (expense.paid === true || expense.paymentLocked === true || list(expense.paymentHistory).length)
-    throw new HttpsError('failed-precondition', 'El gasto tiene pagos registrados. Administración puede revisar el proveedor.');
+  if (!canEditScopedExpensePayments(expense, actor))
+    throw new HttpsError('failed-precondition', 'El gasto tiene pagos de otra persona o sin autoría verificable.');
   if (expense.thirdPartyPayoutRequired || list(expense.sharedInvoices).length || list(expense.sharedReceipts).length
     || list(expense.sharedPaymentIds).length || list(expense.sharedPaymentRecords).length)
     throw new HttpsError('failed-precondition', 'El gasto tiene una autorización de cobro o comprobantes compartidos. Consultá a Administración.');

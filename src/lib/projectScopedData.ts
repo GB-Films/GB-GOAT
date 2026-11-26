@@ -10,9 +10,9 @@ function expenseRevision(updatedAt: unknown) {
   return Number.isInteger(version?.seconds) ? [version?.seconds, version?.nanoseconds || 0] : null;
 }
 
-export async function editScopedAreaExpense(projectId: string, itemId: string, updatedAt: unknown, updates: Record<string, unknown>) {
+export async function editScopedAreaExpense(projectId: string, itemId: string, updatedAt: unknown, updates: Record<string, unknown>, confirmedPaidEdit = false) {
   return (await providerFinanceRequest({
-    action: 'editScopedAreaExpense', projectId, itemId, expectedUpdatedAt: expenseRevision(updatedAt), updates,
+    action: 'editScopedAreaExpense', projectId, itemId, expectedUpdatedAt: expenseRevision(updatedAt), updates, confirmedPaidEdit,
   }) as { expense: AreaExpense }).expense;
 }
 
@@ -25,9 +25,9 @@ export async function searchScopedExpenseProviders(projectId: string, itemId: st
   return response.providers;
 }
 
-export function assignScopedExpenseProvider(projectId: string, itemId: string, updatedAt: unknown, providerId: string) {
+export function assignScopedExpenseProvider(projectId: string, itemId: string, updatedAt: unknown, providerId: string, confirmedPaidEdit = false) {
   return providerFinanceRequest({
-    action: 'assignScopedExpenseProvider', projectId, itemId, expectedUpdatedAt: expenseRevision(updatedAt), providerId,
+    action: 'assignScopedExpenseProvider', projectId, itemId, expectedUpdatedAt: expenseRevision(updatedAt), providerId, confirmedPaidEdit,
   }) as Promise<{ expense: AreaExpense; provider: ScopedProviderOption }>;
 }
 
