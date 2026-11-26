@@ -392,13 +392,13 @@ async function imported(seed) {
   return db;
 }
 
-test('a correction moves the sale link, the contract and the untouched name; budgets stay; repeating it writes nothing', async () => {
+test('a correction moves the sale link, the contract, the untouched name and the untouched ARS budget; repeating it writes nothing', async () => {
   const db = await imported();
-  const budget = db.records.get('projectCommercial/ct-G-ZZZ-0001').budgetTotal;
+  assert.equal(db.records.get('projectCommercial/ct-G-ZZZ-0001').budgetTotal, 500000);
   // Like serverTimestamp(): valid in a field, never inside an array.
   const serverTime = { serverTimestamp: true };
   const options = { db, payload: correction(), timestamp: () => serverTime, clock };
-  assert.deepEqual(await importProject(options), { schemaVersion: 1, projectCode: 'G ZZZ 0001', projectId: 'ct-G-ZZZ-0001', outcome: 'corrected' });
+  assert.deepEqual(await importProject(options), { schemaVersion: 1, projectCode: 'G ZZZ 0001', projectId: 'ct-G-ZZZ-0001', outcome: 'corrected', budget: 'updated' });
   const inArrays = value => Array.isArray(value) ? value.some(item => item === serverTime || JSON.stringify(item).includes('serverTimestamp'))
     : value && typeof value === 'object' && Object.values(value).some(inArrays);
   for (const path of db.writes) assert.equal(inArrays(db.records.get(path)), false, `${path} has a server timestamp inside an array`);
@@ -409,12 +409,14 @@ test('a correction moves the sale link, the contract and the untouched name; bud
   assert.equal(commercial.controlTotalProjectId, 'G ZZZ 0001 Prueba Local');
   assert.equal(commercial.controlTotalContractAmount, 450000);
   assert.equal(commercial.controlTotalContractArs, 450000);
-  assert.equal(commercial.budgetTotal, budget);
+  assert.equal(commercial.budgetTotal, 450000);
   assert.equal(db.records.get('projects/ct-G-ZZZ-0001').name, 'Prueba Local');
   const receipt = db.records.get('crmProjectImports/ct-G-ZZZ-0001');
   assert.equal(receipt.saleId, 'VE-CORREGIDA');
+  assert.equal(receipt.budgetSet, 450000);
   assert.equal(receipt.corrections.length, 1);
-  assert.deepEqual(receipt.corrections[0].from, { saleId: 'VE-TESTLOCAL', sourceProjectId: 'G ZZZ 0001 Prueba local', name: 'Prueba local', contractCurrency: 'ARS', contractAmount: 500000 });
+  assert.deepEqual(receipt.corrections[0].from, { saleId: 'VE-TESTLOCAL', sourceProjectId: 'G ZZZ 0001 Prueba local', name: 'Prueba local', clientName: 'Cliente local', contractCurrency: 'ARS', contractAmount: 500000 });
+  assert.deepEqual(receipt.corrections[0].budget, { from: 500000, to: 450000 });
   assert.deepEqual(db.writes.sort(), ['crmProjectImports/ct-G-ZZZ-0001', 'projectCommercial/ct-G-ZZZ-0001', 'projects/ct-G-ZZZ-0001']);
   db.writes.length = 0;
   assert.equal((await importProject(options)).outcome, 'already_corrected');
@@ -444,6 +446,114 @@ test('a correction already made by hand only updates the receipt', async () => {
   assert.equal(db.records.get('projectCommercial/ct-G-ZZZ-0001').crmSaleId, 'VE-CORREGIDA');
   assert.equal(db.records.get('crmProjectImports/ct-G-ZZZ-0001').saleId, 'VE-CORREGIDA');
 });
+
+test('a contract written before the ARS/USD split still counts as what the CRM sent', async () => {
+  const db = await imported();
+  const { controlTotalContractArs, controlTotalContractUsd, ...legacy } = db.records.get('projectCommercial/ct-G-ZZZ-0001');
+  db.records.set('projectCommercial/ct-G-ZZZ-0001', legacy);
+  const result = await importProject({ db, payload: correction(), timestamp: () => 456, clock });
+  assert.equal(result.kept, undefined);
+  assert.equal(db.records.get('projectCommercial/ct-G-ZZZ-0001').controlTotalContractArs, 450000);
+});
+
+test('a budget a person set is kept, also when the alta found the project already in GOAT', async () => {
+  const edited = await imported();
+  edited.records.set('projectCommercial/ct-G-ZZZ-0001', { ...edited.records.get('projectCommercial/ct-G-ZZZ-0001'), budgetTotal: 600000 });
+  assert.equal((await importProject({ db: edited, payload: correction(), timestamp: () => 456, clock })).budget, 'kept');
+  assert.equal(edited.records.get('projectCommercial/ct-G-ZZZ-0001').budgetTotal, 600000);
+  // It still remembers what the CRM had put there.
+  assert.equal(edited.records.get('crmProjectImports/ct-G-ZZZ-0001').budgetSet, 500000);
+  // The alta only linked a project Production had loaded: its budget was never the CRM's.
+  const existing = await imported({ 'projects/manual-1': { projectCode: 'G ZZZ 0001', name: 'Prueba local' },
+    'projectCommercial/manual-1': { budgetTotal: 500000, crmSaleId: 'VE-TESTLOCAL', crmSaleUrl: 'https://gran-crm.granberta.workers.dev/?ir=venta/VE-TESTLOCAL', controlTotalProjectId: 'G ZZZ 0001 Prueba local' } });
+  assert.equal(existing.records.get('crmProjectImports/ct-G-ZZZ-0001').outcome, 'existing');
+  assert.equal((await importProject({ db: existing, payload: correction(), timestamp: () => 456, clock })).budget, 'kept');
+  assert.equal(existing.records.get('projectCommercial/manual-1').budgetTotal, 500000);
+});
+
+test('a USD or pending contract never moves the budget, which keeps following later ARS corrections until a person edits it', async () => {
+  const db = await imported();
+  const usd = await importProject({ db, payload: correction({ contractCurrency: 'USD', contractAmount: 3000 }), timestamp: () => 456, clock });
+  assert.equal(usd.budget, 'not_ars');
+  assert.equal(db.records.get('projectCommercial/ct-G-ZZZ-0001').budgetTotal, 500000);
+  assert.equal(db.records.get('projectCommercial/ct-G-ZZZ-0001').controlTotalContractUsd, 3000);
+  assert.equal((await importProject({ db, payload: correction({ contractAmount: 470000 }), timestamp: () => 456, clock })).budget, 'updated');
+  assert.equal((await importProject({ db, payload: correction({ contractAmount: 490000 }), timestamp: () => 456, clock })).budget, 'updated');
+  assert.equal(db.records.get('projectCommercial/ct-G-ZZZ-0001').budgetTotal, 490000);
+  db.records.set('projectCommercial/ct-G-ZZZ-0001', { ...db.records.get('projectCommercial/ct-G-ZZZ-0001'), budgetTotal: 495000 });
+  assert.equal((await importProject({ db, payload: correction({ contractAmount: 510000 }), timestamp: () => 456, clock })).budget, 'kept');
+  assert.equal(db.records.get('projectCommercial/ct-G-ZZZ-0001').budgetTotal, 495000);
+  // Already equal to the contract: nothing to move, and the CRM follows it from there.
+  db.records.set('projectCommercial/ct-G-ZZZ-0001', { ...db.records.get('projectCommercial/ct-G-ZZZ-0001'), budgetTotal: 520000 });
+  assert.equal((await importProject({ db, payload: correction({ contractAmount: 520000 }), timestamp: () => 456, clock })).budget, 'unchanged');
+  assert.equal(db.records.get('crmProjectImports/ct-G-ZZZ-0001').budgetSet, 520000);
+});
+
+test('a USD alta budget is recognised through its stored creation quote', async () => {
+  const db = database();
+  await importProject({ db, payload: fixture({ contractCurrency: 'USD', contractAmount: 900 }), timestamp: () => 123, clock, getQuote: async () => quote });
+  assert.equal(db.records.get('projectCommercial/ct-G-ZZZ-0001').budgetTotal, 90900);
+  assert.equal((await importProject({ db, payload: correction({ contractCurrency: 'ARS', contractAmount: 95000 }), timestamp: () => 456, clock })).budget, 'updated');
+  assert.equal(db.records.get('projectCommercial/ct-G-ZZZ-0001').budgetTotal, 95000);
+});
+
+// A code whose client or acronym changed after the alta: GOAT's receipt still has the old code.
+const renamed = overrides => correction({ projectCode: 'G YYY 0001', sourceProjectId: 'G YYY 0001 Prueba Local', clientName: 'Cliente nuevo', ...overrides });
+
+test('a code the CRM renamed moves its receipt, renames the project and corrects it; the old code is a trace', async () => {
+  const db = await imported();
+  const options = { db, payload: renamed({ previousProjectCode: 'G ZZZ 0001' }), timestamp: () => 456, clock };
+  assert.deepEqual(await importProject(options), { schemaVersion: 1, projectCode: 'G YYY 0001', projectId: 'ct-G-ZZZ-0001', outcome: 'corrected', budget: 'updated', previousProjectCode: 'G ZZZ 0001' });
+  assert.equal(db.records.get('projects/ct-G-ZZZ-0001').projectCode, 'G YYY 0001');
+  const commercial = db.records.get('projectCommercial/ct-G-ZZZ-0001');
+  assert.equal(commercial.clientName, 'Cliente nuevo');
+  assert.equal(commercial.controlTotalProjectId, 'G YYY 0001 Prueba Local');
+  const receipt = db.records.get('crmProjectImports/ct-G-YYY-0001');
+  assert.equal(receipt.projectId, 'ct-G-ZZZ-0001');
+  assert.equal(receipt.projectCode, 'G YYY 0001');
+  assert.deepEqual(receipt.renamedFrom, ['G ZZZ 0001']);
+  assert.equal(receipt.source.previousProjectCode, undefined);
+  assert.equal(db.records.get('crmProjectImports/ct-G-ZZZ-0001').movedTo, 'ct-G-YYY-0001');
+  db.writes.length = 0;
+  assert.equal((await importProject(options)).outcome, 'already_corrected');
+  assert.equal(db.writes.length, 0);
+  // The old code: an alta retry finds its receipt; a correction with it is stale.
+  assert.equal((await importProject({ db, payload: fixture(), timestamp: () => 789, clock })).outcome, 'already_processed');
+  await assert.rejects(importProject({ db, payload: correction(), timestamp: () => 789, clock }), { status: 409 });
+  assert.equal(db.writes.length, 0);
+});
+
+test('a code renamed by hand in GOAT is found through its only project and receipt', async () => {
+  const db = await imported();
+  db.records.set('projects/ct-G-ZZZ-0001', { ...db.records.get('projects/ct-G-ZZZ-0001'), projectCode: 'G YYY 0001' });
+  db.records.set('projectCommercial/ct-G-ZZZ-0001', { ...db.records.get('projectCommercial/ct-G-ZZZ-0001'), controlTotalProjectId: 'G YYY 0001 Prueba local' });
+  const result = await importProject({ db, payload: renamed({ saleId: 'VE-TESTLOCAL', clientName: 'Cliente local', sourceProjectId: 'G YYY 0001 Prueba local', name: 'Prueba local' }), timestamp: () => 456, clock });
+  assert.equal(result.outcome, 'corrected');
+  assert.equal(result.previousProjectCode, 'G ZZZ 0001');
+  assert.equal(db.records.get('projectCommercial/ct-G-ZZZ-0001').budgetTotal, 450000);
+  assert.equal(db.records.get('crmProjectImports/ct-G-YYY-0001').projectId, 'ct-G-ZZZ-0001');
+  assert.equal(db.records.get('crmProjectImports/ct-G-ZZZ-0001').movedTo, 'ct-G-YYY-0001');
+});
+
+for (const [title, prepare, status, override] of [
+  ['without the receipt of the code it names', () => {}, 409, { previousProjectCode: 'G XXX 0009' }],
+  ['naming the same code', () => {}, 400, { previousProjectCode: 'G YYY 0001' }],
+  ['naming a code of another unit', () => {}, 400, { previousProjectCode: 'B ZZZ 0001' }],
+  ['renamed by hand on two projects', db => {
+    db.records.set('projects/ct-G-ZZZ-0001', { ...db.records.get('projects/ct-G-ZZZ-0001'), projectCode: 'G YYY 0001' });
+    db.records.set('projects/manual-2', { projectCode: 'G YYY 0001', name: 'Otro' });
+  }, 409, {}],
+  ['renamed by hand and tied to another sale', db => {
+    db.records.set('projects/ct-G-ZZZ-0001', { ...db.records.get('projects/ct-G-ZZZ-0001'), projectCode: 'G YYY 0001' });
+  }, 409, {}],
+]) {
+  test(`a renamed code ${title} writes nothing`, async () => {
+    const db = await imported();
+    prepare(db);
+    await assert.rejects(importProject({ db, payload: renamed(override), timestamp: () => 456, clock }), { status });
+    assert.equal(db.writes.length, 0);
+  });
+}
 
 for (const [title, prepare, status, override] of [
   ['without a CRM receipt', db => db.records.delete('crmProjectImports/ct-G-ZZZ-0001'), 409],

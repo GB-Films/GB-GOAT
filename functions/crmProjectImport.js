@@ -3,8 +3,9 @@
 // The HTTP function is private: Cloud Run IAM authenticates the CRM workflow.
 // Imports only create projects. A retry never edits an existing project.
 // The only edit is importMode 'correction': the CRM corrected a code it already
-// sent (its sale, its name or its contract) and GOAT re-reads the CRM-owned
-// reference fields. Budgets and anything an administrator changed stay as they are.
+// sent (its sale, its name, its client, its contract or the code itself) and GOAT
+// re-reads what the CRM owns. The budget follows an ARS contract only while it
+// still says what the CRM put there; anything an administrator changed stays.
 class ImportError extends Error {
   constructor(status, message) {
     super(message);
@@ -18,7 +19,7 @@ const FIELDS = [
   'deliveryDate', 'contractCurrency', 'contractAmount', 'ownerUnit',
   'internalProviderUnit', 'condition', 'status',
 ];
-const V2_FIELDS = [...FIELDS, 'importMode', 'projectStatus', 'sourceEvidence', 'contractConfirmed', 'baniPost'];
+const V2_FIELDS = [...FIELDS, 'importMode', 'projectStatus', 'sourceEvidence', 'contractConfirmed', 'baniPost', 'previousProjectCode'];
 const V3_FIELDS = [...V2_FIELDS, 'bIndependent', 'contractOverride'];
 const Bani = require('./crmBaniPost');
 const { validateIndependentB } = require('./crmIndependentB');
@@ -81,6 +82,16 @@ function validatePayload(input) {
     if (v3 && input.contractOverride !== undefined) {
       if (!input.contractOverride || Object.keys(input.contractOverride).join(',') !== 'approvalId' || !/^[A-Za-z0-9_-]{1,200}$/.test(input.contractOverride.approvalId || '')) invalid('Indicá la referencia de la confirmación humana del importe.');
       data.contractOverride = { approvalId: input.contractOverride.approvalId };
+    }
+    // A correction that changed the code itself (another client or acronym) says
+    // which code GOAT received, so its receipt can be found.
+    if (input.previousProjectCode !== undefined) {
+      const previous = input.previousProjectCode;
+      if (input.importMode !== 'correction' || typeof previous !== 'string' || previous === data.projectCode
+        || !/^[GB] [A-Z0-9_-]{1,20} \d{4,8}$/.test(previous) || previous[0] !== data.projectCode[0]) {
+        invalid('El código anterior sólo acompaña una corrección y es otro código de la misma unidad.');
+      }
+      data.previousProjectCode = previous;
     }
   }
   return data;
@@ -152,6 +163,50 @@ const contractFields = data => ({
   controlTotalContractUsd: data.contractCurrency === 'USD' ? data.contractAmount : null,
 });
 const sameFields = (current, wanted) => Object.keys(wanted).every(key => (current[key] ?? null) === (wanted[key] ?? null));
+// Imports before the ARS/USD split wrote only currency and amount: a missing split still says what the CRM sent.
+const contractFromSent = (current, sent) => {
+  const wanted = contractFields(sent);
+  return sameFields(current, { controlTotalContractCurrency: wanted.controlTotalContractCurrency, controlTotalContractAmount: wanted.controlTotalContractAmount })
+    && ['controlTotalContractArs', 'controlTotalContractUsd'].every(key => current[key] == null || current[key] === wanted[key]);
+};
+const sameMoney = (a, b) => typeof a === 'number' && typeof b === 'number' && Math.abs(a - b) < 0.005;
+
+// The budget the CRM itself put in GOAT: the last one a correction wrote, or the
+// one the alta created. A project the alta found already in GOAT was budgeted by a person.
+function budgetFromCrm(receipt) {
+  if (typeof receipt.budgetSet === 'number') return receipt.budgetSet;
+  if (receipt.outcome !== 'created' || !receipt.source) return undefined;
+  const sent = receipt.source;
+  if (sent.contractAmount === null) return 0;
+  if (sent.contractCurrency === 'ARS') return sent.contractAmount;
+  if (sent.contractCurrency === 'USD' && receipt.conversion) {
+    try { return convertUsd(sent.contractAmount, receipt.conversion, new Date(`${receipt.conversion.date}T12:00:00-03:00`)); }
+    catch { return undefined; }
+  }
+  return undefined;
+}
+
+// The receipt of a code that changed after its alta still carries the old code.
+// The CRM names it when it changes the code; a code renamed by hand in GOAT is
+// found through its single project and the single live receipt pointing to it.
+async function receiptOfRenamedCode(transaction, db, data) {
+  const missing = new ImportError(409, 'Este código no llegó desde el CRM: no hay alta que corregir.');
+  if (data.previousProjectCode) {
+    const ref = db.collection('crmProjectImports').doc(projectIdFor(data.previousProjectCode));
+    const marker = await transaction.get(ref);
+    if (!marker.exists || marker.data().movedTo) throw missing;
+    return { marker, previousRef: ref };
+  }
+  const projects = await transaction.get(db.collection('projects').where('projectCode', '==', data.projectCode).limit(2));
+  if (projects.size !== 1) throw missing;
+  const receipts = await transaction.get(db.collection('crmProjectImports').where('projectId', '==', projects.docs[0].id).limit(5));
+  const live = receipts.docs.filter(doc => !doc.data().movedTo);
+  if (!live.length) throw missing;
+  if (live.length > 1) throw new ImportError(409, 'El proyecto de este código tiene más de un recibo del CRM. Requiere revisión.');
+  // Renamed by hand and moved to another sale at once is not a rename the CRM can prove.
+  if (live[0].data().saleId !== data.saleId) throw new ImportError(409, 'El proyecto de este código está atado a otra venta en su recibo. Requiere revisión.');
+  return { marker: live[0], previousRef: db.collection('crmProjectImports').doc(live[0].id) };
+}
 
 async function correctProject({ db, data, timestamp, clock }) {
   const projectId = projectIdFor(data.projectCode);
@@ -159,17 +214,20 @@ async function correctProject({ db, data, timestamp, clock }) {
   const age = clock().getTime() - Date.parse(data.sourceEvidence.verifiedAt);
   if (age > 36 * 60 * 60 * 1000 || age < -300000) invalid('La verificación del registro está vencida o tiene fecha futura.');
   return db.runTransaction(async transaction => {
-    const marker = await transaction.get(markerRef);
-    if (!marker.exists) throw new ImportError(409, 'Este código no llegó desde el CRM: no hay alta que corregir.');
+    let marker = await transaction.get(markerRef), previousRef = null;
+    if (!marker.exists) ({ marker, previousRef } = await receiptOfRenamedCode(transaction, db, data));
+    else if (marker.data().movedTo) throw new ImportError(409, 'Este código ya pasó a otro: la corrección llegó con el código viejo.');
     const receipt = marker.data(), sent = receipt.source;
-    if (!sent || receipt.projectCode !== data.projectCode || sent.projectCode !== data.projectCode || !receipt.projectId) {
+    // The code GOAT received: this one, or the one before a rename.
+    const receivedCode = previousRef ? receipt.projectCode : data.projectCode;
+    if (!sent || receipt.projectCode !== receivedCode || sent.projectCode !== receivedCode || !receipt.projectId) {
       throw new ImportError(409, 'El recibo de este código no permite corregirlo. Requiere revisión.');
     }
     const projectRef = db.collection('projects').doc(receipt.projectId);
     const commercialRef = db.collection('projectCommercial').doc(receipt.projectId);
     const project = await transaction.get(projectRef);
-    if (!project.exists || project.data().projectCode !== data.projectCode) {
-      throw new ImportError(409, 'El proyecto de este código no está o cambió de código. Requiere revisión.');
+    if (!project.exists || ![data.projectCode, receivedCode].includes(project.data().projectCode)) {
+      throw new ImportError(409, 'El proyecto de este código no está o tiene otro código. Requiere revisión.');
     }
     const commercialDoc = await transaction.get(commercialRef);
     if (!commercialDoc.exists) throw new ImportError(409, 'El proyecto no tiene sus datos comerciales separados. Requiere revisión.');
@@ -182,33 +240,59 @@ async function correctProject({ db, data, timestamp, clock }) {
       if (!sameFields(commercial, linkFields(sent))) throw new ImportError(409, 'El vínculo con el CRM se cambió en GOAT. Requiere revisión.');
       Object.assign(changes, link);
     }
-    // The contract reference and the visible name are corrected only while they
-    // still say what the CRM sent. A manual edit wins and is reported.
+    // The contract reference, the client and the visible name are corrected only
+    // while they still say what the CRM sent. A manual edit wins and is reported.
     const contract = contractFields(data);
     if (!sameFields(commercial, contract)) {
-      if (sameFields(commercial, contractFields(sent))) Object.assign(changes, contract);
+      if (contractFromSent(commercial, sent)) Object.assign(changes, contract);
       else kept.push('contract');
+    }
+    if (commercial.clientName !== data.clientName) {
+      if (commercial.clientName === sent.clientName) changes.clientName = data.clientName;
+      else kept.push('client');
     }
     const name = project.data().name;
     const rename = name !== data.name && name === sent.name;
     if (name !== data.name && !rename) kept.push('name');
-    const response = outcome => ({ schemaVersion: 1, projectCode: data.projectCode, projectId: receipt.projectId, outcome, ...(kept.length ? { kept } : {}) });
-    const IDENTITY = ['saleId', 'sourceProjectId', 'name', 'contractCurrency', 'contractAmount'];
-    if (!Object.keys(changes).length && !rename && IDENTITY.every(key => sent[key] === data[key])) return response('already_corrected');
-    const now = timestamp();
-    // Writes after every read; budgets, items and payments are never touched.
+    const recode = project.data().projectCode !== data.projectCode;
+    // The budget follows an ARS contract while it still says what the CRM put
+    // there. A budget a person set, or a USD or pending contract, is left alone.
+    // The receipt remembers what the CRM last put in the budget, across corrections that did not move it.
+    const budgetNow = commercial.budgetTotal;
+    let budget = 'not_ars', budgetSet = budgetFromCrm(receipt);
+    if (data.contractCurrency === 'ARS') {
+      if (sameMoney(budgetNow, data.contractAmount)) budget = 'unchanged';
+      else if (sameMoney(budgetNow, budgetSet)) { budget = 'updated'; changes.budgetTotal = data.contractAmount; }
+      else budget = 'kept';
+      if (budget !== 'kept') budgetSet = data.contractAmount;
+    }
+    const response = outcome => ({ schemaVersion: 1, projectCode: data.projectCode, projectId: receipt.projectId, outcome,
+      budget, ...(previousRef ? { previousProjectCode: receivedCode } : {}), ...(kept.length ? { kept } : {}) });
+    const IDENTITY = ['saleId', 'sourceProjectId', 'name', 'clientName', 'contractCurrency', 'contractAmount'];
+    if (!previousRef && !Object.keys(changes).length && !rename && (budgetSet === undefined || receipt.budgetSet === budgetSet)
+      && IDENTITY.every(key => sent[key] === data[key])) return response('already_corrected');
+    const now = timestamp(), receivedAt = clock().toISOString();
+    // Writes after every read; budget items, expenses and payments are never touched.
     if (Object.keys(changes).length) transaction.update(commercialRef, { ...changes, updatedAt: now });
-    if (rename) transaction.update(projectRef, { name: data.name, updatedAt: now });
-    const { baniPost, ...source } = data;
-    transaction.update(markerRef, {
-      saleId: data.saleId, source,
+    if (rename || recode) transaction.update(projectRef, { ...(rename ? { name: data.name } : {}), ...(recode ? { projectCode: data.projectCode } : {}), updatedAt: now });
+    const { baniPost, previousProjectCode, ...source } = data;
+    const corrected = {
+      saleId: data.saleId, source, ...(budgetSet !== undefined ? { budgetSet } : {}),
       // Firestore rejects serverTimestamp() inside an array: the history keeps the request time.
       corrections: [...(receipt.corrections || []), {
-        receivedAt: clock().toISOString(), kept, evidence: data.sourceEvidence,
-        from: Object.fromEntries(IDENTITY.map(key => [key, sent[key]])),
+        receivedAt, kept, evidence: data.sourceEvidence,
+        ...(budget === 'updated' ? { budget: { from: budgetNow, to: data.contractAmount } } : {}),
+        from: Object.fromEntries(IDENTITY.map(key => [key, sent[key] ?? null])),
         to: Object.fromEntries(IDENTITY.map(key => [key, data[key]])),
       }],
-    });
+    };
+    if (previousRef) {
+      // The receipt moves to the code's new id; the old one stays as the trace of the rename.
+      transaction.create(markerRef, { ...receipt, ...corrected, projectCode: data.projectCode, renamedFrom: [...(receipt.renamedFrom || []), receivedCode] });
+      transaction.update(previousRef, { movedTo: projectId, movedAt: receivedAt });
+    } else {
+      transaction.update(markerRef, corrected);
+    }
     return response('corrected');
   });
 }

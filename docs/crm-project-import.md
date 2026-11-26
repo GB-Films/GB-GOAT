@@ -39,17 +39,19 @@ Una transacción busca el código exacto y usa el mismo ID `ct-G-SIGLAS-NUMERO` 
 
 El CRM marca `goat` como pendiente al generar únicamente las nuevas G. Si falla, conserva el código y los otros destinos; el workflow queda en rojo y el repaso actual de seis horas reintenta sólo ese destino. El fallo lo atiende el circuito existente del mecánico del CRM. No se añade cron ni job. Esta deduplicación se aplica al código confirmado; no cambia la numeración ni la puerta de generación del CRM.
 
-La lista Proyectos usa una suscripción en tiempo real con los mismos filtros de permisos. La importación manual desde CT permanece disponible para casos anteriores. Las correcciones posteriores de cliente o código se revisan en GOAT; las de venta, nombre o contrato llegan por el modo de corrección, sin actualización automática del presupuesto.
+La lista Proyectos usa una suscripción en tiempo real con los mismos filtros de permisos. La importación manual desde CT permanece disponible para casos anteriores. Las correcciones posteriores de venta, nombre, cliente, contrato o del código mismo llegan por el modo de corrección.
 
 ## Correcciones desde el CRM
 
-Cuando el corrector del Code Generator cambia la venta de origen, el nombre o el precio final de un código ya entregado, envía el mismo payload v2 con `importMode: 'correction'`, armado desde la fila corregida del registro y con su evidencia (vigente 36h). El código G no cambia: un cambio de cliente o de sigla cambia el código y se sigue revisando a mano.
+Cuando el corrector del Code Generator cambia la venta de origen, el nombre, el cliente, la sigla o el precio final de un código ya entregado, envía el mismo payload v2 con `importMode: 'correction'`, armado desde la fila corregida del registro y con su evidencia (vigente 36h).
 
 - Requiere el recibo `crmProjectImports/{id}` del alta y el proyecto con sus datos comerciales separados. Sin recibo, proyecto borrado o con otro código: HTTP 409 sin escrituras.
+- Un cambio de cliente o de sigla cambia el código. El corrector manda el código que GOAT recibió en `previousProjectCode` (de la misma unidad, G o B). Un código que se renombró a mano en GOAT se encuentra sin él: un solo proyecto con el código nuevo y un solo recibo vivo que apunta a ese proyecto, de la misma venta. El recibo pasa al id del código nuevo con `renamedFrom`; el viejo queda como rastro con `movedTo`, y una corrección que llega con el código viejo devuelve 409. El proyecto toma el código nuevo; su id no cambia. Ambigüedad (dos proyectos con el código, dos recibos vivos, otra venta) o código anterior sin recibo: HTTP 409 sin escrituras.
 - El vínculo con el CRM (`crmSaleId`, `crmSaleUrl`, `controlTotalProjectId`) es del CRM: se corrige si todavía dice lo que el CRM mandó. Si alguien lo cambió en GOAT: HTTP 409 sin escrituras.
-- La referencia del contrato (`controlTotalContract*`) y el nombre visible se corrigen sólo si siguen diciendo lo que mandó el CRM. Si un administrador los editó, se conservan y la respuesta lo informa en `kept` (`contract`, `name`).
-- Nunca toca presupuesto (`budgetTotal`), partidas, gastos, pagos, equipo ni estado.
-- El recibo pasa a la venta corregida y guarda el historial en `corrections` (de, a, conservados, evidencia). Repetir la misma corrección devuelve `already_corrected` sin escrituras; un reintento del alta con los datos corregidos sigue siendo `already_processed`.
+- La referencia del contrato (`controlTotalContract*`), el cliente (`clientName`) y el nombre visible se corrigen sólo si siguen diciendo lo que mandó el CRM. Una referencia de contrato anterior a la separación ARS/USD, sin esos dos campos, cuenta como sin editar. Si un administrador los editó, se conservan y la respuesta lo informa en `kept` (`contract`, `client`, `name`).
+- El presupuesto (`budgetTotal`, el «Valor de Venta») sigue a un contrato en ARS mientras diga lo que el CRM puso: el del alta creada por el CRM (ARS directo, USD con la cotización guardada en el recibo, 0 si el precio estaba pendiente) o el de la última corrección, que el recibo guarda en `budgetSet`. Un proyecto que el alta encontró ya cargado en GOAT nunca lo tuvo del CRM. La respuesta dice `budget`: `updated` (lo movió), `unchanged` (ya decía el contrato), `kept` (lo editó una persona: se conserva) o `not_ars` (contrato en USD o pendiente: el presupuesto en pesos se revisa a mano).
+- Nunca toca partidas, gastos, pagos, equipo ni estado.
+- El recibo pasa a la venta corregida y guarda el historial en `corrections` (de, a, conservados, presupuesto movido, evidencia). Repetir la misma corrección devuelve `already_corrected` sin escrituras; un reintento del alta con los datos corregidos sigue siendo `already_processed`.
 
 Para publicarlo: revisión, `node scripts/configure-crm-import.cjs` en seco (muestra que agrega `datastore.entities.update` al rol `crmProjectImport`), `--apply`, despliegue de `functions:importCrmProject` y recién después el emisor del CRM.
 
