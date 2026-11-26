@@ -109,11 +109,12 @@ test('firmar un contrato con proveedor asociado no intenta aplicarlo como declar
 test('el tercero se aplica con la firma y la constancia vigente no pide aprobación', () => {
   const third = { ...profile, kind: 'third_party', status: 'active' };
   const rendered = html(third, 'persona', { ...doc, signed: true, artifactsReady: true });
-  assert.match(rendered, /habilitan automáticamente la facturación y el cobro/);
-  assert.match(rendered, /bajo tu responsabilidad/);
+  assert.match(rendered, /El tercero puede facturar y cobrar los trabajos incluidos/);
   assert.match(rendered, /PDF firmado/);
   assert.doesNotMatch(rendered, /pendiente de revisión|Comprobar aplicación de la firma|Revisar y firmar/);
-  assert.match(declarationCompletionMessage('third_party', 'active'), /Declaración aplicada/);
+  assert.match(declarationCompletionMessage('third_party', 'active'), /Permiso firmado y aplicado a los trabajos seleccionados/);
+  assert.match(declarationPresentation({ ...third, status: 'pending_signature' }, 'persona').explanation, /El permiso se aplica automáticamente/);
+  assert.equal(declarationPresentation({ ...third, thirdPartyCurrent: false }, 'persona').status, 'Sin vigencia');
   assert.equal(declarationPresentation({ ...third, status: 'pending_review' }, 'persona').action, 'apply');
 });
 

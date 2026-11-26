@@ -4,17 +4,18 @@ import { declarationDocument, declarationPresentation, portalDeclarationCompleti
 import { groupPortalDocumentsByProject, needsPortalSignature, portalDocumentCategory } from '../lib/providerPortalUi';
 import { outdatedProfileDeclaration } from '../lib/providerProfileForm';
 
-export function ProviderPortalDocuments({ documents, declarations, providerId, providerType, provider, busy, loading, loaded, notice, onRefresh, onSign, onDownload, onRecover, onApply, onApplyDocument, onReviewData, onReviewCompany, onRevoke, labels }: {
+export function ProviderPortalDocuments({ documents, declarations, providerId, providerType, provider, busy, loading, loaded, notice, onRefresh, onSign, onDownload, onRecover, onApply, onApplyDocument, onReviewData, onReviewCompany, onRevoke, onEditThirdParties, labels }: {
   documents: any[]; declarations: any[]; providerId: string; providerType: string; provider?: Record<string, unknown>; busy: boolean; loading: boolean; loaded: boolean; notice: string; labels: Record<string, string>;
   onRefresh: () => void; onSign: (doc: any) => void; onDownload: (doc: any, artifact: string) => Promise<void>;
   onRecover: (doc: any) => Promise<void>; onApply: (id: string, kind: string, doc?: DeclarationDocument, recover?: boolean) => Promise<string>;
   onApplyDocument: (doc: any) => Promise<void>;
-  onReviewData: () => void; onReviewCompany: () => void; onRevoke: (id: string) => void;
+  onReviewData: () => void; onReviewCompany: () => void; onRevoke: (id: string) => void; onEditThirdParties?: () => void;
 }) {
   const standalone = documents.filter(doc => !declarations.some(d => declarationDocument(d, [doc], providerId)));
   const declarationCards = declarations.map(d => ({ d, doc: declarationDocument(d, documents, providerId) }));
   const activeDeclarations = declarationCards.filter(({ d, doc }) => !(provider && outdatedProfileDeclaration(d, provider)) && (declarationPresentation(d, providerType, doc).action || d.applicationIssue));
-  const history = declarationCards.filter(item => !activeDeclarations.includes(item));
+  const currentPermissions = declarationCards.filter(({ d }) => d.kind === 'third_party' && d.status === 'active' && d.thirdPartyCurrent !== false);
+  const history = declarationCards.filter(item => !activeDeclarations.includes(item) && !currentPermissions.includes(item));
   const card = (doc: any) => {
     const pending = needsPortalSignature(doc);
     return <article key={doc.id} className={`portal-panel space-y-2 sm:space-y-3 ${pending ? 'border-amber-200' : ''}`}>
@@ -38,7 +39,7 @@ export function ProviderPortalDocuments({ documents, declarations, providerId, p
     </article>;
   };
   const declarationCard = ({ d, doc }: typeof declarationCards[number]) => <ProviderDeclarationCard key={`${providerId}/${d.id}`} declaration={d} document={doc} providerType={providerType} provider={provider} busy={busy}
-    onSign={() => { if (doc) onSign(doc); }} onReviewData={d.kind === 'representation' && providerType === 'empresa' ? onReviewCompany : onReviewData}
+    onSign={() => { if (doc) onSign(doc); }} onReviewData={d.kind === 'third_party' && onEditThirdParties ? onEditThirdParties : d.kind === 'representation' && providerType === 'empresa' ? onReviewCompany : onReviewData}
     onDownload={artifact => { if (!doc) return Promise.reject(Error('Este documento no está disponible.')); return onDownload(doc, artifact); }}
     onComplete={recover => onApply(d.id, d.kind, doc, recover)}>
     {d.content.changes && <dl className="divide-y divide-slate-100 rounded-xl bg-slate-50 px-3">
@@ -46,12 +47,16 @@ export function ProviderPortalDocuments({ documents, declarations, providerId, p
         <dt className="text-slate-500">{labels[key] || key}</dt><dd className="break-words text-slate-800">{change.after || 'Sin dato'}</dd>
       </div>)}
     </dl>}
-    {d.kind === 'third_party' && <div className="space-y-2 text-sm text-slate-600"><p>{d.content.party.name} · CUIT {d.content.party.cuit}</p>
-      <p>{d.content.validity === 'until_revoked' ? 'Hasta que revoques la autorización' : `Vigente hasta ${d.content.expiresOn}`}</p>
-      {d.content.party.relationship && <p>Relación con el prestador: {d.content.party.relationship}</p>}
-      {d.content.party.activity && <p>Actividad declarada: {d.content.party.activity}</p>}
-      <p>Cuenta autorizada: {d.content.party.cbu || d.content.party.alias}</p>
-      {['active', 'pending_review'].includes(d.status) && <button disabled={busy} className="portal-button" onClick={() => onRevoke(d.id)}>Revocar autorización</button>}
+    {d.kind === 'third_party' && <div className="space-y-2 break-words text-sm text-slate-600">
+      <p><strong className="text-slate-900">{d.content.party.name}</strong> · CUIT {d.content.party.cuit}</p>
+      <p>Cuenta para estos trabajos <strong className="text-slate-900">{d.content.party.cbu || d.content.party.alias}</strong></p>
+      {d.status === 'active' && <p>{d.content.validity === 'until_revoked' ? 'Vigente hasta que lo revoques' : `Fecha de vencimiento ${d.content.expiresOn}`}</p>}
+      {!!d.content.workDetails?.length && <details className="portal-details rounded-lg bg-slate-50 px-2.5 py-1.5">
+        <summary>{d.content.workDetails.length} {d.content.workDetails.length === 1 ? 'trabajo incluido' : 'trabajos incluidos'}</summary>
+        <ul className="space-y-1 py-1 pl-3">{d.content.workDetails.map((work: { key: string; projectName?: string; description?: string }) =>
+          <li key={work.key}><strong>{work.projectName || 'Proyecto sin nombre'}</strong> · {work.description || 'Trabajo sin descripción'}</li>)}</ul>
+      </details>}
+      {d.thirdPartyCurrent !== false && ['active', 'pending_review'].includes(d.status) && <button disabled={busy} className="portal-button" onClick={() => onRevoke(d.id)}>Revocar permiso</button>}
     </div>}
   </ProviderDeclarationCard>;
   const projects = (items: any[]) => groupPortalDocumentsByProject(items).map(group => <details key={group.key} aria-label={group.name} open={group.documents.some(needsPortalSignature) || undefined} className="group rounded-xl border border-slate-200 bg-slate-50/70 p-2 sm:rounded-2xl sm:p-4">
@@ -59,7 +64,7 @@ export function ProviderPortalDocuments({ documents, declarations, providerId, p
     <div className="mt-3 space-y-3">{group.documents.map(card)}</div>
   </details>);
   return <section className="space-y-5" aria-label="Tus documentos">
-    <div className="flex items-center justify-between gap-3"><div><h2 className="text-lg font-semibold">Tus documentos</h2><p className="mt-1 text-sm text-slate-500">Firmá los pendientes y descargá tus constancias.</p></div>
+    <div className="flex items-start justify-between gap-2"><div><h2 className="text-lg font-semibold">Tus documentos</h2><p className="mt-1 text-sm text-slate-600">Abrí una categoría para firmar los pendientes o descargar tus documentos.</p></div>
       <button disabled={busy || loading} className="portal-button" onClick={onRefresh}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />Actualizar</button></div>
     {notice && <p role="status" className="rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800">{notice}</p>}
     {!loaded && loading && <p role="status" className="portal-panel text-sm text-slate-500">Buscando tus documentos…</p>}
@@ -71,14 +76,17 @@ export function ProviderPortalDocuments({ documents, declarations, providerId, p
     ].map(category => {
       const needs = category.docs.filter(needsPortalSignature), done = category.docs.filter(doc => !needsPortalSignature(doc));
       const active = category.statements.filter(item => activeDeclarations.includes(item)), old = category.statements.filter(item => history.includes(item));
+      const current = category.statements.filter(item => currentPermissions.includes(item));
       const total = category.docs.length + category.statements.length, attention = needs.length + active.length;
       if (!total && category.key === 'profile') return null;
       return <details key={category.key} id={`provider-documents-${category.key}`} aria-label={category.title} open={attention > 0 || undefined} className="portal-details portal-panel scroll-mt-3">
         <summary className="flex flex-wrap items-center gap-2"><span className="flex-1 font-semibold">{category.title}</span><span className="portal-status">{total}</span>{attention > 0 && <span className="portal-status portal-status-pending">{attention} pendientes</span>}</summary>
         <div className="mt-4 space-y-4">
+          {category.key === 'third-party' && onEditThirdParties && <button type="button" className="portal-button" onClick={onEditThirdParties}>Autorizar a un tercero</button>}
           {!!attention && <section className="space-y-3" aria-label="Documentos pendientes"><h3 className="text-sm font-semibold text-amber-900">Necesitan tu atención</h3>{projects(needs)}{active.map(declarationCard)}</section>}
           {!!done.length && <div className="space-y-3">{projects(done)}</div>}
-          {!!old.length && <details className="portal-details"><summary>Historial de declaraciones <span className="ml-2 text-slate-400">{old.length}</span></summary><div className="mt-3 space-y-3">{old.map(declarationCard)}</div></details>}
+          {!!current.length && <section className="space-y-2"><h3 className="text-sm font-semibold text-slate-800">Permisos vigentes</h3>{current.map(declarationCard)}</section>}
+          {!!old.length && <details className="portal-details"><summary>{category.key === 'third-party' ? 'Permisos anteriores' : 'Historial de declaraciones'} <span className="ml-2 text-slate-400">{old.length}</span></summary><div className="mt-3 space-y-3">{old.map(declarationCard)}</div></details>}
           {!total && <p className="text-sm text-slate-500">Todavía no hay {category.title.toLowerCase()}.</p>}
         </div>
       </details>;

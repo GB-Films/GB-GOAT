@@ -25,6 +25,8 @@ export async function testSignedThirdParty({ db, deps, own, adminCall, signActua
 
   const overview = await own({ action: 'overview', providerId: legacy.providerId });
   assert.equal(overview.declarations.find(d => d.id === legacy.id).status, 'active', 'a historical signed declaration applies on return without admin approval');
+  assert.equal(overview.declarations.find(d => d.id === legacy.id).thirdPartyCurrent, true);
+  assert.equal(overview.thirdPartyLastSigned.party.alias, legacy.content.party.alias);
   assert.deepEqual((await ref.get()).data().effectiveRoles, ['invoice', 'payment']);
   assert.equal((await ref.get()).data().decisions, undefined);
   assert.equal(await auditCount(), 1);
@@ -83,5 +85,55 @@ export async function testSignedThirdParty({ db, deps, own, adminCall, signActua
   await service.apply(ref);
   assert.deepEqual((await workRef.get()).data(), workBefore, 'only the third-party flag is written; money and history stay intact');
   assert.deepEqual((await db.collection('providerFinancialRecords').get()).docs.map(row => ({ id: row.id, ...row.data() })), financialBefore, 'signatures never create or modify financial records');
-  console.log('PASS third-party signed activation, real legacy recovery, concurrency, revocation and immutable finances');
+  const preferencesRef = db.doc(`providerPortalPreferences/${hash({ providerId: original.providerId, uid: original.actor.uid })}`);
+  const beforePreferences = await preferencesRef.get(), beforeRevocation = (await ref.get()).data();
+  const newWorks = ['reuse-signed-third-party', 'reuse-saved-third-party', 'reuse-unselected-work'].map(key => db.doc(`projects/project/areaExpenses/${key}`));
+  const work = { providerId: original.providerId, description: 'Próximo trabajo de prueba', area: 'Campo', total: 100, paymentHistory: [] };
+  const temporaryDeclarations = [];
+  try {
+    await Promise.all(newWorks.map(ref => ref.create(work)));
+    await own({ action: 'saveThirdPartyDetails', providerId: original.providerId, ...original.content.party, name: 'Tercero guardado anterior', cuit: '20123456786', holderCuit: '', cbu: '', alias: 'cuenta.previa' });
+    await own({ action: 'saveThirdPartyDetails', providerId: original.providerId, ...original.content.party, cbu: '', alias: 'cuenta.guardada' });
+    const pending = await own({ action: 'prepareThirdParty', providerId: original.providerId, attemptId: 'new-unfinished-third-party-draft',
+      ...original.content.party, cbu: '', alias: 'cuenta.sin.firma', roles: ['invoice', 'payment'], workKeys: original.content.workKeys, responsibilityConfirmed: true });
+    temporaryDeclarations.push(pending.id);
+    assert.equal(pending.status, 'pending_signature');
+    const withDraft = await own({ action: 'overview', providerId: original.providerId });
+    assert.equal(withDraft.thirdPartyDefaults.alias, 'cuenta.guardada');
+    assert.equal(withDraft.thirdPartyLastSigned.party.alias, content.party.alias);
+    const choices = withDraft.thirdPartyChoices;
+    assert.deepEqual(choices.find(choice => choice.party.alias === 'cuenta.sin.firma')?.source, 'saved');
+    assert.deepEqual(choices.find(choice => choice.party.alias === 'cuenta.guardada')?.source, 'saved');
+    for (const [index, source, alias] of [[0, 'signed', content.party.alias], [1, 'saved', 'cuenta.previa']]) {
+      const chosen = choices.find(choice => choice.source === source && choice.party.alias === alias);
+      assert(chosen, `el tercero ${source} aparece entre los datos reutilizables`);
+      assert.deepEqual(Object.keys(chosen).sort(), ['party', 'source']);
+      const workKey = newWorks[index].path.replace(/^projects\//, '');
+      const next = await own({ action: 'prepareThirdParty', providerId: original.providerId, attemptId: `reuse-details-${source}`,
+        ...chosen.party, roles: ['invoice', 'payment'], workKeys: [workKey], responsibilityConfirmed: true });
+      temporaryDeclarations.push(next.id);
+      assert.equal(next.content.party.alias, alias);
+      assert.deepEqual(next.content.workKeys, [workKey]);
+      assert.deepEqual((await newWorks[index].get()).data(), work, 'preparar no autoriza todavía');
+      await signActual(next);
+      const signed = await own({ action: 'completeDeclaration', providerId: original.providerId, declarationId: next.id });
+      assert.equal(signed.status, 'active');
+      assert.deepEqual((await newWorks[index].get()).data(), { ...work, thirdPartyPayoutRequired: true });
+      assert.deepEqual((await newWorks[2].get()).data(), work, 'la firma no alcanza a otro trabajo del mismo proyecto');
+    }
+    const revoke = { action: 'revokeThirdParty', providerId: original.providerId, declarationId: legacy.id };
+    assert.deepEqual(await own(revoke), { status: 'revoked' });
+    const revoked = (await ref.get()).data();
+    assert.deepEqual(await own(revoke), { status: 'revoked' });
+    assert.deepEqual((await ref.get()).data(), revoked, 'retries preserve the same revocation');
+    const afterRevoke = await own({ action: 'overview', providerId: original.providerId });
+    assert(afterRevoke.thirdPartyChoices.some(({ source, party }) => source === 'signed' && party.alias === content.party.alias));
+    assert.deepEqual((await workRef.get()).data(), workBefore, 'revocation and reuse preserve existing project records');
+  } finally {
+    await ref.set(beforeRevocation);
+    for (const id of temporaryDeclarations) await db.doc(`providerPortalDeclarations/${id}`).delete();
+    await Promise.all(newWorks.map(ref => ref.delete()));
+    if (beforePreferences.exists) await preferencesRef.set(beforePreferences.data()); else await preferencesRef.delete();
+  }
+  console.log('PASS third-party signed activation, legacy recovery, reuse of signed and saved payees, scoped signing, concurrency and revocation');
 }

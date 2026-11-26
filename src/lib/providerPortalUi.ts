@@ -35,7 +35,7 @@ export function providerWorkEmptyMessage(hasLoaded: boolean, member?: { status?:
   if (!member) return 'Vinculá tu ficha para ver tus trabajos.';
   if (member.needsClassification) return 'Tu cuenta está asociada. Administración debe confirmar la clasificación de tu ficha.';
   if (member.status !== 'active') return 'Tus trabajos aparecerán cuando se habilite tu representación.';
-  return viewLoaded ? 'Todavía no tenés trabajos asignados.' : 'Cargando tus datos…';
+  return viewLoaded ? 'Todavía no tenés trabajos asignados. Si esperabas ver uno, pedile a producción que lo vincule a tu ficha.' : 'Cargando tus datos…';
 }
 export function profileApplicationConflict(error: { message?: string }) {
   return /datos cambiaron|ficha cambi[oó]|datos.*modificaron|datos.*cambiado/i.test(error?.message || '');

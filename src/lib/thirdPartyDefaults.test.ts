@@ -7,3 +7,13 @@ test('recupera al emisor y su cuenta sin autorizar trabajos nuevos ni confirmar 
   assert.deepEqual(state.workKeys, []); assert.equal(state.responsibilityConfirmed, false);
   assert.equal(thirdPartyFormDefaults(null).name, '');
 });
+
+test('los datos firmados prevalecen sobre otro borrador sin reutilizar el consentimiento', () => {
+  const state = thirdPartyFormDefaults({ thirdPartyLastSigned: { party: { name: 'Persona firmada', cuit: '20111111112', cbu: '0000000000000000000001' } },
+    thirdPartyDefaults: { name: 'Otra persona', cuit: '20111111113', alias: 'cuenta.borrador' },
+    thirdPartyIntake: { party: { name: 'Anterior' }, workKeys: ['trabajo-anterior'] } });
+  assert.equal(state.name, 'Persona firmada');
+  assert.equal(state.account, '0000000000000000000001');
+  assert.deepEqual(state.workKeys, []);
+  assert.equal(state.responsibilityConfirmed, false);
+});

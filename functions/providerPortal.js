@@ -21,7 +21,7 @@ const { profileReview } = require('./providerProfileReview');
 const { DECLARED_COMPANY_EVIDENCE } = require('./providerEvidence');
 const { companyRepresentation, assertCompanyAccount, DECLARED_COMPANY_VERSION } = require('./providerRepresentation');
 const { applySignedCompanyRepresentation } = require('./signedCompanyRepresentation');
-const { thirdPartyDeclaration, thirdPartyDetails } = require('./providerThirdPartyDeclaration');
+const { thirdPartyDeclaration, thirdPartyDetails, thirdPartyIsCurrent, signedThirdParties, thirdPartyChoices } = require('./providerThirdPartyDeclaration');
 const { applySignedProviderProfile } = require('./signedProviderProfile');
 const { createSignedThirdPartyService, needsThirdPartyApplication } = require('./signedThirdPartyDeclaration');
 const { createCashReceiptService } = require('./providerCashReceipts');
@@ -77,11 +77,16 @@ function createProviderPortalHandler({
   const preferencesRef = (providerId, actor) => db.doc(`providerPortalPreferences/${hash({ providerId, uid: actor.uid })}`);
   async function saveThirdPartyDetails(providerId, actor, input) {
     const party = thirdPartyDetails(input);
+    const ref = preferencesRef(providerId, actor);
     await db.runTransaction(async tx => {
-      const p = (await tx.get(db.doc(`providers/${providerId}`))).data();
-      const m = (await tx.get(db.doc(`providerPortalUsers/${actor.uid}/memberships/${providerId}`))).data();
+      const [provider, membership, preferences] = await Promise.all([
+        tx.get(db.doc(`providers/${providerId}`)), tx.get(db.doc(`providerPortalUsers/${actor.uid}/memberships/${providerId}`)), tx.get(ref),
+      ]);
+      const p = provider.data(), m = membership.data(), previous = preferences.data();
       if (p?.type !== 'persona' || m?.status !== 'active' || m.email !== actor.email) fail('No podés guardar datos para esta ficha.');
-      tx.set(preferencesRef(providerId, actor), { providerId, uid: actor.uid, email: actor.email, party, updatedAt: timestamp() });
+      const savedParties = thirdPartyChoices([], [party, ...(previous?.uid === actor.uid && previous.email === actor.email
+        ? [previous.party, ...M.list(previous.savedParties)] : [])]).map(choice => choice.party);
+      tx.set(ref, { providerId, uid: actor.uid, email: actor.email, party, savedParties, updatedAt: timestamp() });
     });
     return { party };
   }
@@ -460,17 +465,22 @@ function createProviderPortalHandler({
         declarations:declarations.docs.map(row=>({id:row.id,...row.data()}))});
       // Only this provider's scoped data leave the boundary, never arbitrary financial fields or file tokens.
       const profileConfirmation = confirmationState(provider, membership, actor, declarations.docs.map(s => ({ id: s.id, ...s.data() })));
+      const isPerson = provider.type === 'persona';
+      const signatureHistory = isPerson ? signedThirdParties(declarationRows, actor) : [];
+      const entered = isPerson ? declarationRows.filter(d => d.kind === 'third_party' && d.actor?.uid === actor.uid && d.actor?.email === actor.email
+        && ['preparing', 'pending_signature', 'pending_review'].includes(d.status))
+        .sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0)).map(d => d.content?.party) : [];
+      const pref = preferences?.data(), intakeData = intake?.data();
+      const stored = pref?.uid === actor.uid && pref.email === actor.email ? pref : null;
+      const startingData = intakeData?.providerId === providerId ? { party: intakeData.party, workKeys: intakeData.workKeys, roles: intakeData.roles } : null;
       return {
         provider: M.publicProfile(provider),
         profileConfirmation,
         profileReview: profileReview(provider, profileConfirmation, declarations.docs.map(row => row.data())),
-        thirdPartyDefaults: preferences?.data()?.uid === actor.uid && preferences.data().email === actor.email
-          ? preferences.data().party
-          : declarations.docs.map(doc => doc.data()).filter(d => d.kind === 'third_party' && d.actor.uid === actor.uid && d.actor.email === actor.email)
-            .sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0))[0]?.content.party || null,
-        thirdPartyIntake: intake?.data()?.providerId === providerId
-          ? { party: intake.data().party, workKeys: intake.data().workKeys, roles: intake.data().roles }
-          : null,
+        thirdPartyLastSigned: signatureHistory[0] || null,
+        thirdPartyDefaults: stored?.party || entered[0] || null,
+        thirdPartyIntake: startingData,
+        thirdPartyChoices: thirdPartyChoices(signatureHistory, [stored?.party, ...M.list(stored?.savedParties), ...entered, startingData?.party]),
         works: declarationRows.some((d, i) => d.status === 'active' && needsThirdPartyApplication(declarations.docs[i].data())) ? await works(providerId, actor) : work,
         financial: financial.docs.map((s) => {
           const r = s.data();
@@ -496,6 +506,7 @@ function createProviderPortalHandler({
             id: r.id,
             kind: r.kind,
             status: r.status,
+            ...(r.kind === 'third_party' && r.status === 'active' ? { thirdPartyCurrent: thirdPartyIsCurrent(r.content, clock()) } : {}),
             content: r.content,
             signedAt: r.proof?.signedAt || "",
             signing: r.signing,
@@ -634,7 +645,6 @@ function createProviderPortalHandler({
             tx.update(ref, { signing, status: "pending_signature" });
         });
       }
-      if (kind === 'third_party') await saveThirdPartyDetails(providerId, actor, content.party);
       return { id: declarationId, ...(await ref.get()).data(), ...clientPreview };
     }
     if (input.action === "completeDeclaration") {
@@ -656,10 +666,11 @@ function createProviderPortalHandler({
         if (
           !r ||
           r.providerId !== providerId ||
-          r.kind !== "third_party" ||
-          !["active", "pending_review"].includes(r.status)
+          r.kind !== "third_party"
         )
           fail("Autorización no revocable.");
+        if (r.status === 'revoked') return;
+        if (!['active', 'pending_review'].includes(r.status)) fail('Autorización no revocable.');
         tx.update(ref, {
           status: "revoked",
           revocation: { actor, at: timestamp() },

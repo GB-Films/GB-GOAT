@@ -28,13 +28,14 @@ export function ProviderProfileForm({ provider, declarations, labels, draft, onC
   const needsConfirmation = confirmationMode || hasBank && Object.keys(draft).some(key => ['bankAccount_cbu','bankAccount_alias','name','lastName','businessName'].includes(key));
   useEffect(() => { if (!Object.keys(draft).length) setConfirmed(false); }, [draft]);
   return <details id="provider-profile-details" className="portal-details portal-panel">
-    <summary className="font-bold">Mis datos</summary>
+    <summary className="font-bold">Datos personales y cuenta propia</summary>
     <form className="mt-5 space-y-5" onSubmit={event => { event.preventDefault();
     if (verifying || !accountVerified || (confirmationMode && (!confirmed || !dataConfirmed || !emailConfirmed))) return;
     void onPrepare({ changes: confirmationMode ? { ...Object.fromEntries(Object.entries(pending).filter(([key]) => key !== 'email').map(([key, change]) => [key, change.after])), ...draft } : draft, ownAccountConfirmed: confirmed,
       ...(confirmationMode ? { confirmProfile: true, dataConfirmed, accessEmailConfirmed: emailConfirmed, selectedAccountEmail: account.email, ...(account.verificationId ? { accountVerificationId: account.verificationId } : {}) } : {}) }); }}>
     {confirmationMode && <h2 className="font-bold">Confirmá tus datos</h2>}
     {confirmationMode && <p className="text-sm text-slate-600">Vas a firmar un documento con el detalle completo de esta ficha. Podés corregir los datos antes de continuar.</p>}
+    {!confirmationMode && <p className="text-sm text-slate-600">Si cambiás tus datos, revisá la declaración y firmala para guardar los cambios.</p>}
     {notice && <p role="status" className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800">{notice}</p>}
     {needsNewSignature && <p role="status" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">Tu ficha cambió después de una firma anterior. Revisá los datos actuales y firmá nuevamente.</p>}
     {applicationError && <p role="alert" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">{applicationError}</p>}

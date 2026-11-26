@@ -14,6 +14,47 @@ function thirdPartyIsCurrent(content, now = new Date()) {
   return typeof end === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(end) && !Number.isNaN(Date.parse(end))
     && new Date(end).toISOString().slice(0, 10) === end && end >= M.dateKey(now);
 }
+
+function thirdPartyAccountKey(party) {
+  return JSON.stringify([party.cuit, party.cbu || party.alias.toLowerCase(), party.name.toLowerCase()]);
+}
+
+function signedThirdParties(declarations, actor) {
+  const candidates = declarations.filter(row => row.kind === 'third_party' && ['active', 'revoked'].includes(row.status)
+    && row.actor?.uid === actor.uid && row.actor?.email === actor.email && M.list(row.effectiveRoles).includes('payment')
+    && row.proof?.complete === true && row.proof.signedPdfSha256 && row.proof.contentHash === row.contentHash
+    && Number.isFinite(Date.parse(row.proof.signedAt)) && THIRD_PARTY_VERSIONS.includes(row.content?.termsVersion))
+    .sort((a, b) => Date.parse(b.proof.signedAt) - Date.parse(a.proof.signedAt) || String(b.id).localeCompare(String(a.id)));
+  const result = [];
+  for (const { kind, providerId, actor: signer, content, contentHash, id, proof } of candidates) {
+    if (M.hash({ kind, providerId, actor: signer, content }) !== contentHash) continue;
+    try {
+      result.push({ id, signedAt: proof.signedAt, party: thirdPartyDetails(content.party || {}) });
+    } catch (error) {
+      if (error.code !== 'failed-precondition') throw error;
+    }
+  }
+  return result;
+}
+
+function thirdPartyChoices(signed, entered) {
+  const result = new Map();
+  for (const { party } of signed) {
+    const key = thirdPartyAccountKey(party);
+    if (!result.has(key)) result.set(key, { source: 'signed', party });
+  }
+  for (const value of entered.filter(Boolean)) {
+    try {
+      const party = thirdPartyDetails(value);
+      const key = thirdPartyAccountKey(party);
+      if (!result.has(key)) result.set(key, { source: 'saved', party });
+    } catch (error) {
+      if (error.code !== 'failed-precondition') throw error;
+    }
+  }
+  return [...result.values()];
+}
+
 function thirdPartyDeclaration(provider, actor, input, workKeys) {
   const party = thirdPartyDetails(input);
   const result = M.thirdParty({ ...input, holder: input.name }, workKeys, false, false);
@@ -29,4 +70,4 @@ function thirdPartyDeclaration(provider, actor, input, workKeys) {
   result.terms = `Yo, ${name}, DNI ${result.signerDni}, con cuenta de acceso ${actor.email}, declaro ser quien presta los servicios seleccionados. Solicito y autorizo, bajo mi responsabilidad, que ${party.name}, CUIT ${party.cuit}, emita la factura que corresponda y reciba los pagos de esos trabajos en la cuenta ${party.cbu || party.alias}. Declaro que la cuenta indicada corresponde al titular de la factura, ${party.name}, CUIT ${party.holderCuit}. Mi cuenta propia queda registrada por separado y no se utilizará para estos pagos autorizados. Asumo la responsabilidad por la exactitud de la información y por los acuerdos y distribución posterior de fondos con la persona designada. La autorización no tiene fecha de vencimiento y sólo alcanza a los trabajos seleccionados, hasta su revocación. Guardar estos datos no autoriza otros trabajos ni modifica autorizaciones ya firmadas. Al completar mi firma desde mi cuenta registrada, esta declaración se aplica automáticamente a la facturación y al cobro de los trabajos seleccionados, sin aprobación administrativa posterior. Los datos de la cuenta son declarados por mí; esta autorización no constituye una verificación bancaria automática ni acredita un pago realizado.`;
   return result;
 }
-module.exports = { thirdPartyDeclaration, thirdPartyDetails, thirdPartyIsCurrent, THIRD_PARTY_VERSIONS };
+module.exports = { thirdPartyDeclaration, thirdPartyDetails, thirdPartyIsCurrent, signedThirdParties, thirdPartyChoices, THIRD_PARTY_VERSIONS };
