@@ -11,6 +11,7 @@ import {
   type AssistantPendingAction,
 } from '../lib/assistantAgent';
 import { buildAssistantTools } from '../lib/assistantTools';
+import { ASSISTANT_CASH_PAYMENT_TOOL } from '../lib/assistantCashPayment';
 import { formatPdfForAssistant, readAssistantPdf, type AssistantPdf } from '../lib/assistantPdf';
 import {
   listAssistantProjects,
@@ -53,6 +54,7 @@ const SUGGESTIONS = [
   '¿Qué proyectos tengo?',
   '¿Cómo viene el presupuesto?',
   '¿Cómo cargo un gasto?',
+  'Quiero registrar un pago con mi caja',
   '¿Qué puedo hacer con mi usuario?',
 ];
 
@@ -66,6 +68,8 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
   const [projects, setProjects] = useState<AssistantProjectHandle[]>([]);
   const [engine, setEngine] = useState('');
   const [pendingAction, setPendingAction] = useState<AssistantPendingAction | null>(null);
+  const [cashPaymentRetry, setCashPaymentRetry] = useState(false);
+  const reviewingCashPayment = pendingAction?.name === ASSISTANT_CASH_PAYMENT_TOOL;
   const [attachment, setAttachment] = useState<ChatAttachment | null>(null);
   const [attachmentBusy, setAttachmentBusy] = useState(false);
   const pendingFileRef = useRef<File | null>(null);
@@ -139,12 +143,13 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
 
   const handleSend = async (rawText: string) => {
     const text = rawText.trim();
-    if ((!text && !attachment) || busy) return;
+    if ((!text && !attachment) || busy || reviewingCashPayment) return;
     const attached = attachment;
     setInput('');
     setError('');
     setBusy(true);
     setPendingAction(null);
+    setCashPaymentRetry(false);
     setAttachment(null);
     setVisible((current) => [...current, {
       id: `u-${Date.now()}`,
@@ -211,6 +216,19 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
     }
   };
 
+  const showCashPaymentResult = (pending: AssistantPendingAction, output: { mensaje?: string; error?: string; retry?: boolean }) => {
+    setCashPaymentRetry(output.retry === true);
+    if (output.retry) {
+      setPendingAction(pending);
+      setError(output.error || 'Reintentá esta misma propuesta para comprobar el registro.');
+    } else {
+      historyRef.current = [...historyRef.current, { role: 'tool', tool_call_id: pending.callId, content: JSON.stringify(output) }];
+      setVisible(current => [...current, { id: `pay-${pending.callId}`, role: 'assistant',
+        content: output.mensaje || output.error || 'No se pudo registrar el pago.' }]);
+    }
+    setBusy(false);
+  };
+
   const confirmPendingAction = async () => {
     const pending = pendingAction;
     if (!pending || busy) return;
@@ -224,6 +242,10 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
     } catch (err: any) {
       output = { error: err?.message || 'No se pudo ejecutar la acción.' };
     }
+    if (pending.name === ASSISTANT_CASH_PAYMENT_TOOL) {
+      showCashPaymentResult(pending, output as { mensaje?: string; error?: string; retry?: boolean });
+      return;
+    }
     await finishPendingAction(pending, output);
   };
 
@@ -233,6 +255,12 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
     setPendingAction(null);
     setError('');
     setBusy(true);
+    if (pending.name === ASSISTANT_CASH_PAYMENT_TOOL) {
+      showCashPaymentResult(pending, { error: cashPaymentRetry
+        ? 'Cerraste la propuesta. Revisá el historial del gasto para comprobar si el pago se registró antes de volver a cargarlo.'
+        : 'Propuesta cancelada. No se registró el pago.' });
+      return;
+    }
     await finishPendingAction(pending, { error: 'El usuario canceló la acción.' });
   };
 
@@ -318,13 +346,14 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
               {visible.length > 0 && (
                 <button
                   type="button"
+                  disabled={busy || reviewingCashPayment}
                   onClick={() => {
                     historyRef.current = [];
                     setVisible([]);
                     setPendingAction(null);
                     setError('');
                   }}
-                  className="rounded px-2 py-1 text-[9px] font-bold uppercase tracking-widest text-slate-300 transition-colors hover:text-white"
+                  className="rounded px-2 py-1 text-[9px] font-bold uppercase tracking-widest text-slate-300 transition-colors hover:text-white disabled:opacity-50"
                   title="Empezar de nuevo"
                 >
                   Limpiar
@@ -345,8 +374,7 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
             {visible.length === 0 && !pendingAction && (
               <div className="space-y-2">
                 <p className="text-[11px] leading-5 text-slate-500">
-                  Puedo resumir proyectos, buscar partidas o gastos, decirte qué pagos están pendientes y cargar
-                  partidas o gastos con tu confirmación. Siempre dentro de tus permisos.
+                  Consultá gastos, saldos y pagos pendientes. También podés revisar y confirmar el registro de un pago que ya hiciste con tu caja asignada.
                 </p>
                 <div className="flex flex-wrap gap-1.5">
                   {SUGGESTIONS.map((suggestion) => (
@@ -412,7 +440,7 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
             <div className="border-t border-amber-100 bg-amber-50 px-4 py-3">
               <div className="flex items-center gap-2 text-[9px] font-black uppercase tracking-widest text-amber-700">
                 <AlertTriangle className="h-3.5 w-3.5" />
-                Confirmá la acción
+                {reviewingCashPayment ? 'Revisá el pago antes de registrarlo' : 'Confirmá la acción'}
               </div>
               <p className="mt-1 max-h-48 overflow-y-auto whitespace-pre-line text-[12px] font-bold text-slate-800">{pendingAction.summary}</p>
               <div className="mt-2 flex gap-2">
@@ -423,7 +451,7 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
                   className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-white transition-colors hover:bg-black disabled:bg-slate-300"
                 >
                   <Check className="h-3.5 w-3.5" />
-                  Confirmar
+                  {reviewingCashPayment ? cashPaymentRetry ? 'Reintentar registro' : 'Registrar pago' : 'Confirmar'}
                 </button>
                 <button
                   type="button"
@@ -432,7 +460,7 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
                   className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-widest text-slate-500 transition-colors hover:border-slate-400 disabled:text-slate-300"
                 >
                   <X className="h-3.5 w-3.5" />
-                  Cancelar
+                  {reviewingCashPayment && cashPaymentRetry ? 'Cerrar propuesta' : 'Cancelar'}
                 </button>
               </div>
             </div>
@@ -474,7 +502,7 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                disabled={busy || attachmentBusy}
+                disabled={busy || attachmentBusy || reviewingCashPayment}
                 className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200 text-slate-500 transition-colors hover:border-slate-900 hover:text-slate-900 disabled:text-slate-300"
                 title="Adjuntar planilla (Excel/CSV) o PDF"
               >
@@ -491,14 +519,14 @@ export function AssistantChat({ uid, email, globalRole, currentProjectId }: Assi
                   }
                 }}
                 rows={2}
-                placeholder="Escribí tu consulta..."
+                placeholder={reviewingCashPayment ? 'Confirmá o cancelá la propuesta para seguir.' : 'Escribí tu consulta...'}
                 className="max-h-32 min-h-[44px] flex-1 resize-none rounded-xl border border-slate-200 px-3 py-2 text-[12px] text-slate-800 outline-none transition-colors focus:border-slate-900"
-                disabled={busy}
+                disabled={busy || reviewingCashPayment}
               />
               <button
                 type="button"
                 onClick={() => handleSend(input)}
-                disabled={busy || (!input.trim() && !attachment)}
+                disabled={busy || reviewingCashPayment || (!input.trim() && !attachment)}
                 className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-slate-900 text-white transition-colors hover:bg-black disabled:bg-slate-300"
                 title="Enviar"
               >

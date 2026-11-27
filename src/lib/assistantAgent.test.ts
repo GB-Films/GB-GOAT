@@ -156,7 +156,9 @@ test('el prompt del sistema explica el alcance, el formato y las confirmaciones'
   assert.match(prompt, /Proyectos a los que tiene acceso: Largometraje, Spot/);
   assert.match(prompt, /piden confirmación al usuario/);
   assert.match(prompt, /panel angosto/);
-  assert.match(prompt, /Registrar, transferir o ejecutar pagos, reintegros y movimientos de cajas se hace SIEMPRE a mano/);
+  assert.match(prompt, /registrar_pago_mi_caja/);
+  assert.match(prompt, /sólo registra si el usuario la confirma/);
+  assert.match(prompt, /Si te piden hacer una transferencia, entregar caja, usar Caja General, reintegrar o corregir pagos, indicá la pantalla correspondiente/);
   assert.match(prompt, /programar_fechas_pago/);
 });
 

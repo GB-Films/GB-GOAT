@@ -1,5 +1,6 @@
 import { canAccessGeneralCash, canReadCashMovement } from './generalCashAccess';
 import { applyPaymentDatePlan, preparePaymentDatePlan, type PaymentDatePlan } from './assistantPaymentDates';
+import { ASSISTANT_CASH_PAYMENT_TOOL, applyAssistantCashPayment, prepareAssistantCashPayment, type AssistantCashPaymentPlan } from './assistantCashPayment';
 import { canViewProjectSubcategory, hasFullProjectAreaAccess } from './projectAccess';
 import {
   canAssistantEditArea,
@@ -43,6 +44,7 @@ export type AssistantBudgetItem = {
   subcategory?: string;
   providerName?: string;
   description?: string;
+  unit?: string;
   quantity?: number;
   unitPrice?: number;
   total?: number;
@@ -50,6 +52,7 @@ export type AssistantBudgetItem = {
   paymentDate?: string;
   paymentHistory?: any[];
   paymentLocked?: boolean;
+  thirdPartyPayoutRequired?: boolean;
   order?: number;
   updatedAt?: any;
   createdAt?: any;
@@ -728,6 +731,53 @@ export const buildAssistantTools = ({
   });
 
   if (enableActions) {
+    let cashPayment: AssistantCashPaymentPlan | undefined;
+    tools.push({
+      name: ASSISTANT_CASH_PAYMENT_TOOL,
+      description: 'Prepara el registro de un pago en pesos ya realizado por el usuario con su propia caja asignada del proyecto. Solo para un gasto editable de Áreas por confirmación. Primero buscá el identificador exacto del gasto; pedí los datos faltantes o ambiguos. El usuario revisa y confirma antes de registrar.',
+      requiresConfirmation: true,
+      parameters: {
+        ...projectOptionsSchema({
+          fila: { type: 'string', description: 'Identificador exacto de la fila de Áreas.' },
+          monto: { type: 'number', description: 'Importe en ARS efectivamente pagado.' },
+          fecha: { type: 'string', description: 'Fecha real del pago en formato AAAA-MM-DD.' },
+          detalle: { type: 'string', description: 'Detalle opcional que indique el usuario.' },
+        }),
+        required: ['fila', 'monto', 'fecha'],
+      },
+      prepare: async args => {
+        if (!userId) return { error: 'Iniciá sesión para registrar pagos.' };
+        const resolved = await resolveProject(args?.proyecto);
+        if ('error' in resolved) return resolved;
+        const context = await loadProject(resolved.context.projectId);
+        if (!context) return { error: 'No pudimos consultar el acceso al proyecto y el saldo de tu caja.' };
+        const plan = prepareAssistantCashPayment(context, args || {}, crypto.randomUUID());
+        cashPayment = plan;
+        return { args: { paymentId: plan.request.paymentId }, summary: plan.summary };
+      },
+      run: async args => {
+        const plan = cashPayment;
+        if (!plan || args?.paymentId !== plan.request.paymentId) return { error: 'Volvé a preparar el pago para revisar y confirmar sus datos.' };
+        const context = await loadProject(plan.request.projectId);
+        if (!context) return { error: 'No pudimos consultar el acceso al proyecto y el saldo de tu caja.', retry: true };
+        try {
+          const result = await applyAssistantCashPayment(plan, context, providerFinanceRequest);
+          cashPayment = undefined;
+          projectCache.delete(plan.request.projectId);
+          return result;
+        } catch (error: any) {
+          const code = String(error?.code || '').replace(/^functions\//, '');
+          const message: Record<string, string> = {
+            'ITEM_CHANGED': 'El gasto cambió. Volvé a preparar el pago con los datos actuales.',
+            'PAYMENT_EXCEEDS_TOTAL': 'El gasto ya no tiene saldo suficiente para este pago.',
+          };
+          if (['unavailable', 'deadline-exceeded', 'internal', 'unknown'].includes(code))
+            return { error: 'No pudimos confirmar el resultado. Reintentá esta misma propuesta para comprobar el registro.', retry: true };
+          cashPayment = undefined;
+          return { error: code === 'permission-denied' ? 'Ya no tenés permiso para registrar este pago.' : message[error?.message] || error?.message || 'No se pudo registrar el pago.' };
+        }
+      },
+    });
     const datePlans = new Map<string, PaymentDatePlan>();
     tools.push({
       name: 'programar_fechas_pago',
