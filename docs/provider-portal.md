@@ -42,6 +42,18 @@ La respuesta no contiene otras personas, bancos, facturas ni rutas/URLs de los a
 
 Tarjetas, texto y espacios más compactos; pestañas visibles en dos filas sin scroll lateral; resúmenes de importes en columnas; documentos y formularios con cortes de línea seguros. Se conserva el tamaño de escritura de 16px para evitar zoom automático en iOS y los botones mantienen 40px de alto. El escritorio conserva su distribución. La verificación usa renderizado estático, tipos, build y emuladores; no se automatiza un navegador ni se prueba con sesiones reales.
 
+### Portada y enlaces de alta
+
+La portada de GOAT ofrece **Ingresar al sistema** con Google. Los enlaces de
+alta, incluidos los ya enviados, abren la misma portada y muestran **Darme de alta
+como proveedor** después de comprobar su vigencia y destino. Al elegir esa opción
+se vuelve a validar el enlace antes de abrir el formulario. Los enlaces vencidos,
+usados o cancelados dejan el ingreso disponible y explican qué pasó.
+
+Un enlace vigente permite el alta a quien lo tenga. Se conservan los límites de
+cada invitación, incluidos el vencimiento y el consumo de los enlaces de un solo
+uso. El formulario guarda el alta con los controles de Google y del servidor.
+
 ### Recuperación del alta
 
 El alta distingue la verificación de Google del guardado. Si la sesión supera el margen de nueve minutos, se detiene antes de enviar y ofrece **Verificar con Google** desde un clic explícito. La verificación exige la misma cuenta, correo verificado y proveedor Google; cambiar la cuenta invalida las confirmaciones personales y bancarias. Los datos del formulario y la clave del intento se conservan durante la recuperación en esa ventana.

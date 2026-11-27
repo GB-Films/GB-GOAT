@@ -16,6 +16,7 @@ const portal=createProviderPortalHandler({db,timestamp:()=>admin.firestore.Field
   findAccountByUid: async uid => ({ uid, email: `${uid}@example.test`, emailVerified: true, providerData: [{ providerId: 'google.com' }] })});
 const request=(data,uid='person')=>({auth:{uid,token:{email:`${uid}@example.test`,email_verified:true,firebase:{sign_in_provider:'google.com'},auth_time:Date.now()/1000}},data});
 const submit=(data,uid)=>portal(request(data,uid));
+const publicInviteCheck=inviteToken=>portal({data:{action:'linkedInviteTargetStatus',inviteToken}});
 const seed=(token,extra={})=>db.doc(`providerInvites/${token}`).set({status:'pending',used:false,expiresAt:admin.firestore.Timestamp.fromMillis(Date.now()+3600000),...extra});
 let sequence=12000000,passed=0;
 const input=(token,extra={})=>{const dni=String(sequence++);return {action:'registerProvider',inviteToken:token,attemptId:token,personalAccountAccepted:true,ownAccountConfirmed:true,form:{type:'persona',name:'Persona',lastName:'Prueba',dni,cuit:`20${dni}6`,email:'person@example.test',phone:'111',address:'Casa',category:'Sonido',bankAccount_cbu:'',bankAccount_alias:'own.alias',...extra}};};
@@ -32,7 +33,15 @@ try {
   await db.doc('providerPortalConfig/current').set({enabled:true});
   await testDetachProviderInvite({ db, finance: createProviderFinanceHandler({ db, timestamp: () => admin.firestore.FieldValue.serverTimestamp() }),
     portal, seed, input, submit });
-  await seed('new');const first=input('new'),out=await submit(first);
+  await assert.rejects(publicInviteCheck('unknown-token'),/ya no está disponible/);
+  await seed('new');
+  const originalInvite=(await db.doc('providerInvites/new').get()).data();
+  assert.deepEqual(await publicInviteCheck('new'),{issue:null});
+  assert.deepEqual(await publicInviteCheck('new'),{issue:null});
+  assert.deepEqual((await db.doc('providerInvites/new').get()).data(),originalInvite);
+  const first=input('new'),out=await submit(first);
+  await assert.rejects(publicInviteCheck('new'),/ya no está disponible/);
+  pass('anonymous entry validates an invite without consuming it; consumed invite cannot reopen registration');
   const saved=(await db.doc(`providers/${out.providerId}`).get()).data();
   assert.equal(out.reused,false);assert.equal(saved.personalGoogleAccount.uid,'person');assert.equal(saved.registration.status,'complete');
   assert.equal((await db.doc(`providerPortalUsers/person/memberships/${out.providerId}`).get()).data().status,'active');
@@ -132,7 +141,8 @@ try {
   assert.equal((await db.doc(`providerIdentifiers/dni_${race.form.dni}`).get()).data().providerId,'race-old');pass('two accounts racing: one completion only');
   await seed('retry-race');const retry=input('retry-race');const both=await Promise.all([submit(retry),submit(retry)]);assert.equal(both[0].providerId,both[1].providerId);pass('concurrent exact retries create one provider');
   for(const [label,extra]of[['expired',{expiresAt:admin.firestore.Timestamp.fromMillis(0)}],['cancelled',{status:'cancelled'}],['used',{used:true,status:'used'}]]){
-    await seed(label,extra);await denied(input(label));pass(`reject ${label} invite`);
+    await seed(label,extra);await assert.rejects(publicInviteCheck(label),/ya no está disponible/);
+    await denied(input(label));pass(`reject ${label} invite`);
   }
   for(const extra of [{providerId:'different'},{providerName:'Nombre sin ficha'},{paid:true},{paymentHistory:[{amount:1}]},{paymentLocked:true}]){
     const token=`target-denied-${sequence++}`;await seed(token,{projectId:'fictitious',collectionName:'areaExpenses',expenseId:token});await db.doc(`projects/fictitious/areaExpenses/${token}`).set(extra);await denied(input(token));

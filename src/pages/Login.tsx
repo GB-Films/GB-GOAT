@@ -5,7 +5,7 @@ import { Navigate, useLocation } from 'react-router-dom';
 import { USER_INVITE_TOKEN_KEY, useAuth } from '../context/AuthContext';
 import { portalRequest } from '../lib/providerPortal';
 import { needsTeamOnboarding } from '../lib/teamOnboarding';
-import { motion } from 'motion/react';
+import { GoatEntryScreen } from '../components/GoatEntryScreen';
 
 export default function Login() {
   const { user, profile, loading, authError, refreshProfile } = useAuth();
@@ -14,7 +14,6 @@ export default function Login() {
   const [loginError, setLoginError] = useState('');
   const [hasInviteLink, setHasInviteLink] = useState(false);
   const [acceptingInvite,setAcceptingInvite] = useState(false);
-  const logoSrc = `${(import.meta as any).env.BASE_URL}gb-films-logo.png`;
 
   useEffect(() => {
     const inviteToken = new URLSearchParams(location.search).get('invite');
@@ -45,11 +44,7 @@ export default function Login() {
   }
 
   if (loading || acceptingInvite) {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-slate-50">
-        <div className="w-10 h-10 border-4 border-black border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
+    return <GoatEntryScreen status="Comprobando el acceso…" />;
   }
 
   const handleLogin = async () => {
@@ -81,53 +76,7 @@ export default function Login() {
     }
   };
 
-  return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-slate-50 p-4">
-      <motion.div 
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="w-full max-w-md bg-white p-8 rounded-2xl shadow-xl shadow-slate-200/50 border border-slate-100"
-      >
-        <div className="flex flex-col items-center text-center mb-8">
-          <img
-            src={logoSrc}
-            alt="GB Films"
-            className="w-28 h-auto object-contain mb-6"
-          />
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">GB GOAT</h1>
-          <p className="text-slate-500 mt-2">Gestión profesional para productoras audiovisuales</p>
-        </div>
-
-        <div className="space-y-4">
-          {hasInviteLink && (
-            <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-100 text-xs font-medium text-emerald-700 text-center">
-              Invitación detectada. Iniciá sesión con el email invitado.
-            </div>
-          )}
-          <button
-            onClick={() => handleLogin()}
-            disabled={isSigningIn}
-            className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-white border border-slate-200 rounded-xl font-medium text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition-all active:scale-[0.98]"
-          >
-            <img src="https://www.google.com/favicon.ico" alt="Google" className="w-5 h-5" />
-            {isSigningIn ? 'Conectando...' : 'Continuar con Google'}
-          </button>
-        </div>
-
-        {loginError && (
-          <p className="mt-4 text-center text-xs font-medium text-red-500">
-            {loginError}
-          </p>
-        )}
-
-        <p className="mt-8 text-center text-xs text-slate-400">
-          Ingresá con tu cuenta Google autorizada. No necesitás crear una contraseña para GOAT.
-        </p>
-        <nav aria-label="Información de GB GOAT" className="mt-4 flex justify-center gap-4 text-xs text-slate-600">
-          <a href={`${(import.meta as any).env.BASE_URL}about.html`} className="underline underline-offset-2 hover:text-slate-900">Sobre GB GOAT</a>
-          <a href={`${(import.meta as any).env.BASE_URL}privacy.html`} className="underline underline-offset-2 hover:text-slate-900">Privacidad</a>
-        </nav>
-      </motion.div>
-    </div>
-  );
+  return <GoatEntryScreen login={{ onClick: handleLogin, busy: isSigningIn }}
+    status={hasInviteLink ? 'Ingresá con el correo que recibió la invitación de equipo.' : undefined}
+    alert={loginError} />;
 }

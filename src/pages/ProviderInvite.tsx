@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { GoogleAuthProvider, onAuthStateChanged, reauthenticateWithPopup, signInWithPopup, User } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDocFromServer } from 'firebase/firestore';
 import { useParams } from 'react-router-dom';
 import { CheckCircle2, Loader2, UserRound, Building2, AlertTriangle, CalendarDays } from 'lucide-react';
 import { auth, db } from '../lib/firebase';
@@ -13,6 +13,8 @@ import { emptyThirdParty, providerFiscalErrors } from '../lib/providerThirdParty
 import { portalRequest } from '../lib/providerPortal';
 import { providerRegistrationFailure, registrationFieldErrors, registrationProblem, verifyRegistrationSession, type RegistrationFailure } from '../lib/providerRegistrationFlow';
 import { ProviderRegistrationFailure } from '../components/ProviderRegistrationFailure';
+import { GoatEntryScreen } from '../components/GoatEntryScreen';
+import { isProviderInviteToken, providerInviteAvailabilityIssue } from '../lib/providerInvites';
 
 type ProviderType = 'persona' | 'empresa';
 
@@ -85,46 +87,39 @@ const formatWrittenDate = (value: string) => {
   return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
 };
 
-const getInviteDate = (dateValue: any) => {
-  if (!dateValue) return null;
-  if (typeof dateValue.toDate === 'function') return dateValue.toDate();
-  if (dateValue.seconds) return new Date(dateValue.seconds * 1000);
-  const date = new Date(dateValue);
-  return Number.isNaN(date.getTime()) ? null : date;
-};
-
-const isInviteExpired = (inviteData: any) => {
-  const expiresAt = getInviteDate(inviteData?.expiresAt);
-  return Boolean(expiresAt && expiresAt.getTime() < Date.now());
-};
-
 const PROVIDER_INVITE_MESSAGES: Record<string, string> = {
-  INVITE_NOT_FOUND: 'Este link de alta no existe o fue eliminado.',
-  INVITE_USED: 'Este link ya fue utilizado. Pedí un nuevo link a Gran Berta Films.',
-  INVITE_CANCELLED: 'Este link fue cancelado. Pedí un nuevo link a Gran Berta Films.',
-  INVITE_EXPIRED: 'Este link vencio. Pedi un nuevo link a Gran Berta Films.',
-  TARGET_EXPENSE_NOT_FOUND: 'El gasto asociado a este link ya no existe. Pedí un link nuevo a Gran Berta Films.',
-  TARGET_EXPENSE_ALREADY_ASSIGNED: 'Este gasto ya tiene un proveedor asignado. Si te pasaron este link para reemplazarlo, pedí uno nuevo a Gran Berta Films.',
-  TARGET_EXPENSE_HAS_PAYMENTS: 'Este gasto ya tiene pagos registrados, por eso el link no puede asignarle un proveedor. Avisá a Gran Berta Films para resolver el alta por otra vía.',
-  DNI_EXISTS: 'Ya existe una persona registrada con este DNI.',
-  CUIT_EXISTS: 'Ya existe un proveedor registrado con este CUIT/CUIL.',
+  INVITE_NOT_FOUND: 'Este enlace de alta no existe. Pedile a Gran Berta un enlace nuevo.',
+  INVITE_USED: 'Este enlace ya fue usado. Si completaste el alta, ingresá con tu cuenta registrada.',
+  INVITE_CANCELLED: 'Este enlace fue cancelado. Pedile a Gran Berta uno nuevo.',
+  INVITE_EXPIRED: 'Este enlace venció. Pedile a Gran Berta uno nuevo.',
+  INVITE_UNAVAILABLE: 'Este enlace ya no está disponible. Pedile a Gran Berta uno nuevo.',
+  TARGET_EXPENSE_NOT_FOUND: 'El gasto de este enlace ya no existe. Pedile a Gran Berta un enlace nuevo.',
+  TARGET_EXPENSE_ALREADY_ASSIGNED: 'El gasto ya tiene un proveedor asignado. Pedile a Gran Berta un enlace nuevo.',
+  TARGET_EXPENSE_HAS_PAYMENTS: 'El gasto ya tiene pagos registrados. Pedile a Gran Berta que revise este enlace.',
 };
 
-// Antes de mostrar el formulario, revisa el gasto del link para poder decir
-// exactamente por qué el alta ya no puede completarse.
-const readInviteTargetIssue = async (inviteData: any, inviteToken: string) => {
-  if (!inviteData.projectId || !inviteData.expenseId || inviteData.provisionalProviderId) return '';
+type RegistrationInvite = { id: string; mode?: string };
+type InviteRead = { invite: RegistrationInvite; issue?: never } | { issue: string; invite?: never };
+
+async function readProviderInvite(token: string): Promise<InviteRead> {
+  if ((import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV && token === 'preview')
+    return { invite: { id: 'preview', mode: 'single_use' } };
+  if (!isProviderInviteToken(token)) return { issue: PROVIDER_INVITE_MESSAGES.INVITE_NOT_FOUND };
+  const snapshot = await getDocFromServer(doc(db, 'providerInvites', token));
+  const data = snapshot.exists() ? snapshot.data() : null;
+  const availability = providerInviteAvailabilityIssue(data);
+  if (availability || !data) return { issue: PROVIDER_INVITE_MESSAGES[availability || 'INVITE_NOT_FOUND'] };
+
+  // El servidor vuelve a comprobar la vigencia y el destino al abrir el alta.
   try {
-    const { issue: targetIssue } = await portalRequest({ action: 'linkedInviteTargetStatus', inviteToken });
-    return targetIssue ? PROVIDER_INVITE_MESSAGES[targetIssue] || '' : '';
-  } catch (err: any) {
-    console.error('Error reading provider invite target:', err);
-    if (err?.code === 'unavailable' || err?.code === 'firestore/unavailable') {
-      return 'No pudimos conectar con el servidor. Revisá la conexión a internet y volvé a intentar.';
-    }
-    return 'No pudimos verificar el gasto asociado a este link: puede haber sido eliminado o el link dejó de estar activo. Pedí un link nuevo a Gran Berta Films.';
+    const { issue } = await portalRequest({ action: 'linkedInviteTargetStatus', inviteToken: token });
+    if (issue === null) return { invite: { id: snapshot.id, mode: data.mode } };
+    return { issue: PROVIDER_INVITE_MESSAGES[issue] || PROVIDER_INVITE_MESSAGES.INVITE_UNAVAILABLE };
+  } catch (error) {
+    if ((error as { code?: string })?.code === 'functions/failed-precondition') return { issue: PROVIDER_INVITE_MESSAGES.INVITE_UNAVAILABLE };
+    throw error;
   }
-};
+}
 
 function InlineDatePicker({ value, onChange }: { value: string; onChange: (value: string) => void }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -320,14 +315,22 @@ function Field({ label, required, error, children }: { label: string; required?:
   );
 }
 
-export default function ProviderInvite({teamOnboarding}: {teamOnboarding?: {initialForm?: Partial<ProviderForm>; onComplete:()=>Promise<void>; onReview?:()=>Promise<void>}} = {}) {
+type ProviderInviteProps = { teamOnboarding?: { initialForm?: Partial<ProviderForm>; onComplete: () => Promise<void>; onReview?: () => Promise<void> } };
+
+export default function ProviderInvite(props: ProviderInviteProps) {
   const { token = '' } = useParams();
-  const [invite, setInvite] = useState<any | null>(null);
+  return <ProviderInviteSession key={token} token={token} {...props} />;
+}
+
+function ProviderInviteSession({ token, teamOnboarding }: ProviderInviteProps & { token: string; key?: string }) {
+  const [invite, setInvite] = useState<RegistrationInvite | null>(null);
   const [loading, setLoading] = useState(true);
+  const [checking, setChecking] = useState(false);
+  const [started, setStarted] = useState(false);
   const [submitLoading, setSubmitLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [registeredProviderId, setRegisteredProviderId] = useState('');
-  const [attemptId, setAttemptId] = useState(() => crypto.randomUUID());
+  const [attemptId] = useState(() => crypto.randomUUID());
   const [error, setError] = useState('');
   const [failure, setFailure] = useState<RegistrationFailure | null>(null);
   const [accountNotice, setAccountNotice] = useState('');
@@ -340,6 +343,7 @@ export default function ProviderInvite({teamOnboarding}: {teamOnboarding?: {init
   const [signingIn, setSigningIn] = useState(false);
   const submitErrorRef = useRef<HTMLDivElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
+  const formTitleRef = useRef<HTMLHeadingElement>(null);
   const accountIdentity = useRef(auth.currentUser ? `${auth.currentUser.uid}:${auth.currentUser.email}` : '');
   const currentToken = useRef(token);
   currentToken.current = token;
@@ -399,59 +403,45 @@ export default function ProviderInvite({teamOnboarding}: {teamOnboarding?: {init
 
   useEffect(() => {
     let active = true;
-    setLoading(true); setInvite(null); setError(''); setFailure(null); setSubmitted(false); setRegisteredProviderId('');
-    setAttemptId(crypto.randomUUID()); setSubmitLoading(false); setOwnAccountConfirmed(false);
-    if (!isTeamOnboarding) setForm({ ...emptyForm, email:auth.currentUser?.email?.trim().toLowerCase() || '' });
-    const loadInvite = async () => {
-      if(teamOnboarding) {setInvite({id:'team',status:'pending'});setLoading(false);return;}
-      const isLocalPreview = Boolean((import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV) && token === 'preview';
-      if (isLocalPreview) {
-        setInvite({ id: 'preview', status: 'pending', mode: 'single_use' });
-        setLoading(false);
-        return;
-      }
-      try {
-        const inviteRef = doc(db, 'providerInvites', token);
-        const snap = await getDoc(inviteRef);
-        if (!active) return;
-        if (!snap.exists()) {
-          setError(PROVIDER_INVITE_MESSAGES.INVITE_NOT_FOUND);
-          return;
-        }
-        const data = snap.data();
-        if (data.used || data.status === 'used') {
-          setError(PROVIDER_INVITE_MESSAGES.INVITE_USED);
-          return;
-        }
-        if (data.status === 'cancelled') {
-          setError(PROVIDER_INVITE_MESSAGES.INVITE_CANCELLED);
-          return;
-        }
-        if (isInviteExpired(data)) {
-          setError(PROVIDER_INVITE_MESSAGES.INVITE_EXPIRED);
-          return;
-        }
-        const targetIssue = await readInviteTargetIssue(data, token);
-        if (!active) return;
-        if (targetIssue) {
-          setError(targetIssue);
-          return;
-        }
-        setInvite({ id: snap.id, ...data });
-      } catch (err) {
-        if (!active) return;
-        console.error('Error loading provider invite:', err);
-        const issue = providerRegistrationFailure(err, attemptId, 'load');
-        setFailure(issue); setError(issue.message);
-      } finally {
-        if (active) setLoading(false);
-      }
-    };
+    currentToken.current = token;
+    if (isTeamOnboarding) {
+      setLoading(false);
+      return;
+    }
+    readProviderInvite(token).then(result => {
+      if (!active) return;
+      setInvite(result.invite || null);
+      setError(result.issue || '');
+    }).catch(error => {
+      if (!active) return;
+      const issue = providerRegistrationFailure(error, attemptId, 'load');
+      setFailure(issue);
+      setError(issue.message);
+    }).finally(() => { if (active) setLoading(false); });
+    return () => { active = false; currentToken.current = ''; };
+  }, [token, isTeamOnboarding, attemptId]);
 
-    if (token || teamOnboarding) loadInvite();
-    else { setError('Falta el enlace de alta. Pedí a Gran Berta que te comparta uno nuevo.'); setLoading(false); }
-    return () => { active = false; };
-  }, [token, isTeamOnboarding]);
+  useEffect(() => { if (started) formTitleRef.current?.focus(); }, [started]);
+
+  const startRegistration = async () => {
+    if (!invite || checking) return;
+    setChecking(true);
+    try {
+      const result = await readProviderInvite(token);
+      if (currentToken.current !== token) return;
+      setInvite(result.invite || null);
+      setError(result.issue || '');
+      if (result.invite) setStarted(true);
+    } catch (error) {
+      if (currentToken.current !== token) return;
+      const issue = providerRegistrationFailure(error, attemptId, 'load');
+      setInvite(null);
+      setFailure(issue);
+      setError(issue.message);
+    } finally {
+      if (currentToken.current === token) setChecking(false);
+    }
+  };
 
   function validateForm(values: ProviderForm = form): FormErrors {
     const nextErrors: FormErrors = {};
@@ -571,6 +561,13 @@ export default function ProviderInvite({teamOnboarding}: {teamOnboarding?: {init
     }
   };
 
+  if (!isTeamOnboarding && !started && !submitted) {
+    return <GoatEntryScreen login={{ href: '/login' }}
+      invitation={!loading && invite ? { onStart: startRegistration, checking } : undefined}
+      status={loading ? 'Comprobando invitación…' : undefined}
+      alert={recoveryNotice || error} />;
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
@@ -597,25 +594,12 @@ export default function ProviderInvite({teamOnboarding}: {teamOnboarding?: {init
     );
   }
 
-  if (error && !invite) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
-        <div className="bg-white border border-red-100 rounded-2xl p-10 max-w-lg text-center shadow-sm">
-          <AlertTriangle className="w-12 h-12 text-red-500 mx-auto mb-5" />
-          <div className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate-400 mb-3">Gran Berta Films</div>
-          <h1 className="text-2xl font-bold text-slate-900 mb-3">No se pudo abrir el alta</h1>
-          <div className="text-sm text-red-600 leading-relaxed">{recoveryNotice || error}</div>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="min-h-screen bg-slate-50 py-10 px-4">
       <div className="max-w-3xl mx-auto">
         <header className="mb-8 text-center">
           <div className="text-[10px] font-bold uppercase tracking-[0.35em] text-slate-400 mb-3">Gran Berta Films</div>
-          <h1 className="text-3xl font-bold text-slate-950">Alta como proveedor</h1>
+          <h1 ref={formTitleRef} tabIndex={-1} className="text-3xl font-bold text-slate-950 outline-none">Alta como proveedor</h1>
           <p className="text-sm text-slate-500 mt-3 max-w-xl mx-auto">
             Completá tus datos para quedar registrado/a en la base de proveedores. Los campos con asterisco son obligatorios.
           </p>
