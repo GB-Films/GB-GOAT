@@ -79,6 +79,20 @@ const baniDatabaseId = defineString('BANI_DATABASE_ID', { default: 'ai-studio-1e
 const baniOwnerUid = defineString('BANI_OWNER_UID');
 let baniDb;
 
+const { createBaniProviderLinkHandler, syncLinkedProvider } = require('./baniProviderLink');
+const getBaniProviderDb = () => {
+  if (!baniDb) {
+    const app = admin.initializeApp({ projectId: baniProjectId.value() }, 'bani-project-sync');
+    baniDb = require('firebase-admin/firestore').getFirestore(app, baniDatabaseId.value());
+  }
+  return baniDb;
+};
+const baniProviderService = 'bani-project-sync@gb-goat.iam.gserviceaccount.com';
+exports.manageBaniProviderLink = onCall({region:'us-central1', serviceAccount:baniProviderService, maxInstances:2},
+  createBaniProviderLinkHandler({sourceDb:db,getTargetDb:getBaniProviderDb,getOwnerUid:()=>baniOwnerUid.value()}));
+exports.syncBaniProviderLink = onDocumentWritten({document:'providers/{providerId}',database:'(default)',region:'us-central1',serviceAccount:baniProviderService,retry:true},
+  event => syncLinkedProvider({sourceDb:db,targetDb:getBaniProviderDb(),ownerUid:baniOwnerUid.value(),providerId:event.params.providerId}));
+
 exports.syncProjectToBani = onDocumentWritten({
   document: 'projects/{projectId}',
   database: '(default)',

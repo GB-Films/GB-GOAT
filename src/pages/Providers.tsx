@@ -22,6 +22,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { providerFinanceRequest } from '../lib/providerFinance';
+import BaniProviderLink from '../components/BaniProviderLink';
 import { DETACH_PROVIDER_INVITE_CONFIRMATION } from '../lib/providerInvites';
 import { handleFirestoreError } from '../lib/firestoreUtils';
 import { useAuth } from '../context/AuthContext';
@@ -136,6 +137,7 @@ export default function Providers() {
   const [searchTerm, setSearchTerm] = useState('');
   const [providerOrder, setProviderOrder] = useState<ProviderSortOrder>('updated-desc');
   const canDeleteProviders = profile?.role === 'admin';
+  const [baniProvider, setBaniProvider] = useState<{id:string;name:string} | null>(null);
   const directoryAccess = providerDirectoryAccess(profile?.role);
   const canEditProviders = directoryAccess === 'manage';
   const canCreateProviders = hasGlobalRole(profile?.role, PROVIDER_CREATE_ROLES);
@@ -798,6 +800,7 @@ export default function Providers() {
                               <Pencil className="w-3.5 h-3.5" />
                             </button>
                           )}
+                          {canDeleteProviders && <button type="button" className="rounded border px-2 py-1 text-xs text-slate-700" onClick={event => { event.stopPropagation(); setBaniProvider({id:provider.id,name:providerDisplayName(provider)}); }}>Vincular con BANI LAB</button>}
                           {canDeleteProviders && (
                             <button onClick={(event) => { event.stopPropagation(); handleDeleteProvider(provider); }} className="p-1 text-slate-300 hover:text-red-500 transition-colors" title="Eliminar proveedor">
                               <Trash2 className="w-3.5 h-3.5" />
@@ -813,6 +816,8 @@ export default function Providers() {
           </table>
         </div>
       )}
+
+      {baniProvider && <BaniProviderLink providerId={baniProvider.id} providerName={baniProvider.name} onClose={() => setBaniProvider(null)} />}
 
       <AnimatePresence>
         {showProviderInviteModal && (
