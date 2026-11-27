@@ -4,6 +4,27 @@ export const MAX_LINKED_PROVIDER_INVITE_DAYS = 7;
 export const PROVIDER_INVITE_CLOCK_SKEW_MARGIN_MS = 5 * 60 * 1000;
 export const DETACH_PROVIDER_INVITE_CONFIRMATION = '¿Desvincular este enlace del gasto? Si el enlace sigue vigente, permitirá completar el alta sin asignarla a esta fila.';
 
+type ProviderInviteAvailability = {
+  status?: unknown;
+  used?: unknown;
+  expiresAt?: { toMillis?: () => number } | null;
+};
+
+export const isProviderInviteToken = (token: string) => /^[\w-]{1,160}$/.test(token);
+
+export function providerInviteAvailabilityIssue(invite: ProviderInviteAvailability | null, now = Date.now()) {
+  if (!invite) return 'INVITE_NOT_FOUND';
+  if (invite.used === true || invite.status === 'used') return 'INVITE_USED';
+  if (invite.status === 'cancelled') return 'INVITE_CANCELLED';
+  if (invite.used !== false || invite.status !== 'pending') return 'INVITE_UNAVAILABLE';
+  if (invite.expiresAt != null) {
+    const expiresAt = typeof invite.expiresAt.toMillis === 'function' ? invite.expiresAt.toMillis() : NaN;
+    if (!Number.isFinite(expiresAt)) return 'INVITE_UNAVAILABLE';
+    if (expiresAt <= now) return 'INVITE_EXPIRED';
+  }
+  return null;
+}
+
 export const clampLinkedProviderInviteDays = (value: number) => (
   Math.max(1, Math.min(MAX_LINKED_PROVIDER_INVITE_DAYS, Math.floor(value) || MAX_LINKED_PROVIDER_INVITE_DAYS))
 );

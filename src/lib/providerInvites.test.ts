@@ -5,7 +5,25 @@ import {
   PROVIDER_INVITE_CLOCK_SKEW_MARGIN_MS,
   buildLinkedProviderInviteExpiration,
   getProviderInviteTargetIssue,
+  isProviderInviteToken,
+  providerInviteAvailabilityIssue,
 } from './providerInvites';
+
+test('la entrada sólo habilita altas con un enlace pendiente, disponible y vigente', () => {
+  const now = Date.parse('2026-11-27T15:00:00Z');
+  const invite = { status: 'pending', used: false, expiresAt: { toMillis: () => now + 1000 } };
+  assert.equal(providerInviteAvailabilityIssue(invite, now), null);
+  assert.equal(providerInviteAvailabilityIssue({ status: 'pending', used: false }, now), null, 'respeta enlaces anteriores sin vencimiento');
+  assert.equal(providerInviteAvailabilityIssue(null, now), 'INVITE_NOT_FOUND');
+  assert.equal(providerInviteAvailabilityIssue({ ...invite, used: true }, now), 'INVITE_USED');
+  assert.equal(providerInviteAvailabilityIssue({ ...invite, status: 'used' }, now), 'INVITE_USED');
+  assert.equal(providerInviteAvailabilityIssue({ ...invite, status: 'cancelled' }, now), 'INVITE_CANCELLED');
+  assert.equal(providerInviteAvailabilityIssue(invite, now + 1000), 'INVITE_EXPIRED');
+  assert.equal(providerInviteAvailabilityIssue({ ...invite, used: undefined }, now), 'INVITE_UNAVAILABLE');
+  assert.equal(providerInviteAvailabilityIssue({ ...invite, expiresAt: {} }, now), 'INVITE_UNAVAILABLE');
+  assert.equal(isProviderInviteToken('link-historico_123'), true);
+  for (const token of ['', 'a/b', 'a?invite=other', 'a'.repeat(161)]) assert.equal(isProviderInviteToken(token), false);
+});
 
 test('linked provider invites stay below Firestore maximum expiration', () => {
   const now = new Date('2026-07-28T12:00:00.000Z');
