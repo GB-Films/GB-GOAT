@@ -233,7 +233,8 @@ export const ASSISTANT_HELP_SECTIONS: AssistantHelpSection[] = [
       'Las planillas y los PDFs que se adjuntan no se guardan: se leen en el navegador y se usan sólo en esa conversación.',
       'También se puede copiar una tabla desde Excel o Google Sheets y pegarla directamente en el chat: se toma como una lista de filas para cargar.',
       'El asistente puede leer el texto de un PDF (por ejemplo una factura) y, si se lo pedís, adjuntarlo como factura de un gasto con confirmación.',
-      'Los pagos, los reintegros y los movimientos de cajas se hacen siempre a mano desde la app; el asistente no los ejecuta. Tampoco sube documentos ni cambia permisos.',
+      'Para registrar un pago en pesos que ya hiciste con tu caja asignada, decile al asistente el gasto de Áreas, el importe y la fecha. Revisá la propuesta y elegí Registrar pago. Para adjuntar su comprobante usá Gestión de pagos.',
+      'Las entregas y devoluciones de caja, los pagos desde Caja General, los reintegros y las correcciones de pagos se gestionan desde las pantallas del proyecto.',
     ].join('\n'),
   },
 ];

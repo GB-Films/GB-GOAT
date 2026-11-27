@@ -53,6 +53,19 @@ se responden como no ejecutadas, para que las reprograme después de confirmar;
 no se ejecutan a escondidas ni quedan ids de herramienta sin respuesta. La fecha
 de referencia del prompt usa Argentina para interpretar hoy/mañana.
 
+## Registro de un pago desde la caja asignada
+
+`registrar_pago_mi_caja` prepara un pago en ARS que el usuario ya hizo con su
+caja personal del proyecto. Identifica un gasto editable de Áreas y le muestra
+proyecto, gasto, importe, fecha y saldo antes de confirmar. Al elegir **Registrar
+pago**, se consulta el estado vigente y se ejecuta la misma función de finanzas
+que usa Gestión de pagos para colaboradores. Esta función registra el pago y
+el movimiento de caja juntos. Reintentar la misma propuesta conserva el ID del pago.
+
+Se prepara un pago por vez. Para adjuntar un comprobante al registrarlo, se usa
+Gestión de pagos. El resultado del registro aparece en el chat con la respuesta
+de la función, sin depender de otra consulta al modelo.
+
 ## Publicación
 
 Esta entrega requiere publicar `assistantChat` antes del frontend. Los overrides
@@ -63,3 +76,5 @@ publicar. No requiere migrar datos ni desplegar reglas u otras funciones.
 Validación: pruebas de preparación/confirmación, protocolo y configuración;
 emulador de fechas para permisos, atomicidad, filas pagadas e importes intactos.
 Las sondas de proveedor usan sólo mensajes ficticios; nunca datos de producción.
+El registro desde la caja asignada se publica con la web y reutiliza el servidor
+de finanzas vigente.

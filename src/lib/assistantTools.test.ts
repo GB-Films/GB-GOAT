@@ -102,6 +102,18 @@ test('el asistente lista los proyectos del usuario', async () => {
   assert.deepEqual(result.proyectos.map((project: any) => project.nombre), ['Largometraje', 'Spot']);
 });
 
+test('la herramienta de caja prepara el pago de la fila exacta y rechaza un identificador sin propuesta', async () => {
+  const tool = buildTools({ userId: 'area-uid' }).find(entry => entry.name === 'registrar_pago_mi_caja')!;
+  assert.equal(tool.requiresConfirmation, true);
+  assert.equal(tool.summarize, undefined);
+  const proposal = await tool.prepare!({ fila: 'a1', monto: 200.5, fecha: '2024-10-20' });
+  assert.ok('summary' in proposal);
+  assert.match(proposal.summary, /Largometraje\nGasto: Ferretería · Pintura/);
+  assert.match(proposal.summary, /tu caja asignada/);
+  assert.equal(typeof proposal.args.paymentId, 'string');
+  assert.match((await tool.run({ paymentId: 'inventado' }) as any).error, /Volvé a preparar/);
+});
+
 test('sin proyecto indicado usa el que está abierto en pantalla', async () => {
   const summary = await runTool(buildTools(), 'resumen_proyecto');
 
