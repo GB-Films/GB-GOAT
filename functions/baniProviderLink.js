@@ -22,14 +22,15 @@ function providerProjection(source){
   if(!displayName) return {status:'missing',displayName:'',category:''};
   return {status:'linked',displayName,category:bounded(d.category==='Otra'?d.categoryOther||d.category:d.category,100)};
 }
-const timeOf=s=>({seconds:Number(s.readTime?.seconds||0),nanoseconds:Number(s.readTime?.nanoseconds||0)});
+const timestampOf=t=>({seconds:Number(t?.seconds||0),nanoseconds:Number(t?.nanoseconds||0)});
+const timeOf=s=>timestampOf(s.readTime);
 const compare=(a,b)=>Number(a?.seconds||0)-Number(b?.seconds||0)||Number(a?.nanoseconds||0)-Number(b?.nanoseconds||0);
 const paths=(db,owner)=>({
   team:db.collection('users').doc(key(owner)).collection('team'),
   links:db.collection('goatProviderLinks').doc(key(owner)).collection('contacts'),
   providers:db.collection('goatProviderLinks').doc(key(owner)).collection('providers'),
 });
-const readProvider=async (db,providerId)=>(await db.getAll(db.collection('providers').doc(key(providerId)),{fieldMask:providerFields}))[0];
+const readProvider=async (db,providerId,forMatching=false)=>(await db.getAll(db.collection('providers').doc(key(providerId)),{fieldMask:forMatching?[...providerFields,"email"]:providerFields}))[0];
 const memberResult=doc=>({id:doc.id,name:memberName(doc.data()||{})});
 
 async function assertAdmin(db,request){
@@ -49,11 +50,35 @@ async function syncLinkedProvider({sourceDb,targetDb,ownerUid,providerId}){
     const current=(await tx.get(ref)).data();
     if(current?.providerId!==providerId||compare(observed,current.observed)<=0)return false;
     const patch=providerProjection(source);
+    const sourceVersion=timestampOf(source.updateTime||source.readTime);
+    if (source.exists ? compare(sourceVersion,current.sourceVersion)===0 : current.status==='missing')return false;
     if(patch.status==='missing'){patch.displayName=current.displayName||'';patch.category=current.category||'';}
-    tx.update(ref,{...patch,observed});
+    tx.update(ref,{...patch,observed,sourceVersion});
     return true;
   });
 }
+
+async function linkProvider({targetDb,ownerUid,providerId,memberId,source,newMatch}){
+  const {links,providers,team}=paths(targetDb,ownerUid);
+  const providerRef=providers.doc(key(providerId)),ref=links.doc(key(memberId));
+  const projection=providerProjection(source);
+  if(projection.status!=='linked')throw new HttpsError('failed-precondition','El proveedor no tiene nombre para mostrar.');
+  return targetDb.runTransaction(async tx=>{
+    const [candidate,contact,other]=await Promise.all([tx.get(ref),tx.get(team.doc(memberId)),tx.get(providerRef)]);
+    if(!contact.exists)throw new HttpsError('not-found','El contacto ya no existe en BANI LAB.');
+    if(candidate.exists&&candidate.data().providerId!==providerId)
+      throw new HttpsError('already-exists','El contacto ya está vinculado a otro proveedor.');
+    if(other.exists&&other.data().memberId!==memberId)throw new HttpsError('already-exists','Este proveedor ya está vinculado a otro contacto.');
+    if(newMatch&&(newMatch.normalizeEmail(contact.data().email)!==newMatch.email||
+      newMatch.identity(memberName(contact.data()))!==newMatch.name))
+      throw new HttpsError('failed-precondition','El contacto cambió durante el cruce.');
+    if(!candidate.exists)tx.create(ref,{providerId,...projection,observed:timeOf(source),sourceVersion:timestampOf(source.updateTime||source.readTime)});
+    if(!other.exists)tx.create(providerRef,{memberId});
+    return candidate.exists?'already-linked':'created';
+  });
+}
+
+
 
 function createBaniProviderLinkHandler({sourceDb,getTargetDb,getOwnerUid}){
   return async request=>{
@@ -90,21 +115,10 @@ function createBaniProviderLinkHandler({sourceDb,getTargetDb,getOwnerUid}){
       return {linkedContact:null,candidates:matches};
     }
     if(input.action!=='link')throw new HttpsError('invalid-argument','Acción inválida.');
-    const projection=providerProjection(source);
-    if(projection.status!=='linked')throw new HttpsError('failed-precondition','El proveedor no tiene nombre para mostrar.');
     const memberId=key(input.memberId);
-    const ref=links.doc(memberId);
-    await targetDb.runTransaction(async tx=>{
-      const [candidate,contact,other]=await Promise.all([tx.get(ref),tx.get(team.doc(memberId)),tx.get(providerRef)]);
-      if(!contact.exists)throw new HttpsError('not-found','El contacto ya no existe en BANI LAB.');
-      if(candidate.exists&&candidate.data().providerId!==providerId)
-        throw new HttpsError('already-exists','El contacto ya está vinculado a otro proveedor.');
-      if(other.exists&&other.data().memberId!==memberId)throw new HttpsError('already-exists','Este proveedor ya está vinculado a otro contacto.');
-      if(!candidate.exists)tx.create(ref,{providerId,...projection,observed:timeOf(source)});
-      if(!other.exists)tx.create(providerRef,{memberId});
-    });
+    await linkProvider({targetDb,ownerUid,providerId,memberId,source});
     await syncLinkedProvider({sourceDb,targetDb,ownerUid,providerId});
     return {linked:true};
   };
 }
-module.exports={providerProjection,searchKey,compare,createBaniProviderLinkHandler,syncLinkedProvider};
+module.exports={providerProjection,searchKey,compare,createBaniProviderLinkHandler,syncLinkedProvider,linkProvider,readProvider};

@@ -79,36 +79,6 @@ const baniDatabaseId = defineString('BANI_DATABASE_ID', { default: 'ai-studio-1e
 const baniOwnerUid = defineString('BANI_OWNER_UID');
 let baniDb;
 
-const { createBaniProviderLinkHandler, syncLinkedProvider } = require('./baniProviderLink');
-const getBaniProviderDb = () => {
-  if (!baniDb) {
-    const app = admin.initializeApp({ projectId: baniProjectId.value() }, 'bani-project-sync');
-    baniDb = require('firebase-admin/firestore').getFirestore(app, baniDatabaseId.value());
-  }
-  return baniDb;
-};
-const baniProviderService = 'bani-project-sync@gb-goat.iam.gserviceaccount.com';
-exports.manageBaniProviderLink = onCall({region:'us-central1', serviceAccount:baniProviderService, maxInstances:2},
-  createBaniProviderLinkHandler({sourceDb:db,getTargetDb:getBaniProviderDb,getOwnerUid:()=>baniOwnerUid.value()}));
-exports.syncBaniProviderLink = onDocumentWritten({document:'providers/{providerId}',database:'(default)',region:'us-central1',serviceAccount:baniProviderService,retry:true},
-  event => syncLinkedProvider({sourceDb:db,targetDb:getBaniProviderDb(),ownerUid:baniOwnerUid.value(),providerId:event.params.providerId}));
-
-exports.syncProjectToBani = onDocumentWritten({
-  document: 'projects/{projectId}',
-  database: '(default)',
-  region: 'us-central1',
-  serviceAccount: 'bani-project-sync@gb-goat.iam.gserviceaccount.com',
-  retry: true,
-}, async event => {
-  if (!event.data?.after.exists) return;
-  if (!baniDb) {
-    const app = admin.initializeApp({ projectId: baniProjectId.value() }, 'bani-project-sync');
-    baniDb = require('firebase-admin/firestore').getFirestore(app, baniDatabaseId.value());
-  }
-  const result = await syncGoatProject({ sourceDb: db, targetDb: baniDb, ownerUid: baniOwnerUid.value(), projectId: event.params.projectId });
-  console.info('BANI project sync', result);
-});
-
 const deepseekApiKey = defineSecret('DEEPSEEK_API_KEY');
 
 const DEEPSEEK_BASE_URL = 'https://api.deepseek.com/v1';
